@@ -1,0 +1,40 @@
+{
+  "name": "stla-lmb-ntt-portal-filters-onpremise",
+  "version": "1.0.0",
+  "description": "AWS Lambda - NTT Portal: Legacy on-premise filter data service (reference/compatibility version)",
+  "main": "src/handler.js",
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src/ test/ --max-warnings=0",
+    "lint:fix": "eslint src/ test/ --fix",
+    "package": "zip -r stla-lmb-ntt-portal-filters-onpremise.zip . -x '.git/*' '.github/*' 'test/*' 'node_modules/*' 'coverage/*' '*.md'"
+  },
+  "keywords": [
+    "lambda",
+    "aws",
+    "serverless",
+    "cicd"
+  ],
+  "author": "Stellantis NTT Team",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.1041.0",
+    "@aws-sdk/client-ssm": "^3.1041.0",
+    "joi": "17.13.3",
+    "winston": "3.19.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/jest": "^30.0.0",
+    "eslint": "^10.3.0",
+    "jest": "^30.3.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stla-ntt00/stla-lmb-ntt-portal-filters-onpremise"
+  }
+}

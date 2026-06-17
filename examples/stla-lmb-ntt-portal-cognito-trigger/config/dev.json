@@ -1,0 +1,42 @@
+{
+  "FunctionName": "lmb-np-BSN0027990-dev-ntt-portal-cognito-trigger",
+  "Role": "TBD",
+  "Handler": "src/handler.handler",
+  "Description": "AWS Lambda - NTT Portal: Cognito pre-token generation trigger for enriching ID/access tokens with custom claims",
+  "Timeout": 15,
+  "MemorySize": 128,
+  "VpcConfig": {
+    "SubnetIds": [
+      "TBD",
+      "TBD"
+    ],
+    "SecurityGroupIds": [
+      "TBD"
+    ]
+  },
+  "Environment": {
+    "Variables": {
+      "ENVIRONMENT": "dev",
+      "SECRET_DBAPPUSERSECRET": "sm-np-bsn0027990-dev-dbappusersecret",
+      "PARAMETERS_SECRETS_EXTENSION_LOG_LEVEL": "info",
+      "APPLICATION": "NTT.HQ",
+      "PROFILES": "ADMINISTRATOR,MARKET,VIEWER",
+      "MYPEOPLE": "sm-np-bsn0027990-dev-mypeoplesecret",
+      "ENFORCE_ROLE": "",
+      "AWS_LAMBDA_EXEC_WRAPPER": "/opt/dynatrace",
+      "DT_CLUSTER": "TBD",
+      "DT_CONNECTION_AUTH_TOKEN_SECRETS_MANAGER_ARN": "TBD",
+      "DT_CONNECTION_BASE_URL": "TBD",
+      "DT_LOG_COLLECTION_AUTH_TOKEN_SECRETS_MANAGER_ARN": "TBD",
+      "DT_TENANT": "TBD"
+    }
+  },
+  "Runtime": "nodejs24.x",
+  "Region": "eu-west-1",
+  "TracingConfig": {
+    "Mode": "Active"
+  },
+  "Layers": [
+    "TBD"
+  ]
+}
