@@ -94,25 +94,36 @@ node index.js details 79
 
 ## Configurazione
 
-Tutte le credenziali e gli URL sono centralizzati in `config.js`:
+Le credenziali vengono lette da **variabili d'ambiente**. Non inserire mai valori reali in `config.js`.
 
-```js
-module.exports = {
-  auth: {
-    url:          'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
-    grantType:    'client_credentials',
-    scope:        'prd:dgt',
-    clientId:     '...',
-    clientSecret: '...',
-  },
-  dgt: {
-    baseUrl:      'https://emea-aws.stage.np-api.stellantis.com',
-    basePath:     '/ps-stage/extra/srp/digital-layer/v1',
-    clientId:     '...',
-    clientSecret: '...',
-  },
-};
+### Sviluppo locale
+
+Copia `.env.example` in `.env` e inserisci i valori reali:
+
+```bash
+cp .env.example .env
 ```
+
+```ini
+# .env  (NON committare questo file — è in .gitignore)
+PING_CLIENT_ID=your_ping_client_id_here
+PING_CLIENT_SECRET=your_ping_client_secret_here
+DGT_CLIENT_ID=your_dgt_client_id_here
+DGT_CLIENT_SECRET=your_dgt_client_secret_here
+```
+
+`config.js` carica automaticamente il file `.env` se presente, senza dipendenze npm.
+
+### Lambda / produzione
+
+Configura le variabili d'ambiente direttamente sull'ambiente di esecuzione (es. AWS Lambda Environment Variables, CI/CD secrets):
+
+| Variabile | Descrizione |
+|---|---|
+| `PING_CLIENT_ID` | Client ID PingFederate |
+| `PING_CLIENT_SECRET` | Client Secret PingFederate |
+| `DGT_CLIENT_ID` | Client ID Stellantis DGT API |
+| `DGT_CLIENT_SECRET` | Client Secret Stellantis DGT API |
 
 ---
 
