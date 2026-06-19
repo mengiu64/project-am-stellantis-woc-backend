@@ -1,0 +1,14 @@
+{
+  "name": "jobcard",
+  "version": "1.0.0",
+  "description": "JobCard lambda - PingFederate auth + Stellantis DGT API client",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "list": "node index.js list",
+    "details": "node index.js details"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
