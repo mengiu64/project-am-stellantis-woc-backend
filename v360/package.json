@@ -1,0 +1,14 @@
+{
+  "name": "v360",
+  "version": "1.0.0",
+  "description": "V360 lambda - PingFederate auth + Stellantis ASV360 API client",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "ota": "node index.js otaCompatibility",
+    "getdetails": "node index.js getdetails"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

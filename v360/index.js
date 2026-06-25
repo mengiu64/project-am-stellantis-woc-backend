@@ -1,0 +1,86 @@
+'use strict';
+
+/**
+ * index.js — Entry point
+ *
+ * Usage:
+ *   node index.js otaCompatibility <vin> [options]
+ *   node index.js getdetails       <vin> [options]
+ *
+ * Options for "otaCompatibility" (key=value):
+ *   includeOtaHistoryData=true|false   (default: true)
+ *   locale=<value>                     (e.g. fr_FR)
+ *
+ * Options for "getdetails" (key=value):
+ *   searchType=<value>     (default: vin)
+ *   countryCode=<value>    (e.g. FR)
+ *   clientId=<value>
+ *   offering=<value>       (e.g. "Vehicle Description,campaign")
+ *   languageCode=<value>   (e.g. fr)
+ *
+ * Examples:
+ *   node index.js otaCompatibility VR7EMZKU7RJ963237
+ *   node index.js otaCompatibility VR7EMZKU7RJ963237 includeOtaHistoryData=true locale=fr_FR
+ *   node index.js getdetails VF3VEAHHWFZ062040
+ *   node index.js getdetails VF3VEAHHWFZ062040 countryCode=FR offering="Vehicle Description,campaign" languageCode=fr
+ */
+
+const { getBearerToken } = require('./authService');
+const { otaCompatibility, getDetails } = require('./v360Service');
+
+/**
+ * Parses extra CLI args in the form key=value into an object.
+ */
+function parseKvArgs(args) {
+  const result = {};
+  for (const arg of args) {
+    const idx = arg.indexOf('=');
+    if (idx === -1) continue;
+    const key = arg.slice(0, idx).trim();
+    const raw = arg.slice(idx + 1).trim();
+    result[key] = raw;
+  }
+  return result;
+}
+
+async function runOtaCompatibility(vin, extraArgs) {
+  console.log('\n=== OTA Compatibility ===');
+  const params = { vin, ...parseKvArgs(extraArgs) };
+  const token = await getBearerToken();
+  const result = await otaCompatibility(token, params);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function runGetDetails(vin, extraArgs) {
+  console.log('\n=== Get Details ===');
+  const params = { vin, ...parseKvArgs(extraArgs) };
+  const token = await getBearerToken();
+  const result = await getDetails(token, params);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function main() {
+  const [, , command, param, ...rest] = process.argv;
+
+  try {
+    if (command === 'otaCompatibility') {
+      const vin = param || 'VR7EMZKU7RJ963237';
+      await runOtaCompatibility(vin, rest);
+    } else if (command === 'getdetails') {
+      const vin = param || 'VF3VEAHHWFZ062040';
+      await runGetDetails(vin, rest);
+    } else {
+      console.error('[ERROR] Comando non valido. Usa:');
+      console.error('  node index.js otaCompatibility <vin> [key=value ...]');
+      console.error('  node index.js getdetails       <vin> [key=value ...]');
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error('\n[ERROR]', err.message);
+    process.exit(1);
+  }
+}
+
+main();

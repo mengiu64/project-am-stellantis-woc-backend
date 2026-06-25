@@ -1,0 +1,5 @@
+# Credentials — never commit
+.env
+
+# Token cache — never commit
+.token.cache.json
