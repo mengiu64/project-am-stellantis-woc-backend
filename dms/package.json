@@ -1,0 +1,13 @@
+{
+  "name": "dms",
+  "version": "1.0.0",
+  "description": "DMS lambda - PingFederate auth + Stellantis DML API client",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "settings": "node index.js settings"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
