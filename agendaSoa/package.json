@@ -1,0 +1,14 @@
+{
+  "name": "agenda-soa-lambda",
+  "version": "1.0.0",
+  "description": "Node.js Lambda client for AgendaSOA REST service",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node src/test.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  }
+}
