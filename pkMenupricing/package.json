@@ -1,0 +1,15 @@
+{
+  "name": "pk-menupricing",
+  "version": "1.0.0",
+  "description": "Node.js client per MenuPricingSoapClient (Opel/Vauxhall Menu Pricing)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5",
+    "xml2js": "^0.6.2"
+  }
+}
