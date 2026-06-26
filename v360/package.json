@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "V360 lambda - PingFederate auth + Stellantis ASV360 API client",
   "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node index.js",
     "ota": "node index.js otaCompatibility",

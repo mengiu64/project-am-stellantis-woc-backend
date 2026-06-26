@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Node.js Lambda client for AgendaSOA NAGA (create/update appointment) REST endpoints",
   "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node index.js",
     "test": "jest --testEnvironment=node"
