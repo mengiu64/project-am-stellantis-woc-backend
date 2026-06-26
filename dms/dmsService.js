@@ -23,7 +23,7 @@ async function getDmsSettings(bearerToken, params = {}) {
 
   const base = new URL(config.dml.baseUrl);
   const qs = new URLSearchParams({ country, brand, dealer }).toString();
-  const fullPath = `${config.dml.basePath}/settings-current?${qs}`;
+  const fullPath = `${config.dml.basePath}/settings?${qs}`;
 
   const options = {
     hostname: base.hostname,
