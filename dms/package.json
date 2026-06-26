@@ -1,15 +1,14 @@
 {
-  "name": "jobcard",
+  "name": "dms",
   "version": "1.0.0",
-  "description": "JobCard lambda - PingFederate auth + Stellantis DGT API client",
+  "description": "DMS lambda - PingFederate auth + Stellantis DML API client",
   "main": "index.js",
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
     "start": "node index.js",
-    "list": "node index.js list",
-    "details": "node index.js details",
+    "settings": "node index.js settings",
     "test": "jest --testEnvironment=node"
   },
   "keywords": [],

@@ -3,12 +3,22 @@
   "version": "1.0.0",
   "description": "V360 lambda - PingFederate auth + Stellantis ASV360 API client",
   "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "start": "node index.js",
     "ota": "node index.js otaCompatibility",
-    "getdetails": "node index.js getdetails"
+    "getdetails": "node index.js getdetails",
+    "test": "jest --testEnvironment=node"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
 }
