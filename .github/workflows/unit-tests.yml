@@ -14,8 +14,8 @@ jobs:
       run:
         working-directory: agendaSoa
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
@@ -30,8 +30,8 @@ jobs:
       run:
         working-directory: agendaSoaNaga
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
@@ -46,8 +46,8 @@ jobs:
       run:
         working-directory: dms
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
@@ -62,8 +62,8 @@ jobs:
       run:
         working-directory: jobcard
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
@@ -78,8 +78,8 @@ jobs:
       run:
         working-directory: v360
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: "npm"
