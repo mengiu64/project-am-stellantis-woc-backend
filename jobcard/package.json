@@ -6,9 +6,16 @@
   "scripts": {
     "start": "node index.js",
     "list": "node index.js list",
-    "details": "node index.js details"
+    "details": "node index.js details",
+    "test": "jest --testEnvironment=node"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
 }

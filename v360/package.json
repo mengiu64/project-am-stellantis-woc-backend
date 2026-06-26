@@ -6,9 +6,16 @@
   "scripts": {
     "start": "node index.js",
     "ota": "node index.js otaCompatibility",
-    "getdetails": "node index.js getdetails"
+    "getdetails": "node index.js getdetails",
+    "test": "jest --testEnvironment=node"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  }
 }
