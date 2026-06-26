@@ -1,0 +1,88 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test-agendaSoa:
+    name: agendaSoa
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agendaSoa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: agendaSoa/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  test-agendaSoaNaga:
+    name: agendaSoaNaga
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agendaSoaNaga
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: agendaSoaNaga/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  test-dms:
+    name: dms
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dms
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: dms/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  test-jobcard:
+    name: jobcard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jobcard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: jobcard/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  test-v360:
+    name: v360
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: v360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: v360/package-lock.json
+      - run: npm ci
+      - run: npm test
