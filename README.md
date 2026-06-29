@@ -17,7 +17,9 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [v360](#v360)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
-5. [Unit Test](#unit-test)
+5. [Unit Test & Coverage](#unit-test--coverage)
+6. [Security Scan](#security-scan)
+7. [Report di copertura](#report-di-copertura)
 
 ---
 
@@ -283,34 +285,47 @@ ASV_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API ASV360
 
 ---
 
-## Unit Test
+## Unit Test & Coverage
 
 ### Framework
 
 Tutti i moduli usano **[Jest](https://jestjs.io/)** come framework di test.  
 I test sono completamente isolati: nessuna chiamata reale a servizi esterni (tutto mockato con `jest.mock()`).
 
+La build **fallisce automaticamente** se la coverage scende sotto la soglia minima del **90%** su statements, branches, functions e lines (configurato via `coverageThreshold` in ogni `package.json`).
+
 ### Eseguire i test
 
 ```bash
-# Singolo modulo
-cd agendaSoa    && npm test
-cd agendaSoaNaga && npm test
-cd dms          && npm test
-cd jobcard      && npm test
-cd v360         && npm test
+# Solo test
+cd agendaSoa && npm test
+
+# Test + report di copertura (genera coverage/)
+cd agendaSoa && npm run test:coverage
 ```
 
-### Riepilogo copertura
+### Riepilogo test
 
 | Modulo | Test Suites | Tests | File testati |
 |---|:---:|:---:|---|
-| **agendaSoa** | 7 | 63 | `index`, `agendaSOAClient`, `clientFactory`, `handlers/*` |
-| **agendaSoaNaga** | 4 | 35 | `index`, `agendaNagaClient`, `handlers/*` |
+| **agendaSoa** | 7 | 81 | `index`, `agendaSOAClient`, `clientFactory`, `handlers/*` |
+| **agendaSoaNaga** | 5 | 39 | `index`, `agendaNagaClient`, `clientFactory`, `handlers/*` |
 | **dms** | 3 | 23 | `httpClient`, `authService`, `dmsService` |
-| **jobcard** | 3 | 26 | `httpClient`, `authService`, `jobCardService` |
+| **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
-| **Totale** | **20** | **176** | |
+| **Totale** | **21** | **200** | |
+
+### Copertura del codice
+
+| Modulo | Statements | Branches | Functions | Lines |
+|---|:---:|:---:|:---:|:---:|
+| **agendaSoa** | 100% ✅ | 96.96% ✅ | 100% ✅ | 100% ✅ |
+| **agendaSoaNaga** | 100% ✅ | 92.68% ✅ | 100% ✅ | 100% ✅ |
+| **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
+| **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
+| **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
+
+> Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
 ### Struttura dei test
 
@@ -318,30 +333,73 @@ cd v360         && npm test
 <modulo>/
 └── __tests__/
     ├── index.test.js           # Dispatcher Lambda (routing, 400 su action sconosciuta)
-    ├── agendaSOAClient.test.js # Client REST: tutti i metodi pubblici + _processResponse
+    ├── agendaSOAClient.test.js # Client REST: metodi pubblici, interceptors, _post, edge cases
     ├── clientFactory.test.js   # Factory: env vars, overrides
     └── handlers/
-        ├── appointment.test.js   # 200/502/500, merge params
-        ├── availableHours.test.js # 400 se id mancante, 200/502/500
-        ├── cCSList.test.js       # 400 se id mancante, mapping campi
-        └── data.test.js          # 400 se id mancante, plaDtoList
+        ├── appointment.test.js
+        ├── availableHours.test.js
+        ├── cCSList.test.js
+        └── data.test.js
 ```
 
 ### Cosa viene testato
 
 #### agendaSoa
 - **index** – routing verso tutti i handler, fallback `httpMethod`, 400 per action sconosciuta/assente
-- **agendaSOAClient** – costruttore, `_basicAuthHeader`, `_processResponse` (2xx/4xx/5xx), tutti i metodi pubblici (`appointment`, `availableHours`, `cCSList`, `data`, `getAvHoursForRec`), padding orari, mapping CCS, filtro slot occupati
+- **agendaSOAClient** – costruttore (con e senza argomenti), `_basicAuthHeader`, `_processResponse` (2xx/4xx/5xx), interceptors request/response, `_get`/`_getWithApiKey`/`_post` (inclusi `validateStatus`), tutti i metodi pubblici (`appointment`, `availableHours`, `cCSList`, `data`, `getAvHoursForRec`), padding orari, mapping CCS, filtro slot occupati, edge cases (tranches null, rdv null, formato data non standard)
 - **clientFactory** – costruzione da env vars, override config
 - **handlers** – merge parametri (queryString + body + params), 200/502/500, validazione parametri obbligatori
 
 #### agendaSoaNaga
 - **index** – routing `createnaga`/`updatenaga`, fallback `httpMethod`, 400 per action sconosciuta
-- **agendaNagaClient** – `_basicAuthHeader`, `_processResponse`, `createnaga` (path/body), `updatenaga` (path con apptId, aggiunta `authUser`)
-- **handlers** – parsing body, fallback su `params`, 400 se `apptId` mancante, 200/502/500, JSON non valido → 500
+- **agendaNagaClient** – `_basicAuthHeader`, `_processResponse`, `createnaga`, `updatenaga` (path con apptId, `authUser`), `_post` validateStatus
+- **clientFactory** – costruzione da env vars, override config, metodi esposti
+- **handlers** – parsing body, fallback su `params`, 400 se `apptId` mancante, 200/502/500
 
 #### dms / jobcard / v360
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
-- **authService** – cache valida (no HTTP call), cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
-- **dmsService / jobCardService / v360Service** – validazione parametri obbligatori, headers corretti (Authorization, IBM credentials, x-trace-id), query string/body, risposta 200, errori HTTP
+- **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
+- **dmsService / jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP
+
+---
+
+## Security Scan
+
+Ad ogni **push e pull request**, il workflow GitHub Actions esegue automaticamente:
+
+```bash
+npm audit --audit-level=high
+```
+
+Il job fallisce se vengono rilevate vulnerabilità di livello **high** o **critical** nelle dipendenze.  
+I risultati sono visibili nel log dello step "Security scan" nella tab **Actions** del repository.
+
+---
+
+## Report di copertura
+
+Il report HTML completo viene generato automaticamente e pubblicato come **artefatto scaricabile** su GitHub Actions.
+
+### Come accedere al report
+
+1. Vai sul repository GitHub → tab **Actions**
+2. Clicca sul workflow run più recente
+3. In fondo alla pagina, sezione **Artifacts**
+4. Scarica l'artefatto del modulo desiderato (es. `coverage-agendaSoa`)
+5. Estrai lo zip e apri `lcov-report/index.html` nel browser
+
+Gli artefatti sono disponibili per **30 giorni** da ogni esecuzione.
+
+### Generare il report in locale
+
+```bash
+cd agendaSoa
+npm run test:coverage
+# Apri coverage/lcov-report/index.html nel browser
+```
+
+Il comando genera nella cartella `coverage/`:
+- `lcov-report/index.html` — report HTML navigabile per file e riga
+- `cobertura-coverage.xml` — formato XML per integrazione CI
+- `coverage-summary.json` — riepilogo JSON con le percentuali per modulo
 
