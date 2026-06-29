@@ -128,4 +128,17 @@ describe('AgendaNagaClient', () => {
     const result = await client.updatenaga({}, 'appt-1');
     expect(result.success).toBe(false);
   });
+
+  // ── _post validateStatus ──────────────────────────────────────────────────────
+
+  test('_post passes validateStatus that always returns true', async () => {
+    let capturedOpts;
+    mockHttp.post.mockImplementation((_url, _body, opts) => {
+      capturedOpts = opts;
+      return Promise.resolve({ status: 200, data: {} });
+    });
+    await client._post('/test', {});
+    expect(capturedOpts.validateStatus()).toBe(true);
+    expect(capturedOpts.validateStatus(500)).toBe(true);
+  });
 });

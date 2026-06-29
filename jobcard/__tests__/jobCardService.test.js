@@ -153,4 +153,41 @@ describe('jobCardService', () => {
     const [options] = httpsRequest.mock.calls[0];
     expect(options.headers.jobCardId).toBe('79');
   });
+
+  test('sends date range and other optional filters as headers when provided', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await getJobCardList('token', {
+      dealerId: '0062219',
+      creationStartDate: '2024-01-01',
+      creationEndDate: '2024-01-31',
+      deliveryStartDate: '2024-02-01',
+      deliveryEndDate: '2024-02-28',
+      receptionStartDate: '2024-03-01',
+      receptionEndDate: '2024-03-31',
+      dmsRepairOrderId: 'DMS-001',
+      customerName: 'Mario Rossi',
+    });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.headers.creationStartDate).toBe('2024-01-01');
+    expect(options.headers.creationEndDate).toBe('2024-01-31');
+    expect(options.headers.deliveryStartDate).toBe('2024-02-01');
+    expect(options.headers.deliveryEndDate).toBe('2024-02-28');
+    expect(options.headers.receptionStartDate).toBe('2024-03-01');
+    expect(options.headers.receptionEndDate).toBe('2024-03-31');
+    expect(options.headers.dmsRepairOrderId).toBe('DMS-001');
+    expect(options.headers.customerName).toBe('Mario Rossi');
+  });
+
+  test('getJobCardList works without optional params (only dealerId)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { items: [] } });
+
+    const result = await getJobCardList('token', { dealerId: '0062219' });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.headers.dealerId).toBe('0062219');
+    expect(options.headers.vin).toBeUndefined();
+    expect(result).toEqual({ items: [] });
+  });
 });

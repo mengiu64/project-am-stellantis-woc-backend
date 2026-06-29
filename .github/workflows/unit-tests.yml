@@ -1,4 +1,4 @@
-name: Unit Tests
+name: Unit Tests & Security Scan
 
 on:
   push:
@@ -20,8 +20,19 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: agendaSoa/package-lock.json
-      - run: npm ci
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-agendaSoa
+          path: agendaSoa/coverage/
+          retention-days: 30
 
   test-agendaSoaNaga:
     name: agendaSoaNaga
@@ -36,8 +47,19 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: agendaSoaNaga/package-lock.json
-      - run: npm ci
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-agendaSoaNaga
+          path: agendaSoaNaga/coverage/
+          retention-days: 30
 
   test-dms:
     name: dms
@@ -52,8 +74,19 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: dms/package-lock.json
-      - run: npm ci
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-dms
+          path: dms/coverage/
+          retention-days: 30
 
   test-jobcard:
     name: jobcard
@@ -68,8 +101,19 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: jobcard/package-lock.json
-      - run: npm ci
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-jobcard
+          path: jobcard/coverage/
+          retention-days: 30
 
   test-v360:
     name: v360
@@ -84,5 +128,16 @@ jobs:
           node-version: "24"
           cache: "npm"
           cache-dependency-path: v360/package-lock.json
-      - run: npm ci
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-v360
+          path: v360/coverage/
+          retention-days: 30

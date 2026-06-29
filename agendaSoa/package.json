@@ -8,7 +8,8 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "jest --testEnvironment=node"
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -19,6 +20,27 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/__tests__/**/*.test.js"]
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "index.js",
+      "src/**/*.js",
+      "!src/test.js"
+    ],
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "json-summary",
+      "cobertura"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
   }
 }
