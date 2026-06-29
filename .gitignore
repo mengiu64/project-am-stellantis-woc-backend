@@ -1,5 +1,7 @@
 agendaSoa/node_modules/
 agendaSoa/.env
+agendaSoa/coverage/
 agendaSoaNaga/node_modules/
 agendaSoaNaga/.env 
+agendaSoaNaga/coverage/
 cert/
