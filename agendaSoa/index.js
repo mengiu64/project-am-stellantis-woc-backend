@@ -16,10 +16,11 @@
 require('dotenv').config();
 
 const handlers = {
-  appointment:    require('./src/handlers/appointment'),
-  availableHours: require('./src/handlers/availableHours'),
-  cCSList:        require('./src/handlers/cCSList'),
-  data:           require('./src/handlers/data'),
+  appointment:       require('./src/handlers/appointment'),
+  availableHours:    require('./src/handlers/availableHours'),
+  cCSList:           require('./src/handlers/cCSList'),
+  data:              require('./src/handlers/data'),
+  getAvHoursForRec:  require('./src/handlers/getAvHoursForRec'),
 };
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
@@ -66,10 +67,11 @@ async function cliMain() {
 
   if (!action || !validActions.includes(action)) {
     console.error('[ERROR] Azione non valida. Usa:');
-    console.error('  node index.js appointment    ccs=<val> date=YYYY-MM-DD ldapId=<val> pdvId=<val> locale=<val>');
-    console.error('  node index.js availableHours id=<pdvId> startDate=YYYY-MM-DD [endDate=YYYY-MM-DD]');
-    console.error('  node index.js cCSList        id=<pdvId>');
-    console.error('  node index.js data           id=<apptId>');
+    console.error('  node index.js appointment      ccs=<val> date=YYYY-MM-DD ldapId=<val> pdvId=<val> locale=<val>');
+    console.error('  node index.js availableHours   id=<pdvId> startDate=YYYY-MM-DD [endDate=YYYY-MM-DD]');
+    console.error('  node index.js cCSList          id=<pdvId>');
+    console.error('  node index.js data             id=<apptId>');
+    console.error('  node index.js getAvHoursForRec pdvId=<val> date=YYYYMMDD ccs=<val> locale=<val> [ldapId=<val>]');
     process.exit(1);
     return;
   }

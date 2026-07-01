@@ -5,12 +5,14 @@ jest.mock('../src/handlers/appointment', () => ({ handler: jest.fn() }));
 jest.mock('../src/handlers/availableHours', () => ({ handler: jest.fn() }));
 jest.mock('../src/handlers/cCSList', () => ({ handler: jest.fn() }));
 jest.mock('../src/handlers/data', () => ({ handler: jest.fn() }));
+jest.mock('../src/handlers/getAvHoursForRec', () => ({ handler: jest.fn() }));
 
 const { handler, _parseKvArgs, _cliMain } = require('../index');
-const appointment    = require('../src/handlers/appointment');
-const availableHours = require('../src/handlers/availableHours');
-const cCSList        = require('../src/handlers/cCSList');
-const data           = require('../src/handlers/data');
+const appointment       = require('../src/handlers/appointment');
+const availableHours    = require('../src/handlers/availableHours');
+const cCSList           = require('../src/handlers/cCSList');
+const data              = require('../src/handlers/data');
+const getAvHoursForRec  = require('../src/handlers/getAvHoursForRec');
 
 describe('agendaSoa Lambda dispatcher (index.js)', () => {
   beforeEach(() => jest.clearAllMocks());
@@ -42,6 +44,13 @@ describe('agendaSoa Lambda dispatcher (index.js)', () => {
     const event = { action: 'data' };
     await handler(event, {});
     expect(data.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('routes event.action=getAvHoursForRec to getAvHoursForRec handler', async () => {
+    getAvHoursForRec.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { action: 'getAvHoursForRec', queryStringParameters: { pdvId: 'PDV1', date: '20250601', ccs: 'CCS1', locale: 'fr_FR' } };
+    await handler(event, {});
+    expect(getAvHoursForRec.handler).toHaveBeenCalledWith(event, {});
   });
 
   test('uses event.httpMethod as fallback when action is absent', async () => {
@@ -156,6 +165,14 @@ describe('_cliMain', () => {
     process.argv = ['node', 'index.js', 'data', 'id=MY_APPT'];
     await _cliMain();
     expect(data.handler).toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('routes getAvHoursForRec', async () => {
+    getAvHoursForRec.handler.mockResolvedValue({ statusCode: 200, body: '{"success":true,"data":["08:00"]}' });
+    process.argv = ['node', 'index.js', 'getAvHoursForRec', 'pdvId=PDV1', 'date=20250601', 'ccs=CCS1', 'locale=fr_FR'];
+    await _cliMain();
+    expect(getAvHoursForRec.handler).toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
