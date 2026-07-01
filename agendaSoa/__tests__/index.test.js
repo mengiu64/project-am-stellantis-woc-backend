@@ -130,6 +130,7 @@ describe('_cliMain', () => {
     await _cliMain();
     expect(appointment.handler).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'appointment', params: { ccs: 'MY_CCS', date: '2025-06-01' } }),
+      undefined,
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });

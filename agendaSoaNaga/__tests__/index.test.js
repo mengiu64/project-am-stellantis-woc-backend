@@ -125,6 +125,7 @@ describe('_cliMain (naga)', () => {
     await _cliMain();
     expect(createnaga.handler).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'createnaga', params: { rdvBrand: 'AP', locale: 'fr_FR' } }),
+      undefined,
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -135,6 +136,7 @@ describe('_cliMain (naga)', () => {
     await _cliMain();
     expect(createnaga.handler).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'createnaga', body: '{"rdvBrand":"AP"}' }),
+      undefined,
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });
@@ -148,6 +150,7 @@ describe('_cliMain (naga)', () => {
         action: 'updatenaga',
         pathParameters: { apptId: '106799025' },
       }),
+      undefined,
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });
