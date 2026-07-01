@@ -5,6 +5,7 @@ jest.mock('../../src/clientFactory');
 const { handler } = require('../../src/handlers/getAvHoursForRec');
 const { buildClient } = require('../../src/clientFactory');
 
+
 describe('getAvHoursForRec handler', () => {
   let mockClient;
 
