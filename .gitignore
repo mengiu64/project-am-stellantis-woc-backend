@@ -2,6 +2,16 @@ agendaSoa/node_modules/
 agendaSoa/.env
 agendaSoa/coverage/
 agendaSoaNaga/node_modules/
-agendaSoaNaga/.env 
+agendaSoaNaga/.env
 agendaSoaNaga/coverage/
+dms/node_modules/
+dms/.env
+dms/coverage/
+jobcard/node_modules/
+jobcard/.env
+jobcard/coverage/
+v360/node_modules/
+v360/.env
+v360/coverage/
 cert/
+samconfig.toml

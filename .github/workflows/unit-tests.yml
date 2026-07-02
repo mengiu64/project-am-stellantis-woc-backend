@@ -141,3 +141,70 @@ jobs:
           name: coverage-v360
           path: v360/coverage/
           retention-days: 30
+
+  deploy:
+    name: Deploy to AWS (SAM) — stage
+    needs:
+      - test-agendaSoa
+      - test-agendaSoaNaga
+      - test-dms
+      - test-jobcard
+      - test-v360
+    # solo su push al branch main, non su PR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: stage            # opzionale: usa GitHub Environments per approvazioni
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            eu-west-1
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Install npm dependencies (all modules)
+        run: |
+          (cd agendaSoa     && npm ci --omit=dev)
+          (cd agendaSoaNaga && npm ci --omit=dev)
+          (cd dms           && npm ci --omit=dev)
+          (cd jobcard       && npm ci --omit=dev)
+          (cd v360          && npm ci --omit=dev)
+
+      - name: SAM Build
+        run: sam build --parallel
+
+      - name: SAM Deploy
+        run: |
+          sam deploy \
+            --config-env stage \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=stage \
+              ExecutionRoleArn="${{ secrets.AWS_LAMBDA_ROLE_ARN }}" \
+              VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
+              VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
+              PingClientId="${{ secrets.PING_CLIENT_ID }}" \
+              PingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
+              AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
+              AgendaSoaUsername="${{ secrets.AGENDA_SOA_USERNAME }}" \
+              AgendaSoaPassword="${{ secrets.AGENDA_SOA_PASSWORD }}" \
+              AgendaSoaApiKey="${{ secrets.AGENDA_SOA_API_KEY }}" \
+              DmlIbmClientId="${{ secrets.DML_IBM_CLIENT_ID }}" \
+              DmlIbmClientSecret="${{ secrets.DML_IBM_CLIENT_SECRET }}" \
+              DgtClientId="${{ secrets.DGT_CLIENT_ID }}" \
+              DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
+              AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
+              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
+

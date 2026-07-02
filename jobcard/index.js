@@ -30,6 +30,50 @@
 const { getBearerToken } = require('./authService');
 const { getJobCardList, getJobCardDetails } = require('./jobCardService');
 
+// ── Lambda handler ────────────────────────────────────────────────────────────
+
+const VALID_ACTIONS = ['list', 'details'];
+
+exports.handler = async (event) => {
+  const action = event.action;
+  const body   = typeof event.body === 'string'
+    ? JSON.parse(event.body)
+    : (event.body || {});
+
+  if (!action || !VALID_ACTIONS.includes(action)) {
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        message: `Unknown action: "${action}". Valid actions: ${VALID_ACTIONS.join(', ')}`,
+      }),
+    };
+  }
+
+  try {
+    const token = await getBearerToken();
+    const result = action === 'list'
+      ? await getJobCardList(token, body)
+      : await getJobCardDetails(token, body.jobCardId ?? body.id);
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result),
+    };
+  } catch (err) {
+    const statusCode = err.message.includes('is required') ? 400 : 502;
+    return {
+      statusCode,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, message: err.message }),
+    };
+  }
+};
+
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
 /**
  * Parses extra CLI args in the form key=value into an object.
  * Numeric-looking values are cast to numbers.
@@ -85,4 +129,6 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}

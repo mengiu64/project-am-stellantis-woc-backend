@@ -46,8 +46,22 @@ module.exports = {
   dml: {
     baseUrl: 'https://api-async-dml.bsn0027990-stage-f4ou0acl.np.stla-aws.net',
     basePath: '/dms',
+    inquiryBasePath: '/inquiry/DML/1.0',
     ibmClientId: process.env.DML_IBM_CLIENT_ID,
     ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
     xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',
+  },
+
+  // ApplicationArea.Sender defaults (optional, used in CLI inquiry command)
+  sender: {
+    componentId:          process.env.DML_SENDER_COMPONENT_ID     || '1.0.0',
+    dealerNumberId:       process.env.DML_SENDER_DEALER_ID        || '',
+    dealerNumberIdSource: process.env.DML_SENDER_DEALER_ID_SRC    || '',
+    dealerCountryCode:    process.env.DML_SENDER_COUNTRY          || '',
+    languageCode:         process.env.DML_SENDER_LANGUAGE         || '',
+    physicalSiteId:       process.env.DML_SENDER_SITE_ID          || '',
+    serviceId:            process.env.DML_SENDER_SERVICE_ID       || '',
+    currencyId:           process.env.DML_SENDER_CURRENCY         || 'EUR',
+    brand:                process.env.DML_SENDER_BRAND            || '',
   },
 };

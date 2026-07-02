@@ -28,6 +28,50 @@
 const { getBearerToken } = require('./authService');
 const { otaCompatibility, getDetails } = require('./v360Service');
 
+// ── Lambda handler ────────────────────────────────────────────────────────────
+
+const VALID_ACTIONS = ['otaCompatibility', 'getdetails'];
+
+exports.handler = async (event) => {
+  const action = event.action;
+  const body   = typeof event.body === 'string'
+    ? JSON.parse(event.body)
+    : (event.body || {});
+
+  if (!action || !VALID_ACTIONS.includes(action)) {
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        message: `Unknown action: "${action}". Valid actions: ${VALID_ACTIONS.join(', ')}`,
+      }),
+    };
+  }
+
+  try {
+    const token = await getBearerToken();
+    const result = action === 'otaCompatibility'
+      ? await otaCompatibility(token, body)
+      : await getDetails(token, body);
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result),
+    };
+  } catch (err) {
+    const statusCode = err.message.includes('is required') ? 400 : 502;
+    return {
+      statusCode,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, message: err.message }),
+    };
+  }
+};
+
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
 /**
  * Parses extra CLI args in the form key=value into an object.
  */
@@ -83,4 +127,6 @@ async function main() {
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
