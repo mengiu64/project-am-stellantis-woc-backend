@@ -143,7 +143,7 @@ jobs:
           retention-days: 30
 
   deploy:
-    name: Deploy to AWS (SAM) — stage
+    name: Deploy to AWS (SAM) — dev
     needs:
       - test-agendaSoa
       - test-agendaSoaNaga
@@ -153,7 +153,9 @@ jobs:
     # solo su push al branch main, non su PR
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: stage            # opzionale: usa GitHub Environments per approvazioni
+    permissions:
+      id-token: write   # necessario per OIDC
+      contents: read
     steps:
       - uses: actions/checkout@v5
 
@@ -161,12 +163,11 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            eu-west-1
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     eu-west-1
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v2
@@ -187,12 +188,11 @@ jobs:
       - name: SAM Deploy
         run: |
           sam deploy \
-            --config-env stage \
+            --config-env dev \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              Environment=stage \
-              ExecutionRoleArn="${{ secrets.AWS_LAMBDA_ROLE_ARN }}" \
+              Environment=dev \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
               PingClientId="${{ secrets.PING_CLIENT_ID }}" \
@@ -207,4 +207,3 @@ jobs:
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
               AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
-

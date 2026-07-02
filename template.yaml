@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360)
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+
+Parameters:
+
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, stage, prod]
+    Description: Deployment environment (dev | stage | prod)
+
+  VpcSubnetIds:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of private Subnet IDs
+
+  VpcSecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of Security Group IDs
+
+  # ── PingFederate (shared by dms / jobcard / v360) ─────────────────────────
+  PingClientId:
+    Type: String
+    NoEcho: false
+  PingClientSecret:
+    Type: String
+    NoEcho: true
+
+  # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
+  AgendaSoaHost:
+    Type: String
+  AgendaSoaUsername:
+    Type: String
+  AgendaSoaPassword:
+    Type: String
+    NoEcho: true
+  AgendaSoaApiKey:
+    Type: String
+    NoEcho: true
+
+  # ── DMS (DML API) ─────────────────────────────────────────────────────────
+  DmlIbmClientId:
+    Type: String
+  DmlIbmClientSecret:
+    Type: String
+    NoEcho: true
+
+  # ── JobCard (DGT API) ─────────────────────────────────────────────────────
+  DgtClientId:
+    Type: String
+  DgtClientSecret:
+    Type: String
+    NoEcho: true
+
+  # ── V360 (ASV API) ────────────────────────────────────────────────────────
+  AsvClientId:
+    Type: String
+  AsvClientSecret:
+    Type: String
+    NoEcho: true
+
+# ── Globals ───────────────────────────────────────────────────────────────────
+
+Globals:
+  Function:
+    Runtime: nodejs24.x
+    MemorySize: 128
+    Timeout: 30
+    Tracing: Active
+    Handler: index.handler
+    VpcConfig:
+      SubnetIds: !Ref VpcSubnetIds
+      SecurityGroupIds: !Ref VpcSecurityGroupIds
+    PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/StlaPermissionBoundary'
+
+# ── Resources ─────────────────────────────────────────────────────────────────
+
+Resources:
+
+  AgendaSoaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agenda-soa"
+      CodeUri: agendaSoa/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
+          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
+          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
+          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+
+  AgendaSoaNagaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agenda-soa-naga"
+      CodeUri: agendaSoaNaga/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
+          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
+          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
+          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+
+  DmsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dms"
+      CodeUri: dms/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          PING_CLIENT_ID:       !Ref PingClientId
+          PING_CLIENT_SECRET:   !Ref PingClientSecret
+          DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
+          DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
+          DML_X_TARGET_ENV:     !Ref Environment
+
+  JobCardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-jobcard"
+      CodeUri: jobcard/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          PING_CLIENT_ID:     !Ref PingClientId
+          PING_CLIENT_SECRET: !Ref PingClientSecret
+          DGT_CLIENT_ID:      !Ref DgtClientId
+          DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+
+  V360Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-v360"
+      CodeUri: v360/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          PING_CLIENT_ID:     !Ref PingClientId
+          PING_CLIENT_SECRET: !Ref PingClientSecret
+          ASV_CLIENT_ID:      !Ref AsvClientId
+          ASV_CLIENT_SECRET:  !Ref AsvClientSecret
+
+# ── Outputs ───────────────────────────────────────────────────────────────────
+
+Outputs:
+  AgendaSoaFunctionArn:
+    Value: !GetAtt AgendaSoaFunction.Arn
+  AgendaSoaNagaFunctionArn:
+    Value: !GetAtt AgendaSoaNagaFunction.Arn
+  DmsFunctionArn:
+    Value: !GetAtt DmsFunction.Arn
+  JobCardFunctionArn:
+    Value: !GetAtt JobCardFunction.Arn
+  V360FunctionArn:
+    Value: !GetAtt V360Function.Arn
