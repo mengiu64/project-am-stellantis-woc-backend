@@ -150,8 +150,8 @@ jobs:
       - test-dms
       - test-jobcard
       - test-v360
-    # solo su push al branch main, non su PR
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # deploy su push al branch develop
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # necessario per OIDC
