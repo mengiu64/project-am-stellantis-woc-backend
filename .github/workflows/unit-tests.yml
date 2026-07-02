@@ -164,15 +164,13 @@ jobs:
           node-version: "24"
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region:     eu-west-1
 
       - name: Install AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
+        uses: aws-actions/setup-sam@v3
 
       - name: Install npm dependencies (all modules)
         run: |
