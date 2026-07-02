@@ -188,7 +188,11 @@ jobs:
       - name: SAM Deploy
         run: |
           sam deploy \
-            --config-env dev \
+            --stack-name stla-woc-backend-dev \
+            --s3-bucket s3-np-bsn0027990-dev-ops \
+            --s3-prefix stla-woc-backend \
+            --region eu-west-1 \
+            --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
