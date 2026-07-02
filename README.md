@@ -2,7 +2,7 @@
 
 Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360).
 
-![Unit Tests](https://github.com/DevExpPlatform/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
+![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
 ---
 
@@ -122,21 +122,51 @@ agendaSoaNaga/
 
 ### dms
 
-Lambda per il recupero delle **impostazioni DMS** tramite l'API Stellantis DML, con autenticazione PingFederate (Bearer token).
+Lambda per le **impostazioni DMS** e le **richieste di inquiry** (parti/upgrade/linee di lavoro) tramite l'API Stellantis DML, con autenticazione PingFederate (bearer token).
+
+#### Actions disponibili
+
+| `event.action` | Funzione service | Descrizione |
+|---|---|---|
+| `settings` | `getDmsSettings(token, params)` | Recupera la configurazione DMS del dealer |
+| `inquiry` | `postDmsInquiry(token, body)` | Invia una richiesta DML inquiry (LFP / WL / MP) |
 
 #### Funzioni principali
 
 | Modulo | Funzione | Descrizione |
 |---|---|---|
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) |
-| `dmsService` | `getDmsSettings(token, params)` | Chiama GET `/dms/settings?country=&brand=&dealer=` |
+| `dmsService` | `getDmsSettings(token, params)` | GET `/dms/settings?country=&brand=&dealer=` |
+| `dmsService` | `postDmsInquiry(token, body)` | POST `/inquiry/DML/1.0/inquiry` – tipi: `LFP` \| `WL` \| `MP` |
+| `dmsService` | `buildTypeSection(type)` | Helper: genera la sezione payload specifica per tipo (LFP/WL/MP) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
+
+#### Parametri `postDmsInquiry`
+
+| Campo | Obbligatorio | Descrizione |
+|---|---|---|
+| `PartsInquiryHeader.MessageType` | ✅ | Tipo richiesta: `LFP` \| `WL` \| `MP` |
+| `PartsInquiryHeader.DocumentID` | ✅ | Numero Repair Order univoco |
+| `PartsInquiryHeader.CustomerIdDms` | ✅ | ID cliente nel DMS |
+| `PartsInquiryHeader.VehicleID` | ✅ | VIN del veicolo |
+| `ApplicationArea` | ✅ | Mittente, timestamp e BODID (UUID) |
+| `UpSelling.Packages` | ❌ | Usato per `LFP` |
+| `WorkLines` | ❌ | Usato per `WL` |
+| `SpareParts.PartsItem` | ❌ | Usato per `MP` |
 
 #### Utilizzo CLI
 
 ```bash
+# Impostazioni DMS
 node index.js settings <country> <brand> <dealer>
 # es: node index.js settings fr FT 0062230
+
+# Inquiry — argomenti posizionali
+node index.js inquiry <type> <documentId> <customerId> <vehicleId>
+# es: node index.js inquiry LFP 84564621 854265 3C4NJCBH7KT831816
+
+# Inquiry — da file JSON completo
+node index.js inquiry --file ./LFP_1_Request.json
 ```
 
 ---
@@ -310,10 +340,10 @@ cd agendaSoa && npm run test:coverage
 |---|:---:|:---:|---|
 | **agendaSoa** | 7 | 81 | `index`, `agendaSOAClient`, `clientFactory`, `handlers/*` |
 | **agendaSoaNaga** | 5 | 39 | `index`, `agendaNagaClient`, `clientFactory`, `handlers/*` |
-| **dms** | 3 | 23 | `httpClient`, `authService`, `dmsService` |
+| **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
 | **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
-| **Totale** | **21** | **200** | |
+| **Totale** | **21** | **217** | |
 
 ### Copertura del codice
 
@@ -359,7 +389,8 @@ cd agendaSoa && npm run test:coverage
 #### dms / jobcard / v360
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
-- **dmsService / jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP
+- **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/DocumentID/CustomerIdDms/VehicleID), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
+- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP
 
 ---
 
