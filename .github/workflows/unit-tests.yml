@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: ["**"]
 
+# Permessi minimi per tutti i job (principio del privilegio minimo)
+permissions:
+  contents: read
+
 jobs:
   test-agendaSoa:
     name: agendaSoa
