@@ -229,7 +229,7 @@ jobs:
   #   staging    → stage (push diretto o merge da develop)
   #   production → prod  (push diretto o merge da staging)
   #
-  # Prerequisiti per ogni GitHub Environment (Settings → Environments):
+  # dev e stage condividono le stesse variabili (repository-level secrets/vars):
   #   vars:    AWS_ROLE_ARN, S3_BUCKET
   #   secrets: VPC_SUBNET_IDS, VPC_SECURITY_GROUP_IDS, PING_CLIENT_ID,
   #            PING_CLIENT_SECRET, AGENDA_SOA_HOST, AGENDA_SOA_USERNAME,
@@ -237,7 +237,9 @@ jobs:
   #            DML_IBM_CLIENT_SECRET, DGT_CLIENT_ID, DGT_CLIENT_SECRET,
   #            ASV_CLIENT_ID, ASV_CLIENT_SECRET
   #
-  # Per prod si consiglia di abilitare "Required reviewers" sull'environment.
+  # prod usa GitHub Environment "prod" (Settings → Environments) con le proprie
+  # variabili — da configurare quando disponibili.
+  # Si consiglia di abilitare "Required reviewers" sull'environment prod.
 
   deploy-dev:
     name: Deploy to AWS (SAM) — dev
@@ -249,7 +251,6 @@ jobs:
       - test-v360
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
-    environment: dev
     permissions:
       id-token: write
       contents: read
@@ -317,7 +318,6 @@ jobs:
       - test-v360
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
-    environment: stage
     permissions:
       id-token: write
       contents: read
