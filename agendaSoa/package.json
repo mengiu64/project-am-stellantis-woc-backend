@@ -9,14 +9,15 @@
   "scripts": {
     "start": "node index.js",
     "test": "jest --testEnvironment=node",
-    "test:coverage": "jest --testEnvironment=node --coverage --ci"
+    "test:coverage": "jest --testEnvironment=node --coverage --ci --outputFile=coverage/jest-results.json"
   },
   "dependencies": {
     "axios": "^1.7.2",
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "jest-html-reporters": "^3.1.7"
   },
   "jest": {
     "testEnvironment": "node",
@@ -29,6 +30,7 @@
       "!src/test.js"
     ],
     "coverageReporters": [
+      "html",
       "text",
       "lcov",
       "json-summary",
@@ -41,6 +43,20 @@
         "lines": 90,
         "statements": 90
       }
-    }
+    },
+    "reporters": [
+      "default",
+      [
+        "jest-html-reporters",
+        {
+          "publicPath": "./coverage",
+          "filename": "test-report.html",
+          "openReport": false,
+          "includeConsoleLog": true,
+          "includeFailureMsg": true,
+          "expand": true
+        }
+      ]
+    ]
   }
 }

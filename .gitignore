@@ -15,3 +15,15 @@ v360/.env
 v360/coverage/
 cert/
 samconfig.toml
+pkEper/node_modules/
+pkEper/.env
+pkEper/coverage/
+pkDocsoa/node_modules/
+pkDocsoa/.env
+pkDocsoa/coverage/
+pkMenupricing/node_modules/
+pkMenupricing/.env
+pkMenupricing/coverage/
+.aws-sam/
+.idea/
+*/.idea/

@@ -24,39 +24,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -84,39 +174,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -144,39 +324,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -204,39 +474,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -264,39 +624,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -324,39 +774,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -384,39 +924,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
@@ -444,39 +1074,129 @@ jobs:
         run: npm ci
       - name: Security scan
         run: |
-          npm audit --audit-level=high
-          touch .scan-ok
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate step summary
         if: always()
         run: |
           {
+            # ── Security Scan ─────────────────────────────────────────
             echo "## 🔒 Security Scan"
             if [ -f .scan-ok ]; then
               echo "✅ Nessuna vulnerabilità high/critical trovata"
             else
-              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+              echo "❌ Vulnerabilità high/critical rilevate"
             fi
             rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
             if [ -f coverage/coverage-summary.json ]; then
               echo ""
               echo "## 📊 Coverage — $(basename $PWD)"
               node << 'COVEOF'
-          const s = require('./coverage/coverage-summary.json').total;
-          const ok = '✅', ko = '❌';
-          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
-          console.log('| Metrica | Copertura | Covered / Total |');
-          console.log('|---|---|---|');
-          for (const [k, m] of Object.entries(s)) {
-            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
-          }
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
           COVEOF
             else
               echo ""
               echo "## 📊 Coverage"
               echo "❌ Report non disponibile — test falliti o non eseguiti"
             fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
