@@ -223,7 +223,23 @@ jobs:
           path: pkMenupricing/coverage/
           retention-days: 30
 
-  deploy:
+  # ── Deploy jobs ────────────────────────────────────────────────────────────────
+  # Branch → AWS environment:
+  #   develop    → dev   (push diretto)
+  #   staging    → stage (push diretto o merge da develop)
+  #   production → prod  (push diretto o merge da staging)
+  #
+  # Prerequisiti per ogni GitHub Environment (Settings → Environments):
+  #   vars:    AWS_ROLE_ARN, S3_BUCKET
+  #   secrets: VPC_SUBNET_IDS, VPC_SECURITY_GROUP_IDS, PING_CLIENT_ID,
+  #            PING_CLIENT_SECRET, AGENDA_SOA_HOST, AGENDA_SOA_USERNAME,
+  #            AGENDA_SOA_PASSWORD, AGENDA_SOA_API_KEY, DML_IBM_CLIENT_ID,
+  #            DML_IBM_CLIENT_SECRET, DGT_CLIENT_ID, DGT_CLIENT_SECRET,
+  #            ASV_CLIENT_ID, ASV_CLIENT_SECRET
+  #
+  # Per prod si consiglia di abilitare "Required reviewers" sull'environment.
+
+  deploy-dev:
     name: Deploy to AWS (SAM) — dev
     needs:
       - test-agendaSoa
@@ -231,11 +247,11 @@ jobs:
       - test-dms
       - test-jobcard
       - test-v360
-    # deploy su push al branch develop
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
+    environment: dev
     permissions:
-      id-token: write   # necessario per OIDC
+      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@v5
@@ -264,11 +280,11 @@ jobs:
       - name: SAM Build
         run: sam build --parallel
 
-      - name: SAM Deploy
+      - name: SAM Deploy — dev
         run: |
           sam deploy \
             --stack-name stla-woc-backend-dev \
-            --s3-bucket s3-np-bsn0027990-dev-ops \
+            --s3-bucket ${{ vars.S3_BUCKET }} \
             --s3-prefix stla-woc-backend \
             --region eu-west-1 \
             --capabilities CAPABILITY_IAM \
@@ -276,6 +292,142 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=dev \
+              VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
+              VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
+              PingClientId="${{ secrets.PING_CLIENT_ID }}" \
+              PingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
+              AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
+              AgendaSoaUsername="${{ secrets.AGENDA_SOA_USERNAME }}" \
+              AgendaSoaPassword="${{ secrets.AGENDA_SOA_PASSWORD }}" \
+              AgendaSoaApiKey="${{ secrets.AGENDA_SOA_API_KEY }}" \
+              DmlIbmClientId="${{ secrets.DML_IBM_CLIENT_ID }}" \
+              DmlIbmClientSecret="${{ secrets.DML_IBM_CLIENT_SECRET }}" \
+              DgtClientId="${{ secrets.DGT_CLIENT_ID }}" \
+              DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
+              AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
+              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
+
+  deploy-stage:
+    name: Deploy to AWS (SAM) — stage
+    needs:
+      - test-agendaSoa
+      - test-agendaSoaNaga
+      - test-dms
+      - test-jobcard
+      - test-v360
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment: stage
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     eu-west-1
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@v3
+
+      - name: Install npm dependencies (all modules)
+        run: |
+          (cd agendaSoa     && npm ci --omit=dev)
+          (cd agendaSoaNaga && npm ci --omit=dev)
+          (cd dms           && npm ci --omit=dev)
+          (cd jobcard       && npm ci --omit=dev)
+          (cd v360          && npm ci --omit=dev)
+
+      - name: SAM Build
+        run: sam build --parallel
+
+      - name: SAM Deploy — stage
+        run: |
+          sam deploy \
+            --stack-name stla-woc-backend-stage \
+            --s3-bucket ${{ vars.S3_BUCKET }} \
+            --s3-prefix stla-woc-backend \
+            --region eu-west-1 \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=stage \
+              VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
+              VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
+              PingClientId="${{ secrets.PING_CLIENT_ID }}" \
+              PingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
+              AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
+              AgendaSoaUsername="${{ secrets.AGENDA_SOA_USERNAME }}" \
+              AgendaSoaPassword="${{ secrets.AGENDA_SOA_PASSWORD }}" \
+              AgendaSoaApiKey="${{ secrets.AGENDA_SOA_API_KEY }}" \
+              DmlIbmClientId="${{ secrets.DML_IBM_CLIENT_ID }}" \
+              DmlIbmClientSecret="${{ secrets.DML_IBM_CLIENT_SECRET }}" \
+              DgtClientId="${{ secrets.DGT_CLIENT_ID }}" \
+              DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
+              AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
+              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
+
+  deploy-prod:
+    name: Deploy to AWS (SAM) — prod
+    needs:
+      - test-agendaSoa
+      - test-agendaSoaNaga
+      - test-dms
+      - test-jobcard
+      - test-v360
+    if: github.event_name == 'push' && github.ref == 'refs/heads/production'
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region:     eu-west-1
+
+      - name: Install AWS SAM CLI
+        uses: aws-actions/setup-sam@v3
+
+      - name: Install npm dependencies (all modules)
+        run: |
+          (cd agendaSoa     && npm ci --omit=dev)
+          (cd agendaSoaNaga && npm ci --omit=dev)
+          (cd dms           && npm ci --omit=dev)
+          (cd jobcard       && npm ci --omit=dev)
+          (cd v360          && npm ci --omit=dev)
+
+      - name: SAM Build
+        run: sam build --parallel
+
+      - name: SAM Deploy — prod
+        run: |
+          sam deploy \
+            --stack-name stla-woc-backend-prod \
+            --s3-bucket ${{ vars.S3_BUCKET }} \
+            --s3-prefix stla-woc-backend \
+            --region eu-west-1 \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              Environment=prod \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
               PingClientId="${{ secrets.PING_CLIENT_ID }}" \
