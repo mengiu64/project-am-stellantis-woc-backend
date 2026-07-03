@@ -285,7 +285,7 @@ jobs:
         run: |
           sam deploy \
             --stack-name stla-woc-backend-dev \
-            --s3-bucket ${{ vars.S3_BUCKET }} \
+            --s3-bucket s3-np-bsn0027990-dev-ops \
             --s3-prefix stla-woc-backend \
             --region eu-west-1 \
             --capabilities CAPABILITY_IAM \
@@ -352,7 +352,7 @@ jobs:
         run: |
           sam deploy \
             --stack-name stla-woc-backend-stage \
-            --s3-bucket ${{ vars.S3_BUCKET }} \
+            --s3-bucket s3-np-bsn0027990-dev-ops \
             --s3-prefix stla-woc-backend \
             --region eu-west-1 \
             --capabilities CAPABILITY_IAM \
