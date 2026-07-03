@@ -23,9 +23,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -50,9 +83,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -77,9 +143,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -104,9 +203,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -131,9 +263,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -158,9 +323,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -185,9 +383,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
@@ -212,9 +443,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Security scan
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          touch .scan-ok
       - name: Run tests with coverage (≥90%)
-        run: npm run test:coverage
+        run: npm run test:coverage -- --verbose
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità rilevate — vedi il log dello step **Security scan**"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          const s = require('./coverage/coverage-summary.json').total;
+          const ok = '✅', ko = '❌';
+          const fmt = m => (m.pct >= 90 ? ok : ko) + ' **' + m.pct + '%**';
+          console.log('| Metrica | Copertura | Covered / Total |');
+          console.log('|---|---|---|');
+          for (const [k, m] of Object.entries(s)) {
+            console.log('| ' + k + ' | ' + fmt(m) + ' | ' + m.covered + ' / ' + m.total + ' |');
+          }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v6
