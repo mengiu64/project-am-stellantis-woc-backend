@@ -142,6 +142,87 @@ jobs:
           path: v360/coverage/
           retention-days: 30
 
+  test-pkEper:
+    name: pkEper
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkEper
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: pkEper/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-pkEper
+          path: pkEper/coverage/
+          retention-days: 30
+
+  test-pkDocsoa:
+    name: pkDocsoa
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkDocsoa
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: pkDocsoa/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-pkDocsoa
+          path: pkDocsoa/coverage/
+          retention-days: 30
+
+  test-pkMenupricing:
+    name: pkMenupricing
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkMenupricing
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: pkMenupricing/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-pkMenupricing
+          path: pkMenupricing/coverage/
+          retention-days: 30
+
   deploy:
     name: Deploy to AWS (SAM) — dev
     needs:
