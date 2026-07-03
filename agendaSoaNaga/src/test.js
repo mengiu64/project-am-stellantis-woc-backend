@@ -78,7 +78,7 @@ const updatenagaBody = {
   idDossierSF: '1781858874026',
   source: 'WiAdvisor',
   clientNom: 'JSON',
-  authUser: '***REMOVED***',
+  authUser: process.env.TEST_AUTH_USER || '',
 };
 
 async function run() {
