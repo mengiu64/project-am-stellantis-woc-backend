@@ -117,11 +117,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -267,11 +272,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -417,11 +427,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -567,11 +582,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -717,11 +737,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -867,11 +892,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -1017,11 +1047,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
@@ -1167,11 +1202,16 @@ jobs:
             const ok='✅', ko='❌';
             const fmt  = m => (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
             const fmt2 = m => (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
             const t = s.total;
             console.log('### Totale');
             console.log('| Metrica | Copertura | Covered / Total |');
             console.log('|---|---|---|');
             for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
               console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
             }
             const files = Object.entries(s).filter(([k])=>k!=='total');
