@@ -1,0 +1,437 @@
+# project-am-stellantis-woc-backend
+
+> 🇮🇹 [Leggi in italiano](README.md) &nbsp;|&nbsp; 🇬🇧 English
+
+Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360).
+
+![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
+
+---
+
+## Table of Contents
+
+1. [Project structure](#project-structure)
+2. [Modules](#modules)
+   - [agendaSoa](#agendasoa)
+   - [agendaSoaNaga](#agendasoanaga)
+   - [dms](#dms)
+   - [jobcard](#jobcard)
+   - [v360](#v360)
+3. [Installation](#installation)
+4. [Environment variables](#environment-variables)
+5. [Unit Test & Coverage](#unit-test--coverage)
+6. [Security Scan](#security-scan)
+7. [Coverage report](#coverage-report)
+
+---
+
+## Project structure
+
+```
+project-am-stellantis-woc-backend/
+├── agendaSoa/          # Lambda – appointment scheduling (AgendaSOA REST)
+├── agendaSoaNaga/      # Lambda – NAGA appointment creation/update
+├── dms/                # Lambda – DMS Settings (Stellantis DML API)
+├── jobcard/            # Lambda – JobCard list/details (Stellantis DGT API)
+├── v360/               # Lambda – OTA Compatibility & Vehicle Details (ASV360 API)
+├── examples/           # Reference examples (not deployed)
+├── language/           # (reserved)
+└── traslate/           # (reserved)
+```
+
+---
+
+## Modules
+
+### agendaSoa
+
+Central routing Lambda for appointment management via the **AgendaSOA REST** service.
+
+#### Available handlers
+
+| `event.action` | Client method | Description |
+|---|---|---|
+| `appointment` | `client.appointment(params)` | Retrieves receptionist planning data |
+| `availableHours` | `client.availableHours(params)` | Returns available time slots for a PDV |
+| `cCSList` | `client.cCSList(params)` | List of CCS (Customer Service Advisors) for a PDV |
+| `data` | `client.data(params)` | Details of an RDV appointment by ID |
+
+#### Structure
+
+```
+agendaSoa/
+├── index.js                    # Lambda entry-point (dispatcher)
+├── src/
+│   ├── agendaSOAClient.js      # AgendaSOA REST client (axios)
+│   ├── clientFactory.js        # Factory: creates the client from env vars
+│   └── handlers/
+│       ├── appointment.js
+│       ├── availableHours.js
+│       ├── cCSList.js
+│       └── data.js
+└── __tests__/                  # Jest unit tests
+```
+
+#### Event shape
+
+```json
+{
+  "action": "appointment | availableHours | cCSList | data",
+  "queryStringParameters": { "id": "...", "ccs": "...", "date": "..." },
+  "body": "{...}",
+  "params": { "..." }
+}
+```
+
+---
+
+### agendaSoaNaga
+
+Routing Lambda for **NAGA appointment creation and update**.
+
+#### Available handlers
+
+| `event.action` | Client method | Description |
+|---|---|---|
+| `createnaga` | `client.createnaga(body)` | Creates a new NAGA appointment |
+| `updatenaga` | `client.updatenaga(body, apptId)` | Updates an existing appointment |
+
+#### Structure
+
+```
+agendaSoaNaga/
+├── index.js                    # Lambda entry-point (dispatcher)
+├── src/
+│   ├── agendaNagaClient.js     # NAGA REST client (axios)
+│   ├── clientFactory.js        # Factory: creates the client from env vars
+│   └── handlers/
+│       ├── createnaga.js
+│       └── updatenaga.js
+└── __tests__/                  # Jest unit tests
+```
+
+#### Event shape – updatenaga
+
+```json
+{
+  "action": "updatenaga",
+  "pathParameters": { "apptId": "12345" },
+  "body": "{...payload...}"
+}
+```
+
+---
+
+### dms
+
+Lambda for **DMS settings** and **inquiry requests** (parts/upgrades/work lines) via the Stellantis DML API, with PingFederate authentication (bearer token).
+
+#### Available actions
+
+| `event.action` | Service function | Description |
+|---|---|---|
+| `settings` | `getDmsSettings(token, params)` | Retrieves dealer DMS configuration |
+| `inquiry` | `postDmsInquiry(token, body)` | Submits a DML inquiry request (LFP / WL / MP) |
+
+#### Main functions
+
+| Module | Function | Description |
+|---|---|---|
+| `authService` | `getBearerToken()` | Gets/renews the PingFederate bearer token (file cache) |
+| `dmsService` | `getDmsSettings(token, params)` | GET `/dms/settings?country=&brand=&dealer=` |
+| `dmsService` | `postDmsInquiry(token, body)` | POST `/inquiry/DML/1.0/inquiry` – types: `LFP` \| `WL` \| `MP` |
+| `dmsService` | `buildTypeSection(type)` | Helper: generates the type-specific payload section (LFP/WL/MP) |
+| `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
+
+#### `postDmsInquiry` parameters
+
+| Field | Required | Description |
+|---|---|---|
+| `PartsInquiryHeader.MessageType` | ✅ | Request type: `LFP` \| `WL` \| `MP` |
+| `PartsInquiryHeader.DocumentID` | ✅ | Unique Repair Order number |
+| `PartsInquiryHeader.CustomerIdDms` | ✅ | Customer ID in DMS |
+| `PartsInquiryHeader.VehicleID` | ✅ | Vehicle VIN |
+| `ApplicationArea` | ✅ | Sender, timestamp and BODID (UUID) |
+| `UpSelling.Packages` | ❌ | Used for `LFP` |
+| `WorkLines` | ❌ | Used for `WL` |
+| `SpareParts.PartsItem` | ❌ | Used for `MP` |
+
+#### CLI usage
+
+```bash
+# DMS settings
+node index.js settings <country> <brand> <dealer>
+# e.g.: node index.js settings fr FT 0062230
+
+# Inquiry — positional arguments
+node index.js inquiry <type> <documentId> <customerId> <vehicleId>
+# e.g.: node index.js inquiry LFP 84564621 854265 3C4NJCBH7KT831816
+
+# Inquiry — from full JSON file
+node index.js inquiry --file ./LFP_1_Request.json
+```
+
+---
+
+### jobcard
+
+Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, with PingFederate authentication.
+
+#### Main functions
+
+| Module | Function | Description |
+|---|---|---|
+| `authService` | `getBearerToken()` | Gets/renews the PingFederate bearer token (file cache) |
+| `jobCardService` | `getJobCardList(token, params)` | JobCard list with filters and pagination |
+| `jobCardService` | `getJobCardDetails(token, jobCardId)` | Details of a single JobCard |
+| `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
+
+#### `getJobCardList` parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `dealerId` | ✅ | Dealer ID |
+| `vin` | ❌ | VIN number |
+| `creationStartDate` / `creationEndDate` | ❌ | Creation date range (ISO 8601) |
+| `deliveryStartDate` / `deliveryEndDate` | ❌ | Delivery date range (ISO 8601) |
+| `receptionStartDate` / `receptionEndDate` | ❌ | Reception date range (ISO 8601) |
+| `licensePlate` | ❌ | License plate |
+| `dmsRepairOrderId` | ❌ | DMS repair order ID |
+| `customerName` | ❌ | Customer name |
+| `page` | ❌ | Page number (default: 1) |
+| `pageSize` | ❌ | Items per page – 10/25/50/100 (default: 25) |
+| `sortBy` | ❌ | Sort field |
+| `sortOrder` | ❌ | `asc` / `desc` |
+
+#### CLI usage
+
+```bash
+node index.js list    <dealerId> [key=value ...]
+node index.js details <jobCardId>
+# e.g.: node index.js list 0062219 vin=VIN123 page=2
+# e.g.: node index.js details 79
+```
+
+---
+
+### v360
+
+Lambda for **ASV360** APIs (Vehicle 360): OTA compatibility and vehicle details, with PingFederate authentication.
+
+#### Main functions
+
+| Module | Function | Description |
+|---|---|---|
+| `authService` | `getBearerToken()` | Gets/renews the PingFederate bearer token (file cache) |
+| `v360Service` | `otaCompatibility(token, params)` | POST `/otaCompatibility` – OTA update compatibility |
+| `v360Service` | `getDetails(token, params)` | POST `/getdetails` – vehicle details |
+| `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
+
+#### `otaCompatibility` parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `vin` | ✅ | Vehicle VIN |
+| `includeOtaHistoryData` | ❌ | `"true"` / `"false"` |
+| `locale` | ❌ | E.g. `"fr_FR"` |
+
+#### `getDetails` parameters
+
+| Parameter | Required | Description |
+|---|---|---|
+| `vin` | ✅ | Vehicle VIN |
+| `searchType` | ❌ | Default `"vin"` |
+| `countryCode` | ❌ | E.g. `"FR"` |
+| `clientId` | ❌ | Client identifier |
+| `offering` | ❌ | E.g. `"Vehicle Description,campaign"` |
+| `languageCode` | ❌ | E.g. `"fr"` |
+
+#### CLI usage
+
+```bash
+node index.js otaCompatibility <vin> [key=value ...]
+node index.js getdetails       <vin> [key=value ...]
+# e.g.: node index.js otaCompatibility VR7EMZKU7RJ963237 locale=fr_FR
+# e.g.: node index.js getdetails VF3VEAHHWFZ062040 countryCode=FR languageCode=fr
+```
+
+---
+
+## Installation
+
+Each module is independent. Install dependencies separately:
+
+```bash
+cd agendaSoa     && npm install
+cd agendaSoaNaga && npm install
+cd dms           && npm install
+cd jobcard       && npm install
+cd v360          && npm install
+```
+
+---
+
+## Environment variables
+
+Each module reads credentials from a `.env` file in its own folder.  
+Create the file by copying `.env.example` and filling in the values.
+
+### agendaSoa / agendaSoaNaga
+
+```env
+AGENDA_SOA_HOST=https://...        # AgendaSOA service base URL
+AGENDA_SOA_USERNAME=...            # Basic auth username
+AGENDA_SOA_PASSWORD=...            # Basic auth password
+AGENDA_SOA_API_KEY=...             # Static API key (used by the appointment endpoint)
+```
+
+### dms
+
+```env
+PING_CLIENT_ID=...                 # PingFederate Client ID
+PING_CLIENT_SECRET=...             # PingFederate Client Secret
+DML_IBM_CLIENT_ID=...              # X-IBM-Client-Id for DML APIs
+DML_IBM_CLIENT_SECRET=...          # X-IBM-Client-Secret for DML APIs
+DML_X_TARGET_ENV=stage             # Target environment (stage / prod)
+```
+
+### jobcard
+
+```env
+PING_CLIENT_ID=...                 # PingFederate Client ID
+PING_CLIENT_SECRET=...             # PingFederate Client Secret
+DGT_CLIENT_ID=...                  # X-IBM-Client-Id for DGT APIs
+DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret for DGT APIs
+```
+
+### v360
+
+```env
+PING_CLIENT_ID=...                 # PingFederate Client ID
+PING_CLIENT_SECRET=...             # PingFederate Client Secret
+ASV_CLIENT_ID=...                  # X-IBM-Client-Id for ASV360 APIs
+ASV_CLIENT_SECRET=...              # X-IBM-Client-Secret for ASV360 APIs
+```
+
+> **Note:** `authService` implements a file-based cache mechanism (`.token.cache.json`) to avoid requesting a new token on every invocation. The token is automatically renewed 30 seconds before expiry.
+
+---
+
+## Unit Test & Coverage
+
+### Framework
+
+All modules use **[Jest](https://jestjs.io/)** as the test framework.  
+Tests are fully isolated: no real calls to external services (everything mocked with `jest.mock()`).
+
+The build **automatically fails** if coverage drops below the minimum threshold of **90%** on statements, branches, functions and lines (configured via `coverageThreshold` in each `package.json`).
+
+### Running the tests
+
+```bash
+# Tests only
+cd agendaSoa && npm test
+
+# Tests + coverage report (generates coverage/)
+cd agendaSoa && npm run test:coverage
+```
+
+### Test summary
+
+| Module | Test Suites | Tests | Files tested |
+|---|:---:|:---:|---|
+| **agendaSoa** | 7 | 81 | `index`, `agendaSOAClient`, `clientFactory`, `handlers/*` |
+| **agendaSoaNaga** | 5 | 39 | `index`, `agendaNagaClient`, `clientFactory`, `handlers/*` |
+| **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
+| **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
+| **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
+| **Total** | **21** | **217** | |
+
+### Code coverage
+
+| Module | Statements | Branches | Functions | Lines |
+|---|:---:|:---:|:---:|:---:|
+| **agendaSoa** | 100% ✅ | 96.96% ✅ | 100% ✅ | 100% ✅ |
+| **agendaSoaNaga** | 100% ✅ | 92.68% ✅ | 100% ✅ | 100% ✅ |
+| **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
+| **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
+| **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
+
+> Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
+
+### Test structure
+
+```
+<module>/
+└── __tests__/
+    ├── index.test.js           # Lambda dispatcher (routing, 400 on unknown action)
+    ├── agendaSOAClient.test.js # REST client: public methods, interceptors, _post, edge cases
+    ├── clientFactory.test.js   # Factory: env vars, overrides
+    └── handlers/
+        ├── appointment.test.js
+        ├── availableHours.test.js
+        ├── cCSList.test.js
+        └── data.test.js
+```
+
+### What is tested
+
+#### agendaSoa
+- **index** – routing to all handlers, `httpMethod` fallback, 400 for unknown/missing action
+- **agendaSOAClient** – constructor (with and without arguments), `_basicAuthHeader`, `_processResponse` (2xx/4xx/5xx), request/response interceptors, `_get`/`_getWithApiKey`/`_post` (including `validateStatus`), all public methods (`appointment`, `availableHours`, `cCSList`, `data`, `getAvHoursForRec`), time slot padding, CCS mapping, occupied slot filtering, edge cases (null tranches, null rdv, non-standard date format)
+- **clientFactory** – construction from env vars, config override
+- **handlers** – parameter merging (queryString + body + params), 200/502/500, required parameter validation
+
+#### agendaSoaNaga
+- **index** – `createnaga`/`updatenaga` routing, `httpMethod` fallback, 400 for unknown action
+- **agendaNagaClient** – `_basicAuthHeader`, `_processResponse`, `createnaga`, `updatenaga` (path with apptId, `authUser`), `_post` validateStatus
+- **clientFactory** – construction from env vars, config override, exposed methods
+- **handlers** – body parsing, `params` fallback, 400 if `apptId` missing, 200/502/500
+
+#### dms / jobcard / v360
+- **httpClient** – JSON/text parsing, chunk concatenation, body writing, reject on network error
+- **authService** – valid cache, expired/missing cache (renewal), cache writing, HTTP error, missing `access_token`, default `expires_in`
+- **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/DocumentID/CustomerIdDms/VehicleID), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
+- **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors
+
+---
+
+## Security Scan
+
+On every **push and pull request**, the GitHub Actions workflow automatically runs:
+
+```bash
+npm audit --audit-level=high
+```
+
+The job fails if **high** or **critical** severity vulnerabilities are detected in the dependencies.  
+Results are visible in the "Security scan" step log in the **Actions** tab of the repository.
+
+---
+
+## Coverage report
+
+The full HTML report is automatically generated and published as a **downloadable artifact** on GitHub Actions.
+
+### How to access the report
+
+1. Go to the GitHub repository → **Actions** tab
+2. Click on the most recent workflow run
+3. At the bottom of the page, **Artifacts** section
+4. Download the artifact for the desired module (e.g. `coverage-agendaSoa`)
+5. Extract the zip and open `lcov-report/index.html` in the browser
+
+Artifacts are available for **30 days** from each run.
+
+### Generate the report locally
+
+```bash
+cd agendaSoa
+npm run test:coverage
+# Open coverage/lcov-report/index.html in the browser
+```
+
+The command generates in the `coverage/` folder:
+- `lcov-report/index.html` — navigable HTML report per file and line
+- `cobertura-coverage.xml` — XML format for CI integration
+- `coverage-summary.json` — JSON summary with percentages per module
