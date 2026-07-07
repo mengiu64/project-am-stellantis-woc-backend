@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -17,6 +17,10 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [dms](#dms)
    - [jobcard](#jobcard)
    - [v360](#v360)
+   - [pkEper](#pkeper)
+   - [pkDocsoa](#pkdocsoa)
+   - [pkMenupricing](#pkmenupricing)
+   - [pkManager](#pkmanager)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -34,6 +38,10 @@ project-am-stellantis-woc-backend/
 ├── dms/                # Lambda – DMS Settings (Stellantis DML API)
 ├── jobcard/            # Lambda – JobCard list/details (Stellantis DGT API)
 ├── v360/               # Lambda – OTA Compatibility & Vehicle Details (ASV360 API)
+├── pkEper/             # Lambda – Pacchetti ePer (Stellantis FCA/Fiat SOAP)
+├── pkDocsoa/           # Lambda – Pacchetti DocSOA (Stellantis PSA REST)
+├── pkMenupricing/      # Lambda – Pacchetti MenuPricing (Opel/Vauxhall SOAP)
+├── pkManager/          # Lambda – Orchestratore multi-WS pacchetti (ePer/DocSOA/MenuPricing)
 ├── examples/           # Esempi di riferimento (non deployati)
 ├── language/           # (riservato)
 └── traslate/           # (riservato)
@@ -257,16 +265,158 @@ node index.js getdetails       <vin> [key=value ...]
 
 ---
 
+### pkEper
+
+Lambda per i **pacchetti ePer** (Stellantis FCA/Fiat), client SOAP che replica il servizio `WsIQPckEper` originariamente in PHP.
+
+#### Handlers disponibili
+
+| `event.action` | Metodo client | Descrizione |
+|---|---|---|
+| `getGroupsPRRequest` | `client.getGroupsPRRequest(body)` | Lista gruppi pacchetti per un VIN |
+| `getSubgroupsPR` | `client.getSubgroupsPR(body)` | Lista sottogruppi di un gruppo |
+| `getPackagesPR` | `client.getPackagesPR(body)` | Lista pacchetti di un sottogruppo |
+| `getPackageDetailsPR` | `client.getPackageDetailsPR(body)` | Dettaglio di un pacchetto |
+
+#### Struttura
+
+```
+pkEper/
+├── index.js               # Lambda entry-point + demo CLI
+├── WsIQPckEper.js          # Client SOAP (equivalente WsIQPckEper.class.php)
+├── test.js                 # Smoke-test manuale
+└── __tests__/              # Unit test Jest
+```
+
+#### Event shape
+
+```json
+{
+  "action": "getGroupsPRRequest | getSubgroupsPR | getPackagesPR | getPackageDetailsPR",
+  "body": { "coddealer": "0073741", "codmarket": "1000", "VIN": "...", "lingua": "IT" }
+}
+```
+
+---
+
+### pkDocsoa
+
+Lambda per i **pacchetti DocSOA** (Stellantis PSA), client REST che replica il servizio SOAP originario.
+
+#### Handlers disponibili
+
+| `event.action` | Metodo client | Descrizione |
+|---|---|---|
+| `functionsService` | `client.functionsService(params)` | Lista funzioni disponibili per un VIN |
+| `forfaitService` | `client.forfaitService(params)` | Lista forfait (pacchetti) |
+| `ibxDetailForfaitService` | `client.ibxDetailForfaitService(params)` | Dettaglio di un forfait |
+| `ibxParametrageService` | `client.ibxParametrageService(params)` | Parametraggio IBX |
+| `ibxDetailtpService` | `client.ibxDetailtpService(params)` | Dettaglio tempario (tp) |
+
+#### Struttura
+
+```
+pkDocsoa/
+├── index.js               # Lambda entry-point + demo CLI
+├── DocSOARestClient.js     # Client REST DocSOA (axios) + helper vinParts
+├── test.js                 # Smoke-test manuale
+└── __tests__/              # Unit test Jest
+```
+
+#### Event shape
+
+```json
+{
+  "action": "functionsService | forfaitService | ibxDetailForfaitService | ibxParametrageService | ibxDetailtpService",
+  "body": { "vin": "VF3CABHW6GT204366", "langue": "fr", "pays": "FR", "marque": "AP" }
+}
+```
+
+---
+
+### pkMenupricing
+
+Lambda per i **pacchetti MenuPricing** (Opel/Vauxhall), client SOAP con autenticazione WS-Security.
+
+#### Handlers disponibili
+
+| `event.action` | Metodo client | Descrizione |
+|---|---|---|
+| `getJobs` | `client.getJobs(body)` | Lista job/pacchetti disponibili per un VIN |
+| `getJobDetails` | `client.getJobDetails(body)` | Dettaglio di un job/pacchetto |
+
+#### Struttura
+
+```
+pkMenupricing/
+├── index.js                    # Lambda entry-point + demo CLI
+├── MenuPricingSoapClient.js     # Client SOAP MenuPricing
+├── test.js                      # Smoke-test manuale
+└── __tests__/                   # Unit test Jest
+```
+
+#### Event shape
+
+```json
+{
+  "action": "getJobs | getJobDetails",
+  "body": { "vin": "W0VZT6GT7M1017935", "languageCode": "ES", "countryCode": "ES", "dealerIdentificationCode": "ES96590", "manufacturer": "OV" }
+}
+```
+
+---
+
+### pkManager
+
+Lambda orchestratore che gestisce la **configurazione e la validazione dei pacchetti** su più web service (ePer, DocSOA, MenuPricing), determinando quali pacchetti configurati sono effettivamente disponibili per un VIN e recuperandone il dettaglio. Richiede il codice sorgente dei tre moduli fratelli (`pkEper`, `pkDocsoa`, `pkMenupricing`) tramite path relativi: in AWS viene per questo buildato con un `Makefile` custom (`Metadata: BuildMethod: makefile` in `template.yaml`) che ricrea la stessa struttura di cartelle sibling dentro il pacchetto Lambda.
+
+#### Handlers disponibili
+
+| `event.action` | Metodo manager | Descrizione |
+|---|---|---|
+| `getConfigPackages` | `manager.getConfigPackages(market, pkwstouse)` | Configurazione statica pacchetti per il ws indicato |
+| `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersezione tra config e pacchetti live dal WS |
+| `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + dettaglio di ogni pacchetto in parallelo |
+
+`pkwstouse` accetta i valori: `eper`, `docsoa`, `menupricing`.
+
+> ⚠️ **Nota**: `getValidPackages`/`getValidPackagesDetail` invocano internamente metodi (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) non ancora implementati sui client `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient`. Da completare prima di un utilizzo in produzione di queste due action.
+
+#### Struttura
+
+```
+pkManager/
+├── index.js          # Lambda entry-point + CLI
+├── PkManager.js       # Classe orchestratore
+├── test.js            # Smoke-test manuale
+└── __tests__/         # Unit test Jest
+```
+
+#### Event shape
+
+```json
+{
+  "action": "getConfigPackages | getValidPackages | getValidPackagesDetail",
+  "body": { "market": "IT", "pkwstouse": "eper", "VIN": "ZAC5JABL9PJK00363" }
+}
+```
+
+---
+
 ## Installazione
 
 Ogni modulo è indipendente. Installare le dipendenze separatamente:
 
 ```bash
-cd agendaSoa    && npm install
-cd agendaSoaNaga && npm install
-cd dms          && npm install
-cd jobcard      && npm install
-cd v360         && npm install
+cd agendaSoa      && npm install
+cd agendaSoaNaga  && npm install
+cd dms            && npm install
+cd jobcard        && npm install
+cd v360           && npm install
+cd pkEper         && npm install
+cd pkDocsoa       && npm install
+cd pkMenupricing  && npm install
+cd pkManager      && npm install
 ```
 
 ---
@@ -313,6 +463,60 @@ ASV_CLIENT_ID=...                  # X-IBM-Client-Id per le API ASV360
 ASV_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API ASV360
 ```
 
+### pkEper
+
+```env
+EPER_HOST=eper.parts.fiat.com      # Host servizio SOAP ePer
+```
+
+`coddealer`/`codmarket` sono passati nel `body` dell'evento Lambda (non da env).
+
+### pkDocsoa
+
+```env
+DOCSOA_HOST=https://api.inetpsa.com   # URL base servizio DocSOA
+DOCSOA_USERNAME=...                    # Username autenticazione
+DOCSOA_PASSWORD=...                    # Password autenticazione
+DOCSOA_CLIENT_ID=...                   # Client ID applicazione
+PROXY_HOST=...                         # (opzionale) proxy corporate Stellantis/PSA
+PROXY_PORT=8080                        # (opzionale) porta proxy
+```
+
+### pkMenupricing
+
+```env
+MENUPRICING_WSDL=...        # URL base servizio (senza /Menus o /SecuredMenus)
+MENUPRICING_USR=...         # Credenziali WS-Security (applicazione)
+MENUPRICING_PWS=...
+MENUPRICING_USR_REQ=...     # Credenziali di richiesta (dealerDetails nel body)
+MENUPRICING_PWS_REQ=...
+```
+
+### pkManager
+
+Orchestra `pkEper` + `pkDocsoa` + `pkMenupricing`: richiede le rispettive variabili sopra, più i parametri dealer/mercato specifici per ogni WS:
+
+```env
+# ── ePer ─────────────────────────────────────────────────────────────
+EPER_CODDEALER=...
+EPER_CODMARKET=...
+EPER_LINGUA=IT
+# EPER_TICKET=...                  # opzionale
+
+# ── DocSOA ───────────────────────────────────────────────────────────
+DOCSOA_CODBRAND=...
+DOCSOA_LANGUE=...
+DOCSOA_PAYS=...
+DOCSOA_CODEPDV=...
+# DOCSOA_LDP=... / DOCSOA_TYPE_INTERNET=...   # opzionali
+
+# ── MenuPricing ──────────────────────────────────────────────────────
+MP_LANGUAGE_CODE=...
+MP_COUNTRY_CODE=...
+MP_DEALER_IDENTIFICATION_CODE=...
+MP_MANUFACTURER=...
+```
+
 > **Nota:** `authService` implementa un meccanismo di cache su file (`.token.cache.json`) per evitare di richiedere un nuovo token ad ogni invocazione. Il token viene rinnovato automaticamente 30 secondi prima della scadenza.
 
 ---
@@ -345,7 +549,11 @@ cd agendaSoa && npm run test:coverage
 | **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
 | **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
-| **Totale** | **21** | **217** | |
+| **pkEper** | 1 | 19 | `WsIQPckEper` |
+| **pkDocsoa** | 1 | 19 | `DocSOARestClient` |
+| **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
+| **pkManager** | 1 | 27 | `PkManager` |
+| **Totale** | **25** | **296** | |
 
 ### Copertura del codice
 
@@ -356,6 +564,10 @@ cd agendaSoa && npm run test:coverage
 | **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
 | **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
+| **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
+| **pkDocsoa** | 98.46% ✅ | 92.40% ✅ | 100% ✅ | 100% ✅ |
+| **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
+| **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
@@ -393,6 +605,10 @@ cd agendaSoa && npm run test:coverage
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/DocumentID/CustomerIdDms/VehicleID), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
 - **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP
+
+#### pkEper / pkDocsoa / pkMenupricing / pkManager
+- **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – costruzione envelope/richiesta SOAP-REST, parsing risposta, gestione errori HTTP/SOAP, tutti i metodi pubblici del client
+- **PkManager** – costruttore (config da env vars), `getConfigPackages` (mappa statica per ws), `getValidPackages` (intersezione config/WS live), `getValidPackagesDetail` (dettaglio parallelo), `_fetchDetail`/`_fetchLiveMap` con mock dei tre client sibling
 
 ---
 
