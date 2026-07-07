@@ -1,0 +1,20 @@
+# .samignore — esclude percorsi non necessari dalla copia sorgente di `sam build`.
+# Rilevante soprattutto per PkManagerFunction (CodeUri: ./ + Metadata.BuildMethod: makefile),
+# che altrimenti copierebbe l'intero repository (inclusi i moduli Lambda non correlati).
+
+.git/
+.github/
+.idea/
+.aws-sam/
+cert/
+language/
+agendaSoa/
+agendaSoaNaga/
+dms/
+jobcard/
+v360/
+**/__tests__/
+**/coverage/
+**/.env
+**/.env.*
+**/*.md
