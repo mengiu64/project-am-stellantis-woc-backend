@@ -41,10 +41,8 @@ project-am-stellantis-woc-backend/
 ├── pkEper/             # Lambda – Pacchetti ePer (Stellantis FCA/Fiat SOAP)
 ├── pkDocsoa/           # Lambda – Pacchetti DocSOA (Stellantis PSA REST)
 ├── pkMenupricing/      # Lambda – Pacchetti MenuPricing (Opel/Vauxhall SOAP)
-├── pkManager/          # Lambda – Orchestratore multi-WS pacchetti (ePer/DocSOA/MenuPricing)
-├── examples/           # Esempi di riferimento (non deployati)
-├── language/           # (riservato)
-└── traslate/           # (riservato)
+└── pkManager/          # Lambda – Orchestratore multi-WS pacchetti (ePer/DocSOA/MenuPricing)
+
 ```
 
 ---
