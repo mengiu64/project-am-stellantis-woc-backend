@@ -6,11 +6,13 @@ Orchestratore Node.js che gestisce la **configurazione e la validazione dei pacc
 
 ```
 pkManager/
-├── index.js       ← CLI entry-point (dispatcher per metodo)
-├── test.js        ← smoke-test locale
-├── PkManager.js   ← classe orchestratore
+├── index.js          ← CLI entry-point (dispatcher per metodo)
+├── test.js           ← smoke-test locale
+├── PkManager.js       ← classe orchestratore
+├── __tests__/
+│   └── PkManager.test.js ← test automatici (Jest)
 ├── package.json
-└── .env           ← credenziali WS (non committare)
+└── .env              ← credenziali WS (non committare)
 ```
 
 Carica automaticamente i `.env` dei moduli fratello (`pkEper`, `pkDocsoa`, `pkMenupricing`) senza sovrascrivere variabili già definite.
@@ -48,15 +50,26 @@ MP_DEALER_IDENTIFICATION_CODE=
 MP_MANUFACTURER=
 ```
 
-## Smoke-test locale
+## Test automatici
+
+Suite Jest con mock dei client `WsIQPckEper`, `DocSOARestClient`, `MenuPricingSoapClient` (coverage ≥90% branches/functions/lines/statements, come negli altri moduli `jobcard`/`dms`/`v360`).
 
 ```bash
-node test.js config eper
-node test.js config docsoa
-node test.js config menupricing 1000
-node test.js valid  eper         ZAC5JABL9PJK00363
-node test.js valid  docsoa       VF3CABHW6GT204366
-node test.js valid  menupricing  W0VZT6GT7M1017935
+npm test               # esegue la suite Jest
+npm run test:coverage  # esegue la suite con report di coverage (coverage/)
+```
+
+## Smoke-test locale
+
+Lo script `test.js` è un tool manuale a riga di comando per verificare rapidamente le chiamate (non è la suite automatica).
+
+```bash
+npm run manual-test -- config eper
+npm run manual-test -- config docsoa
+npm run manual-test -- config menupricing 1000
+npm run manual-test -- valid  eper         ZAC5JABL9PJK00363
+npm run manual-test -- valid  docsoa       VF3CABHW6GT204366
+npm run manual-test -- valid  menupricing  W0VZT6GT7M1017935
 ```
 
 ## Uso da CLI (index.js)
