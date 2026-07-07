@@ -20,6 +20,57 @@
 require('dotenv').config();
 const { PkManager } = require('./PkManager');
 
+// ── Lambda handler ────────────────────────────────────────────────────────────
+
+const VALID_ACTIONS = ['getConfigPackages', 'getValidPackages', 'getValidPackagesDetail'];
+
+exports.handler = async (event) => {
+  const action = event.action;
+  const body   = typeof event.body === 'string'
+    ? JSON.parse(event.body)
+    : (event.body || {});
+
+  if (!action || !VALID_ACTIONS.includes(action)) {
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        success: false,
+        message: `Unknown action: "${action}". Valid actions: ${VALID_ACTIONS.join(', ')}`,
+      }),
+    };
+  }
+
+  const { market, pkwstouse, VIN } = body;
+
+  try {
+    const manager = new PkManager(body.wsConfig);
+    let result;
+    if (action === 'getConfigPackages') {
+      result = manager.getConfigPackages(market, pkwstouse);
+    } else if (action === 'getValidPackages') {
+      result = await manager.getValidPackages(market, pkwstouse, VIN);
+    } else {
+      result = await manager.getValidPackagesDetail(market, pkwstouse, VIN);
+    }
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(result),
+    };
+  } catch (err) {
+    const statusCode = /non riconosciuto/.test(err.message ?? '') ? 400 : 502;
+    return {
+      statusCode,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, message: err.message ?? String(err) }),
+    };
+  }
+};
+
+// ── CLI ───────────────────────────────────────────────────────────────────────
+
 function printResult(label, data) {
   console.log('\n' + '═'.repeat(65));
   console.log(`  ${label}`);
@@ -42,7 +93,7 @@ function printUsage() {
   console.log('  node index.js pkwstouse menupricing 1000\n');
 }
 
-(async () => {
+async function main() {
   const [, , command, arg1, arg2, arg3] = process.argv;
   const COMMANDS = ['getValidPackages', 'getValidPackagesDetail', 'pkwstouse'];
 
@@ -86,4 +137,8 @@ function printUsage() {
     console.error('\n❌ Errore:', err.message ?? err);
     process.exit(1);
   }
-})();
+}
+
+if (require.main === module) {
+  main();
+}

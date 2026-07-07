@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager)
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -62,6 +62,58 @@ Parameters:
   AsvClientSecret:
     Type: String
     NoEcho: true
+
+  # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
+  EperHost:
+    Type: String
+  EperCoddealer:
+    Type: String
+  EperCodmarket:
+    Type: String
+  EperLingua:
+    Type: String
+    Default: IT
+
+  # ── pkDocsoa (PSA/Stellantis) ─────────────────────────────────────────────
+  DocsoaHost:
+    Type: String
+  DocsoaUsername:
+    Type: String
+  DocsoaPassword:
+    Type: String
+    NoEcho: true
+  DocsoaClientId:
+    Type: String
+  DocsoaCodbrand:
+    Type: String
+  DocsoaLangue:
+    Type: String
+  DocsoaPays:
+    Type: String
+  DocsoaCodepdv:
+    Type: String
+
+  # ── pkMenupricing (Opel/Vauxhall SOAP) ────────────────────────────────────
+  MenupricingWsdl:
+    Type: String
+  MenupricingUsr:
+    Type: String
+  MenupricingPws:
+    Type: String
+    NoEcho: true
+  MenupricingUsrReq:
+    Type: String
+  MenupricingPwsReq:
+    Type: String
+    NoEcho: true
+  MpLanguageCode:
+    Type: String
+  MpCountryCode:
+    Type: String
+  MpDealerIdentificationCode:
+    Type: String
+  MpManufacturer:
+    Type: String
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -157,6 +209,84 @@ Resources:
           ASV_CLIENT_ID:      !Ref AsvClientId
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
 
+  PkEperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pk-eper"
+      CodeUri: pkEper/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          EPER_HOST: !Ref EperHost
+
+  PkDocsoaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pk-docsoa"
+      CodeUri: pkDocsoa/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          DOCSOA_HOST:      !Ref DocsoaHost
+          DOCSOA_USERNAME:  !Ref DocsoaUsername
+          DOCSOA_PASSWORD:  !Ref DocsoaPassword
+          DOCSOA_CLIENT_ID: !Ref DocsoaClientId
+
+  PkMenupricingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pk-menupricing"
+      CodeUri: pkMenupricing/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          MENUPRICING_WSDL:    !Ref MenupricingWsdl
+          MENUPRICING_USR:     !Ref MenupricingUsr
+          MENUPRICING_PWS:     !Ref MenupricingPws
+          MENUPRICING_USR_REQ: !Ref MenupricingUsrReq
+          MENUPRICING_PWS_REQ: !Ref MenupricingPwsReq
+
+  PkManagerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pk-manager"
+      CodeUri: ./
+      Handler: pkManager/index.handler
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          EPER_HOST:                    !Ref EperHost
+          EPER_CODDEALER:               !Ref EperCoddealer
+          EPER_CODMARKET:                !Ref EperCodmarket
+          EPER_LINGUA:                  !Ref EperLingua
+          DOCSOA_HOST:                  !Ref DocsoaHost
+          DOCSOA_USERNAME:              !Ref DocsoaUsername
+          DOCSOA_PASSWORD:              !Ref DocsoaPassword
+          DOCSOA_CLIENT_ID:             !Ref DocsoaClientId
+          DOCSOA_CODBRAND:              !Ref DocsoaCodbrand
+          DOCSOA_LANGUE:                !Ref DocsoaLangue
+          DOCSOA_PAYS:                  !Ref DocsoaPays
+          DOCSOA_CODEPDV:               !Ref DocsoaCodepdv
+          MENUPRICING_WSDL:             !Ref MenupricingWsdl
+          MENUPRICING_USR:              !Ref MenupricingUsr
+          MENUPRICING_PWS:              !Ref MenupricingPws
+          MENUPRICING_USR_REQ:          !Ref MenupricingUsrReq
+          MENUPRICING_PWS_REQ:          !Ref MenupricingPwsReq
+          MP_LANGUAGE_CODE:             !Ref MpLanguageCode
+          MP_COUNTRY_CODE:              !Ref MpCountryCode
+          MP_DEALER_IDENTIFICATION_CODE: !Ref MpDealerIdentificationCode
+          MP_MANUFACTURER:              !Ref MpManufacturer
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 Outputs:
@@ -170,3 +300,11 @@ Outputs:
     Value: !GetAtt JobCardFunction.Arn
   V360FunctionArn:
     Value: !GetAtt V360Function.Arn
+  PkEperFunctionArn:
+    Value: !GetAtt PkEperFunction.Arn
+  PkDocsoaFunctionArn:
+    Value: !GetAtt PkDocsoaFunction.Arn
+  PkMenupricingFunctionArn:
+    Value: !GetAtt PkMenupricingFunction.Arn
+  PkManagerFunctionArn:
+    Value: !GetAtt PkManagerFunction.Arn
