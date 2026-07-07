@@ -2001,6 +2001,10 @@ jobs:
       - test-dms
       - test-jobcard
       - test-v360
+      - test-pkEper
+      - test-pkDocsoa
+      - test-pkMenupricing
+      - test-pkManager
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     permissions:
@@ -2029,6 +2033,10 @@ jobs:
           (cd dms           && npm ci --omit=dev)
           (cd jobcard       && npm ci --omit=dev)
           (cd v360          && npm ci --omit=dev)
+          (cd pkEper        && npm ci --omit=dev)
+          (cd pkDocsoa      && npm ci --omit=dev)
+          (cd pkMenupricing && npm ci --omit=dev)
+          (cd pkManager     && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -2058,7 +2066,28 @@ jobs:
               DgtClientId="${{ secrets.DGT_CLIENT_ID }}" \
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
-              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
+              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}" \
+              EperHost="${{ secrets.EPER_HOST }}" \
+              EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
+              EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
+              EperLingua="${{ vars.EPER_LINGUA }}" \
+              DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
+              DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
+              DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
+              DocsoaClientId="${{ secrets.DOCSOA_CLIENT_ID }}" \
+              DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
+              DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
+              DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
+              DocsoaCodepdv="${{ secrets.DOCSOA_CODEPDV }}" \
+              MenupricingWsdl="${{ secrets.MENUPRICING_WSDL }}" \
+              MenupricingUsr="${{ secrets.MENUPRICING_USR }}" \
+              MenupricingPws="${{ secrets.MENUPRICING_PWS }}" \
+              MenupricingUsrReq="${{ secrets.MENUPRICING_USR_REQ }}" \
+              MenupricingPwsReq="${{ secrets.MENUPRICING_PWS_REQ }}" \
+              MpLanguageCode="${{ secrets.MP_LANGUAGE_CODE }}" \
+              MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
+              MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
+              MpManufacturer="${{ secrets.MP_MANUFACTURER }}"
 
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
@@ -2068,6 +2097,10 @@ jobs:
       - test-dms
       - test-jobcard
       - test-v360
+      - test-pkEper
+      - test-pkDocsoa
+      - test-pkMenupricing
+      - test-pkManager
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     permissions:
@@ -2096,6 +2129,10 @@ jobs:
           (cd dms           && npm ci --omit=dev)
           (cd jobcard       && npm ci --omit=dev)
           (cd v360          && npm ci --omit=dev)
+          (cd pkEper        && npm ci --omit=dev)
+          (cd pkDocsoa      && npm ci --omit=dev)
+          (cd pkMenupricing && npm ci --omit=dev)
+          (cd pkManager     && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -2125,7 +2162,28 @@ jobs:
               DgtClientId="${{ secrets.DGT_CLIENT_ID }}" \
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
-              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
+              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}" \
+              EperHost="${{ secrets.EPER_HOST }}" \
+              EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
+              EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
+              EperLingua="${{ vars.EPER_LINGUA }}" \
+              DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
+              DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
+              DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
+              DocsoaClientId="${{ secrets.DOCSOA_CLIENT_ID }}" \
+              DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
+              DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
+              DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
+              DocsoaCodepdv="${{ secrets.DOCSOA_CODEPDV }}" \
+              MenupricingWsdl="${{ secrets.MENUPRICING_WSDL }}" \
+              MenupricingUsr="${{ secrets.MENUPRICING_USR }}" \
+              MenupricingPws="${{ secrets.MENUPRICING_PWS }}" \
+              MenupricingUsrReq="${{ secrets.MENUPRICING_USR_REQ }}" \
+              MenupricingPwsReq="${{ secrets.MENUPRICING_PWS_REQ }}" \
+              MpLanguageCode="${{ secrets.MP_LANGUAGE_CODE }}" \
+              MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
+              MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
+              MpManufacturer="${{ secrets.MP_MANUFACTURER }}"
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
@@ -2135,6 +2193,10 @@ jobs:
       - test-dms
       - test-jobcard
       - test-v360
+      - test-pkEper
+      - test-pkDocsoa
+      - test-pkMenupricing
+      - test-pkManager
     if: github.event_name == 'push' && github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     environment: prod
@@ -2164,6 +2226,10 @@ jobs:
           (cd dms           && npm ci --omit=dev)
           (cd jobcard       && npm ci --omit=dev)
           (cd v360          && npm ci --omit=dev)
+          (cd pkEper        && npm ci --omit=dev)
+          (cd pkDocsoa      && npm ci --omit=dev)
+          (cd pkMenupricing && npm ci --omit=dev)
+          (cd pkManager     && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -2193,4 +2259,25 @@ jobs:
               DgtClientId="${{ secrets.DGT_CLIENT_ID }}" \
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
-              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}"
+              AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}" \
+              EperHost="${{ secrets.EPER_HOST }}" \
+              EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
+              EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
+              EperLingua="${{ vars.EPER_LINGUA }}" \
+              DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
+              DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
+              DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
+              DocsoaClientId="${{ secrets.DOCSOA_CLIENT_ID }}" \
+              DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
+              DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
+              DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
+              DocsoaCodepdv="${{ secrets.DOCSOA_CODEPDV }}" \
+              MenupricingWsdl="${{ secrets.MENUPRICING_WSDL }}" \
+              MenupricingUsr="${{ secrets.MENUPRICING_USR }}" \
+              MenupricingPws="${{ secrets.MENUPRICING_PWS }}" \
+              MenupricingUsrReq="${{ secrets.MENUPRICING_USR_REQ }}" \
+              MenupricingPwsReq="${{ secrets.MENUPRICING_PWS_REQ }}" \
+              MpLanguageCode="${{ secrets.MP_LANGUAGE_CODE }}" \
+              MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
+              MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
+              MpManufacturer="${{ secrets.MP_MANUFACTURER }}"
