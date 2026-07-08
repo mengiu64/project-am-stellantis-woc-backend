@@ -34,11 +34,41 @@ const { getJobCardList, getJobCardDetails } = require('./jobCardService');
 
 const VALID_ACTIONS = ['list', 'details'];
 
+/**
+ * Resolves { action, body } from either:
+ *  1) A direct Lambda invocation payload:  { "action": "list", "body": { "dealerId": "..." } }
+ *  2) A real API Gateway (REST API or HTTP API) proxy integration event, where the
+ *     action is taken from the last path segment (e.g. .../repairorder/list -> "list")
+ *     and the body is built by merging query string parameters with a JSON body, if any.
+ *     Example: GET /api/repairorder/list?dealerId=0062219
+ */
+function resolveActionAndBody(event) {
+  if (event && event.action) {
+    const body = typeof event.body === 'string'
+      ? JSON.parse(event.body)
+      : (event.body || {});
+    return { action: event.action, body };
+  }
+
+  const rawPath  = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy) || '';
+  const segments = String(rawPath).split('/').filter(Boolean);
+  const action   = segments.length ? decodeURIComponent(segments[segments.length - 1]) : undefined;
+
+  let parsedBody = {};
+  if (event.body) {
+    try {
+      parsedBody = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+    } catch (_) {
+      parsedBody = {};
+    }
+  }
+
+  const body = { ...(event.queryStringParameters || {}), ...parsedBody };
+  return { action, body };
+}
+
 exports.handler = async (event) => {
-  const action = event.action;
-  const body   = typeof event.body === 'string'
-    ? JSON.parse(event.body)
-    : (event.body || {});
+  const { action, body } = resolveActionAndBody(event);
 
   if (!action || !VALID_ACTIONS.includes(action)) {
     return {

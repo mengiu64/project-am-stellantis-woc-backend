@@ -24,11 +24,40 @@ const { PkManager } = require('./PkManager');
 
 const VALID_ACTIONS = ['getConfigPackages', 'getValidPackages', 'getValidPackagesDetail'];
 
+/**
+ * Resolves { action, body } from either:
+ *  1) A direct Lambda invocation payload:  { "action": "getValidPackages", "body": {...} }
+ *  2) A real API Gateway (REST API or HTTP API) proxy integration event, where the
+ *     action is taken from the last path segment (e.g. .../pkManager/getValidPackages -> "getValidPackages")
+ *     and the body is built by merging query string parameters with a JSON body, if any.
+ */
+function resolveActionAndBody(event) {
+  if (event && event.action) {
+    const body = typeof event.body === 'string'
+      ? JSON.parse(event.body)
+      : (event.body || {});
+    return { action: event.action, body };
+  }
+
+  const rawPath  = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy) || '';
+  const segments = String(rawPath).split('/').filter(Boolean);
+  const action   = segments.length ? decodeURIComponent(segments[segments.length - 1]) : undefined;
+
+  let parsedBody = {};
+  if (event.body) {
+    try {
+      parsedBody = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+    } catch (_) {
+      parsedBody = {};
+    }
+  }
+
+  const body = { ...(event.queryStringParameters || {}), ...parsedBody };
+  return { action, body };
+}
+
 exports.handler = async (event) => {
-  const action = event.action;
-  const body   = typeof event.body === 'string'
-    ? JSON.parse(event.body)
-    : (event.body || {});
+  const { action, body } = resolveActionAndBody(event);
 
   if (!action || !VALID_ACTIONS.includes(action)) {
     return {

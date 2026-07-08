@@ -25,8 +25,26 @@ const handlers = {
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
+/**
+ * Resolves the action name from either a direct invocation payload ({ action: "..." }),
+ * a real API Gateway (REST API or HTTP API) proxy integration event — taking the last
+ * path segment (e.g. .../agenda/appointment -> "appointment") — or, as a last resort,
+ * event.httpMethod (legacy fallback).
+ */
+function resolveAction(event) {
+  if (event.action) return event.action;
+
+  const rawPath = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy);
+  if (rawPath) {
+    const segments = String(rawPath).split('/').filter(Boolean);
+    if (segments.length) return decodeURIComponent(segments[segments.length - 1]);
+  }
+
+  return event.httpMethod;
+}
+
 exports.handler = async (event, context) => {
-  const action = event.action || event.httpMethod;
+  const action = resolveAction(event);
 
   if (!action || !handlers[action]) {
     return {
