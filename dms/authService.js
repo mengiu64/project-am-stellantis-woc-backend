@@ -6,7 +6,10 @@ const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
 
-const TOKEN_CACHE_FILE = path.join(__dirname, '.token.cache.json');
+// In AWS Lambda il filesystem del pacchetto (__dirname, /var/task) è read-only:
+// solo /tmp è scrivibile. In locale (CLI) continuiamo a usare __dirname.
+const CACHE_DIR = process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : __dirname;
+const TOKEN_CACHE_FILE = path.join(CACHE_DIR, '.token.cache.json');
 const EXPIRY_BUFFER_SECONDS = 30;
 
 function readCachedToken() {
