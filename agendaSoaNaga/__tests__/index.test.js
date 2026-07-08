@@ -33,6 +33,34 @@ describe('agendaSoaNaga Lambda dispatcher (index.js)', () => {
     expect(createnaga.handler).toHaveBeenCalledWith(event, {});
   });
 
+  test('derives action from event.path (REST API proxy event) last segment', async () => {
+    createnaga.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { path: '/api/agendaNaga/createnaga', queryStringParameters: {} };
+    await handler(event, {});
+    expect(createnaga.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('derives action from event.rawPath (HTTP API v2 proxy event) last segment', async () => {
+    updatenaga.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { rawPath: '/api/agendaNaga/updatenaga', queryStringParameters: {} };
+    await handler(event, {});
+    expect(updatenaga.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('derives action from event.pathParameters.proxy when path/rawPath are absent', async () => {
+    createnaga.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { pathParameters: { proxy: 'createnaga' } };
+    await handler(event, {});
+    expect(createnaga.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('falls back to event.httpMethod when the path has no segments', async () => {
+    createnaga.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { path: '/', httpMethod: 'createnaga' };
+    await handler(event, {});
+    expect(createnaga.handler).toHaveBeenCalledWith(event, {});
+  });
+
   test('returns 400 for unknown action', async () => {
     const event = { action: 'deletenaga' };
     const res = await handler(event, {});

@@ -60,6 +60,34 @@ describe('agendaSoa Lambda dispatcher (index.js)', () => {
     expect(appointment.handler).toHaveBeenCalledWith(event, {});
   });
 
+  test('derives action from event.path (REST API proxy event) last segment', async () => {
+    availableHours.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { path: '/api/agenda/availableHours', queryStringParameters: { id: 'PDV1' } };
+    await handler(event, {});
+    expect(availableHours.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('derives action from event.rawPath (HTTP API v2 proxy event) last segment', async () => {
+    cCSList.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { rawPath: '/api/agenda/cCSList', queryStringParameters: { id: 'PDV1' } };
+    await handler(event, {});
+    expect(cCSList.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('derives action from event.pathParameters.proxy when path/rawPath are absent', async () => {
+    data.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { pathParameters: { proxy: 'data' } };
+    await handler(event, {});
+    expect(data.handler).toHaveBeenCalledWith(event, {});
+  });
+
+  test('falls back to event.httpMethod when the path has no segments', async () => {
+    appointment.handler.mockResolvedValue({ statusCode: 200, body: '{}' });
+    const event = { path: '/', httpMethod: 'appointment' };
+    await handler(event, {});
+    expect(appointment.handler).toHaveBeenCalledWith(event, {});
+  });
+
   test('returns 400 for unknown action', async () => {
     const event = { action: 'unknown' };
     const res = await handler(event, {});
