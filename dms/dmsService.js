@@ -23,7 +23,7 @@ async function getDmsSettings(bearerToken, params = {}) {
 
   const base = new URL(config.dml.baseUrl);
   const qs = new URLSearchParams({ country, brand, dealer }).toString();
-  const fullPath = `${config.dml.basePath}/settings?${qs}`;
+  const fullPath = `${config.dml.settingsPath}?${qs}`;
 
   const options = {
     hostname: base.hostname,
@@ -82,7 +82,7 @@ async function postDmsInquiry(bearerToken, body = {}) {
   if (!header.VehicleID)     throw new Error('[dms] PartsInquiryHeader.VehicleID is required');
 
   const base = new URL(config.dml.baseUrl);
-  const fullPath = `${config.dml.inquiryBasePath}/inquiry`;
+  const fullPath = config.dml.inquiryPath;
   const payload = JSON.stringify(body);
 
   const options = {

@@ -10,8 +10,8 @@ jest.mock('../config', () => ({
   },
   dml: {
     baseUrl: 'https://api.dml.test',
-    basePath: '/dms',
-    inquiryBasePath: '/inquiry/DML/1.0',
+    settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
+    inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
     ibmClientId: 'ibm-id',
     ibmClientSecret: 'ibm-secret',
     xTargetEnv: 'stage',
@@ -160,7 +160,7 @@ describe('dmsService', () => {
 
     const [options] = httpsRequest.mock.calls[0];
     expect(options.hostname).toBe('api.dml.test');
-    expect(options.path).toContain('/dms/settings');
+    expect(options.path).toContain('/ps-dev/extra/dml/dms-settings/v1/settings');
   });
 });
 
@@ -220,7 +220,7 @@ describe('postDmsInquiry', () => {
 
     const [options] = httpsRequest.mock.calls[0];
     expect(options.method).toBe('POST');
-    expect(options.path).toBe('/inquiry/DML/1.0/inquiry');
+    expect(options.path).toBe('/ps-dev/extra/dml/aftersales/v1/inquiry');
     expect(options.hostname).toBe('api.dml.test');
   });
 

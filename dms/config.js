@@ -42,11 +42,11 @@ module.exports = {
     clientSecret: process.env.PING_CLIENT_SECRET,
   },
 
-  // Stellantis DML API
+  // Stellantis DML API (IBM API Connect gateway — emea-aws.dev.np-api.stellantis.com)
   dml: {
-    baseUrl: 'https://api-async-dml.bsn0027990-stage-f4ou0acl.np.stla-aws.net',
-    basePath: '/dms',
-    inquiryBasePath: '/inquiry/DML/1.0',
+    baseUrl: 'https://emea-aws.dev.np-api.stellantis.com',
+    settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
+    inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
     ibmClientId: process.env.DML_IBM_CLIENT_ID,
     ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
     xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',
