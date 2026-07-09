@@ -80,12 +80,10 @@ npm test
 npm run test:coverage
 ```
 
-## Bucket S3 e caricamento dei contenuti
+## Bucket S3
 
 Il bucket (`s3-np-bsn0027990-${Environment}-translations`) viene creato dal
-template SAM (`template.yaml`). I file di traduzione vanno posizionati in
-locale sotto `translations/locales/{lang}/translation.json`: la pipeline CI/CD
-(`.github/workflows/unit-tests.yml`, step di deploy) esegue automaticamente
-`aws s3 sync translations/locales/ s3://<bucket>/locales/` ad ogni deploy,
-cosicché eventuali file aggiunti/aggiornati in quella cartella vengano
-pubblicati nel bucket senza ulteriori interventi manuali.
+template SAM (`template.yaml`). Questa Lambda si limita a **leggere** il file
+`locales/{lang}/translation.json` dal bucket e a restituirlo come JSON: il
+caricamento/la gestione dei contenuti di traduzione nel bucket è a carico di
+un altro processo, esterno a questa Lambda e alla sua pipeline CI/CD.

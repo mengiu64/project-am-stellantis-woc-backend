@@ -2309,11 +2309,6 @@ jobs:
               MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
               MpManufacturer="${{ secrets.MP_MANUFACTURER }}"
 
-      - name: Sync translations to S3 — dev
-        run: |
-          mkdir -p translations/locales
-          aws s3 sync translations/locales/ s3://s3-np-bsn0027990-dev-translations/locales/
-
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
     needs:
@@ -2411,11 +2406,6 @@ jobs:
               MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
               MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
               MpManufacturer="${{ secrets.MP_MANUFACTURER }}"
-
-      - name: Sync translations to S3 — stage
-        run: |
-          mkdir -p translations/locales
-          aws s3 sync translations/locales/ s3://s3-np-bsn0027990-stage-translations/locales/
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
@@ -2515,8 +2505,3 @@ jobs:
               MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
               MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
               MpManufacturer="${{ secrets.MP_MANUFACTURER }}"
-
-      - name: Sync translations to S3 — prod
-        run: |
-          mkdir -p translations/locales
-          aws s3 sync translations/locales/ s3://s3-np-bsn0027990-prod-translations/locales/
