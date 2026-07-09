@@ -62,6 +62,9 @@ Parameters:
   AsvClientSecret:
     Type: String
     NoEcho: true
+  AsvGetDetailsClientId:
+    Type: String
+    Description: Default clientId used in getdetails request body when not provided in input (environment-specific)
 
   # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
   EperHost:
@@ -208,6 +211,7 @@ Resources:
           PING_CLIENT_SECRET: !Ref PingClientSecret
           ASV_CLIENT_ID:      !Ref AsvClientId
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
+          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
 
   PkEperFunction:
     Type: AWS::Serverless::Function

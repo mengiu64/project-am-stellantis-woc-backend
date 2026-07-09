@@ -14,6 +14,12 @@ jest.mock('../config', () => ({
     clientId: 'asv-client-id',
     clientSecret: 'asv-client-secret',
   },
+  getDetailsDefaults: {
+    countryCode: 'FR',
+    languageCode: 'fr',
+    clientId: 'a8bf933a532cc85570a68d9bec7f44c4',
+    offering: 'Vehicle Description,campaign',
+  },
 }));
 jest.mock('../httpClient');
 
@@ -160,15 +166,17 @@ describe('v360Service', () => {
     expect(body.languageCode).toBe('fr');
   });
 
-  test('does not include undefined optional params', async () => {
+  test('falls back to config defaults when optional params are not provided', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
     await getDetails('token', { vin: 'VIN456' });
 
     const [, bodyStr] = httpsRequest.mock.calls[0];
     const body = JSON.parse(bodyStr);
-    expect(body).not.toHaveProperty('countryCode');
-    expect(body).not.toHaveProperty('clientId');
+    expect(body.countryCode).toBe('FR');
+    expect(body.clientId).toBe('a8bf933a532cc85570a68d9bec7f44c4');
+    expect(body.offering).toBe('Vehicle Description,campaign');
+    expect(body.languageCode).toBe('fr');
   });
 
   test('returns response body on success', async () => {

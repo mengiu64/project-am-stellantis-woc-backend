@@ -75,14 +75,15 @@ async function otaCompatibility(bearerToken, params = {}) {
  * @param {object} params
  * @param {string}   params.vin                - (Mandatory) Vehicle VIN
  * @param {string}  [params.searchType]        - Search type (default: "vin")
- * @param {string}  [params.countryCode]       - Country code (e.g. "FR")
- * @param {string}  [params.clientId]          - Client identifier
- * @param {string}  [params.offering]          - Comma-separated list of offerings (e.g. "Vehicle Description,campaign")
- * @param {string}  [params.languageCode]      - Language code (e.g. "fr")
+ * @param {string}  [params.countryCode]       - Country code (default: config.getDetailsDefaults.countryCode, e.g. "FR")
+ * @param {string}  [params.clientId]          - Client identifier (default: config.getDetailsDefaults.clientId)
+ * @param {string}  [params.offering]          - Comma-separated list of offerings (default: config.getDetailsDefaults.offering, e.g. "Vehicle Description,campaign")
+ * @param {string}  [params.languageCode]      - Language code (default: config.getDetailsDefaults.languageCode, e.g. "fr")
  * @returns {Promise<object>} parsed response body
  */
 async function getDetails(bearerToken, params = {}) {
   const { vin, searchType, countryCode, clientId, offering, languageCode } = params;
+  const defaults = config.getDetailsDefaults;
 
   if (!vin) {
     throw new Error('[v360] vin is required for getdetails');
@@ -91,11 +92,11 @@ async function getDetails(bearerToken, params = {}) {
   const body = {
     searchType: searchType || 'vin',
     vin,
+    countryCode: countryCode || defaults.countryCode,
+    clientId: clientId || defaults.clientId,
+    offering: offering || defaults.offering,
+    languageCode: languageCode || defaults.languageCode,
   };
-  if (countryCode)  body.countryCode  = countryCode;
-  if (clientId)     body.clientId     = clientId;
-  if (offering)     body.offering     = offering;
-  if (languageCode) body.languageCode = languageCode;
 
   const { options, bodyStr } = buildAsvOptions('/getdetails', bearerToken, body);
 

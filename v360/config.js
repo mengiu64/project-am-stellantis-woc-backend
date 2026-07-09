@@ -26,6 +26,7 @@ const REQUIRED_ENV = [
   'PING_CLIENT_SECRET',
   'ASV_CLIENT_ID',
   'ASV_CLIENT_SECRET',
+  'ASV_GETDETAILS_CLIENT_ID',
 ];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missing.length > 0) {
@@ -48,5 +49,14 @@ module.exports = {
     basePath: '/ps-prod/extra/asv360/vehicle/v1',
     clientId: process.env.ASV_CLIENT_ID,
     clientSecret: process.env.ASV_CLIENT_SECRET,
+  },
+
+  // Default values used by getdetails when not provided in the input (vin is always mandatory and never defaulted).
+  // clientId is environment-specific (dev/stage/prod), hence sourced from env var.
+  getDetailsDefaults: {
+    countryCode: 'FR',
+    languageCode: 'fr',
+    clientId: process.env.ASV_GETDETAILS_CLIENT_ID,
+    offering: 'Vehicle Description,campaign',
   },
 };
