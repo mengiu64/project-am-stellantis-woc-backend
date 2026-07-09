@@ -22,8 +22,8 @@ if (fs.existsSync(envFile)) {
 
 // Validate required environment variables
 const REQUIRED_ENV = [
-  'PING_CLIENT_ID',
-  'PING_CLIENT_SECRET',
+  'DMS_PING_CLIENT_ID',
+  'DMS_PING_CLIENT_SECRET',
   'DML_IBM_CLIENT_ID',
   'DML_IBM_CLIENT_SECRET',
 ];
@@ -38,8 +38,8 @@ module.exports = {
     url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:dmy',
-    clientId: process.env.PING_CLIENT_ID,
-    clientSecret: process.env.PING_CLIENT_SECRET,
+    clientId: process.env.DMS_PING_CLIENT_ID,
+    clientSecret: process.env.DMS_PING_CLIENT_SECRET,
   },
 
   // Stellantis DML API (IBM API Connect gateway — emea-aws.dev.np-api.stellantis.com)

@@ -436,8 +436,8 @@ AGENDA_SOA_API_KEY=...             # Static API key (used by the appointment end
 ### dms
 
 ```env
-PING_CLIENT_ID=...                 # PingFederate Client ID
-PING_CLIENT_SECRET=...             # PingFederate Client Secret
+DMS_PING_CLIENT_ID=...              # PingFederate Client ID (dms-dedicated)
+DMS_PING_CLIENT_SECRET=...          # PingFederate Client Secret (dms-dedicated)
 DML_IBM_CLIENT_ID=...              # X-IBM-Client-Id for DML APIs
 DML_IBM_CLIENT_SECRET=...          # X-IBM-Client-Secret for DML APIs
 DML_X_TARGET_ENV=stage             # Target environment (stage / prod)
@@ -446,8 +446,8 @@ DML_X_TARGET_ENV=stage             # Target environment (stage / prod)
 ### jobcard
 
 ```env
-PING_CLIENT_ID=...                 # PingFederate Client ID
-PING_CLIENT_SECRET=...             # PingFederate Client Secret
+JOBCARD_PING_CLIENT_ID=...          # PingFederate Client ID (jobcard-dedicated)
+JOBCARD_PING_CLIENT_SECRET=...      # PingFederate Client Secret (jobcard-dedicated)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id for DGT APIs
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret for DGT APIs
 ```
@@ -455,10 +455,11 @@ DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret for DGT APIs
 ### v360
 
 ```env
-PING_CLIENT_ID=...                 # PingFederate Client ID
-PING_CLIENT_SECRET=...             # PingFederate Client Secret
+V360_PING_CLIENT_ID=...             # PingFederate Client ID (v360-dedicated)
+V360_PING_CLIENT_SECRET=...         # PingFederate Client Secret (v360-dedicated)
 ASV_CLIENT_ID=...                  # X-IBM-Client-Id for ASV360 APIs
 ASV_CLIENT_SECRET=...              # X-IBM-Client-Secret for ASV360 APIs
+ASV_GETDETAILS_CLIENT_ID=...       # Default clientId for getdetails (environment-specific)
 ```
 
 ### pkEper

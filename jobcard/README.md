@@ -106,8 +106,8 @@ cp .env.example .env
 
 ```ini
 # .env  (NON committare questo file — è in .gitignore)
-PING_CLIENT_ID=your_ping_client_id_here
-PING_CLIENT_SECRET=your_ping_client_secret_here
+JOBCARD_PING_CLIENT_ID=your_ping_client_id_here
+JOBCARD_PING_CLIENT_SECRET=your_ping_client_secret_here
 DGT_CLIENT_ID=your_dgt_client_id_here
 DGT_CLIENT_SECRET=your_dgt_client_secret_here
 ```
@@ -120,8 +120,8 @@ Configura le variabili d'ambiente direttamente sull'ambiente di esecuzione (es. 
 
 | Variabile | Descrizione |
 |---|---|
-| `PING_CLIENT_ID` | Client ID PingFederate |
-| `PING_CLIENT_SECRET` | Client Secret PingFederate |
+| `JOBCARD_PING_CLIENT_ID` | Client ID PingFederate (dedicato jobcard) |
+| `JOBCARD_PING_CLIENT_SECRET` | Client Secret PingFederate (dedicato jobcard) |
 | `DGT_CLIENT_ID` | Client ID Stellantis DGT API |
 | `DGT_CLIENT_SECRET` | Client Secret Stellantis DGT API |
 

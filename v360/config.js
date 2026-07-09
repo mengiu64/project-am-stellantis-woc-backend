@@ -22,8 +22,8 @@ if (fs.existsSync(envFile)) {
 
 // Validate required environment variables
 const REQUIRED_ENV = [
-  'PING_CLIENT_ID',
-  'PING_CLIENT_SECRET',
+  'V360_PING_CLIENT_ID',
+  'V360_PING_CLIENT_SECRET',
   'ASV_CLIENT_ID',
   'ASV_CLIENT_SECRET',
   'ASV_GETDETAILS_CLIENT_ID',
@@ -39,8 +39,8 @@ module.exports = {
     url: 'https://idfed.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:asv',
-    clientId: process.env.PING_CLIENT_ID,
-    clientSecret: process.env.PING_CLIENT_SECRET,
+    clientId: process.env.V360_PING_CLIENT_ID,
+    clientSecret: process.env.V360_PING_CLIENT_SECRET,
   },
 
   // Stellantis ASV360 API

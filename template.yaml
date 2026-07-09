@@ -22,11 +22,11 @@ Parameters:
     Type: CommaDelimitedList
     Description: Comma-separated list of Security Group IDs
 
-  # ── PingFederate (shared by dms / jobcard / v360) ─────────────────────────
-  PingClientId:
+  # ── PingFederate — DMS (dedicated client, scope prd:dmy) ──────────────────
+  DmsPingClientId:
     Type: String
     NoEcho: false
-  PingClientSecret:
+  DmsPingClientSecret:
     Type: String
     NoEcho: true
 
@@ -55,6 +55,13 @@ Parameters:
   DgtClientSecret:
     Type: String
     NoEcho: true
+  JobcardPingClientId:
+    Type: String
+    Description: PingFederate client id dedicated to jobcard (scope prd:dgt)
+  JobcardPingClientSecret:
+    Type: String
+    NoEcho: true
+    Description: PingFederate client secret dedicated to jobcard (scope prd:dgt)
 
   # ── V360 (ASV API) ────────────────────────────────────────────────────────
   AsvClientId:
@@ -65,6 +72,13 @@ Parameters:
   AsvGetDetailsClientId:
     Type: String
     Description: Default clientId used in getdetails request body when not provided in input (environment-specific)
+  V360PingClientId:
+    Type: String
+    Description: PingFederate client id dedicated to v360 (scope prd:asv)
+  V360PingClientSecret:
+    Type: String
+    NoEcho: true
+    Description: PingFederate client secret dedicated to v360 (scope prd:asv)
 
   # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
   EperHost:
@@ -176,8 +190,8 @@ Resources:
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
       Environment:
         Variables:
-          PING_CLIENT_ID:       !Ref PingClientId
-          PING_CLIENT_SECRET:   !Ref PingClientSecret
+          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
+          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:     !Ref Environment
@@ -192,8 +206,8 @@ Resources:
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
       Environment:
         Variables:
-          PING_CLIENT_ID:     !Ref PingClientId
-          PING_CLIENT_SECRET: !Ref PingClientSecret
+          JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
+          JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
 
@@ -207,8 +221,8 @@ Resources:
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
       Environment:
         Variables:
-          PING_CLIENT_ID:     !Ref PingClientId
-          PING_CLIENT_SECRET: !Ref PingClientSecret
+          V360_PING_CLIENT_ID:     !Ref V360PingClientId
+          V360_PING_CLIENT_SECRET: !Ref V360PingClientSecret
           ASV_CLIENT_ID:      !Ref AsvClientId
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId

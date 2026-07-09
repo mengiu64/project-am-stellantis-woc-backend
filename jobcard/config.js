@@ -22,8 +22,8 @@ if (fs.existsSync(envFile)) {
 
 // Validate required environment variables
 const REQUIRED_ENV = [
-  'PING_CLIENT_ID',
-  'PING_CLIENT_SECRET',
+  'JOBCARD_PING_CLIENT_ID',
+  'JOBCARD_PING_CLIENT_SECRET',
   'DGT_CLIENT_ID',
   'DGT_CLIENT_SECRET',
 ];
@@ -38,8 +38,8 @@ module.exports = {
     url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:dgt',
-    clientId: process.env.PING_CLIENT_ID,
-    clientSecret: process.env.PING_CLIENT_SECRET,
+    clientId: process.env.JOBCARD_PING_CLIENT_ID,
+    clientSecret: process.env.JOBCARD_PING_CLIENT_SECRET,
   },
 
   // Stellantis DGT API
