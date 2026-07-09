@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations)
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -252,6 +252,38 @@ Resources:
           MENUPRICING_USR_REQ: !Ref MenupricingUsrReq
           MENUPRICING_PWS_REQ: !Ref MenupricingPwsReq
 
+  # ── Translations (bucket S3 + Lambda) ──────────────────────────────────────
+
+  TranslationsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "s3-np-bsn0027990-${Environment}-translations"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+
+  TranslationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-translations"
+      CodeUri: translations/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
+      Environment:
+        Variables:
+          TRANSLATIONS_BUCKET_NAME: !Ref TranslationsBucket
+
   PkManagerFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -308,3 +340,7 @@ Outputs:
     Value: !GetAtt PkMenupricingFunction.Arn
   PkManagerFunctionArn:
     Value: !GetAtt PkManagerFunction.Arn
+  TranslationsBucketName:
+    Value: !Ref TranslationsBucket
+  TranslationsFunctionArn:
+    Value: !GetAtt TranslationsFunction.Arn

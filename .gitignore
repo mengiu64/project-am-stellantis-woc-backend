@@ -24,6 +24,9 @@ pkDocsoa/coverage/
 pkMenupricing/node_modules/
 pkMenupricing/.env
 pkMenupricing/coverage/
+translations/node_modules/
+translations/.env
+translations/coverage/
 .aws-sam/
 .idea/
 */.idea/
