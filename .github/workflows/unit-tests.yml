@@ -2287,6 +2287,7 @@ jobs:
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
               AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}" \
+              AsvGetDetailsClientId="${{ secrets.ASV_GETDETAILS_CLIENT_ID }}" \
               EperHost="${{ secrets.EPER_HOST }}" \
               EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
               EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
@@ -2385,6 +2386,7 @@ jobs:
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
               AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}" \
+              AsvGetDetailsClientId="${{ secrets.ASV_GETDETAILS_CLIENT_ID }}" \
               EperHost="${{ secrets.EPER_HOST }}" \
               EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
               EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
@@ -2484,6 +2486,7 @@ jobs:
               DgtClientSecret="${{ secrets.DGT_CLIENT_SECRET }}" \
               AsvClientId="${{ secrets.ASV_CLIENT_ID }}" \
               AsvClientSecret="${{ secrets.ASV_CLIENT_SECRET }}" \
+              AsvGetDetailsClientId="${{ secrets.ASV_GETDETAILS_CLIENT_ID }}" \
               EperHost="${{ secrets.EPER_HOST }}" \
               EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
               EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
