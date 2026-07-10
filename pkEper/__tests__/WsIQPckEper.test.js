@@ -264,4 +264,83 @@ describe('WsIQPckEper', () => {
 
     await expect(client.getPackageDetailsPR({ lingua: 'it', VIN: 'VIN123', codicePacchetto: 'P01' })).resolves.toEqual({});
   });
+
+  // ── getCompletePkEperList ────────────────────────────────────────────────────
+
+  test('getCompletePkEperList returns the error immediately when the groups call fails', async () => {
+    const getGroupsPRRequest = jest.spyOn(client, 'getGroupsPRRequest')
+      .mockResolvedValue({ error: { exitCode: '-1', errorMessage: 'boom' } });
+    const getSubgroupsPR = jest.spyOn(client, 'getSubgroupsPR');
+    const getPackagesPR  = jest.spyOn(client, 'getPackagesPR');
+
+    const result = await client.getCompletePkEperList({ ticket: 'TK', lingua: 'it', vin: 'VIN1' });
+
+    expect(result).toEqual({ error: { exitCode: '-1', errorMessage: 'boom' } });
+    expect(getGroupsPRRequest).toHaveBeenCalledWith(expect.objectContaining({ VIN: 'VIN1' }));
+    expect(getSubgroupsPR).not.toHaveBeenCalled();
+    expect(getPackagesPR).not.toHaveBeenCalled();
+  });
+
+  test('getCompletePkEperList returns {} when no group has pacchetti', async () => {
+    jest.spyOn(client, 'getGroupsPRRequest').mockResolvedValue([
+      { $: { codice: 'G0', numeroPacchetti: '0' } },
+      { codice: 'G1', numeroPacchetti: 0 },
+    ]);
+    const getSubgroupsPR = jest.spyOn(client, 'getSubgroupsPR');
+    const getPackagesPR  = jest.spyOn(client, 'getPackagesPR');
+
+    const result = await client.getCompletePkEperList({ ticket: 'TK', lingua: 'it', vin: 'VIN1' });
+
+    expect(result).toEqual({});
+    expect(getSubgroupsPR).not.toHaveBeenCalled();
+    expect(getPackagesPR).not.toHaveBeenCalled();
+  });
+
+  test('getCompletePkEperList filters groups, skips errors/missing codes and aggregates packages', async () => {
+    jest.spyOn(client, 'getGroupsPRRequest').mockResolvedValue([
+      { $: { codice: 'G0', numeroPacchetti: '0' } },   // filtrato: nessun pacchetto
+      { $: { codice: 'G1', numeroPacchetti: '3' } },   // sottogruppi in errore
+      { $: { codice: 'G2', numeroPacchetti: '2' } },   // percorso normale
+    ]);
+
+    const getSubgroupsPR = jest.spyOn(client, 'getSubgroupsPR').mockImplementation(async ({ codiceGruppo }) => {
+      if (codiceGruppo === 'G1') return { error: { exitCode: '-1', errorMessage: 'sub error' } };
+      if (codiceGruppo === 'G2') {
+        return [
+          { $: { codice: 'S1' } },
+          { codice: 'S2' },     // fallback senza $
+          {},                   // nessun codice: da scartare
+        ];
+      }
+      throw new Error(`unexpected codiceGruppo ${codiceGruppo}`);
+    });
+
+    const getPackagesPR = jest.spyOn(client, 'getPackagesPR').mockImplementation(async ({ codiceGruppo, codiceSottogruppo }) => {
+      if (codiceGruppo === 'G2' && codiceSottogruppo === 'S1') {
+        return [
+          { $: { codice: 'P1' }, descrizione: 'Pkg 1' },
+          { codice: 'P2', descrizione: 'Pkg 2' }, // fallback senza $
+          { descrizione: 'no code' },              // nessun codice: da scartare
+        ];
+      }
+      if (codiceGruppo === 'G2' && codiceSottogruppo === 'S2') {
+        return { error: { exitCode: '-2', errorMessage: 'pk error' } };
+      }
+      throw new Error(`unexpected combo ${codiceGruppo}/${codiceSottogruppo}`);
+    });
+
+    const result = await client.getCompletePkEperList({ ticket: 'TK', lingua: 'it', vin: 'VIN1' });
+
+    expect(result).toEqual({
+      P1: { $: { codice: 'P1' }, descrizione: 'Pkg 1' },
+      P2: { codice: 'P2', descrizione: 'Pkg 2' },
+    });
+
+    expect(getSubgroupsPR).toHaveBeenCalledWith(expect.objectContaining({ codiceGruppo: 'G1' }));
+    expect(getSubgroupsPR).toHaveBeenCalledWith(expect.objectContaining({ codiceGruppo: 'G2' }));
+    expect(getSubgroupsPR).not.toHaveBeenCalledWith(expect.objectContaining({ codiceGruppo: 'G0' }));
+
+    expect(getPackagesPR).toHaveBeenCalledWith(expect.objectContaining({ codiceGruppo: 'G2', codiceSottogruppo: 'S1' }));
+    expect(getPackagesPR).toHaveBeenCalledWith(expect.objectContaining({ codiceGruppo: 'G2', codiceSottogruppo: 'S2' }));
+  });
 });
