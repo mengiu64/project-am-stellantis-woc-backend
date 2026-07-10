@@ -69,6 +69,36 @@ async function otaCompatibility(bearerToken, params = {}) {
 }
 
 /**
+ * Inserts a key into an object right before another key, preserving property order
+ * (relevant when the object is later serialized with JSON.stringify).
+ * If the target key is not found, the new key is appended at the end.
+ *
+ * @param {object} obj         - source object
+ * @param {string} beforeKey   - key before which the new key must be inserted
+ * @param {string} newKey      - key to insert
+ * @param {*} newValue         - value for the new key
+ * @returns {object} a new object with the key inserted in the desired position
+ */
+function insertKeyBefore(obj, beforeKey, newKey, newValue) {
+  const result = {};
+  let inserted = false;
+
+  for (const key of Object.keys(obj)) {
+    if (key === beforeKey && !inserted) {
+      result[newKey] = newValue;
+      inserted = true;
+    }
+    result[key] = obj[key];
+  }
+
+  if (!inserted) {
+    result[newKey] = newValue;
+  }
+
+  return result;
+}
+
+/**
  * Calls getdetails endpoint.
  *
  * @param {string} bearerToken                 - Bearer token from PingFederate
@@ -110,7 +140,15 @@ async function getDetails(bearerToken, params = {}) {
     );
   }
 
-  return response.body;
+  const result = response.body;
+
+  // TODO: externalHexColor is currently hardcoded to null; in the future it will be
+  // populated with a value retrieved from the DB.
+  if (result && result.data && typeof result.data === 'object') {
+    result.data = insertKeyBefore(result.data, 'externalColor', 'externalHexColor', null);
+  }
+
+  return result;
 }
 
 module.exports = { otaCompatibility, getDetails };
