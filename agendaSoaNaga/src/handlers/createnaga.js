@@ -10,7 +10,7 @@ const { buildClient } = require('../clientFactory');
 exports.handler = async (event) => {
   try {
     const body = event.body ? JSON.parse(event.body) : (event.params || {});
-    const client = buildClient();
+    const client = await buildClient();
     const result = await client.createnaga(body);
     return response(result.success ? 200 : 502, result);
   } catch (err) {

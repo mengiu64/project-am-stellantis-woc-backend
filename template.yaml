@@ -41,6 +41,14 @@ Parameters:
   AgendaSoaApiKey:
     Type: String
     NoEcho: true
+  AgendaSoaCertKey:
+    Type: String
+    Default: certs/mwpaga0a.cer
+    Description: S3 object key of the AgendaSOA mTLS client certificate (.cer), inside TranslationsBucket
+  AgendaSoaKeyKey:
+    Type: String
+    Default: certs/mwpaga0a.key
+    Description: S3 object key of the AgendaSOA mTLS client private key (.key), inside TranslationsBucket
 
   # ── DMS (DML API) ─────────────────────────────────────────────────────────
   DmlIbmClientId:
@@ -158,12 +166,17 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
       Environment:
         Variables:
           AGENDA_SOA_HOST:     !Ref AgendaSoaHost
           AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+          AGENDA_SOA_CERT_BUCKET: !Ref TranslationsBucket
+          AGENDA_SOA_CERT:     !Ref AgendaSoaCertKey
+          AGENDA_SOA_KEY:      !Ref AgendaSoaKeyKey
 
   AgendaSoaNagaFunction:
     Type: AWS::Serverless::Function
@@ -173,12 +186,17 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
       Environment:
         Variables:
           AGENDA_SOA_HOST:     !Ref AgendaSoaHost
           AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+          AGENDA_SOA_CERT_BUCKET: !Ref TranslationsBucket
+          AGENDA_SOA_CERT:     !Ref AgendaSoaCertKey
+          AGENDA_SOA_KEY:      !Ref AgendaSoaKeyKey
 
   DmsFunction:
     Type: AWS::Serverless::Function

@@ -7,7 +7,7 @@ exports.handler = async (event) => {
   try {
     const params = parseParams(event);
     if (!params.id) return response(400, { success: false, message: 'Missing required param: id' });
-    const client = buildClient();
+    const client = await buildClient();
     const result = await client.data(params);
     return response(result.success ? 200 : 502, result);
   } catch (err) {

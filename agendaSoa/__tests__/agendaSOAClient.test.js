@@ -39,6 +39,21 @@ describe('AgendaSOAClient', () => {
     );
   });
 
+  test('does not set httpsAgent on axios config when not provided', () => {
+    expect(axios.create).toHaveBeenCalledWith(
+      expect.not.objectContaining({ httpsAgent: expect.anything() })
+    );
+  });
+
+  test('passes httpsAgent to axios.create when provided', () => {
+    const fakeAgent = { fake: true };
+    // eslint-disable-next-line no-unused-vars
+    const c = new AgendaSOAClient({ host: 'http://test-host', httpsAgent: fakeAgent });
+    expect(axios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ httpsAgent: fakeAgent })
+    );
+  });
+
   test('falls back to env vars when config not provided', () => {
     process.env.AGENDA_SOA_HOST = 'http://env-host';
     process.env.AGENDA_SOA_USERNAME = 'env-user';

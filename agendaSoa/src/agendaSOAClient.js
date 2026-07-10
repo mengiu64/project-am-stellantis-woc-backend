@@ -16,6 +16,7 @@ class AgendaSOAClient {
    * @param {string} config.password   - Basic-auth password
    * @param {string} [config.apiKey]   - Static API-Key (used by appointment endpoint)
    * @param {string} [config.proxy]    - Proxy URL (optional)
+   * @param {https.Agent} [config.httpsAgent] - Agent mTLS (certificato client), opzionale
    */
   constructor(config = {}) {
     this.host     = config.host     || process.env.AGENDA_SOA_HOST;
@@ -27,6 +28,10 @@ class AgendaSOAClient {
       baseURL: this.host,
       timeout: 30000,
     };
+
+    if (config.httpsAgent) {
+      axiosConfig.httpsAgent = config.httpsAgent;
+    }
 
 
     this.http = axios.create(axiosConfig);

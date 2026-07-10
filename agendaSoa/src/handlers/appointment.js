@@ -11,7 +11,7 @@ const { buildClient } = require('../clientFactory');
 exports.handler = async (event) => {
   try {
     const params = parseParams(event);
-    const client = buildClient();
+    const client = await buildClient();
     const result = await client.appointment(params);
     return response(result.success ? 200 : 502, result);
   } catch (err) {

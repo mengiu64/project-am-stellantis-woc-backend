@@ -20,7 +20,7 @@ exports.handler = async (event) => {
       return response(400, { success: false, message: `Missing required params: ${missing.join(', ')}` });
     }
 
-    const client = buildClient();
+    const client = await buildClient();
     const result = await client.getAvHoursForRec(pdvId, date, ccs, locale, ldapId);
     return response(result.success ? 200 : 502, result);
   } catch (err) {

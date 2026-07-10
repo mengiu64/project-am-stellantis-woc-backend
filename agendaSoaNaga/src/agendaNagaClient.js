@@ -16,6 +16,7 @@ class AgendaNagaClient {
    * @param {string} config.password   - Basic-auth password
    * @param {string} [config.apiKey]   - Static API-Key (optional)
    * @param {string} [config.proxy]    - Proxy URL (optional)
+   * @param {https.Agent} [config.httpsAgent] - Agent mTLS (certificato client), opzionale
    */
   constructor(config = {}) {
     this.host     = config.host     || process.env.AGENDA_SOA_HOST;
@@ -23,10 +24,16 @@ class AgendaNagaClient {
     this.password = config.password || process.env.AGENDA_SOA_PASSWORD;
     this.apiKey   = config.apiKey   || process.env.AGENDA_SOA_API_KEY;
 
-    this.http = axios.create({
+    const axiosConfig = {
       baseURL: this.host,
       timeout: 30000,
-    });
+    };
+
+    if (config.httpsAgent) {
+      axiosConfig.httpsAgent = config.httpsAgent;
+    }
+
+    this.http = axios.create(axiosConfig);
   }
 
   // ─── private helpers ────────────────────────────────────────────────────────
