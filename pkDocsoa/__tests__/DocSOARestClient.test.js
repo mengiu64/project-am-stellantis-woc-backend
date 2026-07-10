@@ -373,4 +373,144 @@ describe('DocSOARestClient', () => {
       message: 'Empty resultat in ibxDetailtpResponse',
     });
   });
+
+  // ── getCompletePkSOAList ─────────────────────────────────────────────────────
+  // Usa jest.spyOn sui metodi già testati (functionsService/forfaitService/
+  // ibxParametrageService) per pilotare direttamente ogni ramo dell'orchestratore
+  // senza dover ricostruire XML/SOAP grezzi per ogni scenario.
+  describe('getCompletePkSOAList', () => {
+    let warnSpy;
+
+    beforeEach(() => {
+      warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      warnSpy.mockRestore();
+    });
+
+    const baseParams = {
+      vin: 'VF3CABHW6GT204366',
+      codbrand: 'AP',
+      ldp: 'LDP1',
+      langue: 'fr',
+      pays: 'FR',
+      codePdv: 'PDV1',
+      paysUser: 'FR',
+      mode: 'MODE_XML',
+      typeInternet: 'INTERNET',
+    };
+
+    test('returns early when functionsService fails', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: false, data: null, message: 'boom' });
+      const forfaitSpy = jest.spyOn(client, 'forfaitService');
+      const qeSpy      = jest.spyOn(client, 'ibxParametrageService');
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(result).toEqual({ success: false, data: null, message: 'boom' });
+      expect(forfaitSpy).not.toHaveBeenCalled();
+      expect(qeSpy).not.toHaveBeenCalled();
+    });
+
+    test('returns "No functions found" when idFunctionArr is empty', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [] });
+      const forfaitSpy = jest.spyOn(client, 'forfaitService');
+      const qeSpy      = jest.spyOn(client, 'ibxParametrageService');
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(result).toEqual({ success: true, data: null, message: 'No functions found for this VIN/brand' });
+      expect(forfaitSpy).not.toHaveBeenCalled();
+      expect(qeSpy).not.toHaveBeenCalled();
+    });
+
+    test('extracts idFunction from the 3-level nested hierarchy and merges FP+QE on success', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({
+        success: true,
+        data: [
+          {
+            idFunction: 'F1',
+            listFunctions: [
+              {
+                idFunction: 'F1A',
+                listFunctions: [{ idFunction: 'F1A1' }],
+              },
+            ],
+          },
+        ],
+      });
+      const forfaitSpy = jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: true, data: [{ ref_fo: 'FP1' }] });
+      const qeSpy      = jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({ success: true, data: [{ ref_fo: 'QE1' }] });
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(forfaitSpy).toHaveBeenCalledWith(expect.objectContaining({ fonctionIdListe: ['F1', 'F1A', 'F1A1'] }));
+      expect(qeSpy).toHaveBeenCalledWith(expect.objectContaining({ FonctionIdListe: ['F1', 'F1A', 'F1A1'] }));
+      expect(result).toEqual({ success: true, data: [{ ref_fo: 'FP1' }, { ref_fo: 'QE1' }], message: '' });
+    });
+
+    test('skips rows without idFunction at every nesting level and defaults paysUser/mode/typeInternet', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({
+        success: true,
+        data: [
+          { idFunction: 'F1' }, // senza listFunctions annidate
+          {
+            // senza idFunction al livello 1
+            listFunctions: [
+              {
+                idFunction: 'F2A',
+                listFunctions: [{ idFunction: 'F2A1' }, {}], // secondo elemento senza idFunction
+              },
+              {}, // senza idFunction e senza listFunctions annidate
+            ],
+          },
+        ],
+      });
+      const forfaitSpy = jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: true, data: [] });
+      const qeSpy      = jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({ success: true, data: [] });
+
+      // paysUser, mode e typeInternet omessi => usano i valori di default (??)
+      const { paysUser, mode, typeInternet, ...paramsWithoutDefaults } = baseParams;
+      const result = await client.getCompletePkSOAList(paramsWithoutDefaults);
+
+      expect(forfaitSpy).toHaveBeenCalledWith(expect.objectContaining({
+        fonctionIdListe: ['F1', 'F2A', 'F2A1'],
+        paysUser:        paramsWithoutDefaults.pays,
+        mode:            'MODE_XML',
+        typeInternet:    null,
+      }));
+      expect(result).toEqual({ success: true, data: null, message: '' });
+    });
+
+    test('keeps QE results when forfaitService rejects', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
+      jest.spyOn(client, 'forfaitService').mockRejectedValue(new Error('forfait down'));
+      jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({ success: true, data: [{ ref_fo: 'QE1' }] });
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(result).toEqual({ success: true, data: [{ ref_fo: 'QE1' }], message: '' });
+    });
+
+    test('keeps FP results when ibxParametrageService rejects with a non-Error value (String(err) fallback)', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
+      jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: true, data: [{ ref_fo: 'FP1' }] });
+      jest.spyOn(client, 'ibxParametrageService').mockRejectedValue('qe down');
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(result).toEqual({ success: true, data: [{ ref_fo: 'FP1' }], message: '' });
+    });
+
+    test('returns data:null when both forfaitService and ibxParametrageService fail', async () => {
+      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
+      jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: false, data: null, message: 'fp fail' });
+      jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({ success: false, data: null, message: 'qe fail' });
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(result).toEqual({ success: true, data: null, message: '' });
+    });
+  });
 });
