@@ -20,6 +20,10 @@ jest.mock('../config', () => ({
     clientId: 'a8bf933a532cc85570a68d9bec7f44c4',
     offering: 'Vehicle Description,campaign',
   },
+  otaCompatibilityDefaults: {
+    includeOtaHistoryData: 'true',
+    locale: 'en_EN',
+  },
 }));
 jest.mock('../httpClient');
 
@@ -79,8 +83,19 @@ describe('v360Service', () => {
 
     const [, bodyStr] = httpsRequest.mock.calls[0];
     const body = JSON.parse(bodyStr);
-    expect(body).not.toHaveProperty('includeOtaHistoryData');
-    expect(body).not.toHaveProperty('locale');
+    expect(body).toHaveProperty('includeOtaHistoryData');
+    expect(body).toHaveProperty('locale');
+  });
+
+  test('falls back to config defaults when includeOtaHistoryData/locale are not provided', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await otaCompatibility('token', { vin: 'VIN123' });
+
+    const [, bodyStr] = httpsRequest.mock.calls[0];
+    const body = JSON.parse(bodyStr);
+    expect(body.includeOtaHistoryData).toBe('true');
+    expect(body.locale).toBe('en_EN');
   });
 
   test('includes IBM client credentials in headers', async () => {

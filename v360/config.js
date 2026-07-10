@@ -59,4 +59,10 @@ module.exports = {
     clientId: process.env.ASV_GETDETAILS_CLIENT_ID,
     offering: 'Vehicle Description,campaign',
   },
+
+  // Default values used by otaCompatibility when not provided in the input (vin is always mandatory and never defaulted).
+  otaCompatibilityDefaults: {
+    includeOtaHistoryData: 'true',
+    locale: 'en_EN',
+  },
 };

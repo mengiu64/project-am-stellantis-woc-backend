@@ -35,23 +35,26 @@ function buildAsvOptions(apiPath, bearerToken, body) {
 /**
  * Calls otaCompatibility endpoint.
  *
- * @param {string} bearerToken                  - Bearer token from PingFederate
+ * @param {string} bearerToken                  - ****** from PingFederate
  * @param {object} params
  * @param {string}   params.vin                 - (Mandatory) Vehicle VIN
- * @param {string}  [params.includeOtaHistoryData] - Include OTA history ("true"/"false")
- * @param {string}  [params.locale]             - Locale (e.g. "fr_FR")
+ * @param {string}  [params.includeOtaHistoryData] - Include OTA history ("true"/"false") (default: config.otaCompatibilityDefaults.includeOtaHistoryData)
+ * @param {string}  [params.locale]             - Locale (e.g. "en_EN") (default: config.otaCompatibilityDefaults.locale)
  * @returns {Promise<object>} parsed response body
  */
 async function otaCompatibility(bearerToken, params = {}) {
   const { vin, includeOtaHistoryData, locale } = params;
+  const defaults = config.otaCompatibilityDefaults;
 
   if (!vin) {
     throw new Error('[v360] vin is required for otaCompatibility');
   }
 
-  const body = { vin };
-  if (includeOtaHistoryData !== undefined) body.includeOtaHistoryData = includeOtaHistoryData;
-  if (locale)                               body.locale = locale;
+  const body = {
+    vin,
+    includeOtaHistoryData: includeOtaHistoryData !== undefined ? includeOtaHistoryData : defaults.includeOtaHistoryData,
+    locale: locale || defaults.locale,
+  };
 
   const { options, bodyStr } = buildAsvOptions('/otaCompatibility', bearerToken, body);
 
