@@ -11,9 +11,26 @@ const IQPCK_WS     = `https://${EPER_HOST}/wsdl/DMSConnectorService.wsdl`; // us
 const SERVICE_URL  = `https://${EPER_HOST}/DMSConnectorService`;            // endpoint reale (da WSDL soap:address)
 const SERVICE_NS   = 'http://service.dms.keytech.it/';                      // targetNamespace dal WSDL
 const TIMEOUT_MS   = 20_000;
+const CONCURRENCY  = 3;   // max richieste SOAP simultanee verso ePer
 
 // httpsAgent che ignora la verifica del certificato (come il PHP originale)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+// ─── Helper: esegue tasks con concorrenza limitata ─────────────────────────────
+async function pLimit(tasks, concurrency) {
+  const results = new Array(tasks.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await tasks[i]();
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return results;
+}
 
 // ─── Helper: costruisce l'envelope XML esterno ─────────────────────────────────
 function buildEnvelope({ sender, market, content }) {
@@ -244,6 +261,61 @@ class WsIQPckEper {
     const xmlMsg = buildEnvelope({ sender: this.coddealer, market: this.codmarket, content });
     const xmlReturn = await callSoap(xmlMsg);
     return elaborateXml(xmlReturn, 'getPackageDetailsPR');
+  }
+
+  // ── getCompletePkEperList ───────────────────────────────────────────────────
+  // Percorre gruppi → sottogruppi → pacchetti per un VIN e restituisce
+  // la mappa completa dei pacchetti ePer indicizzata per codice.
+  // Le chiamate ai livelli 2 e 3 vengono eseguite in parallelo (Promise.all).
+  // (Corrisponde a JOBCXPAjaxController::getCompletePkEperList, senza updatePkInfoEper)
+  async getCompletePkEperList({ ticket, lingua, vin }) {
+    // Livello 1: gruppi (singola chiamata obbligatoria)
+    const grp = await this.getGroupsPRRequest({ ticket, lingua, VIN: vin });
+    if (grp?.error) return grp;
+
+    // Livello 2: sottogruppi — con concorrenza limitata, solo per gruppi con pacchetti
+    const groupsWithPk = grp.filter(row => {
+      const n = row.$?.numeroPacchetti ?? row.numeroPacchetti;
+      return n && Number(n) !== 0;
+    });
+
+    const subGrpResults = await pLimit(
+      groupsWithPk.map(row => async () => {
+        const codiceGruppo = row.$?.codice ?? row.codice;
+        const subGrp = await this.getSubgroupsPR({ ticket, lingua, VIN: vin, codiceGruppo });
+        return { codiceGruppo, subGrp };
+      }),
+      CONCURRENCY
+    );
+
+    // Livello 3: pacchetti — tutte le combinazioni gruppo/sottogruppo con concorrenza limitata
+    const pkRequests = [];
+    for (const { codiceGruppo, subGrp } of subGrpResults) {
+      if (subGrp?.error) continue;
+      for (const row1 of subGrp) {
+        const codiceSottogruppo = row1.$?.codice ?? row1.codice;
+        if (codiceSottogruppo) pkRequests.push({ codiceGruppo, codiceSottogruppo });
+      }
+    }
+
+    const pkResults = await pLimit(
+      pkRequests.map(({ codiceGruppo, codiceSottogruppo }) => () =>
+        this.getPackagesPR({ ticket, lingua, VIN: vin, codiceGruppo, codiceSottogruppo })
+      ),
+      CONCURRENCY
+    );
+
+    // Raccolta risultati
+    const pklistComplete = {};
+    for (const pkList of pkResults) {
+      if (pkList?.error) continue;
+      for (const row2 of pkList) {
+        const codice = row2.$?.codice ?? row2.codice;
+        if (codice) pklistComplete[codice] = row2;
+      }
+    }
+
+    return pklistComplete;
   }
 }
 

@@ -151,20 +151,33 @@ async function callMethodJob(params, method, endpointUrl) {
     console.log('\n[DEBUG] Request XML:\n', soapEnvelope);
   }
 
-  const response = await axios.post(endpointUrl, soapEnvelope, {
-    httpsAgent,
-    timeout: TIMEOUT_MS,
-    headers: {
-      'Content-Type': 'text/xml;charset=UTF-8',
-      'SOAPAction':   `"${method}"`,
-    },
-  });
-
-  if (process.env.DEBUG_SOAP) {
-    console.log('\n[DEBUG] Raw Response:\n', response.data);
+  let rawData;
+  try {
+    const response = await axios.post(endpointUrl, soapEnvelope, {
+      httpsAgent,
+      timeout: TIMEOUT_MS,
+      headers: {
+        'Content-Type': 'text/xml;charset=UTF-8',
+        'SOAPAction':   `"${method}"`,
+      },
+      // Accetta anche status >= 400 per poter leggere il body del SOAP fault
+      validateStatus: () => true,
+    });
+    rawData = response.data;
+  } catch (err) {
+    // Errori di rete (ETIMEDOUT, ECONNREFUSED, ecc.)
+    throw new Error(`Errore di rete MenuPricing (${method}): ${err.message}`);
   }
 
-  const body = await parseResponse(response.data);
+  if (process.env.DEBUG_SOAP) {
+    console.log('\n[DEBUG] Raw Response:\n', rawData);
+  }
+
+  if (!rawData || typeof rawData !== 'string') {
+    throw new Error(`Risposta non valida da MenuPricing (${method}): body vuoto o non-XML`);
+  }
+
+  const body = await parseResponse(rawData);
   return body;
 }
 
@@ -229,6 +242,21 @@ class MenuPricingSoapClient {
 
     const body = await callMethodJob(params, 'getJobDetails', URL_SECURED);
     return elaborateGetJobDetails(body);
+  }
+
+  // ── getCompletePkMpList ──────────────────────────────────────────────────────
+  // Recupera la lista completa dei pacchetti MenuPricing per un VIN,
+  // indicizzata per codice: { [codice]: { codice, descrizione } }.
+  // Corrisponde a JOBCXPAjaxController::getCompletePkMpList (PHP).
+  // Restituisce { success, data: { [codice]: row } | null, message }
+  async getCompletePkMpList({ vin, languageCode, countryCode, dealerIdentificationCode, manufacturer }) {
+    const res = await this.getJobs({ vin, languageCode, countryCode, dealerIdentificationCode, manufacturer });
+
+    if (!res.success) {
+      return { success: false, data: null, message: res.message };
+    }
+
+    return { success: true, data: res.data ?? null, message: '' };
   }
 }
 
@@ -352,6 +380,7 @@ function parseJobDetailResult(jobArr) {
       AV_LOCAL:    0,
       AV_DISTRIGO: 0,
       AV_CENTRAL:  0,
+      SCONTO:      0,
       PRICE:       '',
       SELECTED:    true,
     }));
@@ -372,6 +401,7 @@ function parseJobDetailResult(jobArr) {
         AV_LOCAL:    0,
         AV_DISTRIGO: 0,
         AV_CENTRAL:  0,
+        SCONTO:      0,
         PRICE:       p.priceExcl,
         SELECTED:    true,
       };

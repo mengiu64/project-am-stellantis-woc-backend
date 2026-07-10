@@ -22,7 +22,7 @@ const { PkManager } = require('./PkManager');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['getConfigPackages', 'getValidPackages', 'getValidPackagesDetail'];
+const VALID_ACTIONS = ['getConfigPackages', 'getValidPackages', 'getValidPackagesDetail', 'getPriceAndAvailability', 'getPkList'];
 
 /**
  * Resolves { action, body } from either:
@@ -70,7 +70,7 @@ exports.handler = async (event) => {
     };
   }
 
-  const { market, pkwstouse, VIN } = body;
+  const { market, pkwstouse, VIN, documentId, customerId } = body;
 
   try {
     const manager = new PkManager(body.wsConfig);
@@ -79,8 +79,15 @@ exports.handler = async (event) => {
       result = manager.getConfigPackages(market, pkwstouse);
     } else if (action === 'getValidPackages') {
       result = await manager.getValidPackages(market, pkwstouse, VIN);
-    } else {
+    } else if (action === 'getValidPackagesDetail') {
       result = await manager.getValidPackagesDetail(market, pkwstouse, VIN);
+    } else if (action === 'getPkList') {
+      result = await manager.getPkList(pkwstouse, documentId, customerId, VIN, market);
+    } else {
+      // getPriceAndAvailability richiede pkDetailList valorizzato: se non
+      // fornito esplicitamente, lo recupera prima con getValidPackagesDetail
+      await manager.getValidPackagesDetail(market, pkwstouse, VIN);
+      result = await manager.getPriceAndAvailability(documentId, customerId, VIN);
     }
 
     return {
@@ -109,22 +116,28 @@ function printResult(label, data) {
 
 function printUsage() {
   console.log('\nUso: node index.js <metodo> [argomenti]\n');
-  console.log('  getValidPackages       <pkwstouse> <VIN> [market]   Intersezione config ↔ WS live');
-  console.log('  getValidPackagesDetail <pkwstouse> <VIN> [market]   Dettaglio pacchetti validi');
-  console.log('  pkwstouse              <pkwstouse> [market]         Configurazione statica\n');
+  console.log('  getValidPackages        <pkwstouse> <VIN> [market]   Intersezione config ↔ WS live');
+  console.log('  getValidPackagesDetail  <pkwstouse> <VIN> [market]   Dettaglio pacchetti validi');
+  console.log('  getPriceAndAvailability <pkwstouse> <VIN> <documentId> <customerId> [market]');
+  console.log('                                                       Sequenza detail => prezzo/disponibilità');
+  console.log('  getPkList               <pkwstouse> <VIN> <documentId> <customerId> [market]');
+  console.log('                                                       detail => prezzo/disponibilità => merge AV_LOCAL/PRICE/SCONTO in pkDetailList');
+  console.log('  pkwstouse               <pkwstouse> [market]         Configurazione statica\n');
   console.log('Esempi:');
   console.log('  node index.js getValidPackages       eper         ZAC5JABL9PJK00363');
   console.log('  node index.js getValidPackages       menupricing  W0VZT6GT7M1017935 1000');
   console.log('  node index.js getValidPackagesDetail eper         ZAC5JABL9PJK00363');
   console.log('  node index.js getValidPackagesDetail docsoa       VF3CABHW6GT204366');
   console.log('  node index.js getValidPackagesDetail menupricing  W0VZT6GT7M1017935 1000');
+  console.log('  node index.js getPriceAndAvailability eper        ZAC5JABL9PJK00363  93825368  854265');
+  console.log('  node index.js getPkList               eper        ZAC5JABL9PJK00363  93825368  854265');
   console.log('  node index.js pkwstouse eper');
   console.log('  node index.js pkwstouse menupricing 1000\n');
 }
 
 async function main() {
-  const [, , command, arg1, arg2, arg3] = process.argv;
-  const COMMANDS = ['getValidPackages', 'getValidPackagesDetail', 'pkwstouse'];
+  const [, , command, arg1, arg2, arg3, arg4, arg5] = process.argv;
+  const COMMANDS = ['getValidPackages', 'getValidPackagesDetail', 'getPriceAndAvailability', 'getPkList', 'pkwstouse'];
 
   if (!command || !COMMANDS.includes(command)) {
     if (command) console.error(`\n❌ Metodo sconosciuto: "${command}"`);
@@ -159,6 +172,36 @@ async function main() {
       console.log(`\n▶  getValidPackagesDetail  market="${market}"  pkwstouse="${pkwstouse}"  VIN="${VIN}"`);
       const result = await manager.getValidPackagesDetail(market, pkwstouse, VIN);
       printResult(`getValidPackagesDetail  market="${market}"  pkwstouse="${pkwstouse}"  VIN="${VIN}"`, result);
+
+    } else if (command === 'getPriceAndAvailability') {
+      const pkwstouse  = arg1;
+      const VIN        = arg2;
+      const documentId = arg3;
+      const customerId = arg4;
+      const market     = arg5 ?? '1000';
+      if (!pkwstouse || !VIN || !documentId || !customerId) { printUsage(); process.exit(1); }
+
+      // 1) getValidPackagesDetail => valorizza manager.pkDetailList
+      console.log(`\n▶  getValidPackagesDetail  market="${market}"  pkwstouse="${pkwstouse}"  VIN="${VIN}"`);
+      await manager.getValidPackagesDetail(market, pkwstouse, VIN);
+      printResult('manager.pkDetailList', manager.pkDetailList);
+
+      // 2) getPriceAndAvailability legge pkDetailList dalla stessa istanza
+      console.log(`\n▶  getPriceAndAvailability  documentId="${documentId}"  customerId="${customerId}"  VIN="${VIN}"`);
+      const result = await manager.getPriceAndAvailability(documentId, customerId, VIN);
+      printResult('getPriceAndAvailability', result);
+
+    } else if (command === 'getPkList') {
+      const pkwstouse  = arg1;
+      const VIN        = arg2;
+      const documentId = arg3;
+      const customerId = arg4;
+      const market     = arg5 ?? '1000';
+      if (!pkwstouse || !VIN || !documentId || !customerId) { printUsage(); process.exit(1); }
+
+      console.log(`\n▶  getPkList  market="${market}"  pkwstouse="${pkwstouse}"  VIN="${VIN}"  documentId="${documentId}"  customerId="${customerId}"`);
+      const result = await manager.getPkList(pkwstouse, documentId, customerId, VIN, market);
+      printResult('getPkList (pkDetailList arricchito)', result);
     }
 
     console.log('\n✅ Completato.');

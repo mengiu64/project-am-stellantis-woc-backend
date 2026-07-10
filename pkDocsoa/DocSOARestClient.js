@@ -15,7 +15,7 @@ const CLIENT_ID = process.env.DOCSOA_CLIENT_ID;
 const PROXY_HOST = process.env.PROXY_HOST;
 const PROXY_PORT = process.env.PROXY_PORT ? Number(process.env.PROXY_PORT) : 8080;
 
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = Number(process.env.DOCSOA_TIMEOUT_MS ?? 60_000);
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // Configurazione proxy per axios (usata solo se PROXY_HOST è definito)
@@ -386,6 +386,89 @@ class DocSOARestClient {
 
     const data = await decodeResultat(ibxResp.resultat);
     return { success: true, data };
+  }
+
+  // ── getCompletePkSOAList ─────────────────────────────────────────────────────
+  // Orchestratore: recupera la struttura funzioni, poi lancia in parallelo
+  // forfaitService (FP) e ibxParametrageService (QE), unisce i risultati.
+  // Corrisponde a JOBCXPAjaxController::getCompletePkSOAList (PHP).
+  // Restituisce { success, data: [...FP, ...QE], message }
+  async getCompletePkSOAList({ vin, codbrand, ldp, langue, pays, codePdv, paysUser, mode, typeInternet }) {
+    const vinParams = vinParts(vin);
+    const ioParams  = {
+      langue,
+      pays,
+      marque:   codbrand,
+      paysUser: paysUser ?? pays,
+      mode:     mode ?? 'MODE_XML',
+    };
+
+    // Step 1: struttura funzioni (chiamata sequenziale obbligatoria)
+    console.log('[getCompletePkSOAList] Step 1: functionsService...');
+    const lev1 = await this.functionsService({ ...vinParams, ...ioParams });
+
+    if (!lev1.success) {
+      console.warn('[getCompletePkSOAList] functionsService fallito:', lev1.message);
+      return { success: false, data: null, message: lev1.message };
+    }
+
+    // Step 2: estrae idFunctionArr dalla gerarchia a 3 livelli
+    const idFunctionArr = [];
+    for (const row1 of toArray(lev1.data)) {
+      if (row1.idFunction) idFunctionArr.push(row1.idFunction);
+      for (const row11 of toArray(row1.listFunctions)) {
+        if (row11.idFunction) idFunctionArr.push(row11.idFunction);
+        for (const row111 of toArray(row11.listFunctions)) {
+          if (row111.idFunction) idFunctionArr.push(row111.idFunction);
+        }
+      }
+    }
+    console.log(`[getCompletePkSOAList] Step 1 OK — ${idFunctionArr.length} funzioni trovate`);
+
+    if (idFunctionArr.length === 0) {
+      console.warn('[getCompletePkSOAList] Nessuna funzione trovata, salto Step 3.');
+      return { success: true, data: null, message: 'No functions found for this VIN/brand' };
+    }
+
+    // Step 3: forfait (FP) e quickEstimate (QE) in parallelo.
+    // Ogni chiamata è isolata: un timeout su una non interrompe l'altra.
+    console.log('[getCompletePkSOAList] Step 3: forfaitService + ibxParametrageService in parallelo...');
+    const toSafeResult = (err) => ({ success: false, data: null, message: err.message ?? String(err) });
+    const [forfaitResult, qeResult] = await Promise.all([
+      this.forfaitService({
+        ...vinParams, ...ioParams,
+        codePdv,
+        ldp,
+        fonctionIdListe: idFunctionArr,
+        typeInternet:    typeInternet ?? null,
+      }).catch(toSafeResult),
+      this.ibxParametrageService({
+        ...vinParams, ...ioParams,
+        FonctionIdListe: idFunctionArr,
+      }).catch(toSafeResult),
+    ]);
+
+    const FParr = forfaitResult.success ? toArray(forfaitResult.data) : [];
+    const QEarr = qeResult.success      ? toArray(qeResult.data)      : [];
+
+    if (!forfaitResult.success) {
+      console.warn('[getCompletePkSOAList] forfaitService fallito:', forfaitResult.message);
+    } else {
+      console.log(`[getCompletePkSOAList] forfaitService OK — ${FParr.length} risultati FP`);
+    }
+    if (!qeResult.success) {
+      console.warn('[getCompletePkSOAList] ibxParametrageService fallito:', qeResult.message);
+    } else {
+      console.log(`[getCompletePkSOAList] ibxParametrageService OK — ${QEarr.length} risultati QE`);
+    }
+
+    const pklistComplete = [...FParr, ...QEarr];
+
+    return {
+      success: true,
+      data:    pklistComplete.length ? pklistComplete : null,
+      message: '',
+    };
   }
 }
 
