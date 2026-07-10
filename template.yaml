@@ -354,6 +354,11 @@ Resources:
           MP_COUNTRY_CODE:              !Ref MpCountryCode
           MP_DEALER_IDENTIFICATION_CODE: !Ref MpDealerIdentificationCode
           MP_MANUFACTURER:              !Ref MpManufacturer
+          DMS_PING_CLIENT_ID:           !Ref DmsPingClientId
+          DMS_PING_CLIENT_SECRET:       !Ref DmsPingClientSecret
+          DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
+          DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
+          DML_X_TARGET_ENV:             !Ref Environment
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
