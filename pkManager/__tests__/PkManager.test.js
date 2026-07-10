@@ -383,6 +383,19 @@ describe('PkManager', () => {
         expect.objectContaining({ vin: 'VIN123', id: '221000135012' })
       );
     });
+
+    test('falls back to String(err) when a rejected detail has no .message', async () => {
+      const getCompletePkEperList = jest.fn().mockResolvedValue({
+        '7210E221': { codicePosizione: 'P1' },
+      });
+      const getPackageDetailsPR = jest.fn().mockRejectedValue('plain string failure');
+      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList, getPackageDetailsPR }));
+
+      const manager = new PkManager();
+      const result = await manager.getValidPackagesDetail('1000', 'eper', 'VIN123');
+
+      expect(result['7210E221']).toEqual({ error: 'plain string failure' });
+    });
   });
 
   // ── _fetchDetail (branch coverage diretto) ────────────────────────────────
@@ -426,6 +439,24 @@ describe('PkManager', () => {
       await expect(manager._fetchDetail('unknown', 'VIN123', 'CODE', {}))
         .rejects.toThrow('pkwstouse non riconosciuto: "unknown"');
     });
+
+    test('throws when pkwstouse is undefined (?? fallback branch)', async () => {
+      const manager = new PkManager();
+      await expect(manager._fetchDetail(undefined, 'VIN123', 'CODE', {}))
+        .rejects.toThrow('pkwstouse non riconosciuto: "undefined"');
+    });
+
+    test('eper: falls back to empty string when neither $ wrapper nor plain fields are present', async () => {
+      const getPackageDetailsPR = jest.fn().mockResolvedValue({ detail: 'ok' });
+      WsIQPckEper.mockImplementation(() => ({ getPackageDetailsPR }));
+
+      const manager = new PkManager();
+      await manager._fetchDetail('eper', 'VIN123', '7210E221', {});
+
+      expect(getPackageDetailsPR).toHaveBeenCalledWith(
+        expect.objectContaining({ codicePosizione: '', codicePosizioneGuida: '' })
+      );
+    });
   });
 
   // ── _fetchLiveMap (branch coverage diretto) ───────────────────────────────
@@ -435,6 +466,12 @@ describe('PkManager', () => {
       const manager = new PkManager();
       await expect(manager._fetchLiveMap('unknown', 'VIN123'))
         .rejects.toThrow('pkwstouse non riconosciuto: "unknown"');
+    });
+
+    test('throws when pkwstouse is undefined (?? fallback branch)', async () => {
+      const manager = new PkManager();
+      await expect(manager._fetchLiveMap(undefined, 'VIN123'))
+        .rejects.toThrow('pkwstouse non riconosciuto: "undefined"');
     });
   });
 
@@ -466,6 +503,11 @@ describe('PkManager', () => {
       const manager = new PkManager();
       expect(() => manager.parseEperRes({ error: { errorMessage: 'boom' } })).toThrow('boom');
     });
+
+    test('throws default message when error node has no errorMessage', () => {
+      const manager = new PkManager();
+      expect(() => manager.parseEperRes({ error: {} })).toThrow('eper: errore sconosciuto');
+    });
   });
 
   // ── parseMenupricingRes ────────────────────────────────────────────────────
@@ -494,6 +536,11 @@ describe('PkManager', () => {
     test('throws when success is false', () => {
       const manager = new PkManager();
       expect(() => manager.parseMenupricingRes({ success: false, message: 'boom' })).toThrow('boom');
+    });
+
+    test('throws default message when success is false and message is missing', () => {
+      const manager = new PkManager();
+      expect(() => manager.parseMenupricingRes({ success: false })).toThrow('menupricing: errore sconosciuto');
     });
   });
 
@@ -642,6 +689,50 @@ describe('PkManager', () => {
       expect(result.listaRicambi).toHaveLength(2);
       expect(result.listaRicambi.map((r) => r.COD)).toEqual(['PR1', 'PR2']);
     });
+
+    test('skips enspr group entries without pr (continue branch)', () => {
+      const manager = new PkManager();
+      const result = manager.parseDocSoaRes({
+        data: {
+          forfait: {
+            ref_fo: 'FO6',
+            lib: 'Forfait sei',
+            prix: 0,
+            niveau: '1',
+            tp: {
+              details: {
+                prs: {
+                  enspr: [
+                    {}, // gruppo senza pr => continue
+                    { pr: { ref: 'PR1', lib_trad: 'Pr uno', selected: 'true', prappl: { quantite: '1' } } },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      }, true);
+
+      expect(result.listaRicambi).toHaveLength(1);
+      expect(result.listaRicambi[0]).toMatchObject({ COD: 'PR1' });
+    });
+
+    test('skips ricambi generici block when pgs.enspg is entirely absent', () => {
+      const manager = new PkManager();
+      const result = manager.parseDocSoaRes({
+        data: {
+          forfait: {
+            ref_fo: 'FO7',
+            lib: 'Forfait sette',
+            prix: 0,
+            niveau: '1',
+            tp: { details: { pgs: {} } },
+          },
+        },
+      }, true);
+
+      expect(result.listaRicambi).toEqual([]);
+    });
   });
 
   // ── getPriceAndAvailability ────────────────────────────────────────────────
@@ -758,6 +849,39 @@ describe('PkManager', () => {
 
       expect(result[0].listaOperazioni[0]).toEqual({ TYPE: 'OP', COD: 'OP1' });
       expect(result[0].listaRicambi[0]).toEqual({ TYPE: 'SP', COD: 'SP1' });
+    });
+
+    test('skips rows without PartNumber/LaborOperationID and rows with non-matching TYPE', async () => {
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        manager.pkDetailList = [
+          {
+            codice: 'PK1',
+            // TYPE non corrispondente => la condizione row?.TYPE === 'SP'/'OP' è falsa
+            listaRicambi: [{ TYPE: 'OP', COD: 'SP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 }],
+            listaOperazioni: [{ TYPE: 'SP', COD: 'OP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 }],
+          },
+        ];
+        return {};
+      });
+
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({
+        WorkLines: [
+          {
+            // riga senza PartNumber => continue
+            PartsItem: [{ OriginalPriceExclVAT: 1 }, { PartNumber: 'SP1', OriginalPriceExclVAT: 12.5 }],
+            // riga senza LaborOperationID => continue
+            LaborItems: [{ OriginalPriceExclVAT: 2 }, { LaborOperationID: 'OP1', OriginalPriceExclVAT: 45 }],
+          },
+        ],
+      });
+
+      const result = await manager.getPkList('eper', 'DOC1', 'CUST1', 'VIN123');
+
+      // TYPE non corrisponde => nessun arricchimento applicato
+      expect(result[0].listaRicambi[0]).toEqual({ TYPE: 'OP', COD: 'SP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 });
+      expect(result[0].listaOperazioni[0]).toEqual({ TYPE: 'SP', COD: 'OP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 });
     });
   });
 });

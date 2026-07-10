@@ -74,6 +74,7 @@ describe('MenuPricingSoapClient', () => {
     expect(body).toContain('<pocFilter value="true"/>');
     expect(body).toContain('user="usrreq"');
     expect(config.headers.SOAPAction).toBe('"getJobs"');
+    expect(config.validateStatus()).toBe(true); // accetta anche status >= 400 (SOAP fault)
     expect(logSpy).toHaveBeenCalled();
   });
 
@@ -372,5 +373,84 @@ describe('MenuPricingSoapClient', () => {
       },
       message: '',
     });
+  });
+
+  // ── errori di trasporto (callMethodJob) ─────────────────────────────────────
+
+  test('throws a descriptive error when axios rejects (network error)', async () => {
+    axios.post.mockRejectedValue(new Error('ECONNREFUSED'));
+
+    await expect(client.getJobs({ languageCode: 'it', countryCode: 'IT', dealerIdentificationCode: '001', manufacturer: 'FT', vin: 'VIN123' }))
+      .rejects.toThrow('Errore di rete MenuPricing (getJobs): ECONNREFUSED');
+  });
+
+  test('throws a descriptive error when the response body is empty/non-string', async () => {
+    axios.post.mockResolvedValue({ data: null });
+
+    await expect(client.getJobs({ languageCode: 'it', countryCode: 'IT', dealerIdentificationCode: '001', manufacturer: 'FT', vin: 'VIN123' }))
+      .rejects.toThrow('Risposta non valida da MenuPricing (getJobs): body vuoto o non-XML');
+  });
+
+  // ── getCompletePkMpList ──────────────────────────────────────────────────────
+
+  test('getCompletePkMpList returns the indexed job map on success', async () => {
+    axios.post.mockResolvedValue({
+      data: soapEnvelope(`
+        <getJobsResponse>
+          <jobsResponse>
+            <status state="2" description="OK"/>
+            <jobHierarchy>
+              <operation description="Oil change" id="OP1">
+                <job id="JOB001" description="Oil change"/>
+              </operation>
+            </jobHierarchy>
+          </jobsResponse>
+        </getJobsResponse>
+      `),
+    });
+
+    const result = await client.getCompletePkMpList({
+      vin: 'VIN123',
+      languageCode: 'it',
+      countryCode: 'IT',
+      dealerIdentificationCode: '001',
+      manufacturer: 'FT',
+    });
+
+    expect(result).toEqual({
+      success: true,
+      data: { JOB001: { codice: 'JOB001', descrizione: 'Oil change' } },
+      message: '',
+    });
+  });
+
+  test('getCompletePkMpList propagates the failure message from getJobs', async () => {
+    axios.post.mockResolvedValue({
+      data: soapEnvelope('<getJobsResponse><jobsResponse><status state="9" description="KO"/></jobsResponse></getJobsResponse>'),
+    });
+
+    const result = await client.getCompletePkMpList({
+      vin: 'VIN123',
+      languageCode: 'it',
+      countryCode: 'IT',
+      dealerIdentificationCode: '001',
+      manufacturer: 'FT',
+    });
+
+    expect(result).toEqual({ success: false, data: null, message: 'KO' });
+  });
+
+  test('getCompletePkMpList defaults data to null when getJobs returns no data', async () => {
+    axios.post.mockResolvedValue({ data: '<Envelope />' });
+
+    const result = await client.getCompletePkMpList({
+      vin: 'VIN123',
+      languageCode: 'it',
+      countryCode: 'IT',
+      dealerIdentificationCode: '001',
+      manufacturer: 'FT',
+    });
+
+    expect(result).toEqual({ success: false, data: null, message: 'No getJobsResponse found' });
   });
 });
