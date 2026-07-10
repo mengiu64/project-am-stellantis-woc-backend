@@ -193,4 +193,45 @@ describe('v360Service', () => {
     await expect(getDetails('token', { vin: 'VIN456' }))
       .rejects.toThrow('[v360] getdetails failed: HTTP 500');
   });
+
+  test('inserts externalHexColor:null right before externalColor in data', async () => {
+    const expectedBody = {
+      statusCode: 200,
+      success: true,
+      data: {
+        vin: 'VIN456',
+        internalColor: 'NOIR',
+        externalColor: 'KTV NOIR PERLA NERA',
+        tireSize: [],
+      },
+      message: 'ok',
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(Object.keys(result.data)).toEqual([
+      'vin', 'internalColor', 'externalHexColor', 'externalColor', 'tireSize',
+    ]);
+    expect(result.data.externalHexColor).toBeNull();
+  });
+
+  test('appends externalHexColor:null when data has no externalColor key', async () => {
+    const expectedBody = { statusCode: 200, success: true, data: { vin: 'VIN456' } };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(Object.keys(result.data)).toEqual(['vin', 'externalHexColor']);
+    expect(result.data.externalHexColor).toBeNull();
+  });
+
+  test('does not fail when response body has no data property', async () => {
+    const expectedBody = { statusCode: 200, success: false, message: 'not found' };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(result).toEqual(expectedBody);
+  });
 });
