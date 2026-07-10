@@ -2,7 +2,7 @@
 
 > 🇮🇹 [Leggi in italiano](README.md) &nbsp;|&nbsp; 🇬🇧 English
 
-Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager).
+Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -21,6 +21,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [pkDocsoa](#pkdocsoa)
    - [pkMenupricing](#pkmenupricing)
    - [pkManager](#pkmanager)
+   - [translations](#translations)
 3. [Installation](#installation)
 4. [Environment variables](#environment-variables)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -41,7 +42,8 @@ project-am-stellantis-woc-backend/
 ├── pkEper/             # Lambda – ePer packages (Stellantis FCA/Fiat SOAP)
 ├── pkDocsoa/           # Lambda – DocSOA packages (Stellantis PSA REST)
 ├── pkMenupricing/      # Lambda – MenuPricing packages (Opel/Vauxhall SOAP)
-└── pkManager/          # Lambda – multi-WS package orchestrator (ePer/DocSOA/MenuPricing)
+├── pkManager/          # Lambda – multi-WS package orchestrator (ePer/DocSOA/MenuPricing)
+└── translations/       # Lambda – translation retrieval from S3
 
 ```
 
@@ -238,8 +240,8 @@ Lambda for **ASV360** APIs (Vehicle 360): OTA compatibility and vehicle details,
 | Parameter | Required | Description |
 |---|---|---|
 | `vin` | ✅ | Vehicle VIN |
-| `includeOtaHistoryData` | ❌ | `"true"` / `"false"` |
-| `locale` | ❌ | E.g. `"fr_FR"` |
+| `includeOtaHistoryData` | ❌ | `"true"` / `"false"` (default `"true"`) |
+| `locale` | ❌ | E.g. `"fr_FR"` (default `"en_EN"`) |
 
 #### `getDetails` parameters
 
@@ -401,6 +403,24 @@ pkManager/
 
 ---
 
+---
+
+### translations
+
+Lambda for retrieving **translation files** (`GET /translations?lang=en`), read from an S3 bucket at path `locales/{lang}/translation.json`. Data access is isolated behind a `TranslationsRepository` interface, so S3 can be replaced by a database in the future without impacting the HTTP handler.
+
+#### CLI usage
+
+```bash
+node index.js translations lang=en
+```
+
+#### Event shape
+
+```json
+{ "action": "translations", "queryStringParameters": { "lang": "en" } }
+```
+
 ## Installation
 
 Each module is independent. Install dependencies separately:
@@ -415,6 +435,7 @@ cd pkEper         && npm install
 cd pkDocsoa       && npm install
 cd pkMenupricing  && npm install
 cd pkManager      && npm install
+cd translations   && npm install
 ```
 
 ---
@@ -516,6 +537,14 @@ MP_DEALER_IDENTIFICATION_CODE=...
 MP_MANUFACTURER=...
 ```
 
+### translations
+
+```env
+TRANSLATIONS_BUCKET_NAME=...        # S3 bucket name with translation files (required)
+TRANSLATIONS_KEY_PREFIX=locales     # (optional) S3 key prefix ({prefix}/{lang}/translation.json)
+TRANSLATIONS_DEFAULT_LANG=en        # (optional) default language when "lang" is not provided
+```
+
 > **Note:** `authService` implements a file-based cache mechanism (`.token.cache.json`) to avoid requesting a new token on every invocation. The token is automatically renewed 30 seconds before expiry.
 
 ---
@@ -552,7 +581,8 @@ cd agendaSoa && npm run test:coverage
 | **pkDocsoa** | 1 | 19 | `DocSOARestClient` |
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
-| **Total** | **25** | **296** | |
+| **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
+| **Total** | **30** | **338** | |
 
 ### Code coverage
 
@@ -567,6 +597,7 @@ cd agendaSoa && npm run test:coverage
 | **pkDocsoa** | 98.46% ✅ | 92.40% ✅ | 100% ✅ | 100% ✅ |
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
+| **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 
@@ -608,6 +639,12 @@ cd agendaSoa && npm run test:coverage
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods
 - **PkManager** – constructor (config from env vars), `getConfigPackages` (static map per ws), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch), `_fetchDetail`/`_fetchLiveMap` with mocks of the three sibling clients
+
+#### translations
+- **index** – CLI/Lambda dispatch to the `translations` handler
+- **S3TranslationsRepository** – fetch and parse JSON from S3, `TranslationNotFoundError` on `NoSuchKey`/404/Code, generic S3 errors rethrown, invalid JSON, missing bucket configuration
+- **repositoryFactory** – default instance construction and overrides
+- **handlers/translations** – merge `queryStringParameters`/`body`/`params` (params wins), default language, 200/404/502, `Content-Type` header
 
 ---
 
