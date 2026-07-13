@@ -1,0 +1,16 @@
+{
+  "name": "session",
+  "version": "1.0.0",
+  "description": "Modulo Node.js autoconsistente che restituisce i dati di sessione (codmarket, oic, sincom, ...). Attualmente i dati sono predefiniti (StaticSessionProvider), ma il codice e' predisposto per essere sostituito da una fonte dati reale (es. RDS/DynamoDB su AWS) tramite DbSessionProvider.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest --testEnvironment=node"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
