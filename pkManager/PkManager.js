@@ -306,9 +306,9 @@ class PkManager {
   // @param {string} [market]   - Codice mercato (default '1000')
   // @returns {Promise<Array>}  - this.pkDetailList arricchito con AV_LOCAL/PRICE/SCONTO
   async getPkList(pkwstouse, documentId, customerId, vehicleId, market = '1000') {
+    console.log('[PkManager.getPkList] parametri chiamata:', { pkwstouse, documentId, customerId, vehicleId, market });
     // 1) valorizza this.pkDetailList
     await this.getValidPackagesDetail(market, pkwstouse, vehicleId);
-
     // 2) interroga il DML per prezzo/disponibilità, usando this.pkDetailList
     const priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId);
 
