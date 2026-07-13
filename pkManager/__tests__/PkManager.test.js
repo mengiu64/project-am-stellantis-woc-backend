@@ -895,5 +895,39 @@ describe('PkManager', () => {
       expect(result[0].listaRicambi[0]).toEqual({ TYPE: 'OP', COD: 'SP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 });
       expect(result[0].listaOperazioni[0]).toEqual({ TYPE: 'SP', COD: 'OP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 });
     });
+
+    test('overrides wsConfig.menupricing.dealerIdentificationCode when provided', async () => {
+      process.env.MP_DEALER_IDENTIFICATION_CODE = 'DID-ENV';
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        // Verifica che l'override sia già applicato PRIMA della valorizzazione
+        // del dettaglio pacchetti, dato che _fetchLiveMap/_fetchDetail leggono
+        // this.wsConfig.menupricing internamente.
+        expect(manager.wsConfig.menupricing.dealerIdentificationCode).toBe('DID-OVERRIDE');
+        manager.pkDetailList = [];
+        return {};
+      });
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({});
+
+      await manager.getPkList('menupricing', 'DOC1', 'CUST1', 'VIN123', '1000', 'DID-OVERRIDE');
+
+      expect(manager.wsConfig.menupricing.dealerIdentificationCode).toBe('DID-OVERRIDE');
+    });
+
+    test('keeps the default wsConfig.menupricing.dealerIdentificationCode when not provided', async () => {
+      process.env.MP_DEALER_IDENTIFICATION_CODE = 'DID-ENV';
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        manager.pkDetailList = [];
+        return {};
+      });
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({});
+
+      await manager.getPkList('menupricing', 'DOC1', 'CUST1', 'VIN123', '1000');
+
+      expect(manager.wsConfig.menupricing.dealerIdentificationCode).toBe('DID-ENV');
+    });
   });
 });

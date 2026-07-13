@@ -179,6 +179,7 @@ class PkManager {
   // @param {string} VIN        - VIN del veicolo
   // @returns {object}          - { [codice]: detailData }
   async getValidPackagesDetail(market, pkwstouse, VIN) {
+    console.log('[PkManager.getValidPackagesDetail] parametri chiamata:', { market, pkwstouse, VIN });
     const validPkgs = await this.getValidPackages(market, pkwstouse, VIN);
 
     // Raccoglie tutti i codici attraverso le categorie
@@ -299,14 +300,25 @@ class PkManager {
   //   - righe TYPE='SP' (listaRicambi)    ↔ WorkLines[].PartsItem[].PartNumber
   //   - righe TYPE='OP' (listaOperazioni) ↔ WorkLines[].LaborItems[].LaborOperationID
   //
-  // @param {string} pkwstouse  - 'eper' | 'docsoa' | 'menupricing'
-  // @param {string} documentId - Repair Order number (PartsInquiryHeader.DocumentID)
-  // @param {string} customerId - Customer ID DMS (PartsInquiryHeader.CustomerIdDms)
-  // @param {string} vehicleId  - VIN del veicolo
-  // @param {string} [market]   - Codice mercato (default '1000')
+  // @param {string} pkwstouse               - 'eper' | 'docsoa' | 'menupricing'
+  // @param {string} documentId               - Repair Order number (PartsInquiryHeader.DocumentID)
+  // @param {string} customerId                - Customer ID DMS (PartsInquiryHeader.CustomerIdDms)
+  // @param {string} vehicleId                 - VIN del veicolo
+  // @param {string} [market]                  - Codice mercato (default '1000')
+  // @param {string} [dealerIdentificationCode] - Override di wsConfig.menupricing.dealerIdentificationCode,
+  //                                              usato dai metodi menupricing (_fetchLiveMap/_fetchDetail)
+  //                                              quando pkwstouse === 'menupricing'
   // @returns {Promise<Array>}  - this.pkDetailList arricchito con AV_LOCAL/PRICE/SCONTO
-  async getPkList(pkwstouse, documentId, customerId, vehicleId, market = '1000') {
-    console.log('[PkManager.getPkList] parametri chiamata:', { pkwstouse, documentId, customerId, vehicleId, market });
+  async getPkList(pkwstouse, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode) {
+    console.log('[PkManager.getPkList] parametri chiamata:', { pkwstouse, documentId, customerId, vehicleId, market, dealerIdentificationCode });
+
+    // Se fornito, sovrascrive il dealerIdentificationCode di menupricing (letto di
+    // default da MP_DEALER_IDENTIFICATION_CODE / wsConfig del costruttore), così
+    // _fetchLiveMap/_fetchDetail lo usano automaticamente tramite this.wsConfig.menupricing
+    if (dealerIdentificationCode) {
+      this.wsConfig.menupricing.dealerIdentificationCode = dealerIdentificationCode;
+    }
+
     // 1) valorizza this.pkDetailList
     await this.getValidPackagesDetail(market, pkwstouse, vehicleId);
     // 2) interroga il DML per prezzo/disponibilità, usando this.pkDetailList

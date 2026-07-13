@@ -70,7 +70,7 @@ exports.handler = async (event) => {
     };
   }
 
-  const { market, pkwstouse, VIN, documentId, customerId } = body;
+  const { market, pkwstouse, VIN, documentId, customerId, dealerIdentificationCode } = body;
 
   try {
     const manager = new PkManager(body.wsConfig);
@@ -82,7 +82,7 @@ exports.handler = async (event) => {
     } else if (action === 'getValidPackagesDetail') {
       result = await manager.getValidPackagesDetail(market, pkwstouse, VIN);
     } else if (action === 'getPkList') {
-      result = await manager.getPkList(pkwstouse, documentId, customerId, VIN, market);
+      result = await manager.getPkList(pkwstouse, documentId, customerId, VIN, market, dealerIdentificationCode);
     } else {
       // getPriceAndAvailability richiede pkDetailList valorizzato: se non
       // fornito esplicitamente, lo recupera prima con getValidPackagesDetail
@@ -120,8 +120,9 @@ function printUsage() {
   console.log('  getValidPackagesDetail  <pkwstouse> <VIN> [market]   Dettaglio pacchetti validi');
   console.log('  getPriceAndAvailability <pkwstouse> <VIN> <documentId> <customerId> [market]');
   console.log('                                                       Sequenza detail => prezzo/disponibilità');
-  console.log('  getPkList               <pkwstouse> <VIN> <documentId> <customerId> [market]');
+  console.log('  getPkList               <pkwstouse> <VIN> <documentId> <customerId> [market] [dealerIdentificationCode]');
   console.log('                                                       detail => prezzo/disponibilità => merge AV_LOCAL/PRICE/SCONTO in pkDetailList');
+  console.log('                                                       dealerIdentificationCode: override usato dai metodi menupricing, se pkwstouse=menupricing');
   console.log('  pkwstouse               <pkwstouse> [market]         Configurazione statica\n');
   console.log('Esempi:');
   console.log('  node index.js getValidPackages       eper         ZAC5JABL9PJK00363');
@@ -136,7 +137,7 @@ function printUsage() {
 }
 
 async function main() {
-  const [, , command, arg1, arg2, arg3, arg4, arg5] = process.argv;
+  const [, , command, arg1, arg2, arg3, arg4, arg5, arg6] = process.argv;
   const COMMANDS = ['getValidPackages', 'getValidPackagesDetail', 'getPriceAndAvailability', 'getPkList', 'pkwstouse'];
 
   if (!command || !COMMANDS.includes(command)) {
@@ -197,10 +198,11 @@ async function main() {
       const documentId = arg3;
       const customerId = arg4;
       const market     = arg5 ?? '1000';
+      const dealerIdentificationCode = arg6;
       if (!pkwstouse || !VIN || !documentId || !customerId) { printUsage(); process.exit(1); }
 
-      console.log(`\n▶  getPkList  market="${market}"  pkwstouse="${pkwstouse}"  VIN="${VIN}"  documentId="${documentId}"  customerId="${customerId}"`);
-      const result = await manager.getPkList(pkwstouse, documentId, customerId, VIN, market);
+      console.log(`\n▶  getPkList  market="${market}"  pkwstouse="${pkwstouse}"  VIN="${VIN}"  documentId="${documentId}"  customerId="${customerId}"  dealerIdentificationCode="${dealerIdentificationCode ?? ''}"`);
+      const result = await manager.getPkList(pkwstouse, documentId, customerId, VIN, market, dealerIdentificationCode);
       printResult('getPkList (pkDetailList arricchito)', result);
     }
 

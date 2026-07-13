@@ -189,7 +189,13 @@ class MenuPricingSoapClient {
 
   // ── getJobs ─────────────────────────────────────────────────────────────────
   // Endpoint: /Menus  — lista piatta codice/descrizione dei job disponibili per il VIN
-  async getJobs({ languageCode, countryCode, dealerIdentificationCode, manufacturer, vin }) {
+  // Il chiamante deve passare vin, dealerIdentificationCode, countryCode; languageCode
+  // e manufacturer sono opzionali e, se assenti, vengono risolti da MP_LANGUAGE_CODE/
+  // MP_MANUFACTURER (env).
+  async getJobs({ vin, dealerIdentificationCode, countryCode, languageCode, manufacturer }) {
+    languageCode = languageCode ?? process.env.MP_LANGUAGE_CODE;
+    manufacturer = manufacturer ?? process.env.MP_MANUFACTURER;
+    console.log('[MenuPricingSoapClient.getJobs] parametri chiamata:', { vin, dealerIdentificationCode, countryCode, languageCode, manufacturer });
     const params = {
       getJobs: {
         jobsRequest: {
@@ -214,7 +220,13 @@ class MenuPricingSoapClient {
 
   // ── getJobDetails ────────────────────────────────────────────────────────────
   // Endpoint: /SecuredMenus  — dettaglio operazioni e ricambi di un job
-  async getJobDetails({ languageCode, countryCode, dealerIdentificationCode, manufacturer, vin, id }) {
+  // Il chiamante deve passare vin, dealerIdentificationCode, countryCode, id;
+  // languageCode e manufacturer sono opzionali e, se assenti, vengono risolti da
+  // MP_LANGUAGE_CODE/MP_MANUFACTURER (env).
+  async getJobDetails({ vin, dealerIdentificationCode, countryCode, id, languageCode, manufacturer }) {
+    languageCode = languageCode ?? process.env.MP_LANGUAGE_CODE;
+    manufacturer = manufacturer ?? process.env.MP_MANUFACTURER;
+    console.log('[MenuPricingSoapClient.getJobDetails] parametri chiamata:', { vin, dealerIdentificationCode, countryCode, id, languageCode, manufacturer });
     const params = {
       getJobDetails: {
         jobDetailsRequest: {
