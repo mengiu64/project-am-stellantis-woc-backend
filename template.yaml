@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session)
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -360,6 +360,22 @@ Resources:
           DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:             !Ref Environment
 
+  SessionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-session"
+      CodeUri: session/
+      Handler: src/index.handler
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
+      Environment:
+        Variables:
+          SESSION_BUCKET_NAME: !Ref TranslationsBucket
+          SESSION_DATA_KEY: session/session_data.json
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 Outputs:
@@ -385,3 +401,5 @@ Outputs:
     Value: !Ref TranslationsBucket
   TranslationsFunctionArn:
     Value: !GetAtt TranslationsFunction.Arn
+  SessionFunctionArn:
+    Value: !GetAtt SessionFunction.Arn

@@ -2,7 +2,7 @@
 
 > 🇮🇹 [Leggi in italiano](README.md) &nbsp;|&nbsp; 🇬🇧 English
 
-Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations).
+Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -22,6 +22,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [pkMenupricing](#pkmenupricing)
    - [pkManager](#pkmanager)
    - [translations](#translations)
+   - [session](#session)
 3. [Installation](#installation)
 4. [Environment variables](#environment-variables)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -43,7 +44,8 @@ project-am-stellantis-woc-backend/
 ├── pkDocsoa/           # Lambda – DocSOA packages (Stellantis PSA REST)
 ├── pkMenupricing/      # Lambda – MenuPricing packages (Opel/Vauxhall SOAP)
 ├── pkManager/          # Lambda – multi-WS package orchestrator (ePer/DocSOA/MenuPricing)
-└── translations/       # Lambda – translation retrieval from S3
+├── translations/       # Lambda – translation retrieval from S3
+└── session/            # Lambda – session data (codmarket, oic, sincom, ...)
 
 ```
 
@@ -421,6 +423,55 @@ node index.js translations lang=en
 { "action": "translations", "queryStringParameters": { "lang": "en" } }
 ```
 
+### session
+
+Lambda that returns **session data** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, part preferences, max discounts, etc.) for a given market, read from a single JSON file on S3 (`session/session_data.json`, same bucket used by `translations`). The file contains an object keyed by 4-character market code (e.g. `"1000"`); the only accepted input parameter is the **market code** (`codmarket`, 4 characters): if not provided, the default `1000` is used. If the requested market is not present in the file, the Lambda responds with `404`. Data access is isolated behind a `SessionRepository` interface, implemented by `S3SessionRepository`, to allow replacing S3 in the future without impacting the HTTP handler (same architecture as the `translations` module).
+
+#### Main functions
+
+| Function | Description |
+|---|---|
+| `handler(event)` | Lambda entry-point: reads `codmarket` from `event.criteria`, `queryStringParameters` or `pathParameters` (in this priority order), defaulting to `1000`; returns 200 with the data, 404 if the market is not present in the file, 502 on generic errors (e.g. S3 unreachable) |
+| `getSessionData(codmarket)` | `S3SessionRepository`: downloads `session/session_data.json` from S3 and extracts the section for the requested market |
+| `buildRepository(overrides)` | Factory that builds `S3SessionRepository` (bucket/key/client configurable via env or overrides, useful in tests) |
+
+#### Structure
+
+```
+session/
+├── src/
+│   ├── index.js                             # Lambda entry-point + CLI
+│   ├── errors.js                             # SessionNotFoundError (404)
+│   ├── repositoryFactory.js                  # Factory: buildRepository()
+│   └── repositories/
+│       ├── sessionRepository.js              # Base interface
+│       └── s3SessionRepository.js            # S3 implementation (bucket + JSON key)
+└── __tests__/                                # Jest unit tests
+```
+
+#### Event shape
+
+```json
+{ "criteria": { "codmarket": "3109" } }
+```
+
+or, behind API Gateway:
+
+```json
+{ "queryStringParameters": { "codmarket": "3109" } }
+```
+
+Without any parameter, the default market (`1000`) is used.
+
+#### CLI usage
+
+```bash
+node src/index.js         # default market (1000)
+node src/index.js 3109    # specific market
+```
+
+---
+
 ## Installation
 
 Each module is independent. Install dependencies separately:
@@ -436,6 +487,7 @@ cd pkDocsoa       && npm install
 cd pkMenupricing  && npm install
 cd pkManager      && npm install
 cd translations   && npm install
+cd session        && npm install
 ```
 
 ---
@@ -547,6 +599,16 @@ TRANSLATIONS_DEFAULT_LANG=en        # (optional) default language when "lang" is
 
 > **Note:** `authService` implements a file-based cache mechanism (`.token.cache.json`) to avoid requesting a new token on every invocation. The token is automatically renewed 30 seconds before expiry.
 
+### session
+
+```env
+SESSION_BUCKET_NAME=...              # S3 bucket name with session data (required)
+SESSION_DATA_KEY=session/session_data.json  # (optional) S3 key of the session data JSON file
+SESSION_DEFAULT_MARKET=1000          # (optional) default market when "codmarket" is not passed
+```
+
+> **Note:** session data is read from a single JSON file on S3 (`session/session_data.json`, same bucket as `translations`), keyed by 4-character market code. If the requested market is not present in the file, the Lambda responds with `404`.
+
 ---
 
 ## Unit Test & Coverage
@@ -582,7 +644,8 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
-| **Total** | **30** | **338** | |
+| **session** | 5 | 33 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository` |
+| **Total** | **35** | **371** | |
 
 ### Code coverage
 
@@ -598,6 +661,7 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
+| **session** | 98.46% ✅ | 92.85% ✅ | 100% ✅ | 98.46% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 
@@ -645,6 +709,14 @@ cd agendaSoa && npm run test:coverage
 - **S3TranslationsRepository** – fetch and parse JSON from S3, `TranslationNotFoundError` on `NoSuchKey`/404/Code, generic S3 errors rethrown, invalid JSON, missing bucket configuration
 - **repositoryFactory** – default instance construction and overrides
 - **handlers/translations** – merge `queryStringParameters`/`body`/`params` (params wins), default language, 200/404/502, `Content-Type` header
+
+#### session
+- **index (handler)** – merges `event.criteria`/`queryStringParameters`/`pathParameters` (`criteria` wins), defaults to market `1000`, 200 with session data, 404 on `SessionNotFoundError` (missing market), 502 on generic errors (e.g. S3 unreachable), `Content-Type` header
+- **index (runCli)** – prints data for the default/requested market from argv, logs error + sets `process.exitCode=1` on failure
+- **errors** – `SessionNotFoundError` with `code=SESSION_NOT_FOUND` and message including the requested market
+- **sessionRepository** – base class throws a "not implemented" error
+- **s3SessionRepository** – fetches and parses JSON from S3, extracts the section for the requested market (uppercased), `SessionNotFoundError` on missing market, S3 error handling (`NoSuchKey`/404/Code), invalid JSON, missing bucket configuration
+- **repositoryFactory** – builds the default instance and with overrides
 
 ---
 
