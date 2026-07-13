@@ -115,7 +115,7 @@ class PkManager {
   // ── getConfigPackages ────────────────────────────────────────────────────────
   // Restituisce la mappa categoria → [codici] per il ws specificato.
   //
-  // @param {string} market      - Codice mercato (es. '1000'). Riservato per
+  // @param {string} market      - Codice mercato (es. '1000'). Riservato per a
   //                               future personalizzazioni per mercato.
   // @param {string} pkwstouse   - Identificativo del web service:
   //                               'eper' | 'docsoa' | 'menupricing'
