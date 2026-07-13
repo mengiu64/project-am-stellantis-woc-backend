@@ -1,16 +1,60 @@
 {
   "name": "session",
   "version": "1.0.0",
-  "description": "Modulo Node.js autoconsistente che restituisce i dati di sessione (codmarket, oic, sincom, ...). Attualmente i dati sono predefiniti (StaticSessionProvider), ma il codice e' predisposto per essere sostituito da una fonte dati reale (es. RDS/DynamoDB su AWS) tramite DbSessionProvider.",
+  "description": "Lambda per il recupero dei dati di sessione (codmarket, oic, sincom, ...) da un file JSON su S3 (session/session_data.json), filtrati per mercato (codmarket a 4 caratteri, default 1000).",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "jest --testEnvironment=node"
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci --outputFile=coverage/jest-results.json"
   },
   "engines": {
     "node": ">=18.0.0"
   },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1083.0",
+    "dotenv": "^17.4.2"
+  },
   "devDependencies": {
-    "jest": "^29.7.0"
+    "jest": "^29.7.0",
+    "jest-html-reporters": "^3.1.7"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js"
+    ],
+    "coverageReporters": [
+      "html",
+      "text",
+      "lcov",
+      "json-summary",
+      "cobertura"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    },
+    "reporters": [
+      "default",
+      [
+        "jest-html-reporters",
+        {
+          "publicPath": "./coverage",
+          "filename": "test-report.html",
+          "openReport": false,
+          "includeConsoleLog": true,
+          "includeFailureMsg": true,
+          "expand": true
+        }
+      ]
+    ]
   }
 }

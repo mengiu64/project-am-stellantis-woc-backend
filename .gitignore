@@ -27,6 +27,9 @@ pkMenupricing/coverage/
 translations/node_modules/
 translations/.env
 translations/coverage/
+session/node_modules/
+session/.env
+session/coverage/
 .aws-sam/
 .idea/
 */.idea/
