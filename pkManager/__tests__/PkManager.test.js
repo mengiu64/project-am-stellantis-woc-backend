@@ -116,7 +116,19 @@ describe('PkManager', () => {
     test('returns static config for menupricing', () => {
       const manager = new PkManager();
       const result = manager.getConfigPackages('1000', 'menupricing');
-      expect(result).toEqual({ BODY: ['221000135012'], MECHANICH: [], ACCESSORIES: [] });
+      expect(result).toEqual({
+        BODY: [
+          '221000135012',
+          '054065105278',
+          '054065305427',
+          '054065505280',
+          '054065705406',
+          '054065905276',
+          '054066105400'
+        ],
+        MECHANICH: [],
+        ACCESSORIES: [],
+      });
     });
 
     test('is case-insensitive on pkwstouse', () => {
