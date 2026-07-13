@@ -258,7 +258,7 @@ describe('AgendaSOAClient', () => {
         ],
       },
     });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(true);
     expect(result.data).toEqual(['07:00', '09:00']);
   });
@@ -272,7 +272,7 @@ describe('AgendaSOAClient', () => {
       success: true,
       data: { grillePlanningReceptionnairePresentations: [] },
     });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(true);
     expect(result.data).toEqual(['07:00', '08:00']);
   });
@@ -280,14 +280,14 @@ describe('AgendaSOAClient', () => {
   test('getAvHoursForRec returns failure when availableHours fails', async () => {
     jest.spyOn(client, 'availableHours').mockResolvedValue({ success: false, data: 'err' });
     jest.spyOn(client, 'appointment').mockResolvedValue({ success: true, data: {} });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(false);
   });
 
   test('getAvHoursForRec returns failure when appointment fails', async () => {
     jest.spyOn(client, 'availableHours').mockResolvedValue({ success: true, data: ['07:00'] });
     jest.spyOn(client, 'appointment').mockResolvedValue({ success: false, data: 'err' });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(false);
   });
 
@@ -297,7 +297,7 @@ describe('AgendaSOAClient', () => {
       success: true,
       data: { grillePlanningReceptionnairePresentations: [] },
     });
-    await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(avSpy).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-06-26' }));
   });
 
@@ -307,8 +307,18 @@ describe('AgendaSOAClient', () => {
       success: true,
       data: { grillePlanningReceptionnairePresentations: [] },
     });
-    await client.getAvHoursForRec('pdv1', '2026-06-26', 'ccs1', 'fr_FR', 'ldap1');
+    await client.getAvHoursForRec('pdv1', '2026-06-26', 'ccs1', 'fr_FR');
     expect(avSpy).toHaveBeenCalledWith(expect.objectContaining({ startDate: '2026-06-26' }));
+  });
+
+  test('getAvHoursForRec non accetta ldapId in input ma lo invia sempre vuoto ad appointment', async () => {
+    jest.spyOn(client, 'availableHours').mockResolvedValue({ success: true, data: [] });
+    const apptSpy = jest.spyOn(client, 'appointment').mockResolvedValue({
+      success: true,
+      data: { grillePlanningReceptionnairePresentations: [] },
+    });
+    await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
+    expect(apptSpy).toHaveBeenCalledWith(expect.objectContaining({ ldapId: '' }));
   });
 
   // ── interceptors ─────────────────────────────────────────────────────────────
@@ -440,7 +450,7 @@ describe('AgendaSOAClient', () => {
   test('getAvHoursForRec handles null apptResult.data (planning ?? [] fallback)', async () => {
     jest.spyOn(client, 'availableHours').mockResolvedValue({ success: true, data: ['07:00'] });
     jest.spyOn(client, 'appointment').mockResolvedValue({ success: true, data: null });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(true);
     expect(result.data).toEqual(['07:00']);
   });
@@ -455,7 +465,7 @@ describe('AgendaSOAClient', () => {
         ],
       },
     });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(true);
     expect(result.data).toEqual(['07:00']);
   });
@@ -470,7 +480,7 @@ describe('AgendaSOAClient', () => {
         ],
       },
     });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(true);
     expect(result.data).toEqual(['07:00']);
   });
@@ -485,7 +495,7 @@ describe('AgendaSOAClient', () => {
         ],
       },
     });
-    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR', 'ldap1');
+    const result = await client.getAvHoursForRec('pdv1', '20260626', 'ccs1', 'fr_FR');
     expect(result.success).toBe(true);
     expect(result.data).toEqual(['07:00', '08:00']);
   });

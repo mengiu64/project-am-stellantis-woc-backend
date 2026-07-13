@@ -89,7 +89,7 @@ async function cliMain() {
     console.error('  node index.js availableHours   id=<pdvId> startDate=YYYY-MM-DD [endDate=YYYY-MM-DD]');
     console.error('  node index.js cCSList          id=<pdvId>');
     console.error('  node index.js data             id=<apptId>');
-    console.error('  node index.js getAvHoursForRec pdvId=<val> date=YYYYMMDD ccs=<val> locale=<val> [ldapId=<val>]');
+    console.error('  node index.js getAvHoursForRec pdvId=<val> date=YYYYMMDD ccs=<val> locale=<val>');
     process.exit(1);
     return;
   }

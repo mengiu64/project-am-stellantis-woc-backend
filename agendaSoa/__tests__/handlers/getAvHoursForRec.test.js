@@ -42,14 +42,14 @@ describe('getAvHoursForRec handler', () => {
     const res = await handler(event);
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ success: true, data: freeHours });
-    expect(mockClient.getAvHoursForRec).toHaveBeenCalledWith('PDV1', '20250601', 'CCS1', 'fr_FR', undefined);
+    expect(mockClient.getAvHoursForRec).toHaveBeenCalledWith('PDV1', '20250601', 'CCS1', 'fr_FR');
   });
 
-  test('passes optional ldapId to client', async () => {
+  test('ignora ldapId anche se passato in input (non e\' piu\' un parametro accettato)', async () => {
     mockClient.getAvHoursForRec.mockResolvedValue({ success: true, data: [] });
     const event = { params: { pdvId: 'PDV1', date: '2025-06-01', ccs: 'CCS1', locale: 'fr_FR', ldapId: 'U123' } };
     await handler(event);
-    expect(mockClient.getAvHoursForRec).toHaveBeenCalledWith('PDV1', '2025-06-01', 'CCS1', 'fr_FR', 'U123');
+    expect(mockClient.getAvHoursForRec).toHaveBeenCalledWith('PDV1', '2025-06-01', 'CCS1', 'fr_FR');
   });
 
   test('returns 502 when client returns success=false', async () => {
@@ -72,7 +72,7 @@ describe('getAvHoursForRec handler', () => {
     const event = { body: JSON.stringify({ pdvId: 'PDV1', date: '20250601', ccs: 'CCS1', locale: 'fr_FR' }) };
     const res = await handler(event);
     expect(res.statusCode).toBe(200);
-    expect(mockClient.getAvHoursForRec).toHaveBeenCalledWith('PDV1', '20250601', 'CCS1', 'fr_FR', undefined);
+    expect(mockClient.getAvHoursForRec).toHaveBeenCalledWith('PDV1', '20250601', 'CCS1', 'fr_FR');
   });
 
   test('response has Content-Type: application/json header', async () => {

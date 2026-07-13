@@ -198,10 +198,9 @@ class AgendaSOAClient {
    * @param {string} date    - Date in YYYYMMDD format
    * @param {string} ccs     - Receptionist id (matches `id` in grillePlanningReceptionnairePresentations)
    * @param {string} locale  - Locale (e.g. "fr_FR")
-   * @param {string} ldapId  - LDAP user identifier (required by appointment endpoint)
    * @returns {{ success: boolean, data: string[] }}  Free time slots in "HH:MM" format
    */
-  async getAvHoursForRec(pdvId, date, ccs, locale, ldapId) {
+  async getAvHoursForRec(pdvId, date, ccs, locale) {
     // Convert YYYYMMDD → YYYY-MM-DD for availableHours; appointment keeps YYYYMMDD
     const startDate = date.length === 8
       ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`
@@ -209,7 +208,9 @@ class AgendaSOAClient {
 
 
     const avResult = await this.availableHours({ id: pdvId, startDate });
-    const apptParams = { ccs, date, pdvId, locale, ldapId };
+    // ldapId non è più un parametro di input: l'endpoint appointment lo richiede
+    // comunque nella query, quindi viene sempre inviato vuoto.
+    const apptParams = { ccs, date, pdvId, locale, ldapId: '' };
     const apptResult = await this.appointment(apptParams);
     
 

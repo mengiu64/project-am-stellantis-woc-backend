@@ -7,13 +7,17 @@ const { buildClient } = require('../clientFactory');
  *
  * Calls availableHours + appointment internally, then filters out busy slots.
  *
- * Expected params: { pdvId, date, ccs, locale, ldapId? }
+ * Expected params: { pdvId, date, ccs, locale }
  *   date: YYYYMMDD or YYYY-MM-DD
+ *
+ * Nota: ldapId non è (più) un parametro di input accettato da questo handler;
+ * viene comunque inviato (vuoto) all'endpoint appointment internamente da
+ * agendaSOAClient.getAvHoursForRec.
  */
 exports.handler = async (event) => {
   try {
     const params = parseParams(event);
-    const { pdvId, date, ccs, locale, ldapId } = params;
+    const { pdvId, date, ccs, locale } = params;
 
     const missing = ['pdvId', 'date', 'ccs', 'locale'].filter((k) => !params[k]);
     if (missing.length) {
@@ -21,7 +25,7 @@ exports.handler = async (event) => {
     }
 
     const client = await buildClient();
-    const result = await client.getAvHoursForRec(pdvId, date, ccs, locale, ldapId);
+    const result = await client.getAvHoursForRec(pdvId, date, ccs, locale);
     return response(result.success ? 200 : 502, result);
   } catch (err) {
     return response(500, { success: false, message: err.message });
