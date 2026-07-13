@@ -51,17 +51,16 @@ module.exports = {
     ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
     xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',
   },
-
   // ApplicationArea.Sender defaults (optional, used in CLI inquiry command)
   sender: {
     componentId:          process.env.DML_SENDER_COMPONENT_ID     || '1.0.0',
-    dealerNumberId:       process.env.DML_SENDER_DEALER_ID        || '',
-    dealerNumberIdSource: process.env.DML_SENDER_DEALER_ID_SRC    || '',
-    dealerCountryCode:    process.env.DML_SENDER_COUNTRY          || '',
-    languageCode:         process.env.DML_SENDER_LANGUAGE         || '',
-    physicalSiteId:       process.env.DML_SENDER_SITE_ID          || '',
-    serviceId:            process.env.DML_SENDER_SERVICE_ID       || '',
+    dealerNumberId:       process.env.DML_SENDER_DEALER_ID        || '0062230',
+    dealerNumberIdSource: process.env.DML_SENDER_DEALER_ID_SRC    || '0062230',
+    dealerCountryCode:    process.env.DML_SENDER_COUNTRY          || 'FR',
+    languageCode:         process.env.DML_SENDER_LANGUAGE         || 'fr-FR',
+    physicalSiteId:       process.env.DML_SENDER_SITE_ID          || '001',
+    serviceId:            process.env.DML_SENDER_SERVICE_ID       || 'FR-0062230.D001',
     currencyId:           process.env.DML_SENDER_CURRENCY         || 'EUR',
-    brand:                process.env.DML_SENDER_BRAND            || '',
+    brand:                process.env.DML_SENDER_BRAND            || 'FT',
   },
 };
