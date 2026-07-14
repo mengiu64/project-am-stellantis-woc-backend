@@ -154,6 +154,42 @@ describe('jobCardService', () => {
     expect(options.headers.jobCardId).toBe('79');
   });
 
+  test('sanitizes ";" separators in contactInfo.address', async () => {
+    const body = {
+      jobCardDetail: {
+        customerInfo: [
+          { contactInfo: { address: '13;poissy ;test' } },
+        ],
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+    const result = await getJobCardDetails('token', '79');
+
+    expect(result.jobCardDetail.customerInfo[0].contactInfo.address).toBe('13 poissy test');
+  });
+
+  test('leaves address untouched when it has no ";"', async () => {
+    const body = {
+      jobCardDetail: {
+        customerInfo: [
+          { contactInfo: { address: '78 VIA PO' } },
+        ],
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+    const result = await getJobCardDetails('token', '79');
+
+    expect(result.jobCardDetail.customerInfo[0].contactInfo.address).toBe('78 VIA PO');
+  });
+
+  test('does not fail when jobCardDetail or customerInfo is missing', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
+  });
+
   test('sends date range and other optional filters as headers when provided', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
