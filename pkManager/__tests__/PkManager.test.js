@@ -165,7 +165,7 @@ describe('PkManager', () => {
       expect(getCompletePkEperList).toHaveBeenCalledWith(
         expect.objectContaining({ vin: 'VIN123' })
       );
-      expect(result).toEqual({ BODY: { '7210E221': { $: { codicePosizione: 'P1' } } } });
+      expect(result).toEqual({ BODY: { '7210E221': { $: { codicePosizione: 'P1' }, DEPT: 'BODY' } } });
     });
 
     test('eper: throws when live result contains error', async () => {
@@ -197,7 +197,7 @@ describe('PkManager', () => {
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'menupricing', 'VIN123');
 
-      expect(result).toEqual({ BODY: { '221000135012': { detail: 'x' } } });
+      expect(result).toEqual({ BODY: { '221000135012': { detail: 'x', DEPT: 'BODY' } } });
     });
 
     test('menupricing: throws when result.success is false', async () => {
@@ -232,7 +232,7 @@ describe('PkManager', () => {
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
 
-      expect(result).toEqual({ ACCESSORIES: { '95R04A': { code: '95R04A', label: 'Accessory 1' } } });
+      expect(result).toEqual({ ACCESSORIES: { '95R04A': { code: '95R04A', label: 'Accessory 1', DEPT: 'ACCESSORIES' } } });
     });
 
     test('docsoa: normalizes single-object data (not array) via toArray', async () => {
@@ -245,7 +245,7 @@ describe('PkManager', () => {
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
 
-      expect(result).toEqual({ MECHANICH: { '42001A': { code: '42001A', label: 'Mechanic 1' } } });
+      expect(result).toEqual({ MECHANICH: { '42001A': { code: '42001A', label: 'Mechanic 1', DEPT: 'MECHANICH' } } });
     });
 
     test('docsoa: throws when result.success is false', async () => {
@@ -305,6 +305,7 @@ describe('PkManager', () => {
         '7210E221': {
           codice: '7210E221',
           descrizione: 'Pacchetto test',
+          DEPT: 'BODY',
           listaOperazioni: [
             { TYPE: 'OP', POSIZIONE: '', COD: 'OP1', DESCR: 'Op uno', AV_LOCAL: 0, SCONTO: 0, TIME: '1.5', QTY: '', PRICE: '', CODSIGI: '' },
           ],
@@ -349,7 +350,7 @@ describe('PkManager', () => {
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'docsoa', 'VF3CABHW6GT204366');
 
-      expect(result['95R04A']).toEqual({ error: 'detail failed' });
+      expect(result['95R04A']).toEqual({ error: 'detail failed', DEPT: 'ACCESSORIES' });
       expect(result['95R10A']).toMatchObject({
         result: true,
         codice: '95R10A',
@@ -389,6 +390,7 @@ describe('PkManager', () => {
           isFixedPrice: '0',
           listaOperazioni: [],
           listaRicambi: [],
+          DEPT: 'BODY',
         },
       });
       expect(getJobDetails).toHaveBeenCalledWith(
@@ -406,7 +408,7 @@ describe('PkManager', () => {
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'eper', 'VIN123');
 
-      expect(result['7210E221']).toEqual({ error: 'plain string failure' });
+      expect(result['7210E221']).toEqual({ error: 'plain string failure', DEPT: 'BODY' });
     });
   });
 
