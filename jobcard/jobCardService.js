@@ -105,6 +105,36 @@ async function getJobCardList(bearerToken, params = {}) {
 }
 
 /**
+ * Normalizes an address string coming from the upstream DL API, which separates
+ * its sub-fields (street number, city, ...) with ";" (e.g. "13;poissy ;test").
+ * Replaces every ";" with a space and collapses/trims extra whitespace.
+ * @param {string} address - raw address value
+ * @returns {string} sanitized address
+ */
+function sanitizeAddress(address) {
+  if (typeof address !== 'string') return address;
+  return address.replace(/;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Sanitizes the address field of every customerInfo.contactInfo entry in a
+ * jobCardDetails response body, in place.
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with sanitized addresses
+ */
+function sanitizeJobCardDetails(body) {
+  const customerInfo = body?.jobCardDetail?.customerInfo;
+  if (Array.isArray(customerInfo)) {
+    for (const customer of customerInfo) {
+      if (customer?.contactInfo?.address) {
+        customer.contactInfo.address = sanitizeAddress(customer.contactInfo.address);
+      }
+    }
+  }
+  return body;
+}
+
+/**
  * Calls jobCardDetails endpoint.
  * @param {string} bearerToken      - Bearer token from PingFederate
  * @param {string|number} jobCardId - JobCard identifier (input parameter)
@@ -126,7 +156,7 @@ async function getJobCardDetails(bearerToken, jobCardId) {
     );
   }
 
-  return response.body;
+  return sanitizeJobCardDetails(response.body);
 }
 
 module.exports = { getJobCardList, getJobCardDetails };
