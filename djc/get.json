@@ -1,0 +1,556 @@
+{
+    "status": "<boolean>",
+    "code": "<success Code>",
+    "jobCardDetail": {
+        "roInfo": {
+            "dmsRepairOrderId": "<dmsRepairOrderId>",
+            "jobCardSrpId": "JCID-XXXX  --null in creazione",
+            "jobCardLegacyId": "<codrepairorder>",
+            "sourceApplication": "WIADVISOR",
+            "dealerId": "0081250",
+            "brand": "<Ing Genome codification >",
+            "stellantisBrand": "<stellantiscode Es:AP>",
+            "status": "PREPARATION_COMPLETED",
+            "repairOrderStatusUpdateDateTime": "2025-12-01T10:15:00Z",
+            "creationDateTime": "2025-11-30T09:00:00Z",
+            "dmsSynchroStatus": "SYNCED",
+            "repairOrderCreator": "D365441",
+            "repairOrderModifier": " D365441",
+            "updateDateTime": "2025-12-08",
+            "printRepairOrder": "?",
+            "printPickingList": "?",
+            "discounts": {
+                "discountInAmountOnPriceWithVat": "?",
+                "discountInPercentage": "?",
+                "reasonDiscountCodeId": "?",
+                "reasonDiscountDescription": "?"
+            },
+            "totalPrice": {
+                "originalPriceExclVat": 15000.0,
+                "originalPriceWithVat": 17700.0,
+                "priceExclVatAfterDiscount": 13500.0,
+                "priceWithVatAfterDiscount": 15930.0,
+                "totalCustomerWithVat": 12000.0,
+                "totalInsuranceWithVat": 2500.0,
+                "totalManufacturerWithVat": 930.0,
+                "totalInternalWithVat": 500.0
+            },
+            "currencyCode": "EUR",
+            "internalComments": "?",
+            "repairOrderComments": "Customer requested express service.",
+            "interiorCarWash": "0/2",
+            "exteriorCarWash": "1/2",
+            "partPreferences": [
+                {
+                    "old": "?",
+                    "original": "?",
+                    "returned": true,
+                    "circularEconomy": true
+                }
+            ],
+            "obfcm": false,
+            "waitOnSite": true,
+            "brokenDownCar": "?",
+            "carParkLocation": "?",
+            "otaUpdateAvailable": "elegible Over The Air (REAPAIRORDER_ADDON_PCY)",
+            "vehicleIdentificationTagNumber": "?",
+            "insuranceContractNumber": "*",
+            "insuranceName": "*",
+            "invoiceId": "solo eservice INV-2025-000123",
+            "purchaseOrderNumber": "?",
+            "onHoldReason": "?",
+            "qualityCheckId": "?",
+            "wiSolveId": "?",
+            "loanerFlag": "?"
+        },
+        "workshopReturn": {
+            "workshopReturn": false,
+            "comeBackRepairOrder": "?",
+            "comeBackJob": "?",
+            "comeBackRepairReason": "?",
+            "comeBackCorrection": "?"
+        },
+        "customerInfo": [
+            {
+                "customerId": "<codcontact>",
+                "customerDmsId": "DMS-CUST-77889",
+                "customerType": "PRIVATE/COMPANY",
+                "dmsCustomerAccountNumber": "?",
+                "internalComments": "?",
+                "gender": "M",
+                "title": "Mr",
+                "personalInfo": {
+                    "firstName": "JAMES",
+                    "lastName": "BOND",
+                    "contactInfo": {
+                        "phone": "+91-22-40000000",
+                        "mobile": "+91-9000000000",
+                        "email": "TEST@example.com",
+                        "address": "TEST",
+                        "additionalAddress": "TEST"
+                    },
+                    "nationalTaxId": "?",
+                    "preferredLanguageCode": "?",
+                    "channelCode": "EMAIL",
+                    "privacyIndicator": "?",
+                    "privacyTypeString": "?",
+                    "satisfactionIndicator": "?"
+                },
+                "companyInfo": {
+                    "companyName": "ABC Trading Co.",
+                    "companyTypeId": "?",
+                    "companyType": "?",
+                    "organizationId": "?"
+                },
+                "vehicleRelationship": "OWNER"
+            }
+        ],
+        "vehicleInfo": {
+            "dmsVehicleId": "DMS-VEH-7788",
+            "identification": {
+                "vin": "1C4PJMCS6GW150668",
+                "licensePlate": "XYZ-046-JIJ",
+                "countryRegistrationId": "5013-AFE ",
+                "brand": "Jeep",
+                "brandCode": "0J",
+                "brandCode2": "JP",
+                "modelDescription": "Compass Limited",
+                "modelCode": "COMP-LTD",
+                "modelYear": "2023"
+            },
+            "state": {
+                "odometerIn": 25432,
+                "odometerOut": "?",
+                "mileageUnits": "km",
+                "fuelReserveLevel": 3,
+                "batteryReserveLevel": 85,
+                "maintenanceType": "?"
+            },
+            "observations": {
+                "observations": "Customer reported mild vibration at 80 km/h."
+            },
+            "dates": {
+                "originalSoldDate": "2023-07-15",
+                "lastTechnicalInspection": "?",
+                "nextTechnicalInspection": "?"
+            },
+            "originInfo": {
+                "sellingCountry": "IT",
+                "affiliationCountry": "IT"
+            }
+        },
+        "contractCoverage": {
+            "contractInfo": [
+                {
+                    "contractType": "EXTENDED",
+                    "contractDescription": "Extended warranty 3 yrs/60,000 km",
+                    "contractCode": "EXT-60K",
+                    "contractStartDate": "2023-07-15",
+                    "contractEndDate": "2026-07-15",
+                    "contractMaxMileage": 60000,
+                    "contractMileageUnit": "km",
+                    "contractStatus": "ACTIVE",
+                    "contractLink": "TEST"
+                }
+            ],
+            "vehicleTelematicsEligible": true,
+            "helpdeskAgreementServiceConnect": true,
+            "dimboService": false,
+            "eligibleServiceList": [
+                "TEST"
+            ]
+        },
+        "pastActivityView": {
+            "lastVisitDate": "?"
+        },
+        "estimatesLinks": [
+            {
+                "internalEstimateId": "EST-001",
+                "estimateStatus": "SENT",
+                "estimateStatusUpdateDateTime": "2025-12-01T11:45:00Z"
+            }
+        ],
+        "recallCampaigns": [
+            {
+                "campaignCode": "RC-2025-ABS",
+                "campaignDescription": "ABS module inspection",
+                "campaignType": "4=Best Service, 5=RapidCheck",
+                "campaignStatus": "COMPLETED",
+                "campaignStartDate": "?",
+                "campaignExecutionDate": "2025-10-15",
+                "campaignContentLink": "?"
+            }
+        ],
+        "vor": {
+            "vorStatus": "?",
+            "vorReason": "?",
+            "customerCareLink": "?"
+        },
+        "vehicleReporting": [
+            {
+                "pCode": "?",
+                "description": "?"
+            }
+        ],
+        "jobs": [
+            {
+                "jobInternalId": "JOB-INT-0001",
+                "jobDmsId": "?",
+                "jobDescription": "Front suspension check and alignment",
+                "jobComments": "?",
+                "customerAgreeToRepair": "?",
+                "identifiedCause": "?",
+                "correctiveAction": "?",
+                "attachments": "?",
+                "packageCode": "PKG-SUS-ALGN",
+                "jobAllocationCode": "ALLOC-CUST",
+                "jobType": "REPAIR",
+                "jobCategory": "?",
+                "paymentType": "CUSTOMER",
+                "priceExclVatAfterDiscount": 4500.0,
+                "priceWithVatAfterDiscount": 5310.0,
+                "originalPriceExclVat": 5000.0,
+                "originalPriceWithVat": 5900.0,
+                "discountInAmountOnPriceWithVat": 590.0,
+                "discountInPercentage": 10.0,
+                "reasonDiscountCodeId": "DISC-PROMO",
+                "reasonDiscountDescription": "Promotional discount",
+                "vatPercentage": 18.0,
+                "cifId": "?",
+                "technicalSheetLink": "?",
+                "totalClaimedAmount": 0.0,
+                "totalPartsAmountRequested": 1800.0,
+                "totalLaborAmountRequested": 2700.0,
+                "totalLaborDurationRequested": 2.5,
+                "totalExternalLaborAmountRequested": 0.0,
+                "sommeSagai": "?",
+                "sommeDecSagai": "?",
+                "sommePrSagai": "?",
+                "sommePrDecSagai": "?",
+                "soldSagai": "?",
+                "labourDecSagai": "?",
+                "contract": [
+                    {
+                        "contractCode": "EXT-60K",
+                        "claimId": "CLM-8877",
+                        "claimUpdateStatus": "PENDING",
+                        "preAuthId": "",
+                        "preAuthStatus": "",
+                        "allocationType": "PARTIAL",
+                        "allocationCode": "ALLOC-WAR",
+                        "claimStatus": "UNDER_REVIEW",
+                        "jobDecisionCode": "",
+                        "jobDecisionPercentage": ""
+                    }
+                ],
+                "jobPayer": [
+                    {
+                        "invoiceType": "CUSTOMER",
+                        "allocationCode": "ALLOC-CUST",
+                        "priceExclVat": 3000.0,
+                        "priceInclVat": 3540.0,
+                        "percentagePayer": 60.0,
+                        "billingStatus": "DUE"
+                    },
+                    {
+                        "invoiceType": "MANUFACTURER",
+                        "allocationCode": "ALLOC-WAR",
+                        "priceExclVat": 2000.0,
+                        "priceWithVat": 2360.0,
+                        "percentagePayer": 40.0,
+                        "billingStatus": "PENDING"
+                    }
+                ],
+                "partInfo": [
+                    {
+                        "partId": "5544",
+                        "partNumber": "PN-AB-5544",
+                        "localPartNumber": "",
+                        "partDescription": "Front control arm bushing",
+                        "partType": "<1 Manufacturer part  2: non- Manufacturer part >",
+                        "itemQuantity": 2,
+                        "unitaryPriceExclVat": 600.0,
+                        "originalPriceExclVat": 1200.0,
+                        "originalPriceWithVat": 1416.0,
+                        "priceExclVatAfterDiscount": 1080.0,
+                        "priceWithVatAfterDiscount": 1274.4,
+                        "discountInAmountOnPriceWithVat": 141.6,
+                        "appDiscountPercentage": 10.0,
+                        "dmsDiscountPercentage": 0.0,
+                        "reasonDiscountCodeId": "DISC-PART",
+                        "reasonDiscountDescription": "Parts discount",
+                        "vatPercentage": 18.0,
+                        "quantityOrdered": 2,
+                        "quantityReserved": 2,
+                        "quantityDelivered": 2,
+                        "informationEta": "2025-12-03",
+                        "replacementStatus": "ORIGINAL",
+                        "stockSource": "",
+                        "warrantyData": {
+                            "partNumberWarranty": "",
+                            "isCasualPart": false,
+                            "partDecisionCode": "",
+                            "partDecisionPercentage": "",
+                            "partPayer": [
+                                {
+                                    "invoiceType": "CUSTOMER",
+                                    "priceExclVat": 648.0,
+                                    "priceInclVat": 764.64,
+                                    "percentagePayer": 60.0
+                                },
+                                {
+                                    "invoiceType": "MANUFACTURER",
+                                    "priceExclVat": 432.0,
+                                    "priceInclVat": 509.76,
+                                    "percentagePayer": 40.0
+                                }
+                            ],
+                            "handlingFees": 100.0,
+                            "shippingFees": 150.0
+                        }
+                    }
+                ],
+                "laborInfo": [
+                    {
+                        "laborOperationId": "LAB-ALGN-01",
+                        "laborOperationCode": "TST",
+                        "laborOperationDescription": "Wheel alignment and suspension inspection",
+                        "laborOperationType": "LABOR",
+                        "laborDuration": 2.5,
+                        "laborRate": "STD",
+                        "laborRateAmount": 900.0,
+                        "priceExclVatAfterDiscount": 2700.0,
+                        "priceWithVatAfterDiscount": 3186.0,
+                        "originalPriceExclVat": 3000.0,
+                        "originalPriceWithVat": 3540.0,
+                        "discountInAmountOnPriceWithVat": 354.0,
+                        "appDiscountPercentage": 10.0,
+                        "dmsDiscountPercentage": 0.0,
+                        "reasonDiscountCodeID": "DISC-LAB",
+                        "reasonDiscountDescription": "Labor promo",
+                        "vatPercentage": 18.0,
+                        "warranty": {
+                            "isCasualLabor": false,
+                            "laborDecisionCode": "",
+                            "laborDecisionPercentage": "",
+                            "laborPayer": [
+                                {
+                                    "invoiceType": "CUSTOMER",
+                                    "priceExclVat": 1620.0,
+                                    "priceInclVat": 1911.6,
+                                    "percentagePayer": 60.0
+                                },
+                                {
+                                    "invoiceType": "MANUFACTURER",
+                                    "priceExclVat": 1080.0,
+                                    "priceInclVat": 1274.4,
+                                    "percentagePayer": 40.0
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "externalJobLabor": [
+                    {
+                        "externalJobId": "EXT-JOB-001",
+                        "externalJobDescription": "Wheel balancing at partner shop",
+                        "externalJobPriceExclVat": 800.0,
+                        "externalJobPriceWithVat": 944.0,
+                        "externalJobInvoiceId": "EXT-INV-5566",
+                        "externalDecisionCode": "",
+                        "externalDecisionPercentage": ""
+                    }
+                ],
+                "externalJobPayer": [
+                    {
+                        "invoiceType": "CUSTOMER",
+                        "priceExclVat": 500.0,
+                        "priceInclVat": 590.0,
+                        "percentagePayer": 62.5
+                    },
+                    {
+                        "invoiceType": "MANUFACTURER",
+                        "priceExclVat": 300.0,
+                        "priceWithVat": 354.0,
+                        "percentagePayer": 37.5
+                    }
+                ],
+                "freeText": {
+                    "textId": "",
+                    "textContent": ""
+                },
+                "fees": [
+                    {
+                        "feeId": "",
+                        "feeDescription": "",
+                        "totalPriceExclVat": "",
+                        "totalPriceInclVat": ""
+                    }
+                ]
+            }
+        ],
+        "consents": [
+            {
+                "repairer": [
+                    {
+                        "channelCode": "1",
+                        "privacyIndicator": true
+                    },
+                    {
+                        "channelCode": "2",
+                        "privacyIndicator": true
+                    },
+                    {
+                        "channelCode": "3",
+                        "privacyIndicator": true
+                    }
+                ],
+                "stellantis": [
+                    {
+                        "channelCode": "4",
+                        "privacyIndicator": true
+                    },
+                    {
+                        "channelCode": "5",
+                        "privacyIndicator": true
+                    },
+                    {
+                        "channelCode": "6",
+                        "privacyIndicator": true
+                    }
+                ],
+                "collectionDate": "?",
+                "disclaimerId": "<ID>",
+                "issuingName": "?"
+            }
+        ],
+        "futureWorks": [
+            {
+                "savedJobId": "?"
+            }
+        ],
+        "prepaymentInfo": [
+            {
+                "mean": "",
+                "referenceId": "?",
+                "amount": "?"
+            }
+        ],
+        "appointments": [
+            {
+                "appointmentInternalId": "?",
+                "appointmentExternalId": "?",
+                "appointmentDmsId": "?",
+                "source": "?",
+                "options": [
+                    "?",
+                    "?",
+                    "?"
+                ],
+                "reception": {
+                    "estimatedReceptionDateTime": "2025-12-05T09:30:00+05:30",
+                    "receptionDateTime": "2025-12-05T09:45:00+05:30",
+                    "receptionDuration": "?",
+                    "receptionType": "?",
+                    "receptionServiceAdvisorId": "SG36544",
+                    "receptionServiceAdvisorName": "TEST"
+                },
+                "delivery": {
+                    "estimatedDeliveryDateTime": "2025-12-05T17:30:00+05:30",
+                    "deliveryDateTime": "2025-12-05T17:45:00+05:30",
+                    "deliveryDuration": "?",
+                    "deliveryType": "?",
+                    "deliveryServiceAdvisorId": "SG5477",
+                    "deliveryServiceAdvisorName": "Peter"
+                }
+            }
+        ],
+        "mobility": [
+            {
+                "mobilityType": "LOAN_VEHICLE",
+                "loanVehicleInfo": {
+                    "loanVehicle": "VR344555577779",
+                    "loanVehicleLp": "SDF-69874-FSD",
+                    "loanVehicleOdometerIn": 12875,
+                    "loanVehicleOdometerOut": 12940
+                },
+                "loanVehicleAppt": [
+                    {
+                        "loanVehicleAppointmentDate": "2025-12-05T09:15:00+05:30",
+                        "loanVehicleAppointmentEmployee": "TEST",
+                        "loanVehicleReturnDate": "2025-12-05T18:15:00+05:30",
+                        "loanVehicleReturnEmployee": "Service Desk"
+                    }
+                ],
+                "driverInfo": [
+                    {
+                        "lastName": " ",
+                        "firstName": " ",
+                        "driverLicenceNumber": "ITDF654fGFDDFG",
+                        "driverLicenceDeliveryDate": "2020-12-05",
+                        "driverLicenceDeliveryCity": "Milano",
+                        "birthDate": "2005-09-05",
+                        "birthTown": "Milano"
+                    }
+                ],
+                "comments": "Customer requested hatchback loaner.",
+                "loanerRequest": true,
+                "loanVehicleContract": "https://mopar.com/contract.pdf"
+            }
+        ],
+        "workShopActivities": [
+            {
+                "activityId": "ACT-01",
+                "activityTimeDate": "2025-12-05T11:00:00+05:30",
+                "activityDuration": 90,
+                "assignedTechnicianId": "TECH-045",
+                "assignedTechnicianName": "TEST",
+                "assignedTeam": "Suspension",
+                "assignedWorklines": [
+                    " JOB-INT-0001"
+                ],
+                "status": "IN_PROGRESS",
+                "clocking": [
+                    "2025-12-05T11:00:00+05:30_START_D855444",
+                    "2025-12-05T11:00:00+05:30_STOP_D855444"
+                ]
+            }
+        ],
+        "attachmentLinks": {
+            "clientAttachments": [
+                ""
+            ],
+            "saPhotos": [
+                ""
+            ],
+            "videoCheckAttachments": [
+                ""
+            ],
+            "currentMaintenancePlan": "",
+            "maintenanceChecklist": "",
+            "toolReportsLink": [
+                ""
+            ],
+            "subcontractorInvoice": [
+                ""
+            ],
+            "vehicleRegistrationCardScan": "",
+            "driversLicenseScan": "",
+            "consentsPdf": "",
+            "miscellaneous": [
+                ""
+            ]
+        },
+        "partOrderLinks": [
+            {
+                "srpInternalOrderId": "SRP-ORD-99001"
+            }
+        ],
+        "repairOrderDoc": {
+            "signedRepairOrderDocument": ""
+        },
+        "communication": {
+            "links": ""
+        }
+    }
+}
