@@ -157,7 +157,7 @@ class PkManager {
       const matched = {};
       for (const code of codes) {
         if (Object.prototype.hasOwnProperty.call(liveMap, code)) {
-          matched[code] = { ...liveMap[code], DEPT: category };
+          matched[code] = { ...liveMap[code], category };
         }
       }
       if (Object.keys(matched).length > 0) {
@@ -196,17 +196,17 @@ class PkManager {
     // non interrompe le altre
     const tasks = entries.map(({ code, rowData }) =>
       this._fetchDetail(pkwstouse, VIN, code, rowData)
-        .then(detail  => ({ code, detail, DEPT: rowData?.DEPT }))
-        .catch(err    => ({ code, detail: { error: err.message ?? String(err) }, DEPT: rowData?.DEPT }))
+        .then(detail  => ({ code, detail, category: rowData?.category }))
+        .catch(err    => ({ code, detail: { error: err.message ?? String(err) }, category: rowData?.category }))
     );
 
     const results = await Promise.all(tasks);
 
-    // Riporta DEPT (valorizzato in getValidPackages/liveMap) anche nel dettaglio,
+    // Riporta category (valorizzato in getValidPackages/liveMap) anche nel dettaglio,
     // così pkDetailList mantiene la categoria di appartenenza del pacchetto
     const detailMap = {};
-    for (const { code, detail, DEPT } of results) {
-      detailMap[code] = { ...detail, DEPT };
+    for (const { code, detail, category } of results) {
+      detailMap[code] = { ...detail, category };
     }
 
     this.pkDetailList = Object.values(detailMap);
