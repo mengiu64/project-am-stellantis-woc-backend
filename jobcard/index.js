@@ -16,7 +16,7 @@
  *   dmsRepairOrderId=<value>
  *   customerName=<value>
  *   page=<number>        (default: 1)
- *   pageSize=<number>    (default: 25)
+ *   pageSize=<number>    (default: 50)
  *   sortBy=<field>       (default: jobCardId)
  *   sortOrder=asc|desc   (default: asc)
  *
