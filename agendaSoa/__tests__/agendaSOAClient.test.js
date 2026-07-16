@@ -340,6 +340,113 @@ describe('AgendaSOAClient', () => {
     await expect(errorCb(new Error('network failure'))).rejects.toThrow('network failure');
   });
 
+  describe('interceptors: request/response logging redaction', () => {
+    let logSpy;
+
+    beforeEach(() => {
+      logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => logSpy.mockRestore());
+
+    test('request interceptor masks sensitive headers and truncates long string body', () => {
+      const [callback] = mockHttp.interceptors.request.use.mock.calls[0];
+      const longBody = 'x'.repeat(5000);
+      const req = {
+        method: 'post',
+        baseURL: 'http://test-host',
+        url: '/endpoint',
+        headers: { Authorization: 'Basic xxx', 'Content-Type': 'application/json' },
+        params: { foo: 'bar' },
+        data: longBody,
+      };
+
+      callback(req);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.headers.Authorization).toBe('***REDACTED***');
+      expect(log.headers['Content-Type']).toBe('application/json');
+      expect(log.body.endsWith('...[truncated]')).toBe(true);
+      expect(req.metadata.startedAt).toEqual(expect.any(Number));
+    });
+
+    test('request interceptor masks sensitive fields in object body', () => {
+      const [callback] = mockHttp.interceptors.request.use.mock.calls[0];
+      const req = {
+        method: 'get',
+        url: '/endpoint',
+        headers: {},
+        data: { password: 'p1', foo: 'bar' },
+      };
+
+      callback(req);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.body.password).toBe('***REDACTED***');
+      expect(log.body.foo).toBe('bar');
+    });
+
+    test('response interceptor logs redacted body and computes durationMs from metadata', () => {
+      const [successCb] = mockHttp.interceptors.response.use.mock.calls[0];
+      const res = {
+        status: 200,
+        config: {
+          method: 'get',
+          baseURL: 'http://test-host',
+          url: '/endpoint',
+          metadata: { startedAt: Date.now() - 10 },
+        },
+        headers: {},
+        data: { accessToken: 'secret-value', list: [{ token: 't1' }, { name: 'ok' }] },
+      };
+
+      successCb(res);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.body.accessToken).toBe('***REDACTED***');
+      expect(log.body.list[0].token).toBe('***REDACTED***');
+      expect(log.body.list[1].name).toBe('ok');
+      expect(log.durationMs).toEqual(expect.any(Number));
+    });
+
+    test('response interceptor logs primitive body without throwing when metadata missing', () => {
+      const [successCb] = mockHttp.interceptors.response.use.mock.calls[0];
+      const res = { status: 204, data: 'plain text', headers: {} };
+
+      successCb(res);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.body).toBe('plain text');
+      expect(log.durationMs).toBeUndefined();
+    });
+
+    test('error interceptor logs redacted response data when available', async () => {
+      const [, errorCb] = mockHttp.interceptors.response.use.mock.calls[0];
+      const err = {
+        message: 'Request failed',
+        config: { method: 'post', baseURL: 'http://test-host', url: '/endpoint' },
+        response: { status: 500, data: { secret: 'abc' } },
+      };
+
+      await expect(errorCb(err)).rejects.toBe(err);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.body.secret).toBe('***REDACTED***');
+      expect(log.statusCode).toBe(500);
+    });
+
+    test('error interceptor handles missing config and response gracefully', async () => {
+      const [, errorCb] = mockHttp.interceptors.response.use.mock.calls[0];
+      const err = { message: 'Unknown error' };
+
+      await expect(errorCb(err)).rejects.toBe(err);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.url).toBeUndefined();
+      expect(log.statusCode).toBeUndefined();
+    });
+  });
+
   // ── _get validateStatus ───────────────────────────────────────────────────────
 
   test('_get passes validateStatus that always returns true', async () => {
