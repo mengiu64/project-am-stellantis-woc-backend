@@ -326,12 +326,30 @@ class PkManager {
     // 2) interroga il DML per prezzo/disponibilità, usando this.pkDetailList
     const priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId);
 
-    // 3) costruisco le mappe di lookup PartNumber → dati e LaborOperationID → dati
-    //    a partire dalle WorkLines ritornate dal DML
-    const partsAvailMap = {};
-    const laborAvailMap = {};
-    const workLines = priceAndAvailability?.WorkLines ?? [];
-    for (const workLine of workLines) {
+    // 3) indicizzo le WorkLines per WorkLineReference (== pkDetail.codice, vedi
+    //    getPriceAndAvailability). NON si può usare un'unica mappa globale
+    //    PartNumber/LaborOperationID → dati per TUTTE le WorkLines insieme:
+    //    se due pacchetti diversi condividono lo stesso ricambio/operazione
+    //    (stesso COD), l'ultima WorkLine processata sovrascriverebbe il
+    //    valore nella mappa condivisa e TUTTI i pacchetti con quel COD
+    //    riceverebbero lo stesso valore "vincente", indipendentemente dal
+    //    pacchetto a cui appartiene realmente — con risultati non
+    //    deterministici (dipendenti dall'ordine delle WorkLines nella
+    //    risposta DML) e valori duplicati/errati tra pacchetti diversi.
+    const workLinesByRef = {};
+    for (const workLine of priceAndAvailability?.WorkLines ?? []) {
+      if (workLine?.WorkLineReference) workLinesByRef[workLine.WorkLineReference] = workLine;
+    }
+
+    // 4) arricchisco this.pkDetailList in place: ciascun pacchetto legge
+    //    esclusivamente la propria WorkLine (matchata per WorkLineReference),
+    //    così non c'è più "bleed" di dati tra pacchetti diversi
+    this.pkDetailList.forEach((pkDetail, idx) => {
+      const ref       = pkDetail?.codice ?? String(idx + 1).padStart(3, '0');
+      const workLine  = workLinesByRef[ref];
+      if (!workLine) return;
+
+      const partsAvailMap = {};
       for (const row of workLine?.PartsItem ?? []) {
         if (!row?.PartNumber) continue;
         partsAvailMap[row.PartNumber] = {
@@ -340,6 +358,8 @@ class PkManager {
           SCONTO:   row.DiscountPercentage,
         };
       }
+
+      const laborAvailMap = {};
       for (const row of workLine?.LaborItems ?? []) {
         if (!row?.LaborOperationID) continue;
         laborAvailMap[row.LaborOperationID] = {
@@ -348,10 +368,7 @@ class PkManager {
           SCONTO:   row.DiscountPercentage,
         };
       }
-    }
 
-    // 4) arricchisco this.pkDetailList in place
-    for (const pkDetail of this.pkDetailList) {
       for (const row of pkDetail?.listaRicambi ?? []) {
         if (row?.TYPE === 'SP' && partsAvailMap[row.COD]) {
           Object.assign(row, partsAvailMap[row.COD]);
@@ -362,7 +379,7 @@ class PkManager {
           Object.assign(row, laborAvailMap[row.COD]);
         }
       }
-    }
+    });
 
     return this.pkDetailList;
   }

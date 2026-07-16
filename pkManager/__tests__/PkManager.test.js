@@ -825,6 +825,7 @@ describe('PkManager', () => {
       jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({
         WorkLines: [
           {
+            WorkLineReference: 'PK1',
             PartsItem: [
               { PartNumber: 'SP1', OriginalPriceExclVAT: 12.5, DiscountPercentage: 10, BinLocation: [{ QuantityAvailable: 3 }] },
             ],
@@ -883,6 +884,7 @@ describe('PkManager', () => {
       jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({
         WorkLines: [
           {
+            WorkLineReference: 'PK1',
             // riga senza PartNumber => continue
             PartsItem: [{ OriginalPriceExclVAT: 1 }, { PartNumber: 'SP1', OriginalPriceExclVAT: 12.5 }],
             // riga senza LaborOperationID => continue
@@ -896,6 +898,37 @@ describe('PkManager', () => {
       // TYPE non corrisponde => nessun arricchimento applicato
       expect(result[0].listaRicambi[0]).toEqual({ TYPE: 'OP', COD: 'SP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 });
       expect(result[0].listaOperazioni[0]).toEqual({ TYPE: 'SP', COD: 'OP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 });
+    });
+
+    test('does not bleed AV_LOCAL/PRICE/SCONTO between different packages sharing the same COD', async () => {
+      // Regressione: due pacchetti diversi (PK1/PK2) condividono lo stesso
+      // ricambio SP1 con disponibilità/prezzo differenti nella rispettiva
+      // WorkLine (matchata per WorkLineReference == codice pacchetto). Prima
+      // della fix, una mappa globale PartNumber → dati sovrascriveva il
+      // valore per SP1 usando l'ultima WorkLine processata, "bleedando" lo
+      // stesso valore (sbagliato, e non deterministico rispetto all'ordine
+      // delle WorkLines) su entrambi i pacchetti.
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        manager.pkDetailList = [
+          { codice: 'PK1', listaOperazioni: [], listaRicambi: [{ TYPE: 'SP', COD: 'SP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 }] },
+          { codice: 'PK2', listaOperazioni: [], listaRicambi: [{ TYPE: 'SP', COD: 'SP1', PRICE: '', AV_LOCAL: 0, SCONTO: 0 }] },
+        ];
+        return {};
+      });
+
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({
+        WorkLines: [
+          { WorkLineReference: 'PK1', PartsItem: [{ PartNumber: 'SP1', OriginalPriceExclVAT: 10, DiscountPercentage: 0, BinLocation: [{ QuantityAvailable: 1 }] }] },
+          { WorkLineReference: 'PK2', PartsItem: [{ PartNumber: 'SP1', OriginalPriceExclVAT: 99, DiscountPercentage: 20, BinLocation: [{ QuantityAvailable: 5 }] }] },
+        ],
+      });
+
+      const result = await manager.getPkList('eper', 'DOC1', 'CUST1', 'VIN123');
+
+      expect(result[0].listaRicambi[0]).toMatchObject({ AV_LOCAL: 1, PRICE: 10, SCONTO: 0 });
+      expect(result[1].listaRicambi[0]).toMatchObject({ AV_LOCAL: 5, PRICE: 99, SCONTO: 20 });
     });
 
     test('overrides wsConfig.menupricing.dealerIdentificationCode when provided', async () => {
