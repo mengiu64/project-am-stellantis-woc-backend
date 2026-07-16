@@ -12,6 +12,35 @@ for (const sibling of ['pkEper', 'pkDocsoa', 'pkMenupricing']) {
   dotenv.config({ path: path.resolve(__dirname, `../${sibling}/.env`) });
 }
 
+// ─── Concorrenza chiamate di dettaglio ─────────────────────────────────────────
+// Alcuni WS legacy (in particolare MenuPricing, che mantiene stato lato server
+// per dealer/sessione) possono restituire risposte "incrociate" o duplicate tra
+// richieste realmente concorrenti, producendo un pkDetailList non deterministico
+// e con codici duplicati/mancanti tra una chiamata e l'altra a parità di
+// argomenti. Di default le chiamate di dettaglio vengono quindi serializzate;
+// il valore è comunque configurabile via env per i WS che si dimostrano stabili
+// sotto concorrenza.
+const DETAIL_FETCH_CONCURRENCY = Number(process.env.PK_DETAIL_FETCH_CONCURRENCY) || 1;
+
+// ─── Helper: esegue una lista di task (funzioni che ritornano Promise) con
+// concorrenza limitata. Le task NON devono essere Promise già avviate: devono
+// essere funzioni, altrimenti sarebbero già tutte "in volo" prima ancora che
+// pLimit possa applicare il limite.
+async function pLimit(taskFns, concurrency) {
+  const results = new Array(taskFns.length);
+  let next = 0;
+
+  async function worker() {
+    while (next < taskFns.length) {
+      const i = next++;
+      results[i] = await taskFns[i]();
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+  return results;
+}
+
 // ─── Configurazione pacchetti per ws ──────────────────────────────────────────
 // Mappa statica: pkwstouse → categoria → lista codici
 const CONFIG_PACKAGES = {
@@ -192,15 +221,20 @@ class PkManager {
 
     if (entries.length === 0) return {};
 
-    // Chiamate al dettaglio in parallelo — un errore su un singolo codice
-    // non interrompe le altre
-    const tasks = entries.map(({ code, rowData }) =>
+    // Chiamate al dettaglio con concorrenza limitata (vedi DETAIL_FETCH_CONCURRENCY
+    // sopra): i WS legacy (in particolare MenuPricing, stateful sul dealer/sessione)
+    // possono "confondere" le risposte quando ricevono più richieste realmente in
+    // parallelo, restituendo il dettaglio sbagliato/duplicato per alcuni codici in
+    // modo non deterministico. Le task sono funzioni (non Promise già avviate),
+    // così pLimit ne controlla davvero l'avvio; un errore su un singolo codice
+    // non interrompe le altre.
+    const taskFns = entries.map(({ code, rowData }) => () =>
       this._fetchDetail(pkwstouse, VIN, code, rowData)
         .then(detail  => ({ code, detail, category: rowData?.category }))
         .catch(err    => ({ code, detail: { error: err.message ?? String(err) }, category: rowData?.category }))
     );
 
-    const results = await Promise.all(tasks);
+    const results = await pLimit(taskFns, DETAIL_FETCH_CONCURRENCY);
 
     // Riporta category (valorizzato in getValidPackages/liveMap) anche nel dettaglio,
     // così pkDetailList mantiene la categoria di appartenenza del pacchetto
