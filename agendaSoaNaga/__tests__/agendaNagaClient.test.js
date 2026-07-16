@@ -261,6 +261,16 @@ describe('AgendaNagaClient', () => {
       expect(log.durationMs).toBeUndefined();
     });
 
+    test('response interceptor logs boolean/number response bodies without throwing', () => {
+      const [successCb] = mockHttp.interceptors.response.use.mock.calls[0];
+      const res = { status: 200, data: true, headers: {} };
+
+      successCb(res);
+
+      const log = JSON.parse(logSpy.mock.calls[0][0]);
+      expect(log.body).toBe(true);
+    });
+
     test('error interceptor logs redacted response data when available', async () => {
       const [, errorCb] = mockHttp.interceptors.response.use.mock.calls[0];
       const err = {
