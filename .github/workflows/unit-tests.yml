@@ -2431,6 +2431,9 @@ jobs:
 
   deploy-dev:
     name: Deploy to AWS (SAM) — dev
+    concurrency:
+      group: deploy-stla-woc-backend-dev
+      cancel-in-progress: false
     needs:
       - test-agendaSoa
       - test-agendaSoaNaga
@@ -2536,6 +2539,9 @@ jobs:
 
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
+    concurrency:
+      group: deploy-stla-woc-backend-stage
+      cancel-in-progress: false
     needs:
       - test-agendaSoa
       - test-agendaSoaNaga
@@ -2641,6 +2647,9 @@ jobs:
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
+    concurrency:
+      group: deploy-stla-woc-backend-prod
+      cancel-in-progress: false
     needs:
       - test-agendaSoa
       - test-agendaSoaNaga

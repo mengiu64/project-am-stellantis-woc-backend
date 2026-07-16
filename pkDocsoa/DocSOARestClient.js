@@ -23,6 +23,25 @@ const axiosProxy = PROXY_HOST
   ? { host: PROXY_HOST, port: PROXY_PORT, protocol: 'http' }
   : false;
 
+const MAX_LOG_BODY_LENGTH = 4000;
+function truncate(str) {
+  if (typeof str !== 'string') return str;
+  return str.length > MAX_LOG_BODY_LENGTH
+    ? `${str.slice(0, MAX_LOG_BODY_LENGTH)}...[truncated]`
+    : str;
+}
+
+// Maschera credenziali WS-Security (<wsse:Password>...</wsse:Password>) e header Authorization
+// prima di loggare request/response XML.
+function redactXml(xml) {
+  if (typeof xml !== 'string') return xml;
+  const masked = xml.replace(
+    /(<[\w:]*Password[^>]*>)([\s\S]*?)(<\/[\w:]*Password>)/gi,
+    '$1***REDACTED***$3'
+  );
+  return truncate(masked);
+}
+
 // URL dei singoli servizi
 const URLS = {
   functionsService:         () => `${HOST}/applications/newapvprdocre/ws/functionsService/v1?client_id=${CLIENT_ID}`,
@@ -204,28 +223,54 @@ function basicAuth() {
 }
 
 async function doPost(url, xml, extraHeaders = {}) {
-  if (process.env.DEBUG_SOAP) {
-    console.log('\n[DEBUG] POST', url);
-    console.log('[DEBUG] Proxy:', PROXY_HOST ? `${PROXY_HOST}:${PROXY_PORT}` : 'none');
-    console.log('[DEBUG] Request:\n', xml);
+  const startedAt = Date.now();
+
+  console.log(JSON.stringify({
+    logType: 'http_request',
+    service: 'pkDocsoa',
+    method: 'POST',
+    url,
+    proxy: PROXY_HOST ? `${PROXY_HOST}:${PROXY_PORT}` : null,
+    headers: { 'Content-Type': 'application/xml', Accept: 'application/xml', Authorization: '***REDACTED***', ...extraHeaders },
+    body: redactXml(xml),
+  }));
+
+  let response;
+  try {
+    response = await axios.post(url, xml, {
+      httpsAgent,
+      proxy:   axiosProxy,
+      timeout: TIMEOUT_MS,
+      headers: {
+        'Content-Type':  'application/xml',
+        'Accept':        'application/xml',
+        'Authorization': basicAuth(),
+        ...extraHeaders,
+      },
+    });
+  } catch (err) {
+    console.log(JSON.stringify({
+      logType: 'http_error',
+      service: 'pkDocsoa',
+      method: 'POST',
+      url,
+      durationMs: Date.now() - startedAt,
+      statusCode: err.response?.status,
+      error: err.message,
+      body: redactXml(err.response?.data),
+    }));
+    throw err;
   }
 
-  const response = await axios.post(url, xml, {
-    httpsAgent,
-    proxy:   axiosProxy,
-    timeout: TIMEOUT_MS,
-    headers: {
-      'Content-Type':  'application/xml',
-      'Accept':        'application/xml',
-      'Authorization': basicAuth(),
-      ...extraHeaders,
-    },
-  });
-
-  if (process.env.DEBUG_SOAP) {
-    console.log('\n[DEBUG] Response status:', response.status);
-    console.log('[DEBUG] Response body:\n', response.data);
-  }
+  console.log(JSON.stringify({
+    logType: 'http_response',
+    service: 'pkDocsoa',
+    method: 'POST',
+    url,
+    statusCode: response.status,
+    durationMs: Date.now() - startedAt,
+    body: redactXml(response.data),
+  }));
 
   if (response.status < 200 || response.status > 206) {
     throw new Error(`HTTP ${response.status}: ${response.data}`);

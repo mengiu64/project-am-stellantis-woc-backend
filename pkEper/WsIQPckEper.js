@@ -16,6 +16,14 @@ const CONCURRENCY  = 3;   // max richieste SOAP simultanee verso ePer
 // httpsAgent che ignora la verifica del certificato (come il PHP originale)
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
+const MAX_LOG_BODY_LENGTH = 4000;
+function truncate(str) {
+  if (typeof str !== 'string') return str;
+  return str.length > MAX_LOG_BODY_LENGTH
+    ? `${str.slice(0, MAX_LOG_BODY_LENGTH)}...[truncated]`
+    : str;
+}
+
 // ─── Helper: esegue tasks con concorrenza limitata ─────────────────────────────
 async function pLimit(tasks, concurrency) {
   const results = new Array(tasks.length);
@@ -85,15 +93,48 @@ function buildSoapRequest(xmlMessage) {
 // ─── Helper: esegue la chiamata SOAP ──────────────────────────────────────────
 async function callSoap(xmlMessage) {
   const soapBody = buildSoapRequest(xmlMessage);
+  const startedAt = Date.now();
 
-  const response = await axios.post(SERVICE_URL, soapBody, {
-    httpsAgent,
-    timeout: TIMEOUT_MS,
-    headers: {
-      'Content-Type': 'text/xml;charset=UTF-8',
-      'SOAPAction':   '""',   // SOAPAction vuoto come da WSDL
-    },
-  });
+  console.log(JSON.stringify({
+    logType: 'http_request',
+    service: 'pkEper',
+    method: 'POST',
+    url: SERVICE_URL,
+    body: truncate(soapBody),
+  }));
+
+  let response;
+  try {
+    response = await axios.post(SERVICE_URL, soapBody, {
+      httpsAgent,
+      timeout: TIMEOUT_MS,
+      headers: {
+        'Content-Type': 'text/xml;charset=UTF-8',
+        'SOAPAction':   '""',   // SOAPAction vuoto come da WSDL
+      },
+    });
+  } catch (err) {
+    console.log(JSON.stringify({
+      logType: 'http_error',
+      service: 'pkEper',
+      method: 'POST',
+      url: SERVICE_URL,
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+      body: truncate(err.response?.data),
+    }));
+    throw err;
+  }
+
+  console.log(JSON.stringify({
+    logType: 'http_response',
+    service: 'pkEper',
+    method: 'POST',
+    url: SERVICE_URL,
+    statusCode: response.status,
+    durationMs: Date.now() - startedAt,
+    body: truncate(response.data),
+  }));
 
   // Estrae il contenuto di <return> dalla risposta SOAP
   const parsed = await xml2js.parseStringPromise(response.data, {

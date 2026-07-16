@@ -4,6 +4,39 @@ const axios = require('axios');
 
 const ALLOWED_STATUS_CODES = [200, 201, 202, 203, 204, 205, 206];
 
+// Chiavi considerate sensibili: il loro valore viene sempre mascherato nei log
+const SENSITIVE_KEY_PATTERN = /pass(word)?|secret|token|api[-_]?key|authorization|pwd|authUser/i;
+const MAX_LOG_BODY_LENGTH = 4000;
+
+function truncate(str) {
+  if (typeof str !== 'string') return str;
+  return str.length > MAX_LOG_BODY_LENGTH
+    ? `${str.slice(0, MAX_LOG_BODY_LENGTH)}...[truncated]`
+    : str;
+}
+
+function redactHeaders(headers = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(headers)) {
+    out[key] = SENSITIVE_KEY_PATTERN.test(key) ? '***REDACTED***' : value;
+  }
+  return out;
+}
+
+function redactBody(body) {
+  if (body == null) return body;
+  if (Array.isArray(body)) return body.map(redactBody);
+  if (typeof body === 'object') {
+    const out = {};
+    for (const [key, value] of Object.entries(body)) {
+      out[key] = SENSITIVE_KEY_PATTERN.test(key) ? '***REDACTED***' : redactBody(value);
+    }
+    return out;
+  }
+  if (typeof body === 'string') return truncate(body);
+  return body;
+}
+
 /**
  * AgendaNaga REST Client for Node.js
  * Handles NAGA appointment creation and update endpoints.
@@ -34,6 +67,45 @@ class AgendaNagaClient {
     }
 
     this.http = axios.create(axiosConfig);
+
+    this.http.interceptors.request.use((req) => {
+      req.metadata = { startedAt: Date.now() };
+      console.log(JSON.stringify({
+        logType: 'http_request',
+        service: 'agendaSoaNaga',
+        method: req.method?.toUpperCase(),
+        url: (req.baseURL || '') + req.url,
+        headers: redactHeaders(req.headers),
+        params: req.params,
+        body: redactBody(req.data),
+      }));
+      return req;
+    });
+
+    this.http.interceptors.response.use((res) => {
+      console.log(JSON.stringify({
+        logType: 'http_response',
+        service: 'agendaSoaNaga',
+        method: res.config?.method?.toUpperCase(),
+        url: (res.config?.baseURL || '') + (res.config?.url || ''),
+        statusCode: res.status,
+        durationMs: res.config?.metadata ? Date.now() - res.config.metadata.startedAt : undefined,
+        headers: redactHeaders(res.headers),
+        body: redactBody(res.data),
+      }));
+      return res;
+    }, (err) => {
+      console.log(JSON.stringify({
+        logType: 'http_error',
+        service: 'agendaSoaNaga',
+        method: err.config?.method?.toUpperCase(),
+        url: err.config ? (err.config.baseURL || '') + err.config.url : undefined,
+        statusCode: err.response?.status,
+        error: err.message,
+        body: redactBody(err.response?.data),
+      }));
+      return Promise.reject(err);
+    });
   }
 
   // ─── private helpers ────────────────────────────────────────────────────────
