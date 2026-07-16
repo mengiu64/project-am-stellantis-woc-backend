@@ -26,6 +26,16 @@ class S3TranslationsRepository extends TranslationsRepository {
     }
 
     const key = this.buildKey(lang);
+    const startedAt = Date.now();
+
+    console.log(JSON.stringify({
+      logType: 'http_request',
+      service: 'translations',
+      method: 'S3:GetObject',
+      bucket: this.bucketName,
+      key,
+      lang,
+    }));
 
     let response;
     try {
@@ -34,6 +44,15 @@ class S3TranslationsRepository extends TranslationsRepository {
         Key: key,
       }));
     } catch (err) {
+      console.log(JSON.stringify({
+        logType: 'http_error',
+        service: 'translations',
+        method: 'S3:GetObject',
+        bucket: this.bucketName,
+        key,
+        durationMs: Date.now() - startedAt,
+        error: err.message,
+      }));
       if (isNotFoundError(err)) {
         throw new TranslationNotFoundError(lang);
       }
@@ -41,6 +60,17 @@ class S3TranslationsRepository extends TranslationsRepository {
     }
 
     const raw = await streamToString(response.Body);
+
+    console.log(JSON.stringify({
+      logType: 'http_response',
+      service: 'translations',
+      method: 'S3:GetObject',
+      bucket: this.bucketName,
+      key,
+      lang,
+      durationMs: Date.now() - startedAt,
+      sizeBytes: raw.length,
+    }));
 
     try {
       return JSON.parse(raw);

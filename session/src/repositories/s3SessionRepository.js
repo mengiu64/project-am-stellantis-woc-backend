@@ -31,6 +31,16 @@ class S3SessionRepository extends SessionRepository {
     }
 
     const market = String(codmarket).toUpperCase();
+    const startedAt = Date.now();
+
+    console.log(JSON.stringify({
+      logType: 'http_request',
+      service: 'session',
+      method: 'S3:GetObject',
+      bucket: this.bucketName,
+      key: this.dataKey,
+      market,
+    }));
 
     let response;
     try {
@@ -39,6 +49,15 @@ class S3SessionRepository extends SessionRepository {
         Key: this.dataKey,
       }));
     } catch (err) {
+      console.log(JSON.stringify({
+        logType: 'http_error',
+        service: 'session',
+        method: 'S3:GetObject',
+        bucket: this.bucketName,
+        key: this.dataKey,
+        durationMs: Date.now() - startedAt,
+        error: err.message,
+      }));
       if (isNotFoundError(err)) {
         throw new Error(`File "${this.dataKey}" non trovato nel bucket "${this.bucketName}"`);
       }
@@ -55,6 +74,20 @@ class S3SessionRepository extends SessionRepository {
     }
 
     const marketData = allMarketsData[market];
+
+    console.log(JSON.stringify({
+      logType: 'http_response',
+      service: 'session',
+      method: 'S3:GetObject',
+      bucket: this.bucketName,
+      key: this.dataKey,
+      market,
+      durationMs: Date.now() - startedAt,
+      sizeBytes: raw.length,
+      found: !!marketData,
+      fields: marketData ? Object.keys(marketData) : [],
+    }));
+
     if (!marketData) {
       throw new SessionNotFoundError(market);
     }

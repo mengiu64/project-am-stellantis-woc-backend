@@ -24,6 +24,24 @@ const TIMEOUT_MS = 30_000;
 
 const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
+const MAX_LOG_BODY_LENGTH = 4000;
+function truncate(str) {
+  if (typeof str !== 'string') return str;
+  return str.length > MAX_LOG_BODY_LENGTH
+    ? `${str.slice(0, MAX_LOG_BODY_LENGTH)}...[truncated]`
+    : str;
+}
+
+// Maschera credenziali WS-Security (<wsse:Password>...</wsse:Password>) prima di loggare.
+function redactXml(xml) {
+  if (typeof xml !== 'string') return xml;
+  const masked = xml.replace(
+    /(<[\w:]*Password[^>]*>)([\s\S]*?)(<\/[\w:]*Password>)/gi,
+    '$1***REDACTED***$3'
+  );
+  return truncate(masked);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Builders XML
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -146,10 +164,16 @@ async function parseResponse(xmlStr) {
 
 async function callMethodJob(params, method, endpointUrl) {
   const soapEnvelope = buildRequest(params, method);
+  const startedAt = Date.now();
 
-  if (process.env.DEBUG_SOAP) {
-    console.log('\n[DEBUG] Request XML:\n', soapEnvelope);
-  }
+  console.log(JSON.stringify({
+    logType: 'http_request',
+    service: 'pkMenupricing',
+    method: 'POST',
+    url: endpointUrl,
+    soapMethod: method,
+    body: redactXml(soapEnvelope),
+  }));
 
   let rawData;
   try {
@@ -164,13 +188,29 @@ async function callMethodJob(params, method, endpointUrl) {
       validateStatus: () => true,
     });
     rawData = response.data;
+
+    console.log(JSON.stringify({
+      logType: 'http_response',
+      service: 'pkMenupricing',
+      method: 'POST',
+      url: endpointUrl,
+      soapMethod: method,
+      statusCode: response.status,
+      durationMs: Date.now() - startedAt,
+      body: redactXml(rawData),
+    }));
   } catch (err) {
     // Errori di rete (ETIMEDOUT, ECONNREFUSED, ecc.)
+    console.log(JSON.stringify({
+      logType: 'http_error',
+      service: 'pkMenupricing',
+      method: 'POST',
+      url: endpointUrl,
+      soapMethod: method,
+      durationMs: Date.now() - startedAt,
+      error: err.message,
+    }));
     throw new Error(`Errore di rete MenuPricing (${method}): ${err.message}`);
-  }
-
-  if (process.env.DEBUG_SOAP) {
-    console.log('\n[DEBUG] Raw Response:\n', rawData);
   }
 
   if (!rawData || typeof rawData !== 'string') {

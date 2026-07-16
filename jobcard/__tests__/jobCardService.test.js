@@ -65,6 +65,24 @@ describe('jobCardService', () => {
     expect(options.headers.Authorization).toBe('Bearer bearer-token');
   });
 
+  test('defaults pageSize to 50 when not provided', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await getJobCardList('token', { dealerId: '0062219' });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.headers.pageSize).toBe('50');
+  });
+
+  test('defaults pageSize to 50 when null', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await getJobCardList('token', { dealerId: '0062219', pageSize: null });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.headers.pageSize).toBe('50');
+  });
+
   test('sends optional filters as headers when provided', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 

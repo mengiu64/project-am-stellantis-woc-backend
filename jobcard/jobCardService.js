@@ -46,7 +46,7 @@ function buildDgtOptions(path, extraHeaders, bearerToken) {
  * @param {string}  [params.dmsRepairOrderId]   - DMS repair order ID
  * @param {string}  [params.customerName]       - Customer first/last name or company
  * @param {number}  [params.page]               - 1-based page index
- * @param {number}  [params.pageSize]           - Items per page (10|25|50|100)
+ * @param {number}  [params.pageSize]           - Items per page (10|25|50|100) (default: 50)
  * @param {string}  [params.sortBy]             - Sort attribute (jobCardId|creationDate|vin|status)
  * @param {string}  [params.sortOrder]          - Sort direction (asc|desc)
  * @returns {Promise<object>} parsed response body
@@ -70,6 +70,8 @@ async function getJobCardList(bearerToken, params = {}) {
     sortOrder,
   } = params;
 
+  const resolvedPageSize = pageSize != null ? pageSize : 50;
+
   if (!dealerId) {
     throw new Error('[jobCard] dealerId is required');
   }
@@ -86,7 +88,7 @@ async function getJobCardList(bearerToken, params = {}) {
   if (dmsRepairOrderId)   headers.dmsRepairOrderId   = dmsRepairOrderId;
   if (customerName)       headers.customerName       = customerName;
   if (page      != null)  headers.page               = String(page);
-  if (pageSize  != null)  headers.pageSize           = String(pageSize);
+  headers.pageSize = String(resolvedPageSize);
   if (sortBy)             headers.sortBy             = sortBy;
   if (sortOrder)          headers.sortOrder          = sortOrder;
 
