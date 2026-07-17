@@ -2,7 +2,6 @@
 
 const path   = require('path');
 const dotenv = require('dotenv');
-const { randomUUID } = require('crypto');
 
 // Carica il .env di pkManager, poi i .env dei moduli fratello (senza sovrascrivere
 // variabili già definite). Questo garantisce che EPER_HOST, MENUPRICING_WSDL,
@@ -254,71 +253,52 @@ class PkManager {
   //
   // A differenza della versione PHP (che chiama DMLManager::PartsAvailability()
   // con un unico blocco { items: { PartsItem, LaborItem } } e un solo $pkDetail),
-  // qui si usa dms/dmsService.js::postDmsInquiry() con MessageType=WL, che si
-  // aspetta un array di WorkLines: costruiamo quindi una WorkLine per ciascun
-  // pacchetto presente in this.pkDetailList (valorizzato da getValidPackagesDetail()),
-  // con PartsItem preso da listaRicambi e LaborItem da listaOperazioni — stessa
-  // logica del ciclo `foreach ($pkDetail['listaOperazioni']...)` /
+  // qui si usa dms/dmsService.js::postDmsInquiry() con MessageType=WL: costruiamo
+  // una WorkLine "di dominio" per ciascun pacchetto presente in this.pkDetailList
+  // (valorizzato da getValidPackagesDetail()), con i codici parte presi da
+  // listaRicambi e i codici manodopera da listaOperazioni — stessa logica del
+  // ciclo `foreach ($pkDetail['listaOperazioni']...)` /
   // `foreach ($pkDetail['listaRicambi']...)` della versione PHP.
+  //
+  // NB: qui costruiamo solo il payload "di business" (PartsInquiryHeader +
+  // workLines/customerAccountDmsId semplificati). Sia l'envelope ApplicationArea
+  // sia la struttura DML nidificata di WorkLines (PartsItem/LaborItem con
+  // PartType/PartStatus/LaborType) non sono più responsabilità del chiamante:
+  // vengono costruiti internamente dalla lambda dms
+  // (dmsService.js::postDmsInquiry -> buildApplicationArea() / buildWorkLines()),
+  // che quindi possiede l'intero payload della richiesta invece di riceverlo
+  // già pronto.
   //
   // @param {string} documentId - Repair Order number (PartsInquiryHeader.DocumentID)
   // @param {string} customerId - Customer ID DMS (PartsInquiryHeader.CustomerIdDms)
   // @param {string} vehicleId  - VIN (PartsInquiryHeader.VehicleID)
   // @returns {Promise<object>} - Risposta di postDmsInquiry (InquiryResponse)
   async getPriceAndAvailability(documentId, customerId, vehicleId) {
-    const dmsConfig          = require(path.resolve(__dirname, '../dms/config'));
     const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
     const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
 
-    // 1) Costruisco le WorkLines a partire da pkDetailList (equivalente ai due
-    //    foreach di getPartsAvailabilityXP che popolano $LaborItem/$PartsItem)
-    const WorkLines = this.pkDetailList.map((pkDetail, idx) => {
-      const LaborItem = (pkDetail?.listaOperazioni ?? [])
-        .filter(Boolean)
-        .map((row) => ({ LaborOperationID: row.COD, LaborType: 'L' }));
+    // Costruisco le workLines semplificate a partire da pkDetailList (equivalente
+    // ai due foreach di getPartsAvailabilityXP che popolano $LaborItem/$PartsItem):
+    // la lambda dms si occupa di trasformarle in WorkLines nel formato DML.
+    const workLines = this.pkDetailList.map((pkDetail, idx) => ({
+      workLineReference: pkDetail?.codice ?? String(idx + 1).padStart(3, '0'),
+      partNumbers: (pkDetail?.listaRicambi ?? []).filter(Boolean).map((row) => row.COD),
+      laborOperationIds: (pkDetail?.listaOperazioni ?? []).filter(Boolean).map((row) => row.COD),
+    }));
 
-      const PartsItem = (pkDetail?.listaRicambi ?? [])
-        .filter(Boolean)
-        .map((row) => ({ PartNumber: row.COD, PartType: 'L', PartStatus: 'O' }));
-
-      return {
-        CustomerAccountDMSID: null,
-        WorkLineReference: pkDetail?.codice ?? String(idx + 1).padStart(3, '0'),
-        TransactionType: 1, // add
-        PartsItem,
-        LaborItem,
-      };
-    });
-
-    // 2) Costruisco il payload InquiryRequest (ApplicationArea + PartsInquiryHeader
-    //    + WorkLines), stesso schema usato in dms/test.js::runWorkLinesInquiry()
-    const s = dmsConfig.sender;
     const body = {
-      ApplicationArea: {
-        Sender: {
-          ComponentID: s.componentId,
-          DealerNumberID: s.dealerNumberId,
-          DealerNumberIDSource: s.dealerNumberIdSource,
-          DealerCountryCode: s.dealerCountryCode,
-          LanguageCode: s.languageCode,
-          PhysicalSiteID: s.physicalSiteId,
-          ServiceID: s.serviceId,
-          CurrencyID: s.currencyId,
-          Brand: s.brand,
-        },
-        CreationDateTime: new Date().toISOString(),
-        BODID: randomUUID(),
-      },
       PartsInquiryHeader: {
         DocumentID: documentId,
         CustomerIdDms: customerId,
         MessageType: 'WL',
         VehicleID: vehicleId,
       },
-      WorkLines,
+      customerAccountDmsId: null,
+      workLines,
     };
 
-    // 3) Chiamo il gateway DML (token da cache/PingFederate + POST /inquiry)
+    // Chiamo il gateway DML (token da cache/PingFederate + POST /inquiry): la
+    // lambda dms si occupa di completare il payload con ApplicationArea e WorkLines.
     const token = await getBearerToken();
     return postDmsInquiry(token, body);
   }

@@ -31,7 +31,7 @@ jest.mock('../config', () => ({
 jest.mock('../httpClient');
 
 const { httpsRequest } = require('../httpClient');
-const { getDmsSettings, postDmsInquiry, buildTypeSection } = require('../dmsService');
+const { getDmsSettings, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines } = require('../dmsService');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -53,15 +53,16 @@ const APPLICATION_AREA = {
   BODID:            '11a8988f-75d2-404e-af15-e3efa26cb1da',
 };
 
-/** Minimal body — enough to pass validation */
-const baseInquiryBody = () => ({
+/** Minimal body — enough to pass validation for a given MessageType (default LFP) */
+const baseInquiryBody = (type = 'LFP') => ({
   ApplicationArea:    APPLICATION_AREA,
   PartsInquiryHeader: {
     DocumentID:    '84564621',
     CustomerIdDms: '854265',
-    MessageType:   'LFP',
+    MessageType:   type,
     VehicleID:     '3C4NJCBH7KT831816',
   },
+  ...buildTypeSection(type),
 });
 
 /** Full LFP body matching LFP_1_Request.json */
@@ -209,8 +210,7 @@ describe('postDmsInquiry', () => {
 
   test.each(['LFP', 'WL', 'MP'])('accepts valid MessageType %s', async (type) => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
-    const body = baseInquiryBody();
-    body.PartsInquiryHeader.MessageType = type;
+    const body = baseInquiryBody(type);
     await expect(postDmsInquiry('token', body)).resolves.toBeDefined();
   });
 
@@ -260,6 +260,316 @@ describe('postDmsInquiry', () => {
       .rejects.toThrow('[dms] inquiry failed: HTTP 500');
   });
 });
+
+// ── postDmsInquiry — ApplicationArea owned by the lambda ─────────────────────
+// Il payload non è più interamente delegato a chi chiama la lambda: se il
+// chiamante non fornisce già un ApplicationArea, questo viene generato
+// internamente da postDmsInquiry() usando config.sender.
+
+describe('postDmsInquiry — ApplicationArea built internally', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.log.mockRestore());
+
+  test('builds ApplicationArea from config.sender when caller omits it', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      PartsInquiryHeader: {
+        DocumentID: '84564621',
+        CustomerIdDms: '854265',
+        MessageType: 'WL',
+        VehicleID: '3C4NJCBH7KT831816',
+      },
+      WorkLines: [],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.ApplicationArea.Sender).toEqual(SENDER);
+    expect(sent.ApplicationArea.BODID).toEqual(expect.any(String));
+    expect(sent.ApplicationArea.CreationDateTime).toEqual(expect.any(String));
+  });
+
+  test('generates a different BODID on each call when ApplicationArea is omitted', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      PartsInquiryHeader: {
+        DocumentID: '84564621',
+        CustomerIdDms: '854265',
+        MessageType: 'WL',
+        VehicleID: '3C4NJCBH7KT831816',
+      },
+      WorkLines: [],
+    };
+    await postDmsInquiry('token', body);
+    await postDmsInquiry('token', body);
+
+    const [, firstPayload] = httpsRequest.mock.calls[0];
+    const [, secondPayload] = httpsRequest.mock.calls[1];
+    expect(JSON.parse(firstPayload).ApplicationArea.BODID)
+      .not.toEqual(JSON.parse(secondPayload).ApplicationArea.BODID);
+  });
+
+  test('does not overwrite ApplicationArea when caller provides one', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await postDmsInquiry('token', baseInquiryBody());
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(payload).ApplicationArea).toEqual(APPLICATION_AREA);
+  });
+});
+
+// ── postDmsInquiry — LFP UpSelling.Packages built from packageCodes ──────────
+// Per LFP il chiamante non deve conoscere lo schema DML (Packages come array
+// di oggetti { Code }): passa solo packageCodes (array di stringhe) e la
+// lambda costruisce UpSelling.Packages, esattamente come fa per ApplicationArea.
+
+describe('postDmsInquiry — UpSelling built from packageCodes (LFP)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.log.mockRestore());
+
+  const lfpHeaderOnlyBody = () => ({
+    PartsInquiryHeader: {
+      DocumentID: '84564621',
+      CustomerIdDms: '854265',
+      MessageType: 'LFP',
+      VehicleID: '3C4NJCBH7KT831816',
+    },
+  });
+
+  test('builds UpSelling.Packages from packageCodes when UpSelling is omitted', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = { ...lfpHeaderOnlyBody(), packageCodes: ['ABC', 'DEF'] };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.UpSelling).toEqual({ Packages: [{ Code: 'ABC' }, { Code: 'DEF' }] });
+  });
+
+  test('does not leak packageCodes in the outgoing payload', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = { ...lfpHeaderOnlyBody(), packageCodes: ['ABC'] };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(payload).packageCodes).toBeUndefined();
+  });
+
+  test('does not overwrite UpSelling when caller already provides it, even with packageCodes set', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      ...lfpHeaderOnlyBody(),
+      UpSelling: { Packages: [{ Code: 'ALREADY-BUILT' }] },
+      packageCodes: ['IGNORED'],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(payload).UpSelling).toEqual({ Packages: [{ Code: 'ALREADY-BUILT' }] });
+  });
+
+  test('still rejects LFP when neither UpSelling nor packageCodes are provided', async () => {
+    await expect(postDmsInquiry('token', lfpHeaderOnlyBody()))
+      .rejects.toThrow('[dms] MessageType LFP requires body.UpSelling');
+  });
+});
+
+// ── postDmsInquiry — WL WorkLines built from workLines (semplificate) ───────
+// Per WL il chiamante non deve conoscere lo schema DML nidificato (WorkLines
+// con PartsItem/LaborItem, PartType/PartStatus/LaborType): passa solo
+// workLines semplificate (workLineReference + partNumbers/laborOperationIds)
+// più un customerAccountDmsId unico ripetuto su ogni riga, e la lambda
+// costruisce WorkLines, esattamente come fa per UpSelling.Packages (LFP).
+
+describe('postDmsInquiry — WorkLines built from workLines (WL)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.log.mockRestore());
+
+  const wlHeaderOnlyBody = () => ({
+    PartsInquiryHeader: {
+      DocumentID: '84564621',
+      CustomerIdDms: '854265',
+      MessageType: 'WL',
+      VehicleID: '3C4NJCBH7KT831816',
+    },
+  });
+
+  test('builds WorkLines from workLines when WorkLines is omitted', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      ...wlHeaderOnlyBody(),
+      customerAccountDmsId: null,
+      workLines: [
+        { workLineReference: '054065705406', partNumbers: ['12667457', '1684471080'], laborOperationIds: ['0602153'] },
+        { workLineReference: '054065705406', partNumbers: ['K2AMV5012AD'], laborOperationIds: [] },
+      ],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.WorkLines).toEqual([
+      {
+        CustomerAccountDMSID: null,
+        WorkLineReference: '054065705406',
+        TransactionType: 1,
+        PartsItem: [
+          { PartNumber: '12667457', PartType: 'L', PartStatus: 'O' },
+          { PartNumber: '1684471080', PartType: 'L', PartStatus: 'O' },
+        ],
+        LaborItem: [{ LaborOperationID: '0602153', LaborType: 'L' }],
+      },
+      {
+        CustomerAccountDMSID: null,
+        WorkLineReference: '054065705406',
+        TransactionType: 1,
+        PartsItem: [{ PartNumber: 'K2AMV5012AD', PartType: 'L', PartStatus: 'O' }],
+        LaborItem: [],
+      },
+    ]);
+  });
+
+  test('applies the shared customerAccountDmsId to every generated WorkLine', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      ...wlHeaderOnlyBody(),
+      customerAccountDmsId: '00123',
+      workLines: [
+        { workLineReference: '001', partNumbers: ['A'], laborOperationIds: [] },
+        { workLineReference: '002', partNumbers: ['B'], laborOperationIds: [] },
+      ],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.WorkLines.map((wl) => wl.CustomerAccountDMSID)).toEqual(['00123', '00123']);
+  });
+
+  test('does not leak workLines/customerAccountDmsId in the outgoing payload', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      ...wlHeaderOnlyBody(),
+      customerAccountDmsId: '00123',
+      workLines: [{ workLineReference: '001', partNumbers: ['A'], laborOperationIds: [] }],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.workLines).toBeUndefined();
+    expect(sent.customerAccountDmsId).toBeUndefined();
+  });
+
+  test('does not overwrite WorkLines when caller already provides it, even with workLines set', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const prebuilt = [{
+      CustomerAccountDMSID: '00123',
+      WorkLineReference: '002',
+      TransactionType: 1,
+      PartsItem: [{ PartNumber: 'K2AMV5012AD', PartType: 'L', PartStatus: 'O' }],
+      LaborItem: [{ LaborOperationID: '0010A14', LaborType: 'L' }],
+    }];
+    const body = {
+      ...wlHeaderOnlyBody(),
+      WorkLines: prebuilt,
+      workLines: [{ workLineReference: 'IGNORED', partNumbers: [], laborOperationIds: [] }],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(payload).WorkLines).toEqual(prebuilt);
+  });
+
+  test('still rejects WL when neither WorkLines nor workLines are provided', async () => {
+    await expect(postDmsInquiry('token', wlHeaderOnlyBody()))
+      .rejects.toThrow('[dms] MessageType WL requires body.WorkLines');
+  });
+});
+
+// ── postDmsInquiry — type-specific section owned by the lambda ──────────────
+// In base al MessageType deve essere usata la sezione corretta del payload
+// (LFP → UpSelling, WL → WorkLines, MP → SpareParts): la lambda valida che sia
+// presente la sezione giusta e che non ce ne siano altre, invece di fidarsi
+// ciecamente di quanto costruito dal chiamante.
+
+describe('postDmsInquiry — type-specific section validation', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.log.mockRestore());
+
+  test.each([
+    ['LFP', 'UpSelling'],
+    ['WL', 'WorkLines'],
+    ['MP', 'SpareParts'],
+  ])('rejects MessageType %s when body.%s is missing', async (type, expectedKey) => {
+    const body = baseInquiryBody(type);
+    delete body[expectedKey];
+
+    await expect(postDmsInquiry('token', body))
+      .rejects.toThrow(`[dms] MessageType ${type} requires body.${expectedKey}`);
+    expect(httpsRequest).not.toHaveBeenCalled();
+  });
+
+  test('rejects MessageType WL when body contains SpareParts instead of WorkLines', async () => {
+    const body = baseInquiryBody('WL');
+    delete body.WorkLines;
+    body.SpareParts = { PartsItem: [] };
+
+    await expect(postDmsInquiry('token', body))
+      .rejects.toThrow('[dms] MessageType WL requires body.WorkLines');
+  });
+
+  test('rejects MessageType WL when body also includes UpSelling', async () => {
+    const body = baseInquiryBody('WL');
+    body.UpSelling = { Packages: [] };
+
+    await expect(postDmsInquiry('token', body))
+      .rejects.toThrow('[dms] MessageType WL must not include: UpSelling');
+  });
+
+  test('rejects MessageType LFP when body also includes WorkLines and SpareParts', async () => {
+    const body = baseInquiryBody('LFP');
+    body.WorkLines = [];
+    body.SpareParts = { PartsItem: [] };
+
+    await expect(postDmsInquiry('token', body))
+      .rejects.toThrow('[dms] MessageType LFP must not include: WorkLines, SpareParts');
+  });
+
+  test.each(['LFP', 'WL', 'MP'])('accepts MessageType %s with only its own section', async (type) => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await expect(postDmsInquiry('token', baseInquiryBody(type))).resolves.toBeDefined();
+  });
+});
+
 
 // ── postDmsInquiry — real example bodies ─────────────────────────────────────
 
@@ -326,5 +636,75 @@ describe('buildTypeSection', () => {
   test('unknown type → returns empty object', () => {
     expect(buildTypeSection('UNKNOWN')).toEqual({});
     expect(buildTypeSection(undefined)).toEqual({});
+  });
+});
+
+describe('buildUpSellingPackages', () => {
+  test('maps an array of codes to Packages objects', () => {
+    expect(buildUpSellingPackages(['ABC', 'DEF'])).toEqual({
+      Packages: [{ Code: 'ABC' }, { Code: 'DEF' }],
+    });
+  });
+
+  test('defaults to an empty Packages array when called without arguments', () => {
+    expect(buildUpSellingPackages()).toEqual({ Packages: [] });
+  });
+});
+
+describe('buildWorkLines', () => {
+  test('maps simplified work lines to the full DML WorkLines structure', () => {
+    const result = buildWorkLines(
+      [{ workLineReference: '002', partNumbers: ['K2AMV5012AD'], laborOperationIds: ['0010A14'] }],
+      '00123'
+    );
+
+    expect(result).toEqual([{
+      CustomerAccountDMSID: '00123',
+      WorkLineReference: '002',
+      TransactionType: 1,
+      PartsItem: [{ PartNumber: 'K2AMV5012AD', PartType: 'L', PartStatus: 'O' }],
+      LaborItem: [{ LaborOperationID: '0010A14', LaborType: 'L' }],
+    }]);
+  });
+
+  test('repeats the same customerAccountDmsId across multiple lines, preserving duplicate references', () => {
+    const result = buildWorkLines(
+      [
+        { workLineReference: '054065705406', partNumbers: ['A'] },
+        { workLineReference: '054065705406', partNumbers: ['B'] },
+      ],
+      null
+    );
+
+    expect(result.map((wl) => wl.CustomerAccountDMSID)).toEqual([null, null]);
+    expect(result.map((wl) => wl.WorkLineReference)).toEqual(['054065705406', '054065705406']);
+  });
+
+  test('lets a line override the shared customerAccountDmsId', () => {
+    const result = buildWorkLines(
+      [{ workLineReference: '001', customerAccountDmsId: 'OVERRIDE', partNumbers: [] }],
+      'DEFAULT'
+    );
+
+    expect(result[0].CustomerAccountDMSID).toBe('OVERRIDE');
+  });
+
+  test('defaults missing partNumbers/laborOperationIds to empty arrays and TransactionType to 1', () => {
+    expect(buildWorkLines([{ workLineReference: '001' }])).toEqual([{
+      CustomerAccountDMSID: null,
+      WorkLineReference: '001',
+      TransactionType: 1,
+      PartsItem: [],
+      LaborItem: [],
+    }]);
+  });
+
+  test('defaults to an empty array when called without arguments', () => {
+    expect(buildWorkLines()).toEqual([]);
+  });
+
+  test('throws when a work line is missing workLineReference', () => {
+    expect(() => buildWorkLines([{ partNumbers: ['A'] }]))
+      .toThrow('[dms] workLines[0].workLineReference is required');
   });
 });

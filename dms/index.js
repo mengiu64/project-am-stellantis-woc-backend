@@ -29,10 +29,8 @@
  */
 
 const fs            = require('fs');
-const { randomUUID } = require('crypto');
 const { getBearerToken } = require('./authService');
 const { getDmsSettings, postDmsInquiry, buildTypeSection } = require('./dmsService');
-const config        = require('./config');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -148,23 +146,9 @@ async function runSettings(country, brand, dealer) {
       process.exit(1);
     }
 
-    const s = config.sender;
+    // ApplicationArea (Sender/BODID/CreationDateTime) non viene più costruito
+    // qui: lo genera internamente postDmsInquiry() quando manca dal body.
     body = {
-      ApplicationArea: {
-        Sender: {
-          ComponentID:          s.componentId,
-          DealerNumberID:       s.dealerNumberId,
-          DealerNumberIDSource: s.dealerNumberIdSource,
-          DealerCountryCode:    s.dealerCountryCode,
-          LanguageCode:         s.languageCode,
-          PhysicalSiteID:       s.physicalSiteId,
-          ServiceID:            s.serviceId,
-          CurrencyID:           s.currencyId,
-          Brand:                s.brand,
-        },
-        CreationDateTime: new Date().toISOString(),
-        BODID:            randomUUID(),
-      },
       PartsInquiryHeader: {
         DocumentID:    documentId,
         CustomerIdDms: customerId,

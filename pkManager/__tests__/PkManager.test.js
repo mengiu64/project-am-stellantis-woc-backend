@@ -6,19 +6,6 @@
 jest.mock('../../pkEper/WsIQPckEper', () => ({ WsIQPckEper: jest.fn() }));
 jest.mock('../../pkDocsoa/DocSOARestClient', () => ({ DocSOARestClient: jest.fn() }));
 jest.mock('../../pkMenupricing/MenuPricingSoapClient', () => ({ MenuPricingSoapClient: jest.fn() }));
-jest.mock('../../dms/config', () => ({
-  sender: {
-    componentId: 'COMP1',
-    dealerNumberId: 'DLR1',
-    dealerNumberIdSource: 'SRC1',
-    dealerCountryCode: 'IT',
-    languageCode: 'IT',
-    physicalSiteId: 'SITE1',
-    serviceId: 'SVC1',
-    currencyId: 'EUR',
-    brand: 'FIAT',
-  },
-}));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
 
@@ -752,7 +739,7 @@ describe('PkManager', () => {
   // ── getPriceAndAvailability ────────────────────────────────────────────────
 
   describe('getPriceAndAvailability', () => {
-    test('builds WorkLines from pkDetailList and posts the DML inquiry', async () => {
+    test('builds simplified workLines from pkDetailList and posts the DML inquiry', async () => {
       const manager = new PkManager();
       manager.pkDetailList = [
         {
@@ -776,18 +763,18 @@ describe('PkManager', () => {
           MessageType: 'WL',
           VehicleID: 'VIN123',
         }),
-        WorkLines: [
-          expect.objectContaining({
-            WorkLineReference: 'PK1',
-            TransactionType: 1,
-            LaborItem: [{ LaborOperationID: 'OP1', LaborType: 'L' }],
-            PartsItem: [{ PartNumber: 'SP1', PartType: 'L', PartStatus: 'O' }],
-          }),
+        customerAccountDmsId: null,
+        workLines: [
+          {
+            workLineReference: 'PK1',
+            partNumbers: ['SP1'],
+            laborOperationIds: ['OP1'],
+          },
         ],
       }));
     });
 
-    test('uses padded index as WorkLineReference when codice is missing', async () => {
+    test('uses padded index as workLineReference when codice is missing', async () => {
       const manager = new PkManager();
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
@@ -797,8 +784,34 @@ describe('PkManager', () => {
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
       expect(postDmsInquiry).toHaveBeenCalledWith('TOKEN123', expect.objectContaining({
-        WorkLines: [expect.objectContaining({ WorkLineReference: '001' })],
+        workLines: [expect.objectContaining({ workLineReference: '001' })],
       }));
+    });
+
+    test('does not build ApplicationArea itself: the envelope is left to the dms lambda', async () => {
+      const manager = new PkManager();
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
+
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.ApplicationArea).toBeUndefined();
+    });
+
+    test('does not build the nested DML WorkLines structure itself: that is left to the dms lambda', async () => {
+      const manager = new PkManager();
+      manager.pkDetailList = [{ codice: 'PK1', listaOperazioni: [{ COD: 'OP1' }], listaRicambi: [{ COD: 'SP1' }] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
+
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.WorkLines).toBeUndefined();
     });
   });
 
