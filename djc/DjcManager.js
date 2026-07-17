@@ -4,32 +4,58 @@ const fs   = require('fs');
 const path = require('path');
 
 // ─── Percorso di default del JSON di riferimento (get.json) ───────────────────
+// Usato solo come fallback quando non è disponibile un jobCardId (es. test,
+// uso locale via CLI senza una jobcard reale da leggere da /tmp).
 const DEFAULT_DJC_JSON_PATH = path.resolve(__dirname, 'get.json');
+
+// Cartella dove la lambda jobcard salva jobCardDetails come <jobCardId>.json
+// (vedi jobcard/jobCardService.js::getJobCardDetails / saveJobCardDetailsToTmp).
+const TMP_DIR = '/tmp';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Classe DjcManager
 // ═══════════════════════════════════════════════════════════════════════════════
 //
 // Orchestratore Node.js per la costruzione dei payload di Digital Job Card (DJC)
-// da inviare alla Push API SRP (Save*). Il contenuto di riferimento (djcJson)
-// viene caricato da get.json e usato come sorgente dati "originale" (json_orig)
-// da cui derivare i payload modificati (json_mod) in base agli argomenti
-// passati a ciascun metodo Save*.
+// da inviare alla Push API SRP (Save*). Il contenuto di riferimento (djcJson) è
+// lo stesso jobCardDetails prodotto dalla lambda jobcard: viene letto da
+// /tmp/<jobCardId>.json (scritto lì da jobcard/jobCardService.js) e usato come
+// sorgente dati "originale" (json_orig) da cui derivare i payload modificati
+// (json_mod) in base agli argomenti passati a ciascun metodo Save*. Se non è
+// disponibile un jobCardId, si ricade su get.json (fixture di riferimento
+// usata in locale/nei test).
 class DjcManager {
   /**
-   * @param {object} [djcJson] - Contenuto già parsato di get.json (usato principalmente
-   *                             nei test). Se omesso, viene letto e parsato da disco.
+   * @param {object} [djcJson]   - Contenuto già parsato di jobCardDetails (usato
+   *                                principalmente nei test). Se omesso, viene letto
+   *                                e parsato da disco in base a jobCardId.
+   * @param {string|number} [jobCardId] - Identificatore della jobcard: se presente,
+   *                                viene letto /tmp/<jobCardId>.json (prodotto dalla
+   *                                lambda jobcard). Se assente, si ricade su get.json.
    */
-  constructor(djcJson) {
-    this.djcJson = djcJson ?? DjcManager._loadDjcJson();
+  constructor(djcJson, jobCardId) {
+    this.jobCardId = jobCardId;
+    this.djcJson = djcJson ?? DjcManager._loadDjcJson(jobCardId);
   }
 
   // ── _loadDjcJson ─────────────────────────────────────────────────────────────
-  // Legge e parsa get.json da disco (percorso di default: djc/get.json).
-  static _loadDjcJson(jsonPath = DEFAULT_DJC_JSON_PATH) {
-    const raw = fs.readFileSync(jsonPath, 'utf8');
+  // Legge e parsa il JSON sorgente da disco: /tmp/<jobCardId>.json se jobCardId
+  // è presente (file scritto dalla lambda jobcard), altrimenti get.json.
+  static _loadDjcJson(jobCardId) {
+    const jsonPath = jobCardId
+      ? path.join(TMP_DIR, `${jobCardId}.json`)
+      : DEFAULT_DJC_JSON_PATH;
+
+    let raw;
+    try {
+      raw = fs.readFileSync(jsonPath, 'utf8');
+    } catch (err) {
+      throw new Error(`[djc] impossibile leggere ${jsonPath}: ${err.message}`);
+    }
+
     return JSON.parse(raw);
   }
+
 
   // ── _buildRoInfoBase ─────────────────────────────────────────────────────────
   // Sottoinsieme "base" di roInfo, comune a tutti i metodi Save* che includono

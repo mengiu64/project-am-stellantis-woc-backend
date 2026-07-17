@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
@@ -137,6 +139,24 @@ function sanitizeJobCardDetails(body) {
 }
 
 /**
+ * Persiste la risposta di jobCardDetails in /tmp/<jobCardId>.json, così da
+ * poter essere letta da un'altra lambda (es. djc) senza rifare la chiamata a
+ * DGT. Un eventuale errore di scrittura non deve far fallire la richiesta:
+ * viene solo loggato come warning.
+ * @param {string|number} jobCardId - usato come nome file (<jobCardId>.json)
+ * @param {object} body             - jobCardDetails response body (già sanitizzato)
+ */
+function saveJobCardDetailsToTmp(jobCardId, body) {
+  const filePath = path.join('/tmp', `${jobCardId}.json`);
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(body), 'utf8');
+    console.log(`[jobCard] jobCardDetails salvato in ${filePath}`);
+  } catch (err) {
+    console.warn(`[jobCard] impossibile salvare jobCardDetails in ${filePath}: ${err.message}`);
+  }
+}
+
+/**
  * Calls jobCardDetails endpoint.
  * @param {string} bearerToken      - Bearer token from PingFederate
  * @param {string|number} jobCardId - JobCard identifier (input parameter)
@@ -158,7 +178,10 @@ async function getJobCardDetails(bearerToken, jobCardId) {
     );
   }
 
-  return sanitizeJobCardDetails(response.body);
+  const sanitized = sanitizeJobCardDetails(response.body);
+  saveJobCardDetailsToTmp(jobCardId, sanitized);
+
+  return sanitized;
 }
 
 module.exports = { getJobCardList, getJobCardDetails };

@@ -4,10 +4,14 @@
  * index.js — CLI entry point per djc
  *
  * Uso:
- *   node index.js SaveRoInfo <interiorCarWash> <exteriorCarWash> <old> <original> <returned> <circularEconomy> <obfcm> <waitOnSite> <vehicleIdentificationTagNumber> <loanerFlag>
+ *   node index.js [--jobCardId <id>] SaveRoInfo <interiorCarWash> <exteriorCarWash> <old> <original> <returned> <circularEconomy> <obfcm> <waitOnSite> <vehicleIdentificationTagNumber> <loanerFlag>
+ *
+ * --jobCardId <id> (opzionale): legge /tmp/<id>.json (scritto dalla lambda jobcard,
+ * jobCardService.js::getJobCardDetails) come json_orig invece del fallback get.json.
  *
  * Esempio:
  *   node index.js SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N
+ *   node index.js --jobCardId 84564621 SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N
  */
 
 require('dotenv').config();
@@ -72,6 +76,7 @@ exports.handler = async (event) => {
   }
 
   const {
+    jobCardId,
     interiorCarWash,
     exteriorCarWash,
     old,
@@ -109,8 +114,19 @@ exports.handler = async (event) => {
     deliveryServiceAdvisorName,
   } = body;
 
+  if (!jobCardId) {
+    return {
+      statusCode: 400,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: false, message: 'jobCardId is required' }),
+    };
+  }
+
   try {
-    const manager = new DjcManager();
+    // djcJson (json_orig) è il jobCardDetails salvato in /tmp/<jobCardId>.json
+    // dalla lambda jobcard (jobCardService.js::getJobCardDetails), non più
+    // get.json — che resta solo un fallback per uso locale/CLI senza jobCardId.
+    const manager = new DjcManager(undefined, jobCardId);
     let result;
 
     if (action === 'SaveRoInfo') {
@@ -173,7 +189,9 @@ function printResult(label, data) {
 }
 
 function printUsage() {
-  console.log('\nUso: node index.js <metodo> [argomenti]\n');
+  console.log('\nUso: node index.js [--jobCardId <id>] <metodo> [argomenti]\n');
+  console.log('  --jobCardId <id> - Legge /tmp/<id>.json (scritto dalla lambda jobcard) come');
+  console.log('                     json_orig invece del fallback get.json\n');
   console.log('  SaveRoInfo <interiorCarWash> <exteriorCarWash> <old> <original> <returned> <circularEconomy> <obfcm> <waitOnSite> <vehicleIdentificationTagNumber> <loanerFlag>');
   console.log('  SaveDmsSync <dmsSynchroStatus>');
   console.log('  SaveCustomer <phone> <mobile> <email> <address> <additionalAddress>');
@@ -183,7 +201,7 @@ function printUsage() {
   console.log('  SaveAppointments <estimatedReceptionDateTime> <receptionDateTime> <receptionServiceAdvisorId> <receptionServiceAdvisorName> <estimatedDeliveryDateTime> <deliveryDateTime> <deliveryServiceAdvisorId> <deliveryServiceAdvisorName>\n');
   console.log('Esempi:');
   console.log('  node index.js SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N');
-  console.log('  node index.js SaveDmsSync SYNCED');
+  console.log('  node index.js --jobCardId 84564621 SaveDmsSync SYNCED');
   console.log('  node index.js SaveCustomer "+91-22-40000000" "+91-9000000000" test@example.com "Via Roma 1" "Interno 2"');
   console.log('  node index.js SaveVehicle "EH-436-DG" 12345 km 3 85');
   console.log('  node index.js SaveJobs');
@@ -192,7 +210,19 @@ function printUsage() {
 }
 
 async function main() {
-  const [, , command, ...args] = process.argv;
+  const rawArgs = process.argv.slice(2);
+
+  // --jobCardId <id> è un flag opzionale globale (rimosso da rawArgs prima di
+  // interpretare comando/argomenti): se presente, legge /tmp/<id>.json invece
+  // del fallback get.json (stessa logica dell'handler Lambda).
+  let jobCardId;
+  const jobCardIdIdx = rawArgs.indexOf('--jobCardId');
+  if (jobCardIdIdx !== -1) {
+    jobCardId = rawArgs[jobCardIdIdx + 1];
+    rawArgs.splice(jobCardIdIdx, 2);
+  }
+
+  const [command, ...args] = rawArgs;
 
   if (!command || !VALID_ACTIONS.includes(command)) {
     if (command) console.error(`\n❌ Metodo sconosciuto: "${command}"`);
@@ -200,7 +230,7 @@ async function main() {
     process.exit(command ? 1 : 0);
   }
 
-  const manager = new DjcManager();
+  const manager = new DjcManager(undefined, jobCardId);
 
   try {
     if (command === 'SaveRoInfo') {

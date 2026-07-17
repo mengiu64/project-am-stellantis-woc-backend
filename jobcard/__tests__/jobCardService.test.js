@@ -16,7 +16,9 @@ jest.mock('../config', () => ({
   },
 }));
 jest.mock('../httpClient');
+jest.mock('fs');
 
+const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
 const { getJobCardList, getJobCardDetails } = require('../jobCardService');
 
@@ -24,9 +26,13 @@ describe('jobCardService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => console.log.mockRestore());
+  afterEach(() => {
+    console.log.mockRestore();
+    console.warn.mockRestore();
+  });
 
   // ── getJobCardList ───────────────────────────────────────────────────────────
 
@@ -206,6 +212,53 @@ describe('jobCardService', () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
     await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
+  });
+
+  // ── /tmp persistence (readable later by djc lambda) ─────────────────────────
+
+  test('saves the sanitized response body to /tmp/<jobCardId>.json', async () => {
+    const body = { jobCardId: '79', jobCardDetail: { roInfo: { foo: 'bar' } } };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+    await getJobCardDetails('token', '79');
+
+    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+    const [filePath, content, encoding] = fs.writeFileSync.mock.calls[0];
+    expect(filePath).toBe('/tmp/79.json');
+    expect(JSON.parse(content)).toEqual(body);
+    expect(encoding).toBe('utf8');
+  });
+
+  test('uses the numeric jobCardId (converted to string) as the file name', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await getJobCardDetails('token', 79);
+
+    const [filePath] = fs.writeFileSync.mock.calls[0];
+    expect(filePath).toBe('/tmp/79.json');
+  });
+
+  test('still returns the response even if writing to /tmp fails', async () => {
+    const body = { jobCardId: '79' };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+    fs.writeFileSync.mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    await expect(getJobCardDetails('token', '79')).resolves.toEqual(body);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('impossibile salvare jobCardDetails'));
+  });
+
+  test('does not write to /tmp when the request fails', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 404, headers: {}, body: { message: 'not found' } });
+
+    await expect(getJobCardDetails('token', '99')).rejects.toThrow();
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  test('does not write to /tmp when jobCardId is missing', async () => {
+    await expect(getJobCardDetails('token', '')).rejects.toThrow();
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
   });
 
   test('sends date range and other optional filters as headers when provided', async () => {

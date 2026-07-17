@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { DjcManager } = require('../DjcManager');
 
 // ─── Fixture djcJson minimale, coerente con la struttura di get.json ──────────
@@ -110,9 +112,35 @@ describe('DjcManager', () => {
       expect(manager.djcJson).toBe(djcJson);
     });
 
-    test('loads djcJson from get.json when not provided', () => {
+    test('loads djcJson from get.json when not provided and jobCardId is absent', () => {
       const manager = new DjcManager();
       expect(manager.djcJson).toHaveProperty('jobCardDetail.roInfo');
+    });
+
+    test('loads djcJson from /tmp/<jobCardId>.json when jobCardId is provided', () => {
+      const jobCardId = 'TEST-JOBCARD-84564621';
+      const tmpFile = path.join('/tmp', `${jobCardId}.json`);
+      const fromTmp = makeDjcJson({ jobCardSrpId: 'FROM-TMP' });
+      fs.writeFileSync(tmpFile, JSON.stringify(fromTmp), 'utf8');
+
+      try {
+        const manager = new DjcManager(undefined, jobCardId);
+        expect(manager.djcJson.jobCardDetail.roInfo.jobCardSrpId).toBe('FROM-TMP');
+        expect(manager.jobCardId).toBe(jobCardId);
+      } finally {
+        fs.unlinkSync(tmpFile);
+      }
+    });
+
+    test('throws a clear error when /tmp/<jobCardId>.json is missing', () => {
+      expect(() => new DjcManager(undefined, 'MISSING-JOBCARD-ID'))
+        .toThrow('[djc] impossibile leggere /tmp/MISSING-JOBCARD-ID.json');
+    });
+
+    test('explicit djcJson takes precedence over jobCardId', () => {
+      const djcJson = makeDjcJson();
+      const manager = new DjcManager(djcJson, 'IGNORED-JOBCARD-ID');
+      expect(manager.djcJson).toBe(djcJson);
     });
   });
 
