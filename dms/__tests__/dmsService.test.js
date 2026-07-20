@@ -631,6 +631,29 @@ describe('postDmsInquiry — WorkLines built from workLines (WL)', () => {
     await expect(postDmsInquiry('token', wlHeaderOnlyBody()))
       .rejects.toThrow('[dms] MessageType WL requires body.WorkLines');
   });
+
+  test('sends CustomerIdDms and CustomerAccountDMSID as null when omitted from a flat WL body (not required, but always present in payload)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    // Body flat come inviato dal chiamante HTTP: nessun CustomerIdDms né
+    // customerAccountDmsId — entrambi non obbligatori, ma il DML si aspetta
+    // comunque le chiavi presenti (CustomerIdDms in PartsInquiryHeader,
+    // CustomerAccountDMSID in ogni WorkLines).
+    const body = {
+      DocumentID: '84564621',
+      VehicleID: '3C4NJCBH7KT831816',
+      MessageType: 'WL',
+      workLines: [
+        { workLineReference: '002', partNumbers: ['K2AMV5012AD'], laborOperationIds: ['0010A14'] },
+      ],
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toHaveProperty('CustomerIdDms', null);
+    expect(sent.WorkLines[0]).toHaveProperty('CustomerAccountDMSID', null);
+  });
 });
 
 // ── postDmsInquiry — type-specific section owned by the lambda ──────────────
