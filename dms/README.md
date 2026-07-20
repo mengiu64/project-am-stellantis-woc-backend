@@ -65,7 +65,7 @@ Invia una richiesta DML inquiry. `ApplicationArea` (Sender/BODID/CreationDateTim
 
 > **Sezione tipo-specifica obbligatoria ed esclusiva**: in base al `MessageType` il body deve contenere **una e una sola** delle sezioni `UpSelling` (LFP) / `WorkLines` (WL) / `SpareParts` (MP). `postDmsInquiry()` valida questo vincolo e rigetta la richiesta se la sezione attesa manca o se ne sono presenti altre non pertinenti al `MessageType` dichiarato.
 
-> **LFP — scorciatoia `packageCodes`**: per `MessageType: 'LFP'` il chiamante non deve costruire `UpSelling.Packages` a mano. Basta passare `packageCodes` — una singola stringa (es. `'ABC'`) o un array di stringhe (es. `['ABC', 'DEF']`) — e `postDmsInquiry()` genera `UpSelling.Packages` internamente via `buildUpSellingPackages()`. Se `UpSelling` è già presente nel body, ha sempre la precedenza e `packageCodes` viene ignorato.
+> **LFP — scorciatoia `package`**: per `MessageType: 'LFP'` il chiamante non deve costruire `UpSelling.Packages` a mano. Basta passare `package` — un identificativo (codice o nome, la ricerca lato DML avviene per entrambi) come singola stringa (es. `'ABC'`) o array (es. `['ABC', 'DEF']`) — e `postDmsInquiry()` genera `UpSelling.Packages` internamente via `buildUpSellingPackages()`. Se `UpSelling` è già presente nel body, ha sempre la precedenza e `package` viene ignorato.
 
 > **Scorciatoia "flat" per `PartsInquiryHeader`**: se il body non contiene già `PartsInquiryHeader` annidato, `postDmsInquiry()` lo costruisce automaticamente da `DocumentID`/`CustomerIdDms`/`MessageType`/`VehicleID` passati direttamente a livello root del body. Utile per chiamare la lambda HTTP senza conoscere lo schema DML:
 > ```json
@@ -74,7 +74,7 @@ Invia una richiesta DML inquiry. `ApplicationArea` (Sender/BODID/CreationDateTim
 >   "CustomerIdDms": "854265",
 >   "MessageType": "LFP",
 >   "VehicleID": "3C4NJCBH7KT831816",
->   "packageCodes": "FORFAIT"
+>   "package": "FORFAIT"
 > }
 > ```
 > Se `PartsInquiryHeader` è già presente nel body, ha sempre la precedenza e i campi root-level vengono ignorati.

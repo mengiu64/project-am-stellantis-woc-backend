@@ -331,12 +331,13 @@ describe('postDmsInquiry — ApplicationArea built internally', () => {
   });
 });
 
-// ── postDmsInquiry — LFP UpSelling.Packages built from packageCodes ──────────
+// ── postDmsInquiry — LFP UpSelling.Packages built from package ──────────
 // Per LFP il chiamante non deve conoscere lo schema DML (Packages come array
-// di oggetti { Code }): passa solo packageCodes (array di stringhe) e la
-// lambda costruisce UpSelling.Packages, esattamente come fa per ApplicationArea.
+// di oggetti { Code }): passa solo package (stringa o array di identificativi,
+// codice o nome) e la lambda costruisce UpSelling.Packages, esattamente come
+// fa per ApplicationArea.
 
-describe('postDmsInquiry — UpSelling built from packageCodes (LFP)', () => {
+describe('postDmsInquiry — UpSelling built from package (LFP)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -353,10 +354,10 @@ describe('postDmsInquiry — UpSelling built from packageCodes (LFP)', () => {
     },
   });
 
-  test('builds UpSelling.Packages from packageCodes when UpSelling is omitted', async () => {
+  test('builds UpSelling.Packages from package when UpSelling is omitted', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    const body = { ...lfpHeaderOnlyBody(), packageCodes: ['ABC', 'DEF'] };
+    const body = { ...lfpHeaderOnlyBody(), package: ['ABC', 'DEF'] };
     await postDmsInquiry('token', body);
 
     const [, payload] = httpsRequest.mock.calls[0];
@@ -364,23 +365,23 @@ describe('postDmsInquiry — UpSelling built from packageCodes (LFP)', () => {
     expect(sent.UpSelling).toEqual({ Packages: [{ Code: 'ABC' }, { Code: 'DEF' }] });
   });
 
-  test('does not leak packageCodes in the outgoing payload', async () => {
+  test('does not leak package in the outgoing payload', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    const body = { ...lfpHeaderOnlyBody(), packageCodes: ['ABC'] };
+    const body = { ...lfpHeaderOnlyBody(), package: ['ABC'] };
     await postDmsInquiry('token', body);
 
     const [, payload] = httpsRequest.mock.calls[0];
-    expect(JSON.parse(payload).packageCodes).toBeUndefined();
+    expect(JSON.parse(payload).package).toBeUndefined();
   });
 
-  test('does not overwrite UpSelling when caller already provides it, even with packageCodes set', async () => {
+  test('does not overwrite UpSelling when caller already provides it, even with package set', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
     const body = {
       ...lfpHeaderOnlyBody(),
       UpSelling: { Packages: [{ Code: 'ALREADY-BUILT' }] },
-      packageCodes: ['IGNORED'],
+      package: ['IGNORED'],
     };
     await postDmsInquiry('token', body);
 
@@ -388,15 +389,15 @@ describe('postDmsInquiry — UpSelling built from packageCodes (LFP)', () => {
     expect(JSON.parse(payload).UpSelling).toEqual({ Packages: [{ Code: 'ALREADY-BUILT' }] });
   });
 
-  test('still rejects LFP when neither UpSelling nor packageCodes are provided', async () => {
+  test('still rejects LFP when neither UpSelling nor package are provided', async () => {
     await expect(postDmsInquiry('token', lfpHeaderOnlyBody()))
       .rejects.toThrow('[dms] MessageType LFP requires body.UpSelling');
   });
 
-  test('accepts a single string for packageCodes (not just an array)', async () => {
+  test('accepts a single string for package (not just an array)', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    const body = { ...lfpHeaderOnlyBody(), packageCodes: 'FORFAIT' };
+    const body = { ...lfpHeaderOnlyBody(), package: 'FORFAIT' };
     await postDmsInquiry('token', body);
 
     const [, payload] = httpsRequest.mock.calls[0];
@@ -427,7 +428,7 @@ describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
       CustomerIdDms: '854265',
       MessageType: 'LFP',
       VehicleID: '3C4NJCBH7KT831816',
-      packageCodes: 'FORFAIT',
+      package: 'FORFAIT',
     };
     await postDmsInquiry('token', body);
 
@@ -449,7 +450,7 @@ describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
       CustomerIdDms: '854265',
       MessageType: 'LFP',
       VehicleID: '3C4NJCBH7KT831816',
-      packageCodes: 'FORFAIT',
+      package: 'FORFAIT',
     };
     await postDmsInquiry('token', body);
 
@@ -468,7 +469,7 @@ describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
       DocumentID: '84564621',
       MessageType: 'LFP',
       VehicleID: '3C4NJCBH7KT831816',
-      packageCodes: 'FORFAIT',
+      package: 'FORFAIT',
     };
     await postDmsInquiry('token', body);
 
@@ -491,7 +492,7 @@ describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
       DocumentID: 'FLAT-DOC',
       CustomerIdDms: 'FLAT-CUST',
       VehicleID: 'FLAT-VIN',
-      packageCodes: 'FORFAIT',
+      package: 'FORFAIT',
     };
     await postDmsInquiry('token', body);
 
@@ -506,7 +507,7 @@ describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
   });
 
   test('still rejects when neither PartsInquiryHeader nor flat fields are provided', async () => {
-    await expect(postDmsInquiry('token', { packageCodes: 'FORFAIT' }))
+    await expect(postDmsInquiry('token', { package: 'FORFAIT' }))
       .rejects.toThrow('[dms] PartsInquiryHeader.MessageType is required');
   });
 });

@@ -116,15 +116,17 @@ function buildApplicationArea() {
 
 /**
  * Builds the UpSelling.Packages section (MessageType LFP) from a plain array
- * of package codes. Il chiamante non deve conoscere lo schema DML (Packages
- * come array di oggetti { Code }): passa solo i codici di dominio e la lambda
- * costruisce la struttura, esattamente come già avviene per ApplicationArea.
+ * of package identifiers (code or name — la ricerca lato DML avviene per
+ * entrambi). Il chiamante non deve conoscere lo schema DML (Packages
+ * come array di oggetti { Code }): passa solo gli identificativi di dominio
+ * e la lambda costruisce la struttura, esattamente come già avviene per
+ * ApplicationArea.
  *
- * @param {string[]} packageCodes - e.g. ['ABC', 'DEF']
+ * @param {string[]} packages - e.g. ['ABC', 'DEF'] (codice o nome pacchetto)
  * @returns {{ Packages: Array<{ Code: string }> }}
  */
-function buildUpSellingPackages(packageCodes = []) {
-  return { Packages: packageCodes.map((code) => ({ Code: code })) };
+function buildUpSellingPackages(packages = []) {
+  return { Packages: packages.map((pkg) => ({ Code: pkg })) };
 }
 
 /**
@@ -199,11 +201,12 @@ function buildWorkLines(workLines = [], customerAccountDmsId = null) {
  * @param {'LFP'|'WL'|'MP'} [body.MessageType] - Shortcut: same as PartsInquiryHeader.MessageType.
  * @param {string}   [body.VehicleID]     - Shortcut: same as PartsInquiryHeader.VehicleID.
  * @param {object}   [body.UpSelling]     - Required (and exclusive) when MessageType is LFP.
- *                     Built internally from body.packageCodes when omitted.
- * @param {string|string[]} [body.packageCodes] - Shortcut for LFP: package code(s)
- *                     (single string e.g. 'ABC', or array e.g. ['ABC', 'DEF']), used
- *                     to build UpSelling.Packages when body.UpSelling is not already
- *                     provided. Not sent as-is.
+ *                     Built internally from body.package when omitted.
+ * @param {string|string[]} [body.package] - Shortcut for LFP: package identifier(s) —
+ *                     codice o nome (la ricerca lato DML avviene per entrambi) — come
+ *                     singola stringa (es. 'ABC') o array (es. ['ABC', 'DEF']), usato
+ *                     per costruire UpSelling.Packages quando body.UpSelling non è già
+ *                     fornito. Not sent as-is.
  * @param {object}   [body.SpareParts]  - Required (and exclusive) when MessageType is MP
  * @param {Array}    [body.WorkLines]   - Required (and exclusive) when MessageType is WL.
  *                     Built internally from body.workLines when omitted.
@@ -253,15 +256,16 @@ async function postDmsInquiry(bearerToken, body = {}) {
   if (header.CustomerIdDms === undefined) header.CustomerIdDms = null;
 
   // LFP: se il chiamante non fornisce già UpSelling.Packages ma passa
-  // packageCodes (dati di dominio, non lo schema DML), lo costruiamo qui.
-  // Accetta sia una singola stringa (es. 'ABC') sia un array (es. ['ABC', 'DEF']).
-  if (header.MessageType === 'LFP' && !requestBody.UpSelling && requestBody.packageCodes != null) {
-    const packageCodes = Array.isArray(requestBody.packageCodes)
-      ? requestBody.packageCodes
-      : [requestBody.packageCodes];
-    requestBody.UpSelling = buildUpSellingPackages(packageCodes);
+  // package (identificativo di dominio: codice o nome, non lo schema DML),
+  // lo costruiamo qui. Accetta sia una singola stringa (es. 'ABC') sia un
+  // array (es. ['ABC', 'DEF']).
+  if (header.MessageType === 'LFP' && !requestBody.UpSelling && requestBody.package != null) {
+    const packages = Array.isArray(requestBody.package)
+      ? requestBody.package
+      : [requestBody.package];
+    requestBody.UpSelling = buildUpSellingPackages(packages);
   }
-  delete requestBody.packageCodes;
+  delete requestBody.package;
 
   // WL: se il chiamante non fornisce già WorkLines ma passa workLines
   // semplificate (workLineReference + partNumbers/laborOperationIds), le

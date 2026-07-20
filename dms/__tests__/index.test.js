@@ -42,7 +42,7 @@ describe('dms lambda handler — routing (per swagger-woc.yaml)', () => {
         DocumentID: '84564621',
         CustomerIdDms: '854265',
         VehicleID: '3C4NJCBH7KT831816',
-        packageCodes: 'FORFAIT',
+        package: 'FORFAIT',
       }),
     };
     const res = await handler(event);
@@ -53,7 +53,7 @@ describe('dms lambda handler — routing (per swagger-woc.yaml)', () => {
       CustomerIdDms: '854265',
       VehicleID: '3C4NJCBH7KT831816',
       MessageType: 'LFP',
-      packageCodes: 'FORFAIT',
+      package: 'FORFAIT',
     }));
   });
 
