@@ -6,7 +6,7 @@ jest.mock('../authService', () => ({
 jest.mock('../dmsService', () => ({
   getDmsSettings: jest.fn(),
   postDmsInquiry: jest.fn(),
-  buildTypeSection: jest.requireActual('../dmsService').buildTypeSection,
+  buildTypeSection: jest.fn(),
 }));
 
 const { getBearerToken } = require('../authService');
