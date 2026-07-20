@@ -56,6 +56,15 @@ Parameters:
   DmlIbmClientSecret:
     Type: String
     NoEcho: true
+  # IBM API Connect target environment for the DML gateway (X-Target-Env header).
+  # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
+  # of the AWS SAM "Environment" parameter (dev/stage/prod stack). It must NOT be
+  # tied to !Ref Environment: the "ps-dev" catalog only authorizes "stage" today,
+  # so wiring it to the AWS dev stack's Environment ("dev") causes DML to reject
+  # the call with "explicit deny in an identity-based policy" (403).
+  DmlXTargetEnv:
+    Type: String
+    Default: stage
 
   # ── JobCard (DGT API) ─────────────────────────────────────────────────────
   DgtClientId:
@@ -212,7 +221,7 @@ Resources:
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
-          DML_X_TARGET_ENV:     !Ref Environment
+          DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
 
   JobCardFunction:
     Type: AWS::Serverless::Function
@@ -358,7 +367,7 @@ Resources:
           DMS_PING_CLIENT_SECRET:       !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
-          DML_X_TARGET_ENV:             !Ref Environment
+          DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
 
   SessionFunction:
     Type: AWS::Serverless::Function
