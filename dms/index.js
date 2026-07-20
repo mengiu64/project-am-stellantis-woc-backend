@@ -36,12 +36,26 @@ const { getDmsSettings, postDmsInquiry, buildTypeSection } = require('./dmsServi
 
 const VALID_ACTIONS = ['settings', 'inquiry'];
 
+// MessageType values accepted by the DML inquiry endpoint (per swagger-woc.yaml
+// path parameter `/api/repairorder/inquiry/{type}`). Kept in sync with
+// dmsService.js's own VALID_INQUIRY_TYPES.
+const VALID_INQUIRY_TYPES = ['LFP', 'WL', 'MP'];
+
 /**
  * Resolves { action, body } from either:
- *  1) A direct Lambda invocation payload:  { "action": "settings", "body": {...} }
- *  2) A real API Gateway (REST API or HTTP API) proxy integration event, where the
- *     action is taken from the last path segment (e.g. .../dms/settings -> "settings")
- *     and the body is built by merging query string parameters with a JSON body, if any.
+ *  1) A direct Lambda invocation payload: { "action": "settings", "body": {...} }
+ *  2) A real API Gateway (REST API or HTTP API) proxy integration event. The
+ *     real routes configured in swagger-woc.yaml are:
+ *       - GET  /api/settings/dml/current          -> action "settings"
+ *       - POST /api/repairorder/inquiry/{type}    -> action "inquiry", where
+ *         {type} (LFP | WL | MP) is the *last* path segment and is used as a
+ *         MessageType shortcut merged into the body (unless the body already
+ *         declares MessageType, either flat or nested in PartsInquiryHeader).
+ *     Falls back to treating the last path segment itself as the action (e.g.
+ *     .../dms/settings -> "settings", .../dms/inquiry -> "inquiry") for direct
+ *     invocations that don't go through the routes above.
+ *     The body is built by merging query string parameters with a JSON body,
+ *     if any.
  */
 function resolveActionAndBody(event) {
   if (event && event.action) {
@@ -52,8 +66,7 @@ function resolveActionAndBody(event) {
   }
 
   const rawPath  = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy) || '';
-  const segments = String(rawPath).split('/').filter(Boolean);
-  const action   = segments.length ? decodeURIComponent(segments[segments.length - 1]) : undefined;
+  const segments = String(rawPath).split('/').filter(Boolean).map(decodeURIComponent);
 
   let parsedBody = {};
   if (event.body) {
@@ -65,6 +78,25 @@ function resolveActionAndBody(event) {
   }
 
   const body = { ...(event.queryStringParameters || {}), ...parsedBody };
+
+  // /api/repairorder/inquiry/{type} -> action "inquiry", {type} feeds MessageType.
+  const inquiryIdx = segments.indexOf('inquiry');
+  if (inquiryIdx !== -1) {
+    const type = segments[inquiryIdx + 1];
+    const hasMessageType = body.MessageType || (body.PartsInquiryHeader && body.PartsInquiryHeader.MessageType);
+    if (type && VALID_INQUIRY_TYPES.includes(type) && !hasMessageType) {
+      body.MessageType = type;
+    }
+    return { action: 'inquiry', body };
+  }
+
+  // /api/settings/dml/current -> action "settings".
+  if (segments.includes('settings')) {
+    return { action: 'settings', body };
+  }
+
+  // Fallback: last path segment as action (direct invocations, e.g. .../dms/settings).
+  const action = segments.length ? segments[segments.length - 1] : undefined;
   return { action, body };
 }
 
