@@ -387,6 +387,107 @@ describe('postDmsInquiry — UpSelling built from packageCodes (LFP)', () => {
     await expect(postDmsInquiry('token', lfpHeaderOnlyBody()))
       .rejects.toThrow('[dms] MessageType LFP requires body.UpSelling');
   });
+
+  test('accepts a single string for packageCodes (not just an array)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = { ...lfpHeaderOnlyBody(), packageCodes: 'FORFAIT' };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.UpSelling).toEqual({ Packages: [{ Code: 'FORFAIT' }] });
+  });
+});
+
+// ── postDmsInquiry — PartsInquiryHeader built from flat root-level fields ────
+// Scorciatoia "flat": il chiamante può passare DocumentID/CustomerIdDms/
+// MessageType/VehicleID direttamente a livello root del body (senza annidarli
+// in PartsInquiryHeader), utile per chiamare la lambda HTTP senza conoscere lo
+// schema DML.
+
+describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.log.mockRestore());
+
+  test('builds PartsInquiryHeader from flat root-level fields when omitted', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      DocumentID: '84564621',
+      CustomerIdDms: '854265',
+      MessageType: 'LFP',
+      VehicleID: '3C4NJCBH7KT831816',
+      packageCodes: 'FORFAIT',
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toEqual({
+      DocumentID: '84564621',
+      CustomerIdDms: '854265',
+      MessageType: 'LFP',
+      VehicleID: '3C4NJCBH7KT831816',
+    });
+  });
+
+  test('does not leak flat root-level fields in the outgoing payload', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      DocumentID: '84564621',
+      CustomerIdDms: '854265',
+      MessageType: 'LFP',
+      VehicleID: '3C4NJCBH7KT831816',
+      packageCodes: 'FORFAIT',
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.DocumentID).toBeUndefined();
+    expect(sent.CustomerIdDms).toBeUndefined();
+    expect(sent.MessageType).toBeUndefined();
+    expect(sent.VehicleID).toBeUndefined();
+  });
+
+  test('does not overwrite PartsInquiryHeader when caller already provides it, even with flat fields set', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      PartsInquiryHeader: {
+        DocumentID: 'NESTED-DOC',
+        CustomerIdDms: 'NESTED-CUST',
+        MessageType: 'LFP',
+        VehicleID: 'NESTED-VIN',
+      },
+      // These flat fields should be ignored since PartsInquiryHeader is already provided.
+      DocumentID: 'FLAT-DOC',
+      CustomerIdDms: 'FLAT-CUST',
+      VehicleID: 'FLAT-VIN',
+      packageCodes: 'FORFAIT',
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toEqual({
+      DocumentID: 'NESTED-DOC',
+      CustomerIdDms: 'NESTED-CUST',
+      MessageType: 'LFP',
+      VehicleID: 'NESTED-VIN',
+    });
+  });
+
+  test('still rejects when neither PartsInquiryHeader nor flat fields are provided', async () => {
+    await expect(postDmsInquiry('token', { packageCodes: 'FORFAIT' }))
+      .rejects.toThrow('[dms] PartsInquiryHeader.MessageType is required');
+  });
 });
 
 // ── postDmsInquiry — WL WorkLines built from workLines (semplificate) ───────
