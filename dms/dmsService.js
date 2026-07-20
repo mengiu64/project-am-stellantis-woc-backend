@@ -181,16 +181,25 @@ function buildWorkLines(workLines = [], customerAccountDmsId = null) {
  *                     buildApplicationArea() when omitted, using config.sender
  *                     and a freshly generated BODID/CreationDateTime. Provide it
  *                     only when replaying a pre-built request (e.g. from file).
- * @param {object}   body.PartsInquiryHeader
+ * @param {object}   [body.PartsInquiryHeader] - Optional; built internally from the
+ *                     flat root-level fields below (DocumentID/CustomerIdDms/
+ *                     MessageType/VehicleID) when omitted. If provided, it always
+ *                     takes precedence over the flat fields.
  * @param {string}     body.PartsInquiryHeader.DocumentID
  * @param {string}     body.PartsInquiryHeader.CustomerIdDms
  * @param {'LFP'|'WL'|'MP'} body.PartsInquiryHeader.MessageType
  * @param {string}     body.PartsInquiryHeader.VehicleID
+ * @param {string}   [body.DocumentID]    - Shortcut: same as PartsInquiryHeader.DocumentID,
+ *                     used when PartsInquiryHeader is not already provided.
+ * @param {string}   [body.CustomerIdDms] - Shortcut: same as PartsInquiryHeader.CustomerIdDms.
+ * @param {'LFP'|'WL'|'MP'} [body.MessageType] - Shortcut: same as PartsInquiryHeader.MessageType.
+ * @param {string}   [body.VehicleID]     - Shortcut: same as PartsInquiryHeader.VehicleID.
  * @param {object}   [body.UpSelling]     - Required (and exclusive) when MessageType is LFP.
  *                     Built internally from body.packageCodes when omitted.
- * @param {string[]} [body.packageCodes]  - Shortcut for LFP: plain array of package
- *                     codes (e.g. ['ABC', 'DEF']), used to build UpSelling.Packages
- *                     when body.UpSelling is not already provided. Not sent as-is.
+ * @param {string|string[]} [body.packageCodes] - Shortcut for LFP: package code(s)
+ *                     (single string e.g. 'ABC', or array e.g. ['ABC', 'DEF']), used
+ *                     to build UpSelling.Packages when body.UpSelling is not already
+ *                     provided. Not sent as-is.
  * @param {object}   [body.SpareParts]  - Required (and exclusive) when MessageType is MP
  * @param {Array}    [body.WorkLines]   - Required (and exclusive) when MessageType is WL.
  *                     Built internally from body.workLines when omitted.
@@ -210,6 +219,21 @@ async function postDmsInquiry(bearerToken, body = {}) {
     ...body,
     ApplicationArea: body.ApplicationArea || buildApplicationArea(),
   };
+
+  // Scorciatoia "flat": se il chiamante non fornisce già PartsInquiryHeader
+  // annidato, lo costruiamo qui dai campi root-level (DocumentID/CustomerIdDms/
+  // MessageType/VehicleID), così non serve conoscere lo schema DML per i casi semplici.
+  if (!requestBody.PartsInquiryHeader) {
+    const { DocumentID, CustomerIdDms, MessageType, VehicleID } = requestBody;
+    if (DocumentID || CustomerIdDms || MessageType || VehicleID) {
+      requestBody.PartsInquiryHeader = { DocumentID, CustomerIdDms, MessageType, VehicleID };
+    }
+  }
+  delete requestBody.DocumentID;
+  delete requestBody.CustomerIdDms;
+  delete requestBody.MessageType;
+  delete requestBody.VehicleID;
+
   const header = requestBody.PartsInquiryHeader || {};
 
   if (!header.MessageType) throw new Error('[dms] PartsInquiryHeader.MessageType is required');
@@ -222,8 +246,12 @@ async function postDmsInquiry(bearerToken, body = {}) {
 
   // LFP: se il chiamante non fornisce già UpSelling.Packages ma passa
   // packageCodes (dati di dominio, non lo schema DML), lo costruiamo qui.
-  if (header.MessageType === 'LFP' && !requestBody.UpSelling && Array.isArray(requestBody.packageCodes)) {
-    requestBody.UpSelling = buildUpSellingPackages(requestBody.packageCodes);
+  // Accetta sia una singola stringa (es. 'ABC') sia un array (es. ['ABC', 'DEF']).
+  if (header.MessageType === 'LFP' && !requestBody.UpSelling && requestBody.packageCodes != null) {
+    const packageCodes = Array.isArray(requestBody.packageCodes)
+      ? requestBody.packageCodes
+      : [requestBody.packageCodes];
+    requestBody.UpSelling = buildUpSellingPackages(packageCodes);
   }
   delete requestBody.packageCodes;
 

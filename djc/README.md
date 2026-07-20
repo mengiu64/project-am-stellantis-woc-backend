@@ -1,8 +1,11 @@
 # djc — Node.js Digital Job Card (Push API SRP)
 
 Modulo Node.js autoconsistente che costruisce i payload da inviare alla **Push API SRP**
-(Digital Job Card) a partire dal contenuto di riferimento `get.json` (istantanea della
-Digital Job Card di un veicolo/repair order).
+(Digital Job Card) a partire dal contenuto di riferimento (`json_orig`), letto da
+`/tmp/<jobCardId>.json` — il jobCardDetails salvato lì dalla lambda `jobcard`
+(`jobCardService.js::getJobCardDetails`), così da evitare una nuova chiamata a DGT.
+Se non è disponibile un `jobCardId` (uso locale/CLI senza una jobcard reale), si ricade
+su `get.json`, un'istantanea statica di riferimento usata anche nei test.
 
 ## Struttura
 
@@ -10,7 +13,7 @@ Digital Job Card di un veicolo/repair order).
 djc/
 ├── index.js            ← CLI entry-point + Lambda handler (dispatcher per metodo)
 ├── DjcManager.js        ← classe orchestratore
-├── get.json             ← contenuto di riferimento della Digital Job Card
+├── get.json             ← fallback statico (usato solo quando jobCardId è assente)
 ├── __tests__/
 │   └── DjcManager.test.js ← test automatici (Jest)
 ├── package.json
@@ -29,12 +32,24 @@ npm install
 ```js
 const { DjcManager } = require('./DjcManager');
 
-const manager = new DjcManager();
-// manager.djcJson contiene il JSON parsato di get.json
+const manager = new DjcManager(undefined, '84564621');
+// manager.djcJson contiene il JSON parsato di /tmp/84564621.json
 ```
 
-Il costruttore accetta opzionalmente un `djcJson` esplicito (utile nei test), altrimenti
-legge e parsa `get.json` da disco.
+Il costruttore è `DjcManager(djcJson, jobCardId)`:
+- `djcJson` esplicito (utile nei test) ha sempre la precedenza;
+- altrimenti, se è presente `jobCardId`, legge e parsa `/tmp/<jobCardId>.json`;
+- se `jobCardId` è assente, ricade su `get.json` (fallback locale/di test).
+
+Se il file `/tmp/<jobCardId>.json` non esiste (o non è leggibile), il costruttore
+lancia un errore esplicito (`[djc] impossibile leggere /tmp/<jobCardId>.json: ...`).
+
+> **Lambda handler**: `jobCardId` è un parametro obbligatorio del body (`{ "jobCardId": "84564621", ... }`);
+> la richiesta viene rigettata con `400` se assente, prima di istanziare `DjcManager`.
+>
+> **CLI**: `jobCardId` è opzionale, passato come flag globale `--jobCardId <id>` prima del
+> comando, es. `node index.js --jobCardId 84564621 SaveDmsSync SYNCED`. Se omesso, il CLI
+> usa `get.json` come in precedenza.
 
 ### Metodi disponibili
 
@@ -43,6 +58,7 @@ legge e parsa `get.json` da disco.
 | `SaveRoInfo`          | ✅ implementato       | `json_orig`/`json_mod` per `jobCardDetail.roInfo` (sottoinsieme esteso)      |
 | `SaveDmsSync`         | ✅ implementato       | `json_orig`/`json_mod` per `jobCardDetail.roInfo` (sottoinsieme base)       |
 | `SaveCustomer`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `customerInfo[0].personalInfo.contactInfo` |
+
 | `SaveVehicle`         | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `vehicleInfo.{identification,state}` |
 | `SaveJobs`            | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + copia di `jobCardDetail.jobs`    |
 | `SaveConsents`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `consents[0].{repairer,stellantis}` |
