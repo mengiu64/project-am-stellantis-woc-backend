@@ -79,6 +79,8 @@ Invia una richiesta DML inquiry. `ApplicationArea` (Sender/BODID/CreationDateTim
 > ```
 > Se `PartsInquiryHeader` è già presente nel body, ha sempre la precedenza e i campi root-level vengono ignorati.
 
+> **`CustomerIdDms` non è obbligatorio**: a differenza di `DocumentID`/`MessageType`/`VehicleID`, il contenuto di `CustomerIdDms` può essere sconosciuto/omesso. Il DML però richiede comunque la chiave presente nel payload: se il chiamante non la valorizza (assente, `null` o `undefined`), `postDmsInquiry()` la invia come `null` anziché ometterla.
+
 > **WL — scorciatoia `workLines` / `customerAccountDmsId`**: per `MessageType: 'WL'` il chiamante non deve costruire a mano la struttura nidificata `WorkLines[].PartsItem[]`/`LaborItem[]` (con `PartType`/`PartStatus`/`LaborType`). Basta passare:
 > - `workLines`: array di righe semplificate `{ workLineReference, partNumbers?, laborOperationIds?, transactionType?, customerAccountDmsId? }` (una voce per `WorkLineReference`, anche duplicato — non deve essere univoco);
 > - `customerAccountDmsId` (opzionale, default `null`): valore unico di `CustomerAccountDMSID` ripetuto automaticamente su ogni riga generata (sovrascrivibile per singola riga con `customerAccountDmsId` dentro l'elemento di `workLines`).

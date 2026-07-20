@@ -186,12 +186,16 @@ function buildWorkLines(workLines = [], customerAccountDmsId = null) {
  *                     MessageType/VehicleID) when omitted. If provided, it always
  *                     takes precedence over the flat fields.
  * @param {string}     body.PartsInquiryHeader.DocumentID
- * @param {string}     body.PartsInquiryHeader.CustomerIdDms
+ * @param {string|null} [body.PartsInquiryHeader.CustomerIdDms] - Non obbligatorio come
+ *                     contenuto (può essere sconosciuto): se omesso/null/undefined viene
+ *                     comunque inviato al DML come `null` (la chiave deve sempre essere
+ *                     presente nel payload).
  * @param {'LFP'|'WL'|'MP'} body.PartsInquiryHeader.MessageType
  * @param {string}     body.PartsInquiryHeader.VehicleID
  * @param {string}   [body.DocumentID]    - Shortcut: same as PartsInquiryHeader.DocumentID,
  *                     used when PartsInquiryHeader is not already provided.
- * @param {string}   [body.CustomerIdDms] - Shortcut: same as PartsInquiryHeader.CustomerIdDms.
+ * @param {string|null} [body.CustomerIdDms] - Shortcut: same as PartsInquiryHeader.CustomerIdDms
+ *                     (non obbligatorio, default null se assente).
  * @param {'LFP'|'WL'|'MP'} [body.MessageType] - Shortcut: same as PartsInquiryHeader.MessageType.
  * @param {string}   [body.VehicleID]     - Shortcut: same as PartsInquiryHeader.VehicleID.
  * @param {object}   [body.UpSelling]     - Required (and exclusive) when MessageType is LFP.
@@ -240,9 +244,13 @@ async function postDmsInquiry(bearerToken, body = {}) {
   if (!VALID_INQUIRY_TYPES.includes(header.MessageType)) {
     throw new Error(`[dms] MessageType must be one of: ${VALID_INQUIRY_TYPES.join(', ')}`);
   }
-  if (!header.DocumentID)    throw new Error('[dms] PartsInquiryHeader.DocumentID is required');
-  if (!header.CustomerIdDms) throw new Error('[dms] PartsInquiryHeader.CustomerIdDms is required');
-  if (!header.VehicleID)     throw new Error('[dms] PartsInquiryHeader.VehicleID is required');
+  if (!header.DocumentID) throw new Error('[dms] PartsInquiryHeader.DocumentID is required');
+  if (!header.VehicleID)  throw new Error('[dms] PartsInquiryHeader.VehicleID is required');
+
+  // CustomerIdDms non è obbligatorio nel contenuto (può essere sconosciuto/assente),
+  // ma il DML si aspetta comunque la chiave presente nel payload: se non fornito
+  // (o esplicitamente null/undefined), viene inviato come null anziché omesso.
+  if (header.CustomerIdDms === undefined) header.CustomerIdDms = null;
 
   // LFP: se il chiamante non fornisce già UpSelling.Packages ma passa
   // packageCodes (dati di dominio, non lo schema DML), lo costruiamo qui.

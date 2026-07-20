@@ -194,11 +194,16 @@ describe('postDmsInquiry', () => {
       .rejects.toThrow('[dms] PartsInquiryHeader.DocumentID is required');
   });
 
-  test('throws if CustomerIdDms is missing', async () => {
+  test('sends CustomerIdDms as null when missing (not required, but always present in payload)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
     const body = baseInquiryBody();
     delete body.PartsInquiryHeader.CustomerIdDms;
-    await expect(postDmsInquiry('token', body))
-      .rejects.toThrow('[dms] PartsInquiryHeader.CustomerIdDms is required');
+
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toHaveProperty('CustomerIdDms', null);
   });
 
   test('throws if VehicleID is missing', async () => {
@@ -454,6 +459,22 @@ describe('postDmsInquiry — PartsInquiryHeader built from flat fields', () => {
     expect(sent.CustomerIdDms).toBeUndefined();
     expect(sent.MessageType).toBeUndefined();
     expect(sent.VehicleID).toBeUndefined();
+  });
+
+  test('defaults CustomerIdDms to null when omitted from the flat root-level fields', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      DocumentID: '84564621',
+      MessageType: 'LFP',
+      VehicleID: '3C4NJCBH7KT831816',
+      packageCodes: 'FORFAIT',
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toHaveProperty('CustomerIdDms', null);
   });
 
   test('does not overwrite PartsInquiryHeader when caller already provides it, even with flat fields set', async () => {
