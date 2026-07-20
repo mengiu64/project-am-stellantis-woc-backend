@@ -85,7 +85,7 @@ Invia una richiesta DML inquiry. `ApplicationArea` (Sender/BODID/CreationDateTim
 > - `workLines`: array di righe semplificate `{ workLineReference, partNumbers?, laborOperationIds?, transactionType?, customerAccountDmsId? }` (una voce per `WorkLineReference`, anche duplicato — non deve essere univoco);
 > - `customerAccountDmsId` (opzionale, default `null`): valore unico di `CustomerAccountDMSID` ripetuto automaticamente su ogni riga generata (sovrascrivibile per singola riga con `customerAccountDmsId` dentro l'elemento di `workLines`).
 >
-> `postDmsInquiry()` genera `WorkLines` internamente via `buildWorkLines()`, con `TransactionType` default `1`, `PartType: 'L'`, `PartStatus: 'O'`, `LaborType: 'L'`. Se `WorkLines` è già presente nel body, ha sempre la precedenza e `workLines`/`customerAccountDmsId` vengono ignorati (mai inviati sul wire).
+> `postDmsInquiry()` genera `WorkLines` internamente via `buildWorkLines()`, con `TransactionType` default `1`, `PartType: 'L'`, `PartStatus: 'O'`, `LaborType: 'L'`. Se `WorkLines` è già presente nel body, ha sempre la precedenza e `workLines`/`customerAccountDmsId` vengono ignorati (mai inviati sul wire). `customerAccountDmsId` non è obbligatorio come contenuto (come `CustomerIdDms`): se omesso/`null`, ogni `WorkLines[].CustomerAccountDMSID` generato viene comunque inviato al DML come `null` (la chiave è sempre presente, non viene mai omessa).
 
 ```bash
 node index.js inquiry <type> <documentId> <customerId> <vehicleId>
