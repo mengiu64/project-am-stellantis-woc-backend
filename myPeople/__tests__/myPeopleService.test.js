@@ -7,6 +7,7 @@ jest.mock('../config', () => ({
     ibmClientId: 'test-client-id',
     username: 'mwppnr16',
     password: 'FntP0P31',
+    identifier: 'B1FD759A-B3E8-4185-BF09-4FA5EF706021',
   },
   secrets: {
     certSecretId: 'apicCert',
@@ -35,36 +36,27 @@ describe('myPeopleService', () => {
   });
 
   test('throws if username is missing', async () => {
-    await expect(readUserProfiles({ identifier: 'ID-1' })).rejects.toThrow('[myPeople] username is required');
-    expect(httpsRequest).not.toHaveBeenCalled();
-  });
-
-  test('throws if identifier is missing', async () => {
-    await expect(readUserProfiles({ username: 'user1' })).rejects.toThrow('[myPeople] identifier is required');
-    expect(httpsRequest).not.toHaveBeenCalled();
-  });
-
-  test('throws if both username and identifier are missing', async () => {
     await expect(readUserProfiles({})).rejects.toThrow('[myPeople] username is required');
+    expect(httpsRequest).not.toHaveBeenCalled();
   });
 
   test('calls httpsRequest with correct hostname, path and method', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { success: true } });
 
-    await readUserProfiles({ username: '0073741.d235', identifier: 'B1FD759A-B3E8' });
+    await readUserProfiles({ username: '0073741.d235' });
 
     const [options] = httpsRequest.mock.calls[0];
     expect(options.method).toBe('GET');
     expect(options.hostname).toBe('api.test');
     expect(options.path).toContain('/applications/mypeople/iursma/v1/readUserProfiles');
     expect(options.path).toContain('username=0073741.d235');
-    expect(options.path).toContain('identifier=B1FD759A-B3E8');
+    expect(options.path).toContain('identifier=B1FD759A-B3E8-4185-BF09-4FA5EF706021');
   });
 
   test('sends X-IBM-Client-Id and Authorization Basic headers', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    await readUserProfiles({ username: 'user1', identifier: 'id1' });
+    await readUserProfiles({ username: 'user1' });
 
     const [options] = httpsRequest.mock.calls[0];
     expect(options.headers['X-IBM-Client-Id']).toBe('test-client-id');
@@ -76,7 +68,7 @@ describe('myPeopleService', () => {
   test('attaches the mTLS https.Agent from certService', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    await readUserProfiles({ username: 'user1', identifier: 'id1' });
+    await readUserProfiles({ username: 'user1' });
 
     expect(getHttpsAgent).toHaveBeenCalledTimes(1);
     const [options] = httpsRequest.mock.calls[0];
@@ -87,29 +79,29 @@ describe('myPeopleService', () => {
     const body = { profiles: [{ username: 'user1' }] };
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
 
-    const result = await readUserProfiles({ username: 'user1', identifier: 'id1' });
+    const result = await readUserProfiles({ username: 'user1' });
     expect(result).toEqual(body);
   });
 
   test('throws on non-200 HTTP response', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 404, headers: {}, body: { message: 'not found' } });
 
-    await expect(readUserProfiles({ username: 'user1', identifier: 'id1' }))
+    await expect(readUserProfiles({ username: 'user1' }))
       .rejects.toThrow('[myPeople] readUserProfiles failed: HTTP 404');
   });
 
   test('propagates errors thrown while retrieving the mTLS agent', async () => {
     getHttpsAgent.mockRejectedValue(new Error('secret fetch failed'));
 
-    await expect(readUserProfiles({ username: 'user1', identifier: 'id1' }))
+    await expect(readUserProfiles({ username: 'user1' }))
       .rejects.toThrow('secret fetch failed');
     expect(httpsRequest).not.toHaveBeenCalled();
   });
 
-  test('URL-encodes special characters in username/identifier', async () => {
+  test('URL-encodes special characters in username', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    await readUserProfiles({ username: 'user name/1', identifier: 'id#1' });
+    await readUserProfiles({ username: 'user name/1' });
 
     const [options] = httpsRequest.mock.calls[0];
     expect(options.path).toContain(encodeURIComponent('user name/1').replace(/%20/g, '+'));

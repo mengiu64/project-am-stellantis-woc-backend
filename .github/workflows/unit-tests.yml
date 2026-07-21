@@ -2759,7 +2759,8 @@ jobs:
               MpManufacturer="${{ secrets.MP_MANUFACTURER }}" \
               MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
-              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}"
+              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
+              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}"
 
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
@@ -2872,7 +2873,8 @@ jobs:
               MpManufacturer="${{ secrets.MP_MANUFACTURER }}" \
               MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
-              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}"
+              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
+              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}"
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
@@ -2986,4 +2988,5 @@ jobs:
               MpManufacturer="${{ secrets.MP_MANUFACTURER }}" \
               MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
-              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}"
+              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
+              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}"

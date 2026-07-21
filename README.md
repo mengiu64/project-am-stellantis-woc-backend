@@ -484,7 +484,7 @@ Lambda per il recupero dei **profili utente** tramite l'API PSA/Stellantis `read
 |---|---|---|
 | `certService` | `fetchSecret(secretId)` | Recupera un secret da Secrets Manager tramite l'extension Lambda (porta locale 2773) |
 | `certService` | `getHttpsAgent()` | Costruisce (e cachea) un `https.Agent` con certificato/chiave client per l'mTLS |
-| `myPeopleService` | `readUserProfiles({ username, identifier })` | Esegue la GET `readUserProfiles` con Basic Auth + `X-IBM-Client-Id` + agent mTLS |
+| `myPeopleService` | `readUserProfiles({ username })` | Esegue la GET `readUserProfiles` con Basic Auth + `X-IBM-Client-Id` + agent mTLS (l'`identifier` è una costante letta da config, non un parametro di chiamata) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `readUserProfiles`
@@ -492,13 +492,14 @@ Lambda per il recupero dei **profili utente** tramite l'API PSA/Stellantis `read
 | Parametro | Obbligatorio | Descrizione |
 |---|---|---|
 | `username` | ✅ | Identificativo utente (es. `0073741.d235`) |
-| `identifier` | ✅ | Identificativo richiesta/dispositivo (UUID) |
+
+> L'`identifier` non è più un parametro di input: è un valore costante configurato tramite la variabile d'ambiente `MYPEOPLE_IDENTIFIER` (vedi sezione Variabili d'ambiente).
 
 #### Utilizzo CLI
 
 ```bash
-node index.js <username> <identifier>
-# es: node index.js 0073741.d235 B1FD759A-B3E8-4185-BF09-4FA5EF706021
+node index.js <username>
+# es: node index.js 0073741.d235
 ```
 
 > **Nota:** la Lambda gira all'interno di una VPC (vedi `Globals.Function.VpcConfig` in `template.yaml`); affinché l'extension possa raggiungere Secrets Manager è necessario un NAT Gateway o un VPC Interface Endpoint per `secretsmanager` nelle subnet configurate.
@@ -653,6 +654,7 @@ MYPEOPLE_USERNAME=...                # Username Basic Auth
 MYPEOPLE_PASSWORD=...                # Password Basic Auth
 MYPEOPLE_CERT_SECRET_ID=apicCert     # (opzionale) id secret Secrets Manager col certificato client mTLS
 MYPEOPLE_KEY_SECRET_ID=apicKey       # (opzionale) id secret Secrets Manager con la chiave privata mTLS
+MYPEOPLE_IDENTIFIER=...              # Identificativo richiesta/dispositivo (UUID) — valore costante, non più un parametro di input
 ```
 
 > **Nota:** certificato e chiave mTLS **non** vanno messi nel `.env`: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension (layer aggiunto alla Lambda in `template.yaml`).
@@ -771,7 +773,7 @@ cd agendaSoa && npm run test:coverage
 #### myPeople
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
 - **certService** – `fetchSecret` (200 con `SecretString`, status non-200, JSON non valido, errore di rete sulla request), `getHttpsAgent` (fetch parallelo cert/key, cache tra invocazioni, reset cache e retry dopo un fallimento)
-- **myPeopleService** – validazione parametri obbligatori (`username`/`identifier`), costruzione options (host/porta/path/query string), header `X-IBM-Client-Id` + `Authorization: Basic`, uso dell'agent mTLS, errori su risposta non-200
+- **myPeopleService** – validazione parametro obbligatorio (`username`), costruzione options (host/porta/path/query string) con `identifier` costante da config, header `X-IBM-Client-Id` + `Authorization: Basic`, uso dell'agent mTLS, errori su risposta non-200
 - **index** – risoluzione parametri da invocazione diretta/`queryStringParameters`/body JSON, 200/400/502, entrypoint CLI
 
 ---

@@ -37,17 +37,14 @@ function buildOptions(queryParams, agent) {
  *
  * @param {object} params
  * @param {string} params.username   - (Mandatory) IURSMA username (es. "0073741.d235")
- * @param {string} params.identifier - (Mandatory) request identifier (UUID)
  * @returns {Promise<object>} parsed response body
  */
 async function readUserProfiles(params = {}) {
-  const { username, identifier } = params;
+  const { username } = params;
+  const identifier = config.myPeople.identifier;
 
   if (!username) {
     throw new Error('[myPeople] username is required');
-  }
-  if (!identifier) {
-    throw new Error('[myPeople] identifier is required');
   }
 
   const agent = await getHttpsAgent();

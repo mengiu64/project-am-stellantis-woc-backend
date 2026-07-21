@@ -12,59 +12,59 @@ describe('myPeople lambda handler', () => {
     jest.clearAllMocks();
   });
 
-  test('direct invocation with { username, identifier }', async () => {
+  test('direct invocation with { username }', async () => {
     readUserProfiles.mockResolvedValue({ success: true });
 
-    const event = { username: '0073741.d235', identifier: 'ID-1' };
+    const event = { username: '0073741.d235' };
     const res = await handler(event);
 
     expect(res.statusCode).toBe(200);
-    expect(readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235', identifier: 'ID-1' });
+    expect(readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
     expect(JSON.parse(res.body)).toEqual({ success: true });
   });
 
-  test('API Gateway event — reads username/identifier from queryStringParameters', async () => {
+  test('API Gateway event — reads username from queryStringParameters', async () => {
     readUserProfiles.mockResolvedValue({ profiles: [] });
 
     const event = {
       rawPath: '/api/mypeople/readUserProfiles',
-      queryStringParameters: { username: '0073741.d235', identifier: 'ID-2' },
+      queryStringParameters: { username: '0073741.d235' },
     };
     const res = await handler(event);
 
     expect(res.statusCode).toBe(200);
-    expect(readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235', identifier: 'ID-2' });
+    expect(readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
   });
 
   test('merges a JSON body over queryStringParameters', async () => {
     readUserProfiles.mockResolvedValue({});
 
     const event = {
-      queryStringParameters: { username: 'from-query', identifier: 'from-query-id' },
-      body: JSON.stringify({ identifier: 'from-body-id' }),
+      queryStringParameters: { username: 'from-query' },
+      body: JSON.stringify({ username: 'from-body' }),
     };
     await handler(event);
 
-    expect(readUserProfiles).toHaveBeenCalledWith({ username: 'from-query', identifier: 'from-body-id' });
+    expect(readUserProfiles).toHaveBeenCalledWith({ username: 'from-body' });
   });
 
   test('ignores an invalid (non-JSON) body without throwing', async () => {
     readUserProfiles.mockResolvedValue({});
 
     const event = {
-      queryStringParameters: { username: 'user1', identifier: 'id1' },
+      queryStringParameters: { username: 'user1' },
       body: 'not-json',
     };
     const res = await handler(event);
 
     expect(res.statusCode).toBe(200);
-    expect(readUserProfiles).toHaveBeenCalledWith({ username: 'user1', identifier: 'id1' });
+    expect(readUserProfiles).toHaveBeenCalledWith({ username: 'user1' });
   });
 
   test('returns 400 when a required parameter is missing', async () => {
     readUserProfiles.mockRejectedValue(new Error('[myPeople] username is required'));
 
-    const res = await handler({ identifier: 'id1' });
+    const res = await handler({});
 
     expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.body);
@@ -75,7 +75,7 @@ describe('myPeople lambda handler', () => {
   test('returns 502 on a downstream/upstream failure', async () => {
     readUserProfiles.mockRejectedValue(new Error('[myPeople] readUserProfiles failed: HTTP 500 - {}'));
 
-    const res = await handler({ username: 'user1', identifier: 'id1' });
+    const res = await handler({ username: 'user1' });
 
     expect(res.statusCode).toBe(502);
     const body = JSON.parse(res.body);

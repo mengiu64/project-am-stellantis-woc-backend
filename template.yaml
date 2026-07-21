@@ -162,6 +162,10 @@ Parameters:
   MyPeoplePassword:
     Type: String
     NoEcho: true
+  MyPeopleIdentifier:
+    Type: String
+    NoEcho: true
+    Description: Fixed identifier value required by the readUserProfiles API (constant, not a per-call input)
   MyPeopleCertSecretId:
     Type: String
     Default: apicCert
@@ -533,6 +537,7 @@ Resources:
           MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
           MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
           MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
 

@@ -26,6 +26,7 @@ const REQUIRED_ENV = [
   'MYPEOPLE_IBM_CLIENT_ID',
   'MYPEOPLE_USERNAME',
   'MYPEOPLE_PASSWORD',
+  'MYPEOPLE_IDENTIFIER',
 ];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missing.length > 0) {
@@ -40,6 +41,9 @@ module.exports = {
     ibmClientId: process.env.MYPEOPLE_IBM_CLIENT_ID,
     username: process.env.MYPEOPLE_USERNAME,
     password: process.env.MYPEOPLE_PASSWORD,
+    // Identifier costante della richiesta (non varia per utente): configurato una
+    // volta come parametro/secret, non più passato dal chiamante.
+    identifier: process.env.MYPEOPLE_IDENTIFIER,
   },
 
   // Secrets Manager (mTLS client certificate/key), read via the AWS Parameters
