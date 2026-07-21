@@ -36,3 +36,4 @@ myPeople/coverage/
 .aws-sam/
 .idea/
 */.idea/
+.cfn-import/
