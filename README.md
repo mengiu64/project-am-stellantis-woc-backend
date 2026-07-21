@@ -451,6 +451,7 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `isdml` | `true` se `dms/settings` risponde `success: true` |
 | `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) in `dms/settings`, altrimenti `null` |
 | `dmldiscount` | valore della prima chiave di `dms/settings` contenente `discount`, altrimenti `null` |
+| `oics` | intero array `Response.User.OICs` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `MARKET`→`market`, `CODE`→`code`, `BRANDS`→`brands`, ...) |
 | tutti gli altri campi | `null` (non derivabili da myPeople/dms) |
 
 #### Funzioni principali
@@ -520,7 +521,8 @@ Lambda per il recupero dei **profili utente** tramite l'API PSA/Stellantis `read
 
 | Modulo | Funzione | Descrizione |
 |---|---|---|
-| `certService` | `fetchSecret(secretId)` | Recupera un secret da Secrets Manager tramite l'extension Lambda (porta locale 2773) |
+| `certService` | `fetchSecret(secretId)` | Recupera un secret da Secrets Manager tramite l'extension Lambda (porta locale 2773); normalizza il valore con `extractPem` |
+| `certService` | `extractPem(value)` | Normalizza il valore del secret in un PEM valido: se è già un PEM lo restituisce trimmato, altrimenti estrae il blocco `-----BEGIN...-----END...-----` ovunque si trovi (utile quando il secret è stato salvato come oggetto "JSON-like" con newline reali invece che come Plaintext puro), altrimenti restituisce il valore originale invariato |
 | `certService` | `getHttpsAgent()` | Costruisce (e cachea) un `https.Agent` con certificato/chiave client per l'mTLS |
 | `myPeopleService` | `readUserProfiles({ username })` | Esegue la GET `readUserProfiles` con Basic Auth + `X-IBM-Client-Id` + agent mTLS (l'`identifier` è una costante letta da config, non un parametro di chiamata) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
@@ -734,9 +736,9 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
-| **session** | 7 | 58 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
-| **myPeople** | 4 | 35 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **41** | **431** | |
+| **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
+| **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
+| **Totale** | **41** | **437** | |
 
 ### Copertura del codice
 
@@ -752,8 +754,8 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
-| **session** | 98.65% ✅ | 94.53% ✅ | 100% ✅ | 99.3% ✅ |
-| **myPeople** | 98.94% ✅ | 93.93% ✅ | 100% ✅ | 100% ✅ |
+| **session** | 98.69% ✅ | 93.84% ✅ | 100% ✅ | 99.32% ✅ |
+| **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
@@ -808,12 +810,12 @@ cd agendaSoa && npm run test:coverage
 - **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND`, messaggio con il mercato/utente richiesto e `label` opzionale (`"il mercato"` di default, `"l'utente"` per il flusso username)
 - **sessionRepository** – la classe base lancia errore "non implementato"
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
-- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione, `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`); test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
+- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione (incluso `oics`, l'intero blocco `OICs` di myPeople con chiavi in minuscolo), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`), `oics: []` quando myPeople non restituisce OIC; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
 - **repositoryFactory** – costruzione dell'istanza di default e con override, sia per `buildRepository` (S3) che per `buildMyPeopleDmsRepository` (myPeople/dms)
 
 #### myPeople
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
-- **certService** – `fetchSecret` (200 con `SecretString`, status non-200, JSON non valido, errore di rete sulla request), `getHttpsAgent` (fetch parallelo cert/key, cache tra invocazioni, reset cache e retry dopo un fallimento)
+- **certService** – `fetchSecret` (200 con `SecretString`, status non-200, JSON non valido, errore di rete sulla request, estrazione del PEM quando il secret è salvato come oggetto "JSON-like"), `extractPem` (PEM già valido, blocco PEM estratto da un wrapper con chiavi extra, nessun PEM trovato, input non-stringa), `getHttpsAgent` (fetch parallelo cert/key, cache tra invocazioni, reset cache e retry dopo un fallimento)
 - **myPeopleService** – validazione parametro obbligatorio (`username`), costruzione options (host/porta/path/query string) con `identifier` costante da config, header `X-IBM-Client-Id` + `Authorization: Basic`, uso dell'agent mTLS, errori su risposta non-200
 - **index** – risoluzione parametri da invocazione diretta/`queryStringParameters`/body JSON, 200/400/502, entrypoint CLI
 
