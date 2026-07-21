@@ -174,8 +174,8 @@ Parameters:
     Type: String
     Default: arn:aws:lambda:eu-west-1:015030872274:layer:AWS-Parameters-and-Secrets-Lambda-Extension:90
     Description: >-
-      ARN of the AWS Parameters and Secrets Lambda Extension layer (pinned instead of using
-      {{resolve:ssm:...}} because the deploy role lacks ssm:GetParameters on the public parameter).
+      ARN of the AWS Parameters and Secrets Lambda Extension layer (pinned instead of a versionless
+      SSM dynamic reference, because the deploy role lacks ssm:GetParameters on the public parameter).
       Bump this when AWS publishes a newer version — see
       https://docs.aws.amazon.com/systems-manager/latest/userguide/ps-integration-lambda-extensions.html#intel
 
