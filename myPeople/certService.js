@@ -37,13 +37,48 @@ function fetchSecret(secretId) {
         }
         try {
           const parsed = JSON.parse(data);
-          resolve(parsed.SecretString);
+          resolve(extractPem(parsed.SecretString));
         } catch (err) {
           reject(new Error(`[certService] invalid response retrieving secret "${secretId}": ${err.message}`));
         }
       });
     }).on('error', reject);
   });
+}
+
+/**
+ * Alcuni segreti sono stati salvati su Secrets Manager come oggetto JSON
+ * (es. {"apicCert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"})
+ * invece che come PEM puro in "Plaintext". Questa funzione normalizza entrambi i casi:
+ * se il valore è già un PEM (inizia con "-----BEGIN") lo restituisce trimmato,
+ * altrimenti prova a fare il parse come JSON ed estrae il valore stringa che
+ * sembra un PEM (o l'unico valore presente); in ogni altro caso restituisce il
+ * valore originale invariato.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function extractPem(value) {
+  if (typeof value !== 'string') return value;
+
+  const trimmed = value.trim();
+  if (trimmed.startsWith('-----BEGIN')) return trimmed;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (err) {
+    return value;
+  }
+
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const values = Object.values(parsed).filter((v) => typeof v === 'string');
+    const pemValue = values.find((v) => v.trim().startsWith('-----BEGIN'));
+    if (pemValue) return pemValue.trim();
+    if (values.length === 1) return values[0].trim();
+  }
+
+  return value;
 }
 
 /**
@@ -77,4 +112,4 @@ function _resetCache() {
   cachedAgentPromise = null;
 }
 
-module.exports = { getHttpsAgent, fetchSecret, _resetCache };
+module.exports = { getHttpsAgent, fetchSecret, _resetCache, extractPem };
