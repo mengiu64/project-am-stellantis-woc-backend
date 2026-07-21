@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -23,6 +23,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [pkManager](#pkmanager)
    - [translations](#translations)
    - [session](#session)
+   - [myPeople](#mypeople)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -45,7 +46,8 @@ project-am-stellantis-woc-backend/
 ├── pkMenupricing/      # Lambda – Pacchetti MenuPricing (Opel/Vauxhall SOAP)
 ├── pkManager/          # Lambda – Orchestratore multi-WS pacchetti (ePer/DocSOA/MenuPricing)
 ├── translations/       # Lambda – Recupero traduzioni da S3
-└── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
+├── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
+└── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 
 ```
 
@@ -472,6 +474,37 @@ node src/index.js 3109    # mercato specifico
 
 ---
 
+### myPeople
+
+Lambda per il recupero dei **profili utente** tramite l'API PSA/Stellantis `readUserProfiles` (piattaforma IURSMA), esposta via API Connect. La chiamata richiede autenticazione **Basic Auth** + header `X-IBM-Client-Id`, oltre a un **certificato client mTLS** (coppia certificato/chiave privata PEM). Certificato e chiave non sono salvati su disco/S3: vengono recuperati a runtime da **AWS Secrets Manager** tramite l'[AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (endpoint locale `http://localhost:2773/secretsmanager/get`), e usati per costruire un `https.Agent` dedicato, cachato tra invocazioni a caldo della stessa Lambda.
+
+#### Funzioni principali
+
+| Modulo | Funzione | Descrizione |
+|---|---|---|
+| `certService` | `fetchSecret(secretId)` | Recupera un secret da Secrets Manager tramite l'extension Lambda (porta locale 2773) |
+| `certService` | `getHttpsAgent()` | Costruisce (e cachea) un `https.Agent` con certificato/chiave client per l'mTLS |
+| `myPeopleService` | `readUserProfiles({ username, identifier })` | Esegue la GET `readUserProfiles` con Basic Auth + `X-IBM-Client-Id` + agent mTLS |
+| `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
+
+#### Parametri `readUserProfiles`
+
+| Parametro | Obbligatorio | Descrizione |
+|---|---|---|
+| `username` | ✅ | Identificativo utente (es. `0073741.d235`) |
+| `identifier` | ✅ | Identificativo richiesta/dispositivo (UUID) |
+
+#### Utilizzo CLI
+
+```bash
+node index.js <username> <identifier>
+# es: node index.js 0073741.d235 B1FD759A-B3E8-4185-BF09-4FA5EF706021
+```
+
+> **Nota:** la Lambda gira all'interno di una VPC (vedi `Globals.Function.VpcConfig` in `template.yaml`); affinché l'extension possa raggiungere Secrets Manager è necessario un NAT Gateway o un VPC Interface Endpoint per `secretsmanager` nelle subnet configurate.
+
+---
+
 ## Installazione
 
 Ogni modulo è indipendente. Installare le dipendenze separatamente:
@@ -488,6 +521,7 @@ cd pkMenupricing  && npm install
 cd pkManager      && npm install
 cd translations   && npm install
 cd session        && npm install
+cd myPeople       && npm install
 ```
 
 ---
@@ -609,6 +643,20 @@ SESSION_DEFAULT_MARKET=1000          # (opzionale) mercato di default quando "co
 
 > **Nota:** i dati di sessione sono letti da un unico file JSON su S3 (`session/session_data.json`, stesso bucket di `translations`), indicizzato per codice mercato a 4 caratteri. Se il mercato richiesto non è presente nel file la Lambda risponde `404`.
 
+### myPeople
+
+```env
+MYPEOPLE_HOST=https://api-basic-preprod.groupe-psa.com   # Host base API myPeople/IURSMA
+MYPEOPLE_BASE_PATH=/applications/mypeople/iursma/v1       # (opzionale) base path del servizio
+MYPEOPLE_IBM_CLIENT_ID=...           # X-IBM-Client-Id per il gateway API Connect
+MYPEOPLE_USERNAME=...                # Username Basic Auth
+MYPEOPLE_PASSWORD=...                # Password Basic Auth
+MYPEOPLE_CERT_SECRET_ID=apicCert     # (opzionale) id secret Secrets Manager col certificato client mTLS
+MYPEOPLE_KEY_SECRET_ID=apicKey       # (opzionale) id secret Secrets Manager con la chiave privata mTLS
+```
+
+> **Nota:** certificato e chiave mTLS **non** vanno messi nel `.env`: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension (layer aggiunto alla Lambda in `template.yaml`).
+
 ---
 
 ## Unit Test & Coverage
@@ -645,7 +693,8 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 5 | 33 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository` |
-| **Totale** | **35** | **371** | |
+| **myPeople** | 4 | 35 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
+| **Totale** | **39** | **406** | |
 
 ### Copertura del codice
 
@@ -662,6 +711,7 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.46% ✅ | 92.85% ✅ | 100% ✅ | 98.46% ✅ |
+| **myPeople** | 98.94% ✅ | 93.93% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
@@ -717,6 +767,12 @@ cd agendaSoa && npm run test:coverage
 - **sessionRepository** – la classe base lancia errore "non implementato"
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
 - **repositoryFactory** – costruzione dell'istanza di default e con override
+
+#### myPeople
+- **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
+- **certService** – `fetchSecret` (200 con `SecretString`, status non-200, JSON non valido, errore di rete sulla request), `getHttpsAgent` (fetch parallelo cert/key, cache tra invocazioni, reset cache e retry dopo un fallimento)
+- **myPeopleService** – validazione parametri obbligatori (`username`/`identifier`), costruzione options (host/porta/path/query string), header `X-IBM-Client-Id` + `Authorization: Basic`, uso dell'agent mTLS, errori su risposta non-200
+- **index** – risoluzione parametri da invocazione diretta/`queryStringParameters`/body JSON, 200/400/502, entrypoint CLI
 
 ---
 

@@ -30,6 +30,9 @@ translations/coverage/
 session/node_modules/
 session/.env
 session/coverage/
+myPeople/node_modules/
+myPeople/.env
+myPeople/coverage/
 .aws-sam/
 .idea/
 */.idea/

@@ -1,0 +1,61 @@
+{
+  "name": "mypeople",
+  "version": "1.0.0",
+  "description": "myPeople lambda - IURSMA readUserProfiles client (mTLS + Basic Auth via IBM API Connect)",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci --outputFile=coverage/jest-results.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-html-reporters": "^3.1.7"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "certService.js",
+      "httpClient.js",
+      "myPeopleService.js"
+    ],
+    "coverageReporters": [
+      "html",
+      "text",
+      "lcov",
+      "json-summary",
+      "cobertura"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    },
+    "reporters": [
+      "default",
+      [
+        "jest-html-reporters",
+        {
+          "publicPath": "./coverage",
+          "filename": "test-report.html",
+          "openReport": false,
+          "includeConsoleLog": true,
+          "includeFailureMsg": true,
+          "expand": true
+        }
+      ]
+    ]
+  }
+}

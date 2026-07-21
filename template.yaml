@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople)
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -149,6 +149,28 @@ Parameters:
   MpManufacturer:
     Type: String
 
+  # ── myPeople (IURSMA readUserProfiles — PSA/Stellantis) ──────────────────
+  MyPeopleHost:
+    Type: String
+    Default: https://api-basic-preprod.groupe-psa.com
+  MyPeopleIbmClientId:
+    Type: String
+    NoEcho: true
+  MyPeopleUsername:
+    Type: String
+    NoEcho: true
+  MyPeoplePassword:
+    Type: String
+    NoEcho: true
+  MyPeopleCertSecretId:
+    Type: String
+    Default: apicCert
+    Description: Secrets Manager secret id holding the mTLS client certificate (PEM)
+  MyPeopleKeySecretId:
+    Type: String
+    Default: apicKey
+    Description: Secrets Manager secret id holding the mTLS client private key (PEM)
+
 # ── Globals ───────────────────────────────────────────────────────────────────
 
 Globals:
@@ -187,6 +209,12 @@ Resources:
           AGENDA_SOA_CERT:     !Ref AgendaSoaCertKey
           AGENDA_SOA_KEY:      !Ref AgendaSoaKeyKey
 
+  AgendaSoaFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AgendaSoaFunction}"
+      RetentionInDays: 30
+
   AgendaSoaNagaFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -207,6 +235,12 @@ Resources:
           AGENDA_SOA_CERT:     !Ref AgendaSoaCertKey
           AGENDA_SOA_KEY:      !Ref AgendaSoaKeyKey
 
+  AgendaSoaNagaFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AgendaSoaNagaFunction}"
+      RetentionInDays: 30
+
   DmsFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -223,6 +257,12 @@ Resources:
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
 
+  DmsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DmsFunction}"
+      RetentionInDays: 30
+
   JobCardFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -237,6 +277,12 @@ Resources:
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+
+  JobCardFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${JobCardFunction}"
+      RetentionInDays: 30
 
   V360Function:
     Type: AWS::Serverless::Function
@@ -254,6 +300,12 @@ Resources:
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
 
+  V360FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${V360Function}"
+      RetentionInDays: 30
+
   PkEperFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -265,6 +317,12 @@ Resources:
       Environment:
         Variables:
           EPER_HOST: !Ref EperHost
+
+  PkEperFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PkEperFunction}"
+      RetentionInDays: 30
 
   PkDocsoaFunction:
     Type: AWS::Serverless::Function
@@ -281,6 +339,12 @@ Resources:
           DOCSOA_PASSWORD:  !Ref DocsoaPassword
           DOCSOA_CLIENT_ID: !Ref DocsoaClientId
 
+  PkDocsoaFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PkDocsoaFunction}"
+      RetentionInDays: 30
+
   PkMenupricingFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -296,6 +360,12 @@ Resources:
           MENUPRICING_PWS:     !Ref MenupricingPws
           MENUPRICING_USR_REQ: !Ref MenupricingUsrReq
           MENUPRICING_PWS_REQ: !Ref MenupricingPwsReq
+
+  PkMenupricingFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PkMenupricingFunction}"
+      RetentionInDays: 30
 
   # ── Translations (bucket S3 + Lambda) ──────────────────────────────────────
 
@@ -328,6 +398,12 @@ Resources:
       Environment:
         Variables:
           TRANSLATIONS_BUCKET_NAME: !Ref TranslationsBucket
+
+  TranslationsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${TranslationsFunction}"
+      RetentionInDays: 30
 
   PkManagerFunction:
     Type: AWS::Serverless::Function
@@ -369,6 +445,12 @@ Resources:
           DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
 
+  PkManagerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PkManagerFunction}"
+      RetentionInDays: 30
+
   SessionFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -384,6 +466,51 @@ Resources:
         Variables:
           SESSION_BUCKET_NAME: !Ref TranslationsBucket
           SESSION_DATA_KEY: session/session_data.json
+
+  SessionFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SessionFunction}"
+      RetentionInDays: 30
+
+  # ── myPeople (IURSMA readUserProfiles) ────────────────────────────────────
+  #
+  # Il certificato/chiave mTLS ("apicCert"/"apicKey") sono letti da AWS Secrets
+  # Manager tramite la AWS Parameters and Secrets Lambda Extension (layer),
+  # per non dover imbarcare l'SDK e per beneficiare della cache locale
+  # dell'estensione. La funzione gira in VPC (Globals.Function.VpcConfig):
+  # è necessario un endpoint di rete verso Secrets Manager (VPC Interface
+  # Endpoint o NAT Gateway) affinché l'estensione riesca a recuperare i segreti.
+  MyPeopleFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-mypeople"
+      CodeUri: myPeople/
+      Layers:
+        - '{{resolve:ssm:/aws/service/aws-parameters-and-secrets-lambda-extension/x86/latest}}'
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+      Environment:
+        Variables:
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
+          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+
+  MyPeopleFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${MyPeopleFunction}"
+      RetentionInDays: 30
 
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
@@ -412,3 +539,5 @@ Outputs:
     Value: !GetAtt TranslationsFunction.Arn
   SessionFunctionArn:
     Value: !GetAtt SessionFunction.Arn
+  MyPeopleFunctionArn:
+    Value: !GetAtt MyPeopleFunction.Arn
