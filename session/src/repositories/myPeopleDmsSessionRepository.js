@@ -157,8 +157,18 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       pcystellantis3: null,
       maxdiscountperc: null,
       maxdiscountval: null,
+      oics: oics.map(lowercaseKeys),
     };
   }
+}
+
+/** Restituisce una copia dell'oggetto con tutte le chiavi di primo livello in minuscolo. */
+function lowercaseKeys(obj) {
+  const result = {};
+  for (const [key, value] of Object.entries(obj || {})) {
+    result[key.toLowerCase()] = value;
+  }
+  return result;
 }
 
 /** Costruisce una Map(key minuscolo -> valore coerentemente tipizzato) dall'array data di dms/settings. */

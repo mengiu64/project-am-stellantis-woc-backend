@@ -100,6 +100,10 @@ describe('MyPeopleDmsSessionRepository', () => {
       pcystellantis3: null,
       maxdiscountperc: null,
       maxdiscountval: null,
+      oics: [
+        { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,31,33,43', main: 'N' },
+        { market: '1000', code: '00007584', state: 'ACTIVE', brands: '00,77,66,57,70,83', main: 'Y' },
+      ],
     });
   });
 
@@ -253,5 +257,91 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(data.sincom).toBeNull();
     expect(data.language).toBeNull();
     expect(data.usertype).toBeNull();
+  });
+
+  test('oics riporta l\'intero blocco OICs di myPeople con tutte le chiavi in minuscolo', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [
+              {
+                MARKET: '1000',
+                CODE: '00010925',
+                STATE: 'ACTIVE',
+                DESCRIPTION: 'BRANDINI SPA',
+                CITY: 'BAGNO A RIPOLI',
+                ADDRESS: "VIA LUNGO L'EMA, 19/21/23",
+                ZIPCODE: '50012',
+                BRANDS: '30,31,33,43',
+                TYPE: 'AFTERSALES',
+                MAIN: 'N',
+              },
+              {
+                MARKET: '1000',
+                CODE: '00007584',
+                STATE: 'ACTIVE',
+                DESCRIPTION: 'BRANDINI S.P.A.',
+                CITY: 'GROSSETO',
+                ADDRESS: 'VIA AMBRA 41-45',
+                ZIPCODE: '58100',
+                BRANDS: '00,77,66,57,70,83',
+                TYPE: 'AFTERSALES',
+                MAIN: 'Y',
+              },
+            ],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.oics).toEqual([
+      {
+        market: '1000',
+        code: '00010925',
+        state: 'ACTIVE',
+        description: 'BRANDINI SPA',
+        city: 'BAGNO A RIPOLI',
+        address: "VIA LUNGO L'EMA, 19/21/23",
+        zipcode: '50012',
+        brands: '30,31,33,43',
+        type: 'AFTERSALES',
+        main: 'N',
+      },
+      {
+        market: '1000',
+        code: '00007584',
+        state: 'ACTIVE',
+        description: 'BRANDINI S.P.A.',
+        city: 'GROSSETO',
+        address: 'VIA AMBRA 41-45',
+        zipcode: '58100',
+        brands: '00,77,66,57,70,83',
+        type: 'AFTERSALES',
+        main: 'Y',
+      },
+    ]);
+  });
+
+  test('oics è un array vuoto quando myPeople non restituisce alcun OIC', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.oics).toEqual([]);
   });
 });

@@ -47,13 +47,13 @@ function fetchSecret(secretId) {
 }
 
 /**
- * Alcuni segreti sono stati salvati su Secrets Manager come oggetto JSON
- * (es. {"apicCert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"})
- * invece che come PEM puro in "Plaintext". Questa funzione normalizza entrambi i casi:
- * se il valore è già un PEM (inizia con "-----BEGIN") lo restituisce trimmato,
- * altrimenti prova a fare il parse come JSON ed estrae il valore stringa che
- * sembra un PEM (o l'unico valore presente); in ogni altro caso restituisce il
- * valore originale invariato.
+ * Alcuni segreti sono stati salvati su Secrets Manager come oggetto "JSON-like"
+ * (es. {"apicCert": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"},
+ * spesso con newline reali non escapate dentro le virgolette, quindi non è detto sia
+ * JSON valido) invece che come PEM puro in "Plaintext". Questa funzione normalizza
+ * entrambi i casi: se il valore è già un PEM (inizia con "-----BEGIN") lo restituisce
+ * trimmato, altrimenti cerca ovunque nella stringa un blocco "-----BEGIN ... -----END
+ * ...-----" e lo estrae; se non trova nulla restituisce il valore originale invariato.
  *
  * @param {string} value
  * @returns {string}
@@ -64,21 +64,8 @@ function extractPem(value) {
   const trimmed = value.trim();
   if (trimmed.startsWith('-----BEGIN')) return trimmed;
 
-  let parsed;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch (err) {
-    return value;
-  }
-
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const values = Object.values(parsed).filter((v) => typeof v === 'string');
-    const pemValue = values.find((v) => v.trim().startsWith('-----BEGIN'));
-    if (pemValue) return pemValue.trim();
-    if (values.length === 1) return values[0].trim();
-  }
-
-  return value;
+  const match = value.match(/-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/);
+  return match ? match[0] : value;
 }
 
 /**

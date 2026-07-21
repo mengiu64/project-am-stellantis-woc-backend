@@ -92,9 +92,9 @@ describe('certService', () => {
       await expect(promise).rejects.toThrow('ECONNREFUSED');
     });
 
-    test('extracts the PEM value when the secret was saved as a JSON object (key/value pairs)', async () => {
+    test('extracts the PEM value when the secret was saved as a JSON-like object with real embedded newlines', async () => {
       const pem = '-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----';
-      const wrapped = JSON.stringify({ apicCert: pem });
+      const wrapped = `{\n  "apicCert": "${pem}"\n}`;
       const mockRes = buildMockRes(200, JSON.stringify({ SecretString: wrapped }));
       http.get.mockImplementation((options, cb) => { cb(mockRes); return { on: jest.fn() }; });
 
@@ -109,33 +109,22 @@ describe('certService', () => {
       expect(certService.extractPem(`  ${pem}  `)).toBe(pem);
     });
 
-    test('extracts the value matching a PEM from a JSON object with multiple keys', () => {
+    test('extracts a PEM block wrapped in a JSON-like object with extra keys', () => {
       const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----';
-      const wrapped = JSON.stringify({ description: 'apicKey', apicKey: pem });
+      const wrapped = `{\n  "description": "apicKey",\n  "apicKey": "${pem}"\n}`;
       expect(certService.extractPem(wrapped)).toBe(pem);
     });
 
-    test('falls back to the single value of a JSON object with one key when none looks like a PEM', () => {
-      const wrapped = JSON.stringify({ apicCert: 'not-a-pem-value' });
-      expect(certService.extractPem(wrapped)).toBe('not-a-pem-value');
+    test('returns the original value unchanged when no PEM block is found', () => {
+      expect(certService.extractPem('{"apicCert":"not-a-pem-value"}')).toBe('{"apicCert":"not-a-pem-value"}');
     });
 
-    test('returns the original value unchanged when it is not JSON and not a PEM', () => {
+    test('returns the original value unchanged when it is plain non-PEM text', () => {
       expect(certService.extractPem('plain-value')).toBe('plain-value');
     });
 
     test('returns the original value unchanged for non-string input', () => {
       expect(certService.extractPem(undefined)).toBeUndefined();
-    });
-
-    test('returns the original value when JSON parses to a non-object (e.g. array/number)', () => {
-      expect(certService.extractPem('[1,2,3]')).toBe('[1,2,3]');
-      expect(certService.extractPem('42')).toBe('42');
-    });
-
-    test('returns the original value when JSON object has multiple keys and none is a single fallback', () => {
-      const wrapped = JSON.stringify({ a: 'foo', b: 'bar' });
-      expect(certService.extractPem(wrapped)).toBe(wrapped);
     });
   });
 
