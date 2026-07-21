@@ -427,15 +427,41 @@ node index.js translations lang=en
 
 ### session
 
-Lambda che restituisce i **dati di sessione** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, preferenze pezzi, sconti massimi, ecc.) per un dato mercato, letti da un unico file JSON su S3 (`session/session_data.json`, stesso bucket usato da `translations`). Il file contiene un oggetto indicizzato per codice mercato a 4 caratteri (es. `"1000"`); l'unico parametro di input accettato è il **codice mercato** (`codmarket`, 4 caratteri): se non viene passato si usa il default `1000`. Se il mercato richiesto non è presente nel file, la Lambda risponde `404`. L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository`, per permettere in futuro di sostituire S3 senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
+Lambda che restituisce i **dati di sessione** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, preferenze pezzi, sconti massimi, ecc.) per un dato mercato o per un dato utente, con un **bivio** in base al parametro passato in input:
+
+- **`codmarket`** (comportamento storico, invariato): i dati sono letti da un unico file JSON su S3 (`session/session_data.json`, stesso bucket usato da `translations`), indicizzato per codice mercato a 4 caratteri (es. `"1000"`). Se non viene passato alcun parametro si usa il default `1000`. Se il mercato richiesto non è presente nel file, la Lambda risponde `404`.
+- **`username`** (nuovo flusso evolutivo): la Lambda chiama in sequenza `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente dell'utente) e poi `dms/settings` (con i parametri `country`/`brand`/`dealer` derivati dalla risposta myPeople), e compone un JSON con **la stessa forma storica** della risposta S3. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se `username` e `codmarket` sono entrambi presenti, ha priorità `username`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+
+L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository` (flusso `codmarket`) e da `MyPeopleDmsSessionRepository` (flusso `username`), per permettere di aggiungere/sostituire sorgenti dati senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
+
+> **Nota tecnica:** per poter richiamare in-process il codice di `myPeople` e `dms` (senza invocazioni Lambda-to-Lambda separate), `SessionFunction` in `template.yaml` usa `CodeUri: ./` (root del repo) + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `session/`, `myPeople/` e `dms/` nel pacchetto di build (stesso pattern già usato da `pkManager` per `pkEper`/`pkDocsoa`/`pkMenupricing`/`dms`).
+
+#### Mappatura myPeople/dms → campi di sessione
+
+| Campo output | Origine |
+|---|---|
+| `codmarket` | `Response.User.Attributes.MARKETCODE` |
+| `oic` | `CODE` dell'OIC con `MAIN: "Y"` (fallback: primo OIC disponibile) |
+| `sincom` | `Attributes.MAINSINCOM` |
+| `sessionbrand` / `brandvehic_fca` | primo codice del campo `BRANDS` (CSV) dell'OIC selezionato |
+| `brandvehic_reftech` | codice brand transcodificato (tabella interna 83→AR, 00→FT, 70→LA, 57→JE, 55→CY, 77→FO, 66→AH, 56→DG, 58→RM, 30→AC, 31→AP, 33→DS, 43→OV, 97→CT); è anche il valore usato come `brand` nella chiamata a `dms/settings` |
+| `brandvehic_genome` | sempre `null` (nessuna tabella di mappatura disponibile) |
+| `language` | `` `${iso2}_${ISO2}` `` da `Attributes.NATIONiso2` (es. `it_IT`) |
+| `usertype` | `Attributes.USERTYPE` |
+| `isdml` | `true` se `dms/settings` risponde `success: true` |
+| `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) in `dms/settings`, altrimenti `null` |
+| `dmldiscount` | valore della prima chiave di `dms/settings` contenente `discount`, altrimenti `null` |
+| tutti gli altri campi | `null` (non derivabili da myPeople/dms) |
 
 #### Funzioni principali
 
 | Funzione | Descrizione |
 |---|---|
-| `handler(event)` | Entry-point Lambda: legge `codmarket` da `event.criteria`, `queryStringParameters` o `pathParameters` (in quest'ordine di priorità), con default `1000`; ritorna 200 con i dati, 404 se il mercato non è presente nel file, 502 su errori generici (es. S3 irraggiungibile) |
+| `handler(event)` | Entry-point Lambda: se è presente `username` (da `event.criteria`, `queryStringParameters` o `pathParameters`) usa `MyPeopleDmsSessionRepository`; altrimenti legge `codmarket` (stessa priorità di sorgenti), con default `1000`, e usa `S3SessionRepository`. Ritorna 200 con i dati, 404 se il mercato/utente non è presente, 502 su errori generici |
 | `getSessionData(codmarket)` | `S3SessionRepository`: scarica `session/session_data.json` da S3 ed estrae la sezione relativa al mercato richiesto |
+| `getSessionData(username)` | `MyPeopleDmsSessionRepository`: chiama `myPeople.readUserProfiles` + `dms.getDmsSettings` e compone il JSON di sessione |
 | `buildRepository(overrides)` | Factory che costruisce `S3SessionRepository` (bucket/key/client configurabili via env o overrides, utile nei test) |
+| `buildMyPeopleDmsRepository(overrides)` | Factory che costruisce `MyPeopleDmsSessionRepository` (funzioni myPeople/dms iniettabili via overrides, utile nei test) |
 
 #### Struttura
 
@@ -444,10 +470,11 @@ session/
 ├── src/
 │   ├── index.js                             # Lambda entry-point + CLI
 │   ├── errors.js                             # SessionNotFoundError (404)
-│   ├── repositoryFactory.js                  # Factory: buildRepository()
+│   ├── repositoryFactory.js                  # Factory: buildRepository(), buildMyPeopleDmsRepository()
 │   └── repositories/
 │       ├── sessionRepository.js              # Interfaccia base
-│       └── s3SessionRepository.js            # Implementazione S3 (bucket + key JSON)
+│       ├── s3SessionRepository.js            # Implementazione S3 (bucket + key JSON) — flusso codmarket
+│       └── myPeopleDmsSessionRepository.js    # Implementazione myPeople + dms/settings — flusso username
 └── __tests__/                                # Unit test Jest
 ```
 
@@ -457,10 +484,20 @@ session/
 { "criteria": { "codmarket": "3109" } }
 ```
 
+oppure, per il nuovo flusso utente:
+
+```json
+{ "criteria": { "username": "0073741.d235" } }
+```
+
 oppure, dietro API Gateway:
 
 ```json
 { "queryStringParameters": { "codmarket": "3109" } }
+```
+
+```json
+{ "queryStringParameters": { "username": "0073741.d235" } }
 ```
 
 Senza alcun parametro, viene usato il mercato di default (`1000`).
@@ -468,8 +505,9 @@ Senza alcun parametro, viene usato il mercato di default (`1000`).
 #### Utilizzo CLI
 
 ```bash
-node src/index.js         # mercato di default (1000)
-node src/index.js 3109    # mercato specifico
+node src/index.js                    # mercato di default (1000)
+node src/index.js 3109               # mercato specifico
+node src/index.js --username 0073741.d235   # flusso myPeople + dms
 ```
 
 ---
@@ -637,12 +675,14 @@ TRANSLATIONS_DEFAULT_LANG=en        # (opzionale) lingua di default quando "lang
 ### session
 
 ```env
-SESSION_BUCKET_NAME=...              # Nome del bucket S3 con i dati di sessione (obbligatoria)
+SESSION_BUCKET_NAME=...              # Nome del bucket S3 con i dati di sessione (obbligatoria per il flusso codmarket)
 SESSION_DATA_KEY=session/session_data.json  # (opzionale) key S3 del file JSON dati di sessione
 SESSION_DEFAULT_MARKET=1000          # (opzionale) mercato di default quando "codmarket" non è passato
 ```
 
 > **Nota:** i dati di sessione sono letti da un unico file JSON su S3 (`session/session_data.json`, stesso bucket di `translations`), indicizzato per codice mercato a 4 caratteri. Se il mercato richiesto non è presente nel file la Lambda risponde `404`.
+
+> **Nota (flusso `username`):** quando viene passato `username` invece di `codmarket`, la Lambda richiama in-process il codice di `myPeople` e `dms`, quindi richiede anche **tutte** le variabili d'ambiente elencate nelle sezioni `dms` e `myPeople` qui sotto (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`, `MYPEOPLE_*`).
 
 ### myPeople
 
@@ -694,9 +734,9 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
-| **session** | 5 | 33 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository` |
+| **session** | 7 | 58 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 35 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **39** | **406** | |
+| **Totale** | **41** | **431** | |
 
 ### Copertura del codice
 
@@ -712,7 +752,7 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
-| **session** | 98.46% ✅ | 92.85% ✅ | 100% ✅ | 98.46% ✅ |
+| **session** | 98.65% ✅ | 94.53% ✅ | 100% ✅ | 99.3% ✅ |
 | **myPeople** | 98.94% ✅ | 93.93% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
@@ -763,12 +803,13 @@ cd agendaSoa && npm run test:coverage
 - **handlers/translations** – merge `queryStringParameters`/`body`/`params` (params vince), default lingua, 200/404/502, header `Content-Type`
 
 #### session
-- **index (handler)** – merge `event.criteria`/`queryStringParameters`/`pathParameters` (precedenza a `criteria`), default mercato `1000`, 200 con i dati di sessione, 404 su `SessionNotFoundError` (mercato assente), 502 su errori generici (es. S3 irraggiungibile), header `Content-Type`
-- **index (runCli)** – stampa dati su mercato di default/richiesto da argv, log errore + `process.exitCode=1` in caso di fallimento
-- **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND` e messaggio con il mercato richiesto
+- **index (handler)** – merge `event.criteria`/`queryStringParameters`/`pathParameters` (precedenza a `criteria`); se `username` è presente (priorità su `codmarket`) usa `MyPeopleDmsSessionRepository`, altrimenti `S3SessionRepository` con default mercato `1000`; 200 con i dati di sessione, 404 su `SessionNotFoundError` (mercato/utente assente), 502 su errori generici (es. S3/myPeople/dms irraggiungibili), header `Content-Type`
+- **index (runCli)** – stampa dati su mercato di default/richiesto da argv o su `--username <value>`, log errore + `process.exitCode=1` in caso di fallimento (incluso `--username` senza valore)
+- **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND`, messaggio con il mercato/utente richiesto e `label` opzionale (`"il mercato"` di default, `"l'utente"` per il flusso username)
 - **sessionRepository** – la classe base lancia errore "non implementato"
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
-- **repositoryFactory** – costruzione dell'istanza di default e con override
+- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione, `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`); test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
+- **repositoryFactory** – costruzione dell'istanza di default e con override, sia per `buildRepository` (S3) che per `buildMyPeopleDmsRepository` (myPeople/dms)
 
 #### myPeople
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete

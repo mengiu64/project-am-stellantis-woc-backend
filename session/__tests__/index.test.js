@@ -3,16 +3,19 @@
 jest.mock('dotenv', () => ({ config: jest.fn() }));
 jest.mock('../src/repositoryFactory');
 
-const { buildRepository } = require('../src/repositoryFactory');
+const { buildRepository, buildMyPeopleDmsRepository } = require('../src/repositoryFactory');
 const { handler, runCli, DEFAULT_MARKET } = require('../src/index');
 const { SessionNotFoundError } = require('../src/errors');
 
 describe('session/src/index — handler', () => {
   let mockRepository;
+  let mockMyPeopleDmsRepository;
 
   beforeEach(() => {
     mockRepository = { getSessionData: jest.fn() };
+    mockMyPeopleDmsRepository = { getSessionData: jest.fn() };
     buildRepository.mockReturnValue(mockRepository);
+    buildMyPeopleDmsRepository.mockReturnValue(mockMyPeopleDmsRepository);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -94,16 +97,64 @@ describe('session/src/index — handler', () => {
     const res = await handler({});
     expect(res.headers['Content-Type']).toBe('application/json');
   });
+
+  it('con username usa MyPeopleDmsSessionRepository invece di S3SessionRepository', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000', sincom: '0073741' });
+    const res = await handler({ queryStringParameters: { username: '0073741.d235' } });
+
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+    expect(mockRepository.getSessionData).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ codmarket: '1000', sincom: '0073741' });
+  });
+
+  it('legge username da event.criteria (invocazione diretta)', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
+    await handler({ criteria: { username: '0073741.d235' } });
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+  });
+
+  it('legge username da pathParameters quando assente altrove', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
+    await handler({ pathParameters: { username: '0073741.d235' } });
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+  });
+
+  it('username ha priorita\' su codmarket quando entrambi presenti', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
+    await handler({ queryStringParameters: { username: '0073741.d235', codmarket: '3109' } });
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+    expect(mockRepository.getSessionData).not.toHaveBeenCalled();
+  });
+
+  it('ritorna 404 quando MyPeopleDmsSessionRepository lancia SessionNotFoundError', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockRejectedValue(
+      new SessionNotFoundError('0073741.d235', "l'utente")
+    );
+    const res = await handler({ criteria: { username: '0073741.d235' } });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body).success).toBe(false);
+  });
+
+  it('ritorna 502 su errore generico di MyPeopleDmsSessionRepository (es. dms irraggiungibile)', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockRejectedValue(new Error('dms unreachable'));
+    const res = await handler({ criteria: { username: '0073741.d235' } });
+    expect(res.statusCode).toBe(502);
+    expect(JSON.parse(res.body).message).toBe('dms unreachable');
+  });
 });
 
 describe('session/src/index — runCli', () => {
   let mockRepository;
+  let mockMyPeopleDmsRepository;
   let logSpy;
   let errorSpy;
 
   beforeEach(() => {
     mockRepository = { getSessionData: jest.fn() };
+    mockMyPeopleDmsRepository = { getSessionData: jest.fn() };
     buildRepository.mockReturnValue(mockRepository);
+    buildMyPeopleDmsRepository.mockReturnValue(mockMyPeopleDmsRepository);
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -135,6 +186,24 @@ describe('session/src/index — runCli', () => {
     const result = await runCli(['node', 'src/index.js', '9999']);
     expect(result).toBeUndefined();
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[session] Errore:'));
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('con --username usa MyPeopleDmsSessionRepository', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const data = await runCli(['node', 'src/index.js', '--username', '0073741.d235']);
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+    expect(mockRepository.getSessionData).not.toHaveBeenCalled();
+    expect(data).toEqual({ codmarket: '1000' });
+    expect(logSpy).toHaveBeenCalledWith(JSON.stringify(data, null, 2));
+  });
+
+  it('--username senza valore logga un errore e non chiama alcun repository', async () => {
+    const result = await runCli(['node', 'src/index.js', '--username']);
+    expect(result).toBeUndefined();
+    expect(mockMyPeopleDmsRepository.getSessionData).not.toHaveBeenCalled();
+    expect(mockRepository.getSessionData).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('--username richiede un valore'));
     expect(process.exitCode).toBe(1);
   });
 });

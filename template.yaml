@@ -483,21 +483,49 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${PkManagerFunction}"
       RetentionInDays: 30
 
+  # SessionFunction impacchetta l'intero repo (CodeUri: ./, BuildMethod: makefile) perché,
+  # oltre al proprio codice, richiede in-process myPeople/myPeopleService e dms/authService +
+  # dms/dmsService (stesso pattern già usato da PkManagerFunction per dms/pkEper/..., vedi
+  # Makefile) per il flusso "evolutivo" username -> myPeople -> dms/settings.
   SessionFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-session"
-      CodeUri: session/
-      Handler: src/index.handler
+      CodeUri: ./
+      Handler: session/src/index.handler
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
         - S3ReadPolicy:
             BucketName: !Ref TranslationsBucket
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
       Environment:
         Variables:
           SESSION_BUCKET_NAME: !Ref TranslationsBucket
           SESSION_DATA_KEY: session/session_data.json
+          # myPeople (usato dal flusso username -> myPeople -> dms/settings)
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
+          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          # dms (usato dallo stesso flusso, per dms/settings)
+          DMS_PING_CLIENT_ID:       !Ref DmsPingClientId
+          DMS_PING_CLIENT_SECRET:   !Ref DmsPingClientSecret
+          DML_IBM_CLIENT_ID:        !Ref DmlIbmClientId
+          DML_IBM_CLIENT_SECRET:    !Ref DmlIbmClientSecret
+          DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
 
   SessionFunctionLogGroup:
     Type: AWS::Logs::LogGroup

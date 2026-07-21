@@ -26,3 +26,18 @@ build-PkManagerFunction:
 		"$(ARTIFACTS_DIR)"/pkDocsoa/__tests__ "$(ARTIFACTS_DIR)"/pkDocsoa/coverage "$(ARTIFACTS_DIR)"/pkDocsoa/.env* \
 		"$(ARTIFACTS_DIR)"/pkMenupricing/__tests__ "$(ARTIFACTS_DIR)"/pkMenupricing/coverage "$(ARTIFACTS_DIR)"/pkMenupricing/.env* \
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+
+# SessionFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché, per il
+# flusso evolutivo "username -> myPeople -> dms/settings", session/src/repositories/
+# myPeopleDmsSessionRepository.js richiede il codice sorgente di myPeople/dms tramite
+# path relativi (../../../myPeople/..., ../../../dms/...): stesso identico motivo/pattern
+# di PkManagerFunction sopra.
+build-SessionFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/dms"
+	cp -r session/. "$(ARTIFACTS_DIR)/session/"
+	cp -r myPeople/. "$(ARTIFACTS_DIR)/myPeople/"
+	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
+		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md

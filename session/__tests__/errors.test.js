@@ -10,4 +10,11 @@ describe('SessionNotFoundError', () => {
     expect(err.name).toBe('SessionNotFoundError');
     expect(err.code).toBe('SESSION_NOT_FOUND');
   });
+
+  it('accetta un\'etichetta custom (es. per lo username)', () => {
+    const err = new SessionNotFoundError('0073741.d235', "l'utente");
+    expect(err.message).toBe('Dati di sessione non trovati per l\'utente "0073741.d235"');
+    expect(err.name).toBe('SessionNotFoundError');
+    expect(err.code).toBe('SESSION_NOT_FOUND');
+  });
 });
