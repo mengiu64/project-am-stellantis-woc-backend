@@ -170,6 +170,14 @@ Parameters:
     Type: String
     Default: apicKey
     Description: Secrets Manager secret id holding the mTLS client private key (PEM)
+  MyPeopleExtensionLayerArn:
+    Type: String
+    Default: arn:aws:lambda:eu-west-1:015030872274:layer:AWS-Parameters-and-Secrets-Lambda-Extension:90
+    Description: >-
+      ARN of the AWS Parameters and Secrets Lambda Extension layer (pinned instead of using
+      {{resolve:ssm:...}} because the deploy role lacks ssm:GetParameters on the public parameter).
+      Bump this when AWS publishes a newer version — see
+      https://docs.aws.amazon.com/systems-manager/latest/userguide/ps-integration-lambda-extensions.html#intel
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -487,7 +495,7 @@ Resources:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-mypeople"
       CodeUri: myPeople/
       Layers:
-        - '{{resolve:ssm:/aws/service/aws-parameters-and-secrets-lambda-extension/x86/latest}}'
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
