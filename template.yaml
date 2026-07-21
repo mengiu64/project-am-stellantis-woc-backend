@@ -219,6 +219,8 @@ Resources:
 
   AgendaSoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AgendaSoaFunction}"
       RetentionInDays: 30
@@ -245,6 +247,8 @@ Resources:
 
   AgendaSoaNagaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AgendaSoaNagaFunction}"
       RetentionInDays: 30
@@ -267,6 +271,8 @@ Resources:
 
   DmsFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${DmsFunction}"
       RetentionInDays: 30
@@ -288,6 +294,8 @@ Resources:
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${JobCardFunction}"
       RetentionInDays: 30
@@ -310,6 +318,8 @@ Resources:
 
   V360FunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${V360Function}"
       RetentionInDays: 30
@@ -328,6 +338,8 @@ Resources:
 
   PkEperFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${PkEperFunction}"
       RetentionInDays: 30
@@ -349,6 +361,8 @@ Resources:
 
   PkDocsoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${PkDocsoaFunction}"
       RetentionInDays: 30
@@ -371,6 +385,8 @@ Resources:
 
   PkMenupricingFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${PkMenupricingFunction}"
       RetentionInDays: 30
@@ -409,6 +425,8 @@ Resources:
 
   TranslationsFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${TranslationsFunction}"
       RetentionInDays: 30
@@ -455,6 +473,8 @@ Resources:
 
   PkManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${PkManagerFunction}"
       RetentionInDays: 30
@@ -477,6 +497,8 @@ Resources:
 
   SessionFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${SessionFunction}"
       RetentionInDays: 30
@@ -516,6 +538,8 @@ Resources:
 
   MyPeopleFunctionLogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${MyPeopleFunction}"
       RetentionInDays: 30
