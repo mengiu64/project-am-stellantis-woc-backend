@@ -8,38 +8,35 @@ const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
 
 /**
  * Handler compatibile con AWS Lambda (event, context) -> risposta HTTP-like.
- * Puo' essere usato direttamente come entry point di una funzione Lambda
- * (es. dietro API Gateway) oppure richiamato da altri moduli.
+ * Entry point di una funzione Lambda dietro API Gateway (REST proxy integration),
+ * protetta da un Lambda Authorizer (lmb-np-bsn0027990-<env>-authorizer).
  *
- * Bivio in base al parametro di input:
- *  - se viene passato `username` (IURSMA), i dati di sessione sono ricavati
- *    "al volo" chiamando prima myPeople (readUserProfiles) e poi dms/settings
- *    con i dati ottenuti (mercato/dealer/brand) — vedi MyPeopleDmsSessionRepository;
- *  - altrimenti si usa il comportamento storico: il mercato (`codmarket`, 4
- *    caratteri, es. "1000") viene letto da S3 (S3SessionRepository). Se non
- *    viene passato nessuno dei due, si usa il mercato di default ("1000").
+ * L'identita' dell'utente arriva SEMPRE da event.requestContext.authorizer (mai da
+ * query/path/body param passati dal client, che NON sono attendibili ai fini
+ * dell'identita': un client potrebbe passare uno username diverso dal proprio e
+ * leggere i dati di sessione di un altro utente). Lo `username` IURSMA da usare per
+ * il flusso myPeople -> dms/settings (vedi MyPeopleDmsSessionRepository) e' quindi
+ * sempre `authorizer.sub`, mai un valore fornito dal chiamante.
  *
- * Entrambi i parametri possono arrivare da:
- *  - event.pathParameters.{codmarket|username} (es. rotta /session/{codmarket})
- *  - event.queryStringParameters.{codmarket|username} (es. ?codmarket=1000 / ?username=...)
- *  - event.criteria.{codmarket|username} (invocazione diretta, utile per test)
+ * Se l'authorizer non ha valorizzato `sub` (richiesta non autenticata / authorizer
+ * non configurato), la Lambda risponde 401 senza interrogare alcun repository.
  *
- * @param {object} [event] - Evento Lambda.
+ * @param {object} [event] - Evento Lambda (API Gateway proxy).
  * @returns {Promise<object>} { statusCode, body }
  */
 async function handler(event = {}) {
-  const criteria = resolveCriteria(event);
+  const { sub } = getAuthContext(event);
+
+  if (!sub) {
+    return response(401, {
+      success: false,
+      message: 'Utente non autenticato: authorizer.sub mancante nella richiesta',
+    });
+  }
 
   try {
-    if (criteria.username) {
-      const repository = buildMyPeopleDmsRepository();
-      const data = await repository.getSessionData(criteria.username);
-      return response(200, data);
-    }
-
-    const codmarket = criteria.codmarket || DEFAULT_MARKET;
-    const repository = buildRepository();
-    const data = await repository.getSessionData(codmarket);
+    const repository = buildMyPeopleDmsRepository();
+    const data = await repository.getSessionData(sub);
     return response(200, data);
   } catch (err) {
     if (err.code === 'SESSION_NOT_FOUND') {
@@ -50,22 +47,39 @@ async function handler(event = {}) {
 }
 
 /**
- * Risolve { codmarket, username } dall'evento, con priorita':
- * event.criteria > event.queryStringParameters > event.pathParameters.
- * Se `username` e' presente, ha la precedenza su `codmarket` (vedi handler).
+ * Estrae l'identita' autenticata dal contesto valorizzato dal Lambda Authorizer
+ * (lmb-np-bsn0027990-<env>-authorizer) in event.requestContext.authorizer:
+ *  - sub     -> id utente stabile (username IURSMA, es. "0073741.d235")
+ *  - roles   -> stringa CSV (es. "dealer,advisor"), qui esposta gia' come array
+ *  - profile -> JSON string col profilo canonico (stessa forma di GET /auth/user-info:
+ *               sub, given_name, family_name, name, email, locale, country, roles[],
+ *               dealer_code, dealer_name, brand, region_code, ...), parsato se presente
+ *
+ * L'autorizzazione applicativa (chi puo' fare cosa in base a roles/profile) resta
+ * a carico del chiamante di questa funzione; qui ci si limita a estrarre i dati.
+ *
+ * @param {object} event - Evento Lambda (API Gateway proxy).
+ * @returns {{ sub: string|null, roles: string[], profile: object|null }}
  */
-function resolveCriteria(event) {
-  const criteria = {
-    ...(event.queryStringParameters || {}),
-    ...(event.criteria || {}),
-  };
-  if (!criteria.codmarket && event.pathParameters && event.pathParameters.codmarket) {
-    criteria.codmarket = event.pathParameters.codmarket;
+function getAuthContext(event) {
+  const authz = (event.requestContext && event.requestContext.authorizer) || {};
+
+  const sub = authz.sub || null;
+
+  const roles = typeof authz.roles === 'string' && authz.roles.trim() !== ''
+    ? authz.roles.split(',').map((role) => role.trim()).filter(Boolean)
+    : [];
+
+  let profile = null;
+  if (authz.profile) {
+    try {
+      profile = JSON.parse(authz.profile);
+    } catch (err) {
+      profile = null;
+    }
   }
-  if (!criteria.username && event.pathParameters && event.pathParameters.username) {
-    criteria.username = event.pathParameters.username;
-  }
-  return criteria;
+
+  return { sub, roles, profile };
 }
 
 function response(statusCode, body) {
@@ -126,4 +140,4 @@ if (require.main === module) {
   runCli();
 }
 
-module.exports = { handler, runCli, DEFAULT_MARKET };
+module.exports = { handler, runCli, DEFAULT_MARKET, getAuthContext };

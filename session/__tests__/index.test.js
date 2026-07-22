@@ -4,7 +4,7 @@ jest.mock('dotenv', () => ({ config: jest.fn() }));
 jest.mock('../src/repositoryFactory');
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('../src/repositoryFactory');
-const { handler, runCli, DEFAULT_MARKET } = require('../src/index');
+const { handler, runCli, DEFAULT_MARKET, getAuthContext } = require('../src/index');
 const { SessionNotFoundError } = require('../src/errors');
 
 describe('session/src/index — handler', () => {
@@ -24,83 +24,23 @@ describe('session/src/index — handler', () => {
     expect(DEFAULT_MARKET).toBe('1000');
   });
 
-  it('usa il mercato di default ("1000") quando event e\' vuoto', async () => {
-    mockRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+  it('ritorna 401 quando event e\' vuoto (nessun authorizer)', async () => {
     const res = await handler();
-    expect(mockRepository.getSessionData).toHaveBeenCalledWith('1000');
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ codmarket: '1000' });
-  });
-
-  it('legge codmarket da queryStringParameters', async () => {
-    mockRepository.getSessionData.mockResolvedValue({ codmarket: '3109' });
-    const res = await handler({ queryStringParameters: { codmarket: '3109' } });
-    expect(mockRepository.getSessionData).toHaveBeenCalledWith('3109');
-    expect(res.statusCode).toBe(200);
-  });
-
-  it('legge codmarket da pathParameters quando assente altrove', async () => {
-    mockRepository.getSessionData.mockResolvedValue({ codmarket: '3110' });
-    const res = await handler({ pathParameters: { codmarket: '3110' } });
-    expect(mockRepository.getSessionData).toHaveBeenCalledWith('3110');
-    expect(res.statusCode).toBe(200);
-  });
-
-  it('legge codmarket da event.criteria (invocazione diretta)', async () => {
-    mockRepository.getSessionData.mockResolvedValue({ codmarket: '3109' });
-    const res = await handler({ criteria: { codmarket: '3109' } });
-    expect(mockRepository.getSessionData).toHaveBeenCalledWith('3109');
-    expect(res.statusCode).toBe(200);
-  });
-
-  it('event.criteria ha priorita\' su queryStringParameters', async () => {
-    mockRepository.getSessionData.mockResolvedValue({});
-    await handler({
-      queryStringParameters: { codmarket: '3109' },
-      criteria: { codmarket: '3110' },
-    });
-    expect(mockRepository.getSessionData).toHaveBeenCalledWith('3110');
-  });
-
-  it('queryStringParameters/criteria hanno priorita\' su pathParameters', async () => {
-    mockRepository.getSessionData.mockResolvedValue({});
-    await handler({
-      pathParameters: { codmarket: '3110' },
-      queryStringParameters: { codmarket: '3109' },
-    });
-    expect(mockRepository.getSessionData).toHaveBeenCalledWith('3109');
-  });
-
-  it('ritorna 404 quando il repository lancia SessionNotFoundError', async () => {
-    mockRepository.getSessionData.mockRejectedValue(new SessionNotFoundError('9999'));
-    const res = await handler({ criteria: { codmarket: '9999' } });
-    expect(res.statusCode).toBe(404);
+    expect(res.statusCode).toBe(401);
     expect(JSON.parse(res.body).success).toBe(false);
+    expect(mockMyPeopleDmsRepository.getSessionData).not.toHaveBeenCalled();
+    expect(mockRepository.getSessionData).not.toHaveBeenCalled();
   });
 
-  it('ritorna 502 su errore generico del repository', async () => {
-    mockRepository.getSessionData.mockRejectedValue(new Error('S3 unreachable'));
-    const res = await handler({ criteria: { codmarket: '1000' } });
-    expect(res.statusCode).toBe(502);
-    expect(JSON.parse(res.body).message).toBe('S3 unreachable');
+  it('ritorna 401 quando requestContext.authorizer.sub e\' assente', async () => {
+    const res = await handler({ requestContext: { authorizer: {} } });
+    expect(res.statusCode).toBe(401);
+    expect(mockMyPeopleDmsRepository.getSessionData).not.toHaveBeenCalled();
   });
 
-  it('ritorna 502 con messaggio stringificato quando l\'errore non ha "message"', async () => {
-    mockRepository.getSessionData.mockRejectedValue('boom');
-    const res = await handler({ criteria: { codmarket: '1000' } });
-    expect(res.statusCode).toBe(502);
-    expect(JSON.parse(res.body).message).toBe('boom');
-  });
-
-  it('la risposta ha header Content-Type: application/json', async () => {
-    mockRepository.getSessionData.mockResolvedValue({});
-    const res = await handler({});
-    expect(res.headers['Content-Type']).toBe('application/json');
-  });
-
-  it('con username usa MyPeopleDmsSessionRepository invece di S3SessionRepository', async () => {
+  it('usa requestContext.authorizer.sub come username per MyPeopleDmsSessionRepository', async () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000', sincom: '0073741' });
-    const res = await handler({ queryStringParameters: { username: '0073741.d235' } });
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
 
     expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
@@ -108,21 +48,14 @@ describe('session/src/index — handler', () => {
     expect(JSON.parse(res.body)).toEqual({ codmarket: '1000', sincom: '0073741' });
   });
 
-  it('legge username da event.criteria (invocazione diretta)', async () => {
+  it('ignora username/codmarket passati dal client e usa sempre authorizer.sub', async () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
-    await handler({ criteria: { username: '0073741.d235' } });
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
-  });
-
-  it('legge username da pathParameters quando assente altrove', async () => {
-    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
-    await handler({ pathParameters: { username: '0073741.d235' } });
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
-  });
-
-  it('username ha priorita\' su codmarket quando entrambi presenti', async () => {
-    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
-    await handler({ queryStringParameters: { username: '0073741.d235', codmarket: '3109' } });
+    await handler({
+      requestContext: { authorizer: { sub: '0073741.d235' } },
+      queryStringParameters: { username: 'altro.utente', codmarket: '3109' },
+      pathParameters: { username: 'altro.utente', codmarket: '3109' },
+      criteria: { username: 'altro.utente', codmarket: '3109' },
+    });
     expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
   });
@@ -131,16 +64,72 @@ describe('session/src/index — handler', () => {
     mockMyPeopleDmsRepository.getSessionData.mockRejectedValue(
       new SessionNotFoundError('0073741.d235', "l'utente")
     );
-    const res = await handler({ criteria: { username: '0073741.d235' } });
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body).success).toBe(false);
   });
 
   it('ritorna 502 su errore generico di MyPeopleDmsSessionRepository (es. dms irraggiungibile)', async () => {
     mockMyPeopleDmsRepository.getSessionData.mockRejectedValue(new Error('dms unreachable'));
-    const res = await handler({ criteria: { username: '0073741.d235' } });
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
     expect(res.statusCode).toBe(502);
     expect(JSON.parse(res.body).message).toBe('dms unreachable');
+  });
+
+  it('ritorna 502 con messaggio stringificato quando l\'errore non ha "message"', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockRejectedValue('boom');
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
+    expect(res.statusCode).toBe(502);
+    expect(JSON.parse(res.body).message).toBe('boom');
+  });
+
+  it('la risposta ha header Content-Type: application/json', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
+    expect(res.headers['Content-Type']).toBe('application/json');
+  });
+});
+
+describe('session/src/index — getAuthContext', () => {
+  it('ritorna sub/roles/profile nulli o vuoti quando requestContext.authorizer e\' assente', () => {
+    expect(getAuthContext({})).toEqual({ sub: null, roles: [], profile: null });
+  });
+
+  it('estrae sub dall\'authorizer', () => {
+    const { sub } = getAuthContext({ requestContext: { authorizer: { sub: '0073741.d235' } } });
+    expect(sub).toBe('0073741.d235');
+  });
+
+  it('converte roles (CSV) in array', () => {
+    const { roles } = getAuthContext({
+      requestContext: { authorizer: { sub: 'x', roles: 'dealer, advisor' } },
+    });
+    expect(roles).toEqual(['dealer', 'advisor']);
+  });
+
+  it('ritorna roles [] quando authorizer.roles e\' assente', () => {
+    const { roles } = getAuthContext({ requestContext: { authorizer: { sub: 'x' } } });
+    expect(roles).toEqual([]);
+  });
+
+  it('effettua il parsing JSON di profile quando presente', () => {
+    const profile = { sub: 'x', dealer_code: '0073741', brand: 'FT' };
+    const { profile: parsed } = getAuthContext({
+      requestContext: { authorizer: { sub: 'x', profile: JSON.stringify(profile) } },
+    });
+    expect(parsed).toEqual(profile);
+  });
+
+  it('ritorna profile null quando il JSON e\' invalido', () => {
+    const { profile } = getAuthContext({
+      requestContext: { authorizer: { sub: 'x', profile: '{not-valid-json' } },
+    });
+    expect(profile).toBeNull();
+  });
+
+  it('ritorna profile null quando authorizer.profile e\' assente', () => {
+    const { profile } = getAuthContext({ requestContext: { authorizer: { sub: 'x' } } });
+    expect(profile).toBeNull();
   });
 });
 
