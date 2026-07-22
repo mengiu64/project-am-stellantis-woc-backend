@@ -222,6 +222,22 @@ describe('PkManager', () => {
       expect(result).toEqual({ ACCESSORIES: { '95R04A': { code: '95R04A', label: 'Accessory 1', category: 'ACCESSORIES' } } });
     });
 
+    test('docsoa: builds live map using refAff field (real DocSOA response shape)', async () => {
+      const getCompletePkSOAList = jest.fn().mockResolvedValue({
+        success: true,
+        data: [
+          { refAff: '95R04A', label: 'Accessory 1' },
+          { refAff: 'UNMATCHED', label: 'Ignore me' },
+        ],
+      });
+      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList }));
+
+      const manager = new PkManager();
+      const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
+
+      expect(result).toEqual({ ACCESSORIES: { '95R04A': { refAff: '95R04A', label: 'Accessory 1', category: 'ACCESSORIES' } } });
+    });
+
     test('docsoa: normalizes single-object data (not array) via toArray', async () => {
       const getCompletePkSOAList = jest.fn().mockResolvedValue({
         success: true,

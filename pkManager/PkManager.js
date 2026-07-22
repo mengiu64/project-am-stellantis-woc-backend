@@ -850,7 +850,7 @@ class PkManager {
 // I campi candidati per il codice sono i più comuni nelle risposte PSA DocSOA.
 // Se nessun campo è trovato, effettua una ricerca per contenuto (JSON stringify).
 function buildDocsoaMap(dataArr) {
-  const CODE_FIELDS = ['id', 'code', 'codice', 'codeFF', 'refForfait', 'fonctionId', 'idFunction'];
+  const CODE_FIELDS = ['refAff', 'id', 'code', 'codice', 'codeFF', 'refForfait', 'fonctionId', 'idFunction'];
   const map = {};
 
   for (const item of toArray(dataArr)) {
