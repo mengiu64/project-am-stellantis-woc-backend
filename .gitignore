@@ -37,3 +37,4 @@ myPeople/coverage/
 .idea/
 */.idea/
 .cfn-import/
+coverage/
