@@ -744,13 +744,13 @@ cd agendaSoa && npm run test:coverage
 | **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
 | **pkEper** | 1 | 19 | `WsIQPckEper` |
-| **pkDocsoa** | 1 | 19 | `DocSOARestClient` |
+| **pkDocsoa** | 2 | 40 | `DocSOARestClient`, `certService` |
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **41** | **437** | |
+| **Totale** | **42** | **458** | |
 
 ### Copertura del codice
 
@@ -762,7 +762,7 @@ cd agendaSoa && npm run test:coverage
 | **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
 | **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
-| **pkDocsoa** | 98.46% ✅ | 92.40% ✅ | 100% ✅ | 100% ✅ |
+| **pkDocsoa** | 97.61% ✅ | 93.70% ✅ | 100% ✅ | 98.97% ✅ |
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
