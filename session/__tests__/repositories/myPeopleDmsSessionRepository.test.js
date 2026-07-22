@@ -76,7 +76,8 @@ describe('MyPeopleDmsSessionRepository', () => {
       pdvId: null,
       sessionbrand: '00',
       inmandate: null,
-      language: 'it_IT',
+      language: 'it',
+      locale: 'it_IT',
       isdml: true,
       dmlcustomerupdate: false, // knownCustomerUpdate ha priorità su accountCustomerUpdate
       dmldiscount: null,
@@ -256,6 +257,7 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(data.oic).toBeNull();
     expect(data.sincom).toBeNull();
     expect(data.language).toBeNull();
+    expect(data.locale).toBeNull();
     expect(data.usertype).toBeNull();
   });
 

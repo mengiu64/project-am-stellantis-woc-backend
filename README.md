@@ -454,7 +454,8 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `sessionbrand` / `brandvehic_fca` | primo codice del campo `BRANDS` (CSV) dell'OIC selezionato |
 | `brandvehic_reftech` | codice brand transcodificato (tabella interna 83→AR, 00→FT, 70→LA, 57→JE, 55→CY, 77→FO, 66→AH, 56→DG, 58→RM, 30→AC, 31→AP, 33→DS, 43→OV, 97→CT); è anche il valore usato come `brand` nella chiamata a `dms/settings` |
 | `brandvehic_genome` | sempre `null` (nessuna tabella di mappatura disponibile) |
-| `language` | `` `${iso2}_${ISO2}` `` da `Attributes.NATIONiso2` (es. `it_IT`) |
+| `language` | codice lingua ISO2 minuscolo da `Attributes.NATIONiso2` (es. `it`) |
+| `locale` | `` `${iso2}_${ISO2}` `` da `Attributes.NATIONiso2` (es. `it_IT`) |
 | `usertype` | `Attributes.USERTYPE` |
 | `isdml` | `true` se `dms/settings` risponde `success: true` |
 | `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) in `dms/settings`, altrimenti `null` |
