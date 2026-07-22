@@ -460,6 +460,45 @@ describe('DocSOARestClient', () => {
       expect(result).toEqual({ success: true, data: [{ ref_fo: 'FP1' }, { ref_fo: 'QE1' }], message: '' });
     });
 
+    test('extracts nested doc records (refAff) from the real ibxParametrageService response shape', async () => {
+      // Struttura reale osservata su ibxParametrageService: il codice pacchetto (refAff)
+      // è annidato in parametrage.paramTP.docByFonctionListe.doc[], non al primo livello.
+      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'FCT0040' }] });
+      jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: true, data: null });
+      jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({
+        success: true,
+        data: {
+          codeOPB: '',
+          paramTP: {
+            docByFonctionListe: {
+              refFonction: 'FCT0040',
+              doc: [
+                { titre: 'Bilan Freinage', refAff: '98B12A', ref: '98B12A1PIA', idFonction: 'FCT0040' },
+                { titre: 'Bilan Liaisons au Sol', refAff: '98B11A', ref: '98B11A1PIA', idFonction: 'FCT0040' },
+              ],
+            },
+          },
+          paramPE: {
+            conditionUtilisationListe: [
+              { ref: '6858_0244613299918KCO', lib: 'Normale', ageListe: [{ ref: '92', lib: '1' }] },
+            ],
+          },
+          paramFF: '',
+        },
+      });
+
+      const result = await client.getCompletePkSOAList(baseParams);
+
+      expect(result).toEqual({
+        success: true,
+        data: [
+          { titre: 'Bilan Freinage', refAff: '98B12A', ref: '98B12A1PIA', idFonction: 'FCT0040' },
+          { titre: 'Bilan Liaisons au Sol', refAff: '98B11A', ref: '98B11A1PIA', idFonction: 'FCT0040' },
+        ],
+        message: '',
+      });
+    });
+
     test('skips rows without idFunction at every nesting level and defaults paysUser/mode/typeInternet', async () => {
       jest.spyOn(client, 'functionsService').mockResolvedValue({
         success: true,
