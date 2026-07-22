@@ -331,6 +331,56 @@ function toArray(val) {
   return Array.isArray(val) ? val : [val];
 }
 
+// ─── Estrazione dei record "pacchetto" dal risultato decodificato di forfaitService/
+// ibxParametrageService ──────────────────────────────────────────────────────────
+// Le risposte reali di DocSOA non sono un array piatto: es. ibxParametrageService
+// restituisce { parametrage: { paramTP: { docByFonctionListe: { doc: [ {refAff, ref,
+// idFonction, ...}, ... ] } }, paramPE: {...}, paramFF: {...} } }. Il codice pacchetto
+// (refAff) è quindi annidato a più livelli. Questa lista deve restare allineata con
+// CODE_FIELDS in pkManager/PkManager.js (buildDocsoaMap).
+const CODE_FIELDS = ['refAff', 'id', 'code', 'codice', 'codeFF', 'refForfait', 'fonctionId', 'idFunction'];
+
+function hasCodeField(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  return CODE_FIELDS.some((field) => typeof obj[field] === 'string' && obj[field]);
+}
+
+// Scende ricorsivamente nell'oggetto/array finché non trova nodi con un campo
+// codice riconosciuto (CODE_FIELDS): quei nodi sono trattati come "foglie" e non
+// vengono ulteriormente esplorati.
+function flattenPackageNodes(node, out = []) {
+  if (node === null || node === undefined) return out;
+  if (Array.isArray(node)) {
+    for (const item of node) flattenPackageNodes(item, out);
+    return out;
+  }
+  if (typeof node === 'object') {
+    if (hasCodeField(node)) {
+      out.push(node);
+      return out;
+    }
+    for (const key of Object.keys(node)) {
+      flattenPackageNodes(node[key], out);
+    }
+  }
+  return out;
+}
+
+// Normalizza il `data` decodificato di forfaitService/ibxParametrageService in un
+// array di record pacchetto. Se il payload è già un array piatto con un campo
+// codice al primo livello lo usa direttamente (retro-compatibile); altrimenti
+// esegue una ricerca in profondità; se non trova nulla, effettua un passthrough
+// grezzo per non perdere dati con schema imprevisto.
+function extractPackageItems(data) {
+  const topArr = toArray(data);
+  if (topArr.some(hasCodeField)) return topArr;
+
+  const deep = flattenPackageNodes(data);
+  if (deep.length) return deep;
+
+  return topArr;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Classe DocSOARestClient
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -502,18 +552,22 @@ class DocSOARestClient {
       }).catch(toSafeResult),
     ]);
 
-    const FParr = forfaitResult.success ? toArray(forfaitResult.data) : [];
-    const QEarr = qeResult.success      ? toArray(qeResult.data)      : [];
+    const FParr = forfaitResult.success ? extractPackageItems(forfaitResult.data) : [];
+    const QEarr = qeResult.success      ? extractPackageItems(qeResult.data)      : [];
 
     if (!forfaitResult.success) {
       console.warn('[getCompletePkSOAList] forfaitService fallito:', forfaitResult.message);
     } else {
       console.log(`[getCompletePkSOAList] forfaitService OK — ${FParr.length} risultati FP`);
+      // Debug: espone i nomi campo reali del primo risultato per diagnosi mapping codici.
+      if (FParr.length) console.log('[getCompletePkSOAList] FP sample:', JSON.stringify(FParr[0]));
     }
     if (!qeResult.success) {
       console.warn('[getCompletePkSOAList] ibxParametrageService fallito:', qeResult.message);
     } else {
       console.log(`[getCompletePkSOAList] ibxParametrageService OK — ${QEarr.length} risultati QE`);
+      // Debug: espone i nomi campo reali del primo risultato per diagnosi mapping codici.
+      if (QEarr.length) console.log('[getCompletePkSOAList] QE sample:', JSON.stringify(QEarr[0]));
     }
 
     const pklistComplete = [...FParr, ...QEarr];

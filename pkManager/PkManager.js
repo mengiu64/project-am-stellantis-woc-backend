@@ -839,7 +839,9 @@ class PkManager {
       const result = await client.getCompletePkSOAList({ vin: VIN, ...cfg });
       if (!result.success) throw new Error(`docsoa: ${result.message}`);
       // data è un array di oggetti XML decodificati → prova a indicizzare per campi codice comuni
-      return buildDocsoaMap(result.data ?? []);
+      const liveMap = buildDocsoaMap(result.data ?? []);
+      console.log(`[_fetchLiveMap:docsoa] raw items: ${toArray(result.data).length}, mapped keys: ${Object.keys(liveMap).length}`);
+      return liveMap;
     }
 
     throw new Error(`pkwstouse non riconosciuto: "${pkwstouse}"`);
