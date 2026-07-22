@@ -427,12 +427,19 @@ node index.js translations lang=en
 
 ### session
 
-Lambda che restituisce i **dati di sessione** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, preferenze pezzi, sconti massimi, ecc.) per un dato mercato o per un dato utente, con un **bivio** in base al parametro passato in input:
+Lambda che restituisce i **dati di sessione** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, preferenze pezzi, sconti massimi, ecc.) per l'utente autenticato.
 
-- **`codmarket`** (comportamento storico, invariato): i dati sono letti da un unico file JSON su S3 (`session/session_data.json`, stesso bucket usato da `translations`), indicizzato per codice mercato a 4 caratteri (es. `"1000"`). Se non viene passato alcun parametro si usa il default `1000`. Se il mercato richiesto non è presente nel file, la Lambda risponde `404`.
-- **`username`** (nuovo flusso evolutivo): la Lambda chiama in sequenza `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente dell'utente) e poi `dms/settings` (con i parametri `country`/`brand`/`dealer` derivati dalla risposta myPeople), e compone un JSON con **la stessa forma storica** della risposta S3. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se `username` e `codmarket` sono entrambi presenti, ha priorità `username`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+L'Handler HTTP (dietro API Gateway, proxy REST) **non si fida di alcun parametro fornito dal client** (query/path/body): l'identità arriva sempre dal Lambda Authorizer (`lmb-np-bsn0027990-<env>-authorizer`), valorizzata in `event.requestContext.authorizer`:
 
-L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository` (flusso `codmarket`) e da `MyPeopleDmsSessionRepository` (flusso `username`), per permettere di aggiungere/sostituire sorgenti dati senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
+- `sub` — id utente stabile (username IURSMA, es. `"0073741.d235"`) — è l'**unico** valore usato come `username` per il flusso `myPeople -> dms/settings`. Se assente, la Lambda risponde `401` senza interrogare alcun repository (nessun fallback su parametri client-controllati, per evitare che un chiamante possa richiedere la sessione di un altro utente passando uno `username`/`codmarket` arbitrario).
+- `roles` — stringa CSV (es. `"dealer,advisor"`), esposta come array da `getAuthContext(event)`; l'autorizzazione applicativa (chi può fare cosa) resta a carico di chi consuma questi dati.
+- `profile` — JSON string col profilo canonico (stessa forma di `GET /auth/user-info`: `sub`, `given_name`, `family_name`, `name`, `email`, `locale`, `country`, `roles[]`, `dealer_code`, `dealer_name`, `brand`, `region_code`, ...), parsato da `getAuthContext(event)` se presente (`null` se assente o JSON non valido). Non usato oggi per calcolare la sessione (si usa sempre `myPeople` via `sub`), disponibile per usi futuri.
+
+Con `sub` disponibile, la Lambda chiama in sequenza `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente) e poi `dms/settings` (con i parametri `country`/`brand`/`dealer` derivati dalla risposta myPeople), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository`. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+
+> **CLI (uso interno/debug, non esposto via API Gateway):** `node session/src/index.js [codmarket]` (flusso storico S3, default mercato `"1000"`) oppure `node session/src/index.js --username <username>` (flusso myPeople/dms) — invocazioni dirette da riga di comando, prive di contesto authorizer, mantenute solo per test/debug locale; **non** riflettono il comportamento dell'handler HTTP.
+
+L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository` (flusso `codmarket`, usato solo dalla CLI) e da `MyPeopleDmsSessionRepository` (flusso `username`, usato dall'handler HTTP tramite `sub` e dalla CLI tramite `--username`), per permettere di aggiungere/sostituire sorgenti dati senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
 
 > **Nota tecnica:** per poter richiamare in-process il codice di `myPeople` e `dms` (senza invocazioni Lambda-to-Lambda separate), `SessionFunction` in `template.yaml` usa `CodeUri: ./` (root del repo) + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `session/`, `myPeople/` e `dms/` nel pacchetto di build (stesso pattern già usato da `pkManager` per `pkEper`/`pkDocsoa`/`pkMenupricing`/`dms`).
 
@@ -458,10 +465,11 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 
 | Funzione | Descrizione |
 |---|---|
-| `handler(event)` | Entry-point Lambda: se è presente `username` (da `event.criteria`, `queryStringParameters` o `pathParameters`) usa `MyPeopleDmsSessionRepository`; altrimenti legge `codmarket` (stessa priorità di sorgenti), con default `1000`, e usa `S3SessionRepository`. Ritorna 200 con i dati, 404 se il mercato/utente non è presente, 502 su errori generici |
-| `getSessionData(codmarket)` | `S3SessionRepository`: scarica `session/session_data.json` da S3 ed estrae la sezione relativa al mercato richiesto |
+| `handler(event)` | Entry-point Lambda HTTP: legge `sub` da `event.requestContext.authorizer` (via `getAuthContext`) e usa **sempre** `MyPeopleDmsSessionRepository` con `sub` come username; ignora qualunque `username`/`codmarket` fornito da query/path/criteria. Ritorna 401 se `sub` è assente, 200 con i dati, 404 se l'utente non è presente su myPeople, 502 su errori generici |
+| `getAuthContext(event)` | Estrae `{ sub, roles, profile }` da `event.requestContext.authorizer`: `roles` (CSV) convertito in array, `profile` (JSON string) parsato in oggetto (`null` se assente/non valido) |
+| `getSessionData(codmarket)` | `S3SessionRepository`: scarica `session/session_data.json` da S3 ed estrae la sezione relativa al mercato richiesto (usato solo dalla CLI) |
 | `getSessionData(username)` | `MyPeopleDmsSessionRepository`: chiama `myPeople.readUserProfiles` + `dms.getDmsSettings` e compone il JSON di sessione |
-| `buildRepository(overrides)` | Factory che costruisce `S3SessionRepository` (bucket/key/client configurabili via env o overrides, utile nei test) |
+| `buildRepository(overrides)` | Factory che costruisce `S3SessionRepository` (bucket/key/client configurabili via env o overrides, utile nei test e nella CLI) |
 | `buildMyPeopleDmsRepository(overrides)` | Factory che costruisce `MyPeopleDmsSessionRepository` (funzioni myPeople/dms iniettabili via overrides, utile nei test) |
 
 #### Struttura
@@ -805,7 +813,8 @@ cd agendaSoa && npm run test:coverage
 - **handlers/translations** – merge `queryStringParameters`/`body`/`params` (params vince), default lingua, 200/404/502, header `Content-Type`
 
 #### session
-- **index (handler)** – merge `event.criteria`/`queryStringParameters`/`pathParameters` (precedenza a `criteria`); se `username` è presente (priorità su `codmarket`) usa `MyPeopleDmsSessionRepository`, altrimenti `S3SessionRepository` con default mercato `1000`; 200 con i dati di sessione, 404 su `SessionNotFoundError` (mercato/utente assente), 502 su errori generici (es. S3/myPeople/dms irraggiungibili), header `Content-Type`
+- **index (handler)** – legge `sub` da `event.requestContext.authorizer` (via `getAuthContext`), ignorando `username`/`codmarket` da `event.criteria`/`queryStringParameters`/`pathParameters`; 401 se `sub` assente, altrimenti usa sempre `MyPeopleDmsSessionRepository(sub)`; 200 con i dati di sessione, 404 su `SessionNotFoundError` (utente assente su myPeople), 502 su errori generici (es. myPeople/dms irraggiungibili), header `Content-Type`
+- **index (getAuthContext)** – estrazione `sub`/`roles`/`profile` da `requestContext.authorizer` assente o vuoto, conversione `roles` CSV→array (incluso trim ed elementi vuoti), parsing JSON di `profile` (assente/non valido → `null`)
 - **index (runCli)** – stampa dati su mercato di default/richiesto da argv o su `--username <value>`, log errore + `process.exitCode=1` in caso di fallimento (incluso `--username` senza valore)
 - **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND`, messaggio con il mercato/utente richiesto e `label` opzionale (`"il mercato"` di default, `"l'utente"` per il flusso username)
 - **sessionRepository** – la classe base lancia errore "non implementato"
