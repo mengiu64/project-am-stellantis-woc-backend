@@ -26,7 +26,8 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
-      "DocSOARestClient.js"
+      "DocSOARestClient.js",
+      "certService.js"
     ],
     "coverageReporters": [
       "html",

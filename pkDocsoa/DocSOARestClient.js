@@ -3,20 +3,24 @@
 require('dotenv').config();
 const axios  = require('axios');
 const xml2js = require('xml2js');
-const https  = require('https');
+const { getHttpsAgent } = require('./certService');
 
 // ─── Configurazione (da .env) ──────────────────────────────────────────────────
-const HOST      = (process.env.DOCSOA_HOST ?? '').replace(/\/$/, ''); // es: https://api.inetpsa.com
+// HOST: gateway IBM API Connect "cert-aai" (autenticazione mTLS), es:
+// https://api-cert-preprod.groupe-psa.com/api/cert-aai
+const HOST      = (process.env.DOCSOA_HOST ?? '').replace(/\/$/, '');
 const USERNAME  = process.env.DOCSOA_USERNAME;
 const PASSWORD  = process.env.DOCSOA_PASSWORD;
-const CLIENT_ID = process.env.DOCSOA_CLIENT_ID;
+// Credenziali applicative del gateway IBM API Connect (stesso pattern di dms/dmsService
+// per il gateway DML): richieste come header su OGNI chiamata, non più come query string.
+const IBM_CLIENT_ID     = process.env.DOCSOA_IBM_CLIENT_ID;
+const IBM_CLIENT_SECRET = process.env.DOCSOA_IBM_CLIENT_SECRET;
 
 // Proxy opzionale (richiesto sulla rete corporativa Stellantis/PSA)
 const PROXY_HOST = process.env.PROXY_HOST;
 const PROXY_PORT = process.env.PROXY_PORT ? Number(process.env.PROXY_PORT) : 8080;
 
 const TIMEOUT_MS = Number(process.env.DOCSOA_TIMEOUT_MS ?? 60_000);
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 // Configurazione proxy per axios (usata solo se PROXY_HOST è definito)
 const axiosProxy = PROXY_HOST
@@ -42,13 +46,15 @@ function redactXml(xml) {
   return truncate(masked);
 }
 
-// URL dei singoli servizi
+// URL dei singoli servizi (gateway "cert-aai", mTLS — nessun client_id in query string:
+// l'identificazione applicativa avviene via header X-IBM-Client-Id/X-IBM-Client-Secret,
+// vedi doPost)
 const URLS = {
-  functionsService:         () => `${HOST}/applications/newapvprdocre/ws/functionsService/v1?client_id=${CLIENT_ID}`,
-  forfaitService:           () => `${HOST}/applications/newapvprdocre/ws/ForfaitService/v1?client_id=${CLIENT_ID}`,
-  ibxDetailForfaitService:  () => `${HOST}/applications/newapvprdocre/ws/ibxdetailforfaitservice/v1?client_id=${CLIENT_ID}`,
-  ibxParametrageService:    () => `${HOST}/applications/newapvprdocre/ws/ibxparametrageservice/v1?client_id=${CLIENT_ID}`,
-  ibxDetailtpService:       () => `${HOST}/applications/newapvprdocre/ibxdetailtpservice/v1`,
+  functionsService:         () => `${HOST}/applications/newapvprdocre/ws/functionsService/v1/getFunctions`,
+  forfaitService:           () => `${HOST}/applications/newapvprdocre/ws/ForfaitService/v1/getForfait`,
+  ibxDetailForfaitService:  () => `${HOST}/applications/newapvprdocre/ws/ibxdetailforfaitservice/v1/getIbxDetailForfait`,
+  ibxParametrageService:    () => `${HOST}/applications/newapvprdocre/ws/ibxparametrageservice/v1/getIbxParametrage`,
+  ibxDetailtpService:       () => `${HOST}/applications/newapvprdocre/ibxdetailtpservice/v1/getIbxDetailTp`,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -225,28 +231,33 @@ function basicAuth() {
 async function doPost(url, xml, extraHeaders = {}) {
   const startedAt = Date.now();
 
+  const headers = {
+    'Content-Type':        'application/xml',
+    'Accept':              'application/xml',
+    'Authorization':       basicAuth(),
+    'X-IBM-Client-Id':     IBM_CLIENT_ID,
+    'X-IBM-Client-Secret': IBM_CLIENT_SECRET,
+    ...extraHeaders,
+  };
+
   console.log(JSON.stringify({
     logType: 'http_request',
     service: 'pkDocsoa',
     method: 'POST',
     url,
     proxy: PROXY_HOST ? `${PROXY_HOST}:${PROXY_PORT}` : null,
-    headers: { 'Content-Type': 'application/xml', Accept: 'application/xml', Authorization: '***REDACTED***', ...extraHeaders },
+    headers: { ...headers, Authorization: '***REDACTED***', 'X-IBM-Client-Secret': '***REDACTED***' },
     body: redactXml(xml),
   }));
 
   let response;
   try {
+    const httpsAgent = await getHttpsAgent();
     response = await axios.post(url, xml, {
       httpsAgent,
       proxy:   axiosProxy,
       timeout: TIMEOUT_MS,
-      headers: {
-        'Content-Type':  'application/xml',
-        'Accept':        'application/xml',
-        'Authorization': basicAuth(),
-        ...extraHeaders,
-      },
+      headers,
     });
   } catch (err) {
     console.log(JSON.stringify({
@@ -414,9 +425,7 @@ class DocSOARestClient {
   // Dettaglio tempo/prezzo di una specifica TP (refTp)
   async ibxDetailtpService(params) {
     const xml    = buildPayload_ibxDetailtpService(params);
-    const rawXml = await doPost(URLS.ibxDetailtpService(), xml, {
-      'X-IBM-Client-Id': CLIENT_ID,
-    });
+    const rawXml = await doPost(URLS.ibxDetailtpService(), xml);
     const clean  = stripNamespacePrefixes(rawXml);
     const parsed = await parseXml(clean);
 

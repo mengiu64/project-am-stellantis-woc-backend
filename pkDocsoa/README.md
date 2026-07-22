@@ -26,10 +26,14 @@ I parametri di connessione e le credenziali vanno impostati in un file `.env` (n
 
 | Variabile | Descrizione |
 |---|---|
-| `DOCSOA_HOST` | Base URL del servizio DocSOA (es. `https://api.inetpsa.com`) |
-| `DOCSOA_USERNAME` | Username di autenticazione |
-| `DOCSOA_PASSWORD` | Password di autenticazione |
-| `DOCSOA_CLIENT_ID` | Client ID applicativo |
+| `DOCSOA_HOST` | Base URL del gateway DocSOA (es. `https://api-cert-preprod.groupe-psa.com/api/cert-aai`) |
+| `DOCSOA_USERNAME` | Username di autenticazione (WS-Security / Basic Auth) |
+| `DOCSOA_PASSWORD` | Password di autenticazione (WS-Security / Basic Auth) |
+| `DOCSOA_IBM_CLIENT_ID` | Client ID applicativo per il gateway IBM API Connect (header `X-IBM-Client-Id`) |
+| `DOCSOA_IBM_CLIENT_SECRET` | Client Secret applicativo per il gateway IBM API Connect (header `X-IBM-Client-Secret`) |
+| `DOCSOA_CERT_SECRET_ID` | (opzionale) nome del segreto Secrets Manager col certificato client mTLS (default `apicCert`, lo stesso usato da `myPeople`) |
+| `DOCSOA_KEY_SECRET_ID` | (opzionale) nome del segreto Secrets Manager con la chiave privata mTLS (default `apicKey`, lo stesso usato da `myPeople`) |
+| `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT` | (opzionale) porta locale della AWS Parameters and Secrets Lambda Extension (default `2773`) |
 | `PROXY_HOST` | (opzionale) Host proxy HTTP |
 | `PROXY_PORT` | (opzionale) Porta proxy HTTP (default `8080`) |
 | `VIN` | VIN di test usato da `index.js`/`test.js` quando non passato da CLI |
@@ -43,6 +47,14 @@ I parametri di connessione e le credenziali vanno impostati in un file `.env` (n
 | `CODE_FF` | Codice forfait di default per `ibxDetailForfaitService` |
 | `REF_TP` | Riferimento TP di default per `ibxDetailtpService` |
 | `TYPEDOC` | Lista tipi documento separati da virgola (test) |
+
+### Autenticazione verso il gateway
+
+Ogni chiamata HTTP verso il gateway DocSOA (`api-cert-preprod.groupe-psa.com/api/cert-aai/...`) utilizza tre livelli di autenticazione, tutti obbligatori e indipendenti tra loro:
+
+1. **mTLS** — certificato client (`DOCSOA_CERT_SECRET_ID`/`DOCSOA_KEY_SECRET_ID`, di default i segreti Secrets Manager `apicCert`/`apicKey`, gli **stessi** usati dalla Lambda `myPeople`), recuperato a runtime tramite la AWS Parameters and Secrets Lambda Extension (vedi `certService.js`).
+2. **Header IBM API Connect** — `X-IBM-Client-Id` / `X-IBM-Client-Secret` (`DOCSOA_IBM_CLIENT_ID` / `DOCSOA_IBM_CLIENT_SECRET`).
+3. **Basic Auth + WS-Security** — header `Authorization: Basic ...` e `<wsse:UsernameToken>` nel body SOAP, con `DOCSOA_USERNAME`/`DOCSOA_PASSWORD`.
 
 ## Utilizzo (libreria)
 

@@ -116,8 +116,12 @@ Parameters:
   DocsoaPassword:
     Type: String
     NoEcho: true
-  DocsoaClientId:
+  DocsoaIbmClientId:
     Type: String
+    NoEcho: true
+  DocsoaIbmClientSecret:
+    Type: String
+    NoEcho: true
   DocsoaCodbrand:
     Type: String
   DocsoaLangue:
@@ -348,20 +352,36 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${PkEperFunction}"
       RetentionInDays: 30
 
+  # Il certificato/chiave mTLS ("apicCert"/"apicKey", gli STESSI usati da myPeople)
+  # sono letti da AWS Secrets Manager tramite la AWS Parameters and Secrets Lambda
+  # Extension (layer), esattamente come in MyPeopleFunction. La funzione gira in
+  # VPC (Globals.Function.VpcConfig): è necessario un endpoint di rete verso
+  # Secrets Manager (VPC Interface Endpoint o NAT Gateway).
   PkDocsoaFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkdocsoa"
       CodeUri: pkDocsoa/
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
       Environment:
         Variables:
-          DOCSOA_HOST:      !Ref DocsoaHost
-          DOCSOA_USERNAME:  !Ref DocsoaUsername
-          DOCSOA_PASSWORD:  !Ref DocsoaPassword
-          DOCSOA_CLIENT_ID: !Ref DocsoaClientId
+          DOCSOA_HOST:              !Ref DocsoaHost
+          DOCSOA_USERNAME:          !Ref DocsoaUsername
+          DOCSOA_PASSWORD:          !Ref DocsoaPassword
+          DOCSOA_IBM_CLIENT_ID:     !Ref DocsoaIbmClientId
+          DOCSOA_IBM_CLIENT_SECRET: !Ref DocsoaIbmClientSecret
+          DOCSOA_CERT_SECRET_ID:    !Ref MyPeopleCertSecretId
+          DOCSOA_KEY_SECRET_ID:     !Ref MyPeopleKeySecretId
 
   PkDocsoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -443,9 +463,20 @@ Resources:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkmanager"
       CodeUri: ./
       Handler: pkManager/index.handler
+      # pkDocsoa (imbarcato in-process via Makefile) richiede l'estensione Lambda +
+      # il permesso Secrets Manager per il proprio mTLS (certificato/chiave "apicCert"/"apicKey",
+      # gli STESSI usati da myPeople) — vedi PkDocsoaFunction/MyPeopleFunction.
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
       Environment:
         Variables:
           EPER_HOST:                    !Ref EperHost
@@ -455,7 +486,10 @@ Resources:
           DOCSOA_HOST:                  !Ref DocsoaHost
           DOCSOA_USERNAME:              !Ref DocsoaUsername
           DOCSOA_PASSWORD:              !Ref DocsoaPassword
-          DOCSOA_CLIENT_ID:             !Ref DocsoaClientId
+          DOCSOA_IBM_CLIENT_ID:         !Ref DocsoaIbmClientId
+          DOCSOA_IBM_CLIENT_SECRET:     !Ref DocsoaIbmClientSecret
+          DOCSOA_CERT_SECRET_ID:        !Ref MyPeopleCertSecretId
+          DOCSOA_KEY_SECRET_ID:         !Ref MyPeopleKeySecretId
           DOCSOA_CODBRAND:              !Ref DocsoaCodbrand
           DOCSOA_LANGUE:                !Ref DocsoaLangue
           DOCSOA_PAYS:                  !Ref DocsoaPays

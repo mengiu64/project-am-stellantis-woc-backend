@@ -2,19 +2,23 @@
 
 jest.mock('dotenv', () => ({ config: jest.fn() }));
 jest.mock('axios');
+jest.mock('../certService');
 
 const axios = require('axios');
+const { getHttpsAgent } = require('../certService');
 
 process.env.DOCSOA_HOST = 'https://api.test.com';
 process.env.DOCSOA_USERNAME = 'user';
 process.env.DOCSOA_PASSWORD = 'pass';
-process.env.DOCSOA_CLIENT_ID = 'client-id';
+process.env.DOCSOA_IBM_CLIENT_ID = 'ibm-client-id';
+process.env.DOCSOA_IBM_CLIENT_SECRET = 'ibm-client-secret';
 delete process.env.PROXY_HOST;
 delete process.env.PROXY_PORT;
 
 const { DocSOARestClient, vinParts } = require('../DocSOARestClient');
 
 const VALID_BASE64 = Buffer.from('<result><item>test</item></result>').toString('base64');
+const FAKE_AGENT = { fake: 'mtls-agent' };
 
 function soapEnvelope(innerXml) {
   return `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>${innerXml}</soap:Body></soap:Envelope>`;
@@ -27,6 +31,7 @@ describe('DocSOARestClient', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.DEBUG_SOAP;
+    getHttpsAgent.mockResolvedValue(FAKE_AGENT);
     client = new DocSOARestClient();
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -110,11 +115,14 @@ describe('DocSOARestClient', () => {
       ],
     });
     const [url, body, config] = axios.post.mock.calls[0];
-    expect(url).toBe('https://api.test.com/applications/newapvprdocre/ws/functionsService/v1?client_id=client-id');
+    expect(url).toBe('https://api.test.com/applications/newapvprdocre/ws/functionsService/v1/getFunctions');
     expect(body).toContain('<spec:listeTypeDoc>A</spec:listeTypeDoc>');
     expect(body).toContain('<iden:WMI>ABC</iden:WMI>');
     expect(config.proxy).toBe(false);
+    expect(config.httpsAgent).toBe(FAKE_AGENT);
     expect(config.headers.Authorization).toBe(`Basic ${Buffer.from('user:pass').toString('base64')}`);
+    expect(config.headers['X-IBM-Client-Id']).toBe('ibm-client-id');
+    expect(config.headers['X-IBM-Client-Secret']).toBe('ibm-client-secret');
     expect(logSpy).toHaveBeenCalled();
   });
 
@@ -332,7 +340,7 @@ describe('DocSOARestClient', () => {
     await expect(client.ibxParametrageService({ wmi: 'ABC', vds: 'DEF123', vis: '4567890', langue: 'it', pays: 'IT', marque: 'FT' })).rejects.toThrow('HTTP 500: <error>boom</error>');
   });
 
-  test('ibxDetailtpService decodes resultat and passes IBM client header', async () => {
+  test('ibxDetailtpService decodes resultat and sends IBM client headers + correct URL', async () => {
     axios.post.mockResolvedValue({
       status: 200,
       data: soapEnvelope(`<getIbxDetailTpResponse><ibxdetailtpResponse><resultat>${VALID_BASE64}</resultat></ibxdetailtpResponse></getIbxDetailTpResponse>`),
@@ -350,8 +358,10 @@ describe('DocSOARestClient', () => {
     });
 
     expect(result).toEqual({ success: true, data: { item: 'test' } });
-    const [, , config] = axios.post.mock.calls[0];
-    expect(config.headers['X-IBM-Client-Id']).toBe('client-id');
+    const [url, , config] = axios.post.mock.calls[0];
+    expect(url).toBe('https://api.test.com/applications/newapvprdocre/ibxdetailtpservice/v1/getIbxDetailTp');
+    expect(config.headers['X-IBM-Client-Id']).toBe('ibm-client-id');
+    expect(config.headers['X-IBM-Client-Secret']).toBe('ibm-client-secret');
   });
 
   test('ibxDetailtpService returns error when response node is missing', async () => {

@@ -305,7 +305,7 @@ pkEper/
 
 ### pkDocsoa
 
-Lambda per i **pacchetti DocSOA** (Stellantis PSA), client REST che replica il servizio SOAP originario.
+Lambda per i **pacchetti DocSOA** (Stellantis PSA), client REST che replica il servizio SOAP originario. Il gateway `api-cert-preprod.groupe-psa.com/api/cert-aai` richiede, oltre a Basic Auth/WS-Security e agli header `X-IBM-Client-Id`/`X-IBM-Client-Secret`, un **certificato client mTLS**: certificato e chiave (segreti Secrets Manager `apicCert`/`apicKey`, gli **stessi** usati da `myPeople`) sono recuperati a runtime tramite l'[AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (vedi `certService.js`, stesso pattern di `myPeople/certService.js`).
 
 #### Handlers disponibili
 
@@ -323,6 +323,7 @@ Lambda per i **pacchetti DocSOA** (Stellantis PSA), client REST che replica il s
 pkDocsoa/
 ├── index.js               # Lambda entry-point + demo CLI
 ├── DocSOARestClient.js     # Client REST DocSOA (axios) + helper vinParts
+├── certService.js          # mTLS: recupero cert/key da Secrets Manager (apicCert/apicKey) + https.Agent cachato
 ├── test.js                 # Smoke-test manuale
 └── __tests__/              # Unit test Jest
 ```
@@ -629,10 +630,13 @@ EPER_HOST=eper.parts.fiat.com      # Host servizio SOAP ePer
 ### pkDocsoa
 
 ```env
-DOCSOA_HOST=https://api.inetpsa.com   # URL base servizio DocSOA
-DOCSOA_USERNAME=...                    # Username autenticazione
-DOCSOA_PASSWORD=...                    # Password autenticazione
-DOCSOA_CLIENT_ID=...                   # Client ID applicazione
+DOCSOA_HOST=https://api-cert-preprod.groupe-psa.com/api/cert-aai   # Base URL gateway DocSOA
+DOCSOA_USERNAME=...                    # Username autenticazione (WS-Security / Basic Auth)
+DOCSOA_PASSWORD=...                    # Password autenticazione (WS-Security / Basic Auth)
+DOCSOA_IBM_CLIENT_ID=...               # X-IBM-Client-Id per il gateway API Connect
+DOCSOA_IBM_CLIENT_SECRET=...           # X-IBM-Client-Secret per il gateway API Connect
+DOCSOA_CERT_SECRET_ID=apicCert         # (opzionale) id secret Secrets Manager col certificato client mTLS (STESSO usato da myPeople)
+DOCSOA_KEY_SECRET_ID=apicKey           # (opzionale) id secret Secrets Manager con la chiave privata mTLS (STESSO usato da myPeople)
 PROXY_HOST=...                         # (opzionale) proxy corporate Stellantis/PSA
 PROXY_PORT=8080                        # (opzionale) porta proxy
 ```
