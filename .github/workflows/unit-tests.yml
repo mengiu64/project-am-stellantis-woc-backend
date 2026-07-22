@@ -2743,7 +2743,8 @@ jobs:
               DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
               DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
               DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
-              DocsoaClientId="${{ secrets.DOCSOA_CLIENT_ID }}" \
+              DocsoaIbmClientId="${{ secrets.DOCSOA_IBM_CLIENT_ID }}" \
+              DocsoaIbmClientSecret="${{ secrets.DOCSOA_IBM_CLIENT_SECRET }}" \
               DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
               DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
               DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
@@ -2857,7 +2858,8 @@ jobs:
               DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
               DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
               DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
-              DocsoaClientId="${{ secrets.DOCSOA_CLIENT_ID }}" \
+              DocsoaIbmClientId="${{ secrets.DOCSOA_IBM_CLIENT_ID }}" \
+              DocsoaIbmClientSecret="${{ secrets.DOCSOA_IBM_CLIENT_SECRET }}" \
               DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
               DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
               DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
@@ -2972,7 +2974,8 @@ jobs:
               DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
               DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
               DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
-              DocsoaClientId="${{ secrets.DOCSOA_CLIENT_ID }}" \
+              DocsoaIbmClientId="${{ secrets.DOCSOA_IBM_CLIENT_ID }}" \
+              DocsoaIbmClientSecret="${{ secrets.DOCSOA_IBM_CLIENT_SECRET }}" \
               DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
               DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
               DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
