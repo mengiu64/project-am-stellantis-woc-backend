@@ -121,6 +121,86 @@ function sanitizeAddress(address) {
 }
 
 /**
+ * Checks whether a value is "present" for the purposes of packageType/
+ * packageCharge derivation, i.e. not undefined, not null and not an empty
+ * string.
+ * @param {*} value - value to check
+ * @returns {boolean} true if value is present
+ */
+function isPresent(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+/**
+ * Computes packageType and packageCharge for a single job entry, based on
+ * jobType/packageCode/paymentType:
+ * - jobType === 'MFP'                              => packageType 'FP',  packageCharge 'CUSTOMER'
+ * - jobType === 'STD' with packageCode present      => packageType 'QE',  packageCharge 'CUSTOMER'
+ * - jobType === 'LFP'                               => packageType 'LFP', packageCharge 'CUSTOMER'
+ * - jobType === 'STD' without packageCode           => packageType 'GC',  packageCharge 'CUSTOMER'
+ * - any other present jobType                       => packageType 'GC',  packageCharge 'INTERNAL'
+ * - jobType absent/empty/null                       => packageType 'GC',  packageCharge 'CUSTOMER'
+ * In every case, if paymentType is present on the job it takes precedence
+ * over the packageCharge value derived above.
+ * @param {object} job - single entry of jobCardDetail.jobs
+ * @returns {{packageType: string, packageCharge: string}}
+ */
+function computePackageInfo(job) {
+  const { jobType, packageCode, paymentType } = job ?? {};
+
+  let packageType;
+  let packageCharge;
+
+  if (jobType === 'MFP') {
+    packageType   = 'FP';
+    packageCharge = 'CUSTOMER';
+  } else if (jobType === 'STD' && isPresent(packageCode)) {
+    packageType   = 'QE';
+    packageCharge = 'CUSTOMER';
+  } else if (jobType === 'LFP') {
+    packageType   = 'LFP';
+    packageCharge = 'CUSTOMER';
+  } else if (jobType === 'STD' && !isPresent(packageCode)) {
+    packageType   = 'GC';
+    packageCharge = 'CUSTOMER';
+  } else if (isPresent(jobType)) {
+    packageType   = 'GC';
+    packageCharge = 'INTERNAL';
+  } else {
+    // jobType assente/vuoto/null
+    packageType   = 'GC';
+    packageCharge = 'CUSTOMER';
+  }
+
+  if (isPresent(paymentType)) {
+    packageCharge = paymentType;
+  }
+
+  return { packageType, packageCharge };
+}
+
+/**
+ * Adds packageType and packageCharge to every entry of jobCardDetail.jobs in
+ * a jobCardDetails response body, in place. See computePackageInfo for the
+ * derivation rules.
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with packageType/packageCharge added to jobs
+ */
+function enrichJobsWithPackageInfo(body) {
+  const jobs = body?.jobCardDetail?.jobs;
+  if (Array.isArray(jobs)) {
+    for (const job of jobs) {
+      if (job && typeof job === 'object') {
+        const { packageType, packageCharge } = computePackageInfo(job);
+        job.packageType   = packageType;
+        job.packageCharge = packageCharge;
+      }
+    }
+  }
+  return body;
+}
+
+/**
  * Sanitizes the address field of every customerInfo.contactInfo entry in a
  * jobCardDetails response body, in place.
  * @param {object} body - jobCardDetails response body
@@ -135,6 +215,7 @@ function sanitizeJobCardDetails(body) {
       }
     }
   }
+  enrichJobsWithPackageInfo(body);
   return body;
 }
 

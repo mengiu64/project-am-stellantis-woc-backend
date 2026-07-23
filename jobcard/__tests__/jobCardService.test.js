@@ -214,6 +214,98 @@ describe('jobCardService', () => {
     await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
   });
 
+  // ── packageType / packageCharge enrichment on jobs ──────────────────────────
+
+  describe('packageType/packageCharge enrichment', () => {
+    async function detailsFor(jobs) {
+      httpsRequest.mockResolvedValue({
+        statusCode: 200,
+        headers: {},
+        body: { jobCardDetail: { jobs } },
+      });
+      const result = await getJobCardDetails('token', '79');
+      return result.jobCardDetail.jobs;
+    }
+
+    test('jobType "MFP" => packageType "FP", packageCharge "CUSTOMER"', async () => {
+      const [job] = await detailsFor([{ jobType: 'MFP' }]);
+      expect(job.packageType).toBe('FP');
+      expect(job.packageCharge).toBe('CUSTOMER');
+    });
+
+    test('jobType "STD" with packageCode present => packageType "QE", packageCharge "CUSTOMER"', async () => {
+      const [job] = await detailsFor([{ jobType: 'STD', packageCode: 'PKG-1' }]);
+      expect(job.packageType).toBe('QE');
+      expect(job.packageCharge).toBe('CUSTOMER');
+    });
+
+    test('jobType "LFP" => packageType "LFP", packageCharge "CUSTOMER"', async () => {
+      const [job] = await detailsFor([{ jobType: 'LFP' }]);
+      expect(job.packageType).toBe('LFP');
+      expect(job.packageCharge).toBe('CUSTOMER');
+    });
+
+    test.each([
+      ['missing', undefined],
+      ['null', null],
+      ['empty string', ''],
+    ])('jobType "STD" with packageCode %s => packageType "GC", packageCharge "CUSTOMER"', async (_label, packageCode) => {
+      const [job] = await detailsFor([{ jobType: 'STD', packageCode }]);
+      expect(job.packageType).toBe('GC');
+      expect(job.packageCharge).toBe('CUSTOMER');
+    });
+
+    test('any other non-empty jobType => packageType "GC", packageCharge "INTERNAL"', async () => {
+      const [job] = await detailsFor([{ jobType: 'REPAIR' }]);
+      expect(job.packageType).toBe('GC');
+      expect(job.packageCharge).toBe('INTERNAL');
+    });
+
+    test('jobType missing/empty/null => packageType "GC", packageCharge "CUSTOMER"', async () => {
+      const [j1] = await detailsFor([{}]);
+      expect(j1.packageType).toBe('GC');
+      expect(j1.packageCharge).toBe('CUSTOMER');
+
+      const [j2] = await detailsFor([{ jobType: null }]);
+      expect(j2.packageType).toBe('GC');
+      expect(j2.packageCharge).toBe('CUSTOMER');
+
+      const [j3] = await detailsFor([{ jobType: '' }]);
+      expect(j3.packageType).toBe('GC');
+      expect(j3.packageCharge).toBe('CUSTOMER');
+    });
+
+    test('paymentType present overrides packageCharge regardless of jobType', async () => {
+      const [job] = await detailsFor([{ jobType: 'MFP', paymentType: 'MANUFACTURER' }]);
+      expect(job.packageType).toBe('FP');
+      expect(job.packageCharge).toBe('MANUFACTURER');
+    });
+
+    test('paymentType present overrides packageCharge for the "other jobType" (INTERNAL) case', async () => {
+      const [job] = await detailsFor([{ jobType: 'WARRANTY', paymentType: 'INSURANCE' }]);
+      expect(job.packageType).toBe('GC');
+      expect(job.packageCharge).toBe('INSURANCE');
+    });
+
+    test('enriches every job in the array independently', async () => {
+      const jobs = await detailsFor([
+        { jobType: 'MFP' },
+        { jobType: 'STD', packageCode: 'PKG-2' },
+        { jobType: 'STD' },
+      ]);
+      expect(jobs.map(j => [j.packageType, j.packageCharge])).toEqual([
+        ['FP', 'CUSTOMER'],
+        ['QE', 'CUSTOMER'],
+        ['GC', 'CUSTOMER'],
+      ]);
+    });
+
+    test('does not fail when jobs is missing or not an array', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+    });
+  });
+
   // ── /tmp persistence (readable later by djc lambda) ─────────────────────────
 
   test('saves the sanitized response body to /tmp/<jobCardId>.json', async () => {
