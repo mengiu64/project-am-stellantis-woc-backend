@@ -92,6 +92,31 @@ node index.js details 79
 
 ---
 
+### Arricchimento della risposta `getJobCardDetails`
+
+Prima di essere restituita, la risposta di `getJobCardDetails` viene arricchita da `sanitizeJobCardDetails` con i seguenti campi calcolati (non presenti nella risposta originale della DGT API):
+
+#### `jobs[].packageType` / `jobs[].packageCharge`
+
+Aggiunti a ciascun elemento di `jobs`, posizionati **prima** di `partInfo`/`laborInfo` quando presenti (per leggibilità). Derivati da `jobType`/`packageCode` del job:
+
+| `jobType`                              | `packageCode`            | `packageType` | `packageCharge`                                  |
+|-----------------------------------------|---------------------------|----------------|---------------------------------------------------|
+| `MFP`                                    | -                          | `FP`           | `CUSTOMER`                                        |
+| `STD`                                    | presente (non vuoto/null) | `QE`           | `CUSTOMER`                                        |
+| `LFP`                                    | -                          | `LFP`          | `CUSTOMER`                                        |
+| `STD`                                    | assente/vuoto/null        | `GC`           | `CUSTOMER`                                        |
+| assente/vuoto/null                       | -                          | `GC`           | `CUSTOMER`                                        |
+| qualsiasi altro valore non vuoto/null   | -                          | `GC`           | `INTERNAL`                                        |
+
+Se il job ha un campo `paymentType` valorizzato, `packageCharge` assume **sempre** quel valore (sovrascrive il risultato della tabella sopra); `packageType` resta invece sempre derivato da `jobType`/`packageCode` come sopra.
+
+#### `roInfo.roSource`
+
+Aggiunto subito dopo `roInfo.sourceApplication`, con lo **stesso valore** di quest'ultimo (se `roInfo`/`sourceApplication` sono assenti, `roSource` non viene aggiunto).
+
+---
+
 ## Configurazione
 
 Le credenziali vengono lette da **variabili d'ambiente**. Non inserire mai valori reali in `config.js`.
