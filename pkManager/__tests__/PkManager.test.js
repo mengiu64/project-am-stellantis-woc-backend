@@ -480,6 +480,37 @@ describe('PkManager', () => {
       expect(result.packageType).toBe('QE');
     });
 
+    test('docsoa: uses rowData.ref (not the refAff-based code) as refTp for ibxDetailtpService', async () => {
+      // I nodi "doc" di ibxParametrageService espongono sia refAff (usato come chiave
+      // di mappatura in buildDocsoaMap, qui il "code") sia ref (il riferimento tecnico
+      // richiesto da ibxDetailtpService): vanno usati per scopi diversi.
+      const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: null, message: 'Empty resultat' });
+      const ibxDetailtpService      = jest.fn().mockResolvedValue({ data: { tp: { ref: 'TP-REF-999' } } });
+      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+
+      const manager  = new PkManager();
+      const rowData  = { refAff: '95R04A', ref: 'TP-REF-999' };
+      const result   = await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', rowData);
+
+      expect(ibxDetailtpService).toHaveBeenCalledWith(
+        expect.objectContaining({ refTp: 'TP-REF-999' })
+      );
+      expect(result.isFixedPrice).toBe('0');
+    });
+
+    test('docsoa: falls back to code as refTp when rowData.ref is missing', async () => {
+      const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: null, message: 'Empty resultat' });
+      const ibxDetailtpService      = jest.fn().mockResolvedValue({ data: { tp: { ref: '95R04A' } } });
+      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+
+      const manager = new PkManager();
+      await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', { codice: '95R04A' });
+
+      expect(ibxDetailtpService).toHaveBeenCalledWith(
+        expect.objectContaining({ refTp: '95R04A' })
+      );
+    });
+
     test('throws for unrecognized pkwstouse', async () => {
       const manager = new PkManager();
       await expect(manager._fetchDetail('unknown', 'VIN123', 'CODE', {}))
@@ -1026,6 +1057,84 @@ describe('PkManager', () => {
       await manager.getPkList('menupricing', 'DOC1', 'CUST1', 'VIN123', '1000');
 
       expect(manager.wsConfig.menupricing.dealerIdentificationCode).toBe('DID-ENV');
+    });
+
+    // Regressione: le 3 fonti (eper/docsoa/menupricing) devono produrre lo
+    // stesso set di chiavi in getPkList, anche quando i rispettivi parse*Res
+    // omettono dei campi (es. DocSOA non valorizza affatto codice/descrizione/
+    // listaOperazioni/listaRicambi quando né il forfait né la tp vengono trovati).
+    test('normalizes every package to the same shape regardless of pkwstouse (docsoa not-found case)', async () => {
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        // Simula l'output "vuoto" di parseDocSoaRes quando né forfait né tp
+        // vengono trovati: codice/descrizione/listaOperazioni/listaRicambi sono
+        // undefined (non presenti sull'oggetto).
+        manager.pkDetailList = [
+          { result: true, pkPrice: 0, niveau: null, isFixedPrice: '0', packageType: 'QE', category: 'ACCESSORIES' },
+        ];
+        return {};
+      });
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({});
+
+      const result = await manager.getPkList('docsoa', 'DOC1', 'CUST1', 'VIN123');
+
+      expect(result).toEqual([
+        {
+          result: true,
+          codice: null,
+          descrizione: null,
+          pkPrice: 0,
+          isFixedPrice: '0',
+          packageType: 'QE',
+          niveau: null,
+          listaOperazioni: [],
+          listaRicambi: [],
+          category: 'ACCESSORIES',
+        },
+      ]);
+    });
+
+    test('normalizes an eper package (no niveau/pkPrice/result natively) to the same shape', async () => {
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        manager.pkDetailList = [
+          {
+            codice: '7210E221',
+            descrizione: 'Pacchetto test',
+            isFixedPrice: '0',
+            packageType: 'QE',
+            listaOperazioni: [{ TYPE: 'OP', COD: 'OP1' }],
+            listaRicambi: [{ TYPE: 'SP', COD: 'SP1' }],
+            category: 'BODY',
+          },
+        ];
+        return {};
+      });
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({});
+
+      const result = await manager.getPkList('eper', 'DOC1', 'CUST1', 'VIN123');
+
+      expect(Object.keys(result[0])).toEqual([
+        'result', 'codice', 'descrizione', 'pkPrice', 'isFixedPrice',
+        'packageType', 'niveau', 'listaOperazioni', 'listaRicambi', 'category',
+      ]);
+      expect(result[0]).toMatchObject({ result: true, codice: '7210E221', pkPrice: 0, niveau: null });
+    });
+
+    test('leaves single-package fetch errors ({ error, category }) untouched by normalization', async () => {
+      const manager = new PkManager();
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        manager.pkDetailList = [{ error: 'detail failed', category: 'ACCESSORIES' }];
+        return {};
+      });
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({});
+
+      const result = await manager.getPkList('docsoa', 'DOC1', 'CUST1', 'VIN123');
+
+      expect(result).toEqual([{ error: 'detail failed', category: 'ACCESSORIES' }]);
     });
   });
 });

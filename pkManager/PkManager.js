@@ -78,6 +78,7 @@ const CONFIG_PACKAGES = {
       '42025A',
       '42120A',
       '44020A'
+
     ],
   },
 
@@ -325,6 +326,14 @@ class PkManager {
   //                                              usato dai metodi menupricing (_fetchLiveMap/_fetchDetail)
   //                                              quando pkwstouse === 'menupricing'
   // @returns {Promise<Array>}  - this.pkDetailList arricchito con AV_LOCAL/PRICE/SCONTO
+  //                              e normalizzato (via _normalizePkDetail) in un
+  //                              contratto identico per ogni pacchetto, qualunque
+  //                              sia il pkwstouse: { result, codice, descrizione,
+  //                              pkPrice, isFixedPrice, packageType, niveau,
+  //                              listaOperazioni, listaRicambi, category }. Le
+  //                              voci per cui il dettaglio del singolo pacchetto
+  //                              non è stato recuperabile restano invece
+  //                              { error, category } (non normalizzate).
   async getPkList(pkwstouse, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode) {
     console.log('[PkManager.getPkList] parametri chiamata:', { pkwstouse, documentId, customerId, vehicleId, market, dealerIdentificationCode });
 
@@ -395,7 +404,46 @@ class PkManager {
       }
     });
 
+    // 5) Normalizzo ogni pacchetto in un contratto identico (stesse chiavi,
+    //    stesso ordine) indipendentemente dal pkwstouse usato: eper/docsoa/
+    //    menupricing restituiscono nativamente forme leggermente diverse dal
+    //    rispettivo parse*Res (es. DocSOA non valorizza affatto codice/
+    //    descrizione/listaOperazioni/listaRicambi quando forfait/tp non viene
+    //    trovato — restano undefined e JSON.stringify le scarta dalla risposta).
+    //    Le voci in errore (fetch del singolo pacchetto fallito, { error,
+    //    category }) restano invariate: non sono un pacchetto valido da
+    //    normalizzare.
+    this.pkDetailList = this.pkDetailList.map((pkDetail) => (
+      pkDetail?.error !== undefined ? pkDetail : this._normalizePkDetail(pkDetail)
+    ));
+
     return this.pkDetailList;
+  }
+
+  // ── _normalizePkDetail ───────────────────────────────────────────────────────
+  // Garantisce che ciascun elemento restituito da getPkList abbia sempre lo
+  // stesso set di chiavi (stesso "payload"), qualunque sia il pkwstouse usato
+  // per produrlo — solo i valori possono differire tra eper/docsoa/menupricing.
+  // @param {object} pkDetail - Elemento di this.pkDetailList prodotto da
+  //                            parseEperRes/parseDocSoaRes/parseMenupricingRes
+  //                            (+ category), già arricchito con AV_LOCAL/PRICE/
+  //                            SCONTO sulle righe di listaOperazioni/listaRicambi.
+  // @returns {object}         - { result, codice, descrizione, pkPrice,
+  //                              isFixedPrice, packageType, niveau,
+  //                              listaOperazioni, listaRicambi, category }
+  _normalizePkDetail(pkDetail) {
+    return {
+      result:          true,
+      codice:          pkDetail?.codice ?? null,
+      descrizione:     pkDetail?.descrizione ?? null,
+      pkPrice:         pkDetail?.pkPrice ?? 0,
+      isFixedPrice:    pkDetail?.isFixedPrice ?? '0',
+      packageType:     pkDetail?.packageType ?? (pkDetail?.isFixedPrice === '1' ? 'FP' : 'QE'),
+      niveau:          pkDetail?.niveau ?? null,
+      listaOperazioni: pkDetail?.listaOperazioni ?? [],
+      listaRicambi:    pkDetail?.listaRicambi ?? [],
+      category:        pkDetail?.category ?? null,
+    };
   }
 
   // ── _fetchDetail ─────────────────────────────────────────────────────────────
@@ -453,8 +501,13 @@ class PkManager {
       }
 
       // 2) non trovato come forfait: il codice è una singola TP (tempo/prezzo),
-      //    non un pacchetto a prezzo fisso => isFixedPrice = '0'
-      const tpRes = await client.ibxDetailtpService({ ...commonParams, refTp: code });
+      //    non un pacchetto a prezzo fisso => isFixedPrice = '0'.
+      //    ibxParametrageService restituisce i nodi doc con sia `refAff` (usato come
+      //    chiave di mappatura in buildDocsoaMap) sia `ref` (il riferimento tecnico
+      //    richiesto da ibxDetailtpService): va usato quest'ultimo quando presente,
+      //    altrimenti si ricade sul code (compatibilità con altri CODE_FIELDS).
+      const refTp = rowData?.ref ?? code;
+      const tpRes = await client.ibxDetailtpService({ ...commonParams, refTp });
       return this.parseDocSoaRes(tpRes, false);
     }
 
