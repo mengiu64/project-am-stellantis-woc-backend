@@ -105,6 +105,7 @@ describe('MyPeopleDmsSessionRepository', () => {
         { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,31,33,43', main: 'N' },
         { market: '1000', code: '00007584', state: 'ACTIVE', brands: '00,77,66,57,70,83', main: 'Y' },
       ],
+      applications: [],
     });
   });
 
@@ -345,5 +346,67 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([]);
+  });
+
+  test('applications riporta l\'intero blocco Applications di myPeople con tutte le chiavi in minuscolo', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            Applications: [
+              { APPLICATION: 'IT.ESERVICE.LINK', PROFILE: 'GARAGE CHIEF', STATUS: 'ACTIVE', MARKET: '1000' },
+              { APPLICATION: 'wiADV.DL', PROFILE: 'Service Manager', STATUS: 'ACTIVE', MARKET: '1000' },
+            ],
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.applications).toEqual([
+      { application: 'IT.ESERVICE.LINK', profile: 'GARAGE CHIEF', status: 'ACTIVE', market: '1000' },
+      { application: 'wiADV.DL', profile: 'Service Manager', status: 'ACTIVE', market: '1000' },
+    ]);
+  });
+
+  test('applications è un array vuoto quando myPeople non restituisce alcuna Application', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            Applications: [],
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.applications).toEqual([]);
+  });
+
+  test('applications è un array vuoto quando myPeople non restituisce affatto il blocco Applications', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.applications).toEqual([]);
   });
 });
