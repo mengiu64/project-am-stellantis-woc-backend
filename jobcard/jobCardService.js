@@ -180,20 +180,43 @@ function computePackageInfo(job) {
 }
 
 /**
+ * Returns a copy of the job with packageType/packageCharge inserted right
+ * before partInfo/laborInfo (whichever comes first), so that they stay easy
+ * to spot instead of being buried after the (often long) parts/labor arrays.
+ * If neither partInfo nor laborInfo is present, they are simply appended.
+ * @param {object} job            - original job entry
+ * @param {string} packageType    - computed packageType
+ * @param {string} packageCharge  - computed packageCharge
+ * @returns {object} new job object with the same keys, reordered
+ */
+function insertPackageInfoBeforePartsAndLabor(job, packageType, packageCharge) {
+  const entries      = Object.entries(job);
+  const insertIndex  = entries.findIndex(([key]) => key === 'partInfo' || key === 'laborInfo');
+  const packageEntries = [['packageType', packageType], ['packageCharge', packageCharge]];
+
+  const newEntries = insertIndex === -1
+    ? [...entries, ...packageEntries]
+    : [...entries.slice(0, insertIndex), ...packageEntries, ...entries.slice(insertIndex)];
+
+  return Object.fromEntries(newEntries);
+}
+
+/**
  * Adds packageType and packageCharge to every entry of jobCardDetail.jobs in
- * a jobCardDetails response body, in place. See computePackageInfo for the
- * derivation rules.
+ * a jobCardDetails response body. The two fields are placed right before
+ * partInfo/laborInfo for readability (see computePackageInfo for the
+ * derivation rules), which requires replacing each job with a reordered copy.
  * @param {object} body - jobCardDetails response body
  * @returns {object} the same body, with packageType/packageCharge added to jobs
  */
 function enrichJobsWithPackageInfo(body) {
   const jobs = body?.jobCardDetail?.jobs;
   if (Array.isArray(jobs)) {
-    for (const job of jobs) {
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
       if (job && typeof job === 'object') {
         const { packageType, packageCharge } = computePackageInfo(job);
-        job.packageType   = packageType;
-        job.packageCharge = packageCharge;
+        jobs[i] = insertPackageInfoBeforePartsAndLabor(job, packageType, packageCharge);
       }
     }
   }

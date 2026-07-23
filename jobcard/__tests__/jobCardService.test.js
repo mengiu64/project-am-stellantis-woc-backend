@@ -304,6 +304,53 @@ describe('jobCardService', () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
       await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
     });
+
+    test('places packageType/packageCharge before partInfo when partInfo is present', async () => {
+      const [job] = await detailsFor([
+        {
+          jobInternalId: 'j1',
+          jobType: 'STD',
+          packageCode: '42001A',
+          partInfo: [{ partId: '1' }],
+        },
+      ]);
+      expect(Object.keys(job)).toEqual([
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo',
+      ]);
+    });
+
+    test('places packageType/packageCharge before laborInfo when laborInfo is present', async () => {
+      const [job] = await detailsFor([
+        {
+          jobInternalId: 'j1',
+          jobType: 'MFP',
+          laborInfo: [{ laborOperationId: '1' }],
+        },
+      ]);
+      expect(Object.keys(job)).toEqual([
+        'jobInternalId', 'jobType', 'packageType', 'packageCharge', 'laborInfo',
+      ]);
+    });
+
+    test('places packageType/packageCharge before whichever of partInfo/laborInfo comes first', async () => {
+      const [job] = await detailsFor([
+        {
+          jobInternalId: 'j1',
+          jobType: 'STD',
+          packageCode: '42001A',
+          partInfo: [{ partId: '1' }],
+          laborInfo: [{ laborOperationId: '1' }],
+        },
+      ]);
+      expect(Object.keys(job)).toEqual([
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'laborInfo',
+      ]);
+    });
+
+    test('appends packageType/packageCharge at the end when neither partInfo nor laborInfo is present', async () => {
+      const [job] = await detailsFor([{ jobInternalId: 'j1', jobType: 'STD' }]);
+      expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge']);
+    });
   });
 
   // ── /tmp persistence (readable later by djc lambda) ─────────────────────────
