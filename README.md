@@ -160,8 +160,8 @@ Lambda per le **impostazioni DMS** e le **richieste di inquiry** (parti/upgrade/
 | Campo | Obbligatorio | Descrizione |
 |---|---|---|
 | `PartsInquiryHeader.MessageType` | ✅ | Tipo richiesta: `LFP` \| `WL` \| `MP` |
-| `PartsInquiryHeader.DocumentID` | ✅ | Numero Repair Order univoco |
-| `PartsInquiryHeader.CustomerIdDms` | ✅ | ID cliente nel DMS |
+| `PartsInquiryHeader.DocumentID` | ❌ | Numero Repair Order univoco. Contenuto non obbligatorio (può essere sconosciuto/omesso, es. per `LFP` quando l'ordine di riparazione non esiste ancora), ma il DML richiede comunque la chiave presente: se assente/`null`/`undefined`, viene inviata come stringa vuota `''` |
+| `PartsInquiryHeader.CustomerIdDms` | ❌ | ID cliente nel DMS. Come `DocumentID`, contenuto non obbligatorio: se assente/`null`/`undefined`, viene inviata come `null` (chiave sempre presente) |
 | `PartsInquiryHeader.VehicleID` | ✅ | VIN del veicolo |
 | `ApplicationArea` | ✅ | Mittente, timestamp e BODID (UUID) |
 | `UpSelling.Packages` | ❌ | Usato per `LFP` |
@@ -214,6 +214,15 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `pageSize` | ❌ | Elementi per pagina – 10/25/50/100 (default: 25) |
 | `sortBy` | ❌ | Campo di ordinamento |
 | `sortOrder` | ❌ | `asc` / `desc` |
+
+#### Arricchimento risposta `getJobCardDetails`
+
+Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDetails` con campi calcolati non presenti nella risposta originale della DGT API:
+
+- **`jobs[].packageType` / `jobs[].packageCharge`** — aggiunti a ciascun job (posizionati prima di `partInfo`/`laborInfo` quando presenti), derivati da `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` con `packageCode` valorizzato → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` senza `packageCode` (o assente/vuoto/`null` di `jobType`) → `GC`/`CUSTOMER`; qualsiasi altro `jobType` non vuoto → `GC`/`INTERNAL`. Se il job ha `paymentType` valorizzato, questo sovrascrive sempre `packageCharge` (il `packageType` resta invariato).
+- **`roInfo.roSource`** — aggiunto subito dopo `roInfo.sourceApplication`, con lo stesso valore.
+
+Vedi `jobcard/README.md` per la tabella completa delle regole.
 
 #### Utilizzo CLI
 
@@ -382,8 +391,12 @@ Lambda orchestratore che gestisce la **configurazione e la validazione dei pacch
 | `getConfigPackages` | `manager.getConfigPackages(market, pkwstouse)` | Configurazione statica pacchetti per il ws indicato |
 | `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersezione tra config e pacchetti live dal WS |
 | `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + dettaglio di ogni pacchetto in parallelo |
+| `getPriceAndAvailability` | `manager.getPriceAndAvailability(market, pkwstouse, VIN)` | `getValidPackagesDetail` + arricchimento `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga di `listaOperazioni`/`listaRicambi` |
+| `getPkList` | `manager.getPkList(market, pkwstouse, VIN)` | Orchestratore end-to-end: come `getPriceAndAvailability`, ma **normalizza** ogni pacchetto allo stesso set di chiavi (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), a prescindere dal `pkwstouse` di origine |
 
 `pkwstouse` accetta i valori: `eper`, `docsoa`, `menupricing`.
+
+Ogni dettaglio pacchetto riporta anche `isFixedPrice`/`packageType`: sempre `"0"`/`"QE"` per `eper`; per `menupricing`/`docsoa`, `"1"`/`"FP"` se il pacchetto è a prezzo fisso (promozione "Lex" per menupricing, forfait `ibxDetailForfaitService` per docsoa), altrimenti `"0"`/`"QE"`. Per `docsoa`, se il forfait non viene trovato si tenta un fallback su `ibxDetailtpService` (tempario). Vedi `pkManager/README.md` per il dettaglio completo.
 
 > ⚠️ **Nota**: `getValidPackages`/`getValidPackagesDetail` invocano internamente metodi (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) non ancora implementati sui client `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient`. Da completare prima di un utilizzo in produzione di queste due action.
 
@@ -461,6 +474,7 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) in `dms/settings`, altrimenti `null` |
 | `dmldiscount` | valore della prima chiave di `dms/settings` contenente `discount`, altrimenti `null` |
 | `oics` | intero array `Response.User.OICs` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `MARKET`→`market`, `CODE`→`code`, `BRANDS`→`brands`, ...) |
+| `applications` | intero array `Response.User.Applications` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `APPLICATION`→`application`, `PROFILE`→`profile`, `STATUS`→`status`, `MARKET`→`market`) |
 | tutti gli altri campi | `null` (non derivabili da myPeople/dms) |
 
 #### Funzioni principali
@@ -804,12 +818,12 @@ cd agendaSoa && npm run test:coverage
 #### dms / jobcard / v360
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
-- **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/DocumentID/CustomerIdDms/VehicleID), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
-- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP
+- **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
+- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – costruzione envelope/richiesta SOAP-REST, parsing risposta, gestione errori HTTP/SOAP, tutti i metodi pubblici del client
-- **PkManager** – costruttore (config da env vars), `getConfigPackages` (mappa statica per ws), `getValidPackages` (intersezione config/WS live), `getValidPackagesDetail` (dettaglio parallelo), `_fetchDetail`/`_fetchLiveMap` con mock dei tre client sibling
+- **PkManager** – costruttore (config da env vars), `getConfigPackages` (mappa statica per ws), `getValidPackages` (intersezione config/WS live), `getValidPackagesDetail` (dettaglio parallelo, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalizzazione via `_normalizePkDetail`, gestione elementi in errore), fallback docsoa forfait→tempario (`ibxDetailtpService`, uso di `rowData.ref` come `refTp`), `_fetchDetail`/`_fetchLiveMap` con mock dei tre client sibling
 
 #### translations
 - **index** – dispatch CLI/Lambda verso l'handler `translations`
@@ -824,7 +838,7 @@ cd agendaSoa && npm run test:coverage
 - **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND`, messaggio con il mercato/utente richiesto e `label` opzionale (`"il mercato"` di default, `"l'utente"` per il flusso username)
 - **sessionRepository** – la classe base lancia errore "non implementato"
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
-- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione (incluso `oics`, l'intero blocco `OICs` di myPeople con chiavi in minuscolo), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`), `oics: []` quando myPeople non restituisce OIC; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
+- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione (incluso `oics`/`applications`, gli interi blocchi `OICs`/`Applications` di myPeople con chiavi in minuscolo), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`), `oics: []`/`applications: []` quando myPeople non restituisce OIC/Applications, `applications` assente dal blocco `User`; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
 - **repositoryFactory** – costruzione dell'istanza di default e con override, sia per `buildRepository` (S3) che per `buildMyPeopleDmsRepository` (myPeople/dms)
 
 #### myPeople

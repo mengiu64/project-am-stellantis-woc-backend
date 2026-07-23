@@ -158,8 +158,8 @@ Lambda for **DMS settings** and **inquiry requests** (parts/upgrades/work lines)
 | Field | Required | Description |
 |---|---|---|
 | `PartsInquiryHeader.MessageType` | ✅ | Request type: `LFP` \| `WL` \| `MP` |
-| `PartsInquiryHeader.DocumentID` | ✅ | Unique Repair Order number |
-| `PartsInquiryHeader.CustomerIdDms` | ✅ | Customer ID in DMS |
+| `PartsInquiryHeader.DocumentID` | ❌ | Unique Repair Order number. Content is optional (can be unknown/omitted, e.g. for `LFP` when the repair order doesn't exist yet), but the DML still requires the key to be present: if missing/`null`/`undefined`, it's sent as an empty string `''` |
+| `PartsInquiryHeader.CustomerIdDms` | ❌ | Customer ID in DMS. Like `DocumentID`, content is optional: if missing/`null`/`undefined`, it's sent as `null` (key always present) |
 | `PartsInquiryHeader.VehicleID` | ✅ | Vehicle VIN |
 | `ApplicationArea` | ✅ | Sender, timestamp and BODID (UUID) |
 | `UpSelling.Packages` | ❌ | Used for `LFP` |
@@ -212,6 +212,15 @@ Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, wi
 | `pageSize` | ❌ | Items per page – 10/25/50/100 (default: 25) |
 | `sortBy` | ❌ | Sort field |
 | `sortOrder` | ❌ | `asc` / `desc` |
+
+#### `getJobCardDetails` response enrichment
+
+Before being returned, the response is enriched by `sanitizeJobCardDetails` with computed fields not present in the original DGT API response:
+
+- **`jobs[].packageType` / `jobs[].packageCharge`** — added to each job (placed before `partInfo`/`laborInfo` when present), derived from `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` with `packageCode` set → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` without `packageCode` (or missing/empty/`null` `jobType`) → `GC`/`CUSTOMER`; any other non-empty `jobType` → `GC`/`INTERNAL`. If the job has `paymentType` set, it always overrides `packageCharge` (`packageType` stays unchanged).
+- **`roInfo.roSource`** — added right after `roInfo.sourceApplication`, with the same value.
+
+See `jobcard/README.md` for the full rule table.
 
 #### CLI usage
 
@@ -380,8 +389,12 @@ Orchestrator Lambda that manages **package configuration and validation** across
 | `getConfigPackages` | `manager.getConfigPackages(market, pkwstouse)` | Static package configuration for the given ws |
 | `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersection between config and live packages from the WS |
 | `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + detail of each package in parallel |
+| `getPriceAndAvailability` | `manager.getPriceAndAvailability(market, pkwstouse, VIN)` | `getValidPackagesDetail` + `AV_LOCAL`/`PRICE`/`SCONTO` enrichment for each `listaOperazioni`/`listaRicambi` row |
+| `getPkList` | `manager.getPkList(market, pkwstouse, VIN)` | End-to-end orchestrator: like `getPriceAndAvailability`, but **normalizes** every package to the same set of keys (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), regardless of the source `pkwstouse` |
 
 `pkwstouse` accepts the values: `eper`, `docsoa`, `menupricing`.
+
+Every package detail also reports `isFixedPrice`/`packageType`: always `"0"`/`"QE"` for `eper`; for `menupricing`/`docsoa`, `"1"`/`"FP"` if the package is fixed-price (promotional "Lex" for menupricing, forfait `ibxDetailForfaitService` for docsoa), otherwise `"0"`/`"QE"`. For `docsoa`, if the forfait isn't found, a fallback to `ibxDetailtpService` (tempario) is attempted. See `pkManager/README.md` for the full details.
 
 > ⚠️ **Note**: `getValidPackages`/`getValidPackagesDetail` internally call methods (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) not yet implemented on the `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient` clients. To be completed before using these two actions in production.
 
@@ -701,12 +714,12 @@ cd agendaSoa && npm run test:coverage
 #### dms / jobcard / v360
 - **httpClient** – JSON/text parsing, chunk concatenation, body writing, reject on network error
 - **authService** – valid cache, expired/missing cache (renewal), cache writing, HTTP error, missing `access_token`, default `expires_in`
-- **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/DocumentID/CustomerIdDms/VehicleID), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
-- **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors
+- **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID required; `DocumentID`/`CustomerIdDms` optional content but always present in the payload, sent as `''` and `null` respectively when omitted), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
+- **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors; for `jobCardService`: `jobs[].packageType`/`packageCharge` enrichment (all `jobType`/`packageCode`/`paymentType` combinations), placement before `partInfo`/`laborInfo`, `roInfo.roSource` added right after `sourceApplication` (including missing `roInfo`/`sourceApplication`)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods
-- **PkManager** – constructor (config from env vars), `getConfigPackages` (static map per ws), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch), `_fetchDetail`/`_fetchLiveMap` with mocks of the three sibling clients
+- **PkManager** – constructor (config from env vars), `getConfigPackages` (static map per ws), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalization via `_normalizePkDetail`, error-item handling), docsoa forfait→tempario fallback (`ibxDetailtpService`, using `rowData.ref` as `refTp`), `_fetchDetail`/`_fetchLiveMap` with mocks of the three sibling clients
 
 #### translations
 - **index** – CLI/Lambda dispatch to the `translations` handler
