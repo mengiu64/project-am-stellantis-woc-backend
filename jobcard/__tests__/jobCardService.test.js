@@ -214,6 +214,37 @@ describe('jobCardService', () => {
     await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
   });
 
+  // ── roInfo.roSource enrichment ───────────────────────────────────────────────
+
+  describe('roSource enrichment', () => {
+    test('mirrors roInfo.sourceApplication into roInfo.roSource, placed right after it', async () => {
+      const body = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-504', sourceApplication: 'PANIER', dealerId: '017721L' },
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      const result = await getJobCardDetails('token', '79');
+
+      expect(result.jobCardDetail.roInfo.roSource).toBe('PANIER');
+      expect(Object.keys(result.jobCardDetail.roInfo)).toEqual([
+        'jobCardSrpId', 'sourceApplication', 'roSource', 'dealerId',
+      ]);
+    });
+
+    test('does not fail when roInfo or sourceApplication is missing', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+
+      const body = { jobCardDetail: { roInfo: { dealerId: '017721L' } } };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+      const result = await getJobCardDetails('token', '79');
+      expect(result.jobCardDetail.roInfo.roSource).toBeUndefined();
+      expect(result.jobCardDetail.roInfo.dealerId).toBe('017721L');
+    });
+  });
+
   // ── packageType / packageCharge enrichment on jobs ──────────────────────────
 
   describe('packageType/packageCharge enrichment', () => {

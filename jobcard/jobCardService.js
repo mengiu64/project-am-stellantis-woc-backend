@@ -224,6 +224,42 @@ function enrichJobsWithPackageInfo(body) {
 }
 
 /**
+ * Returns a copy of obj with a new key inserted right after an existing key
+ * (or appended at the end if that key is not found), preserving all other
+ * keys/order. Used to keep derived fields close to the field they mirror.
+ * @param {object} obj      - source object
+ * @param {string} afterKey - key after which the new key should be inserted
+ * @param {string} newKey   - key to insert
+ * @param {*} value         - value for newKey
+ * @returns {object} new object with the same keys plus newKey, reordered
+ */
+function insertKeyAfter(obj, afterKey, newKey, value) {
+  const entries  = Object.entries(obj);
+  const idx      = entries.findIndex(([key]) => key === afterKey);
+  const newEntry = [newKey, value];
+
+  const newEntries = idx === -1
+    ? [...entries, newEntry]
+    : [...entries.slice(0, idx + 1), newEntry, ...entries.slice(idx + 1)];
+
+  return Object.fromEntries(newEntries);
+}
+
+/**
+ * Adds roInfo.roSource to a jobCardDetails response body, mirroring
+ * roInfo.sourceApplication (placed right after it for readability).
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with roInfo.roSource added
+ */
+function addRoSource(body) {
+  const roInfo = body?.jobCardDetail?.roInfo;
+  if (roInfo && typeof roInfo === 'object') {
+    body.jobCardDetail.roInfo = insertKeyAfter(roInfo, 'sourceApplication', 'roSource', roInfo.sourceApplication);
+  }
+  return body;
+}
+
+/**
  * Sanitizes the address field of every customerInfo.contactInfo entry in a
  * jobCardDetails response body, in place.
  * @param {object} body - jobCardDetails response body
@@ -239,6 +275,7 @@ function sanitizeJobCardDetails(body) {
     }
   }
   enrichJobsWithPackageInfo(body);
+  addRoSource(body);
   return body;
 }
 
