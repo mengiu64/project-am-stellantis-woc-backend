@@ -187,11 +187,28 @@ describe('postDmsInquiry', () => {
       .rejects.toThrow('[dms] MessageType must be one of: LFP, WL, MP');
   });
 
-  test('throws if DocumentID is missing', async () => {
+  test('sends DocumentID as empty string when missing (not required, but always present in payload)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
     const body = baseInquiryBody();
     delete body.PartsInquiryHeader.DocumentID;
-    await expect(postDmsInquiry('token', body))
-      .rejects.toThrow('[dms] PartsInquiryHeader.DocumentID is required');
+
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toHaveProperty('DocumentID', '');
+  });
+
+  test('sends DocumentID as empty string when explicitly null', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+    const body = baseInquiryBody();
+    body.PartsInquiryHeader.DocumentID = null;
+
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.PartsInquiryHeader).toHaveProperty('DocumentID', '');
   });
 
   test('sends CustomerIdDms as null when missing (not required, but always present in payload)', async () => {
