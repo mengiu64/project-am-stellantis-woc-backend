@@ -308,6 +308,8 @@ describe('PkManager', () => {
         '7210E221': {
           codice: '7210E221',
           descrizione: 'Pacchetto test',
+          isFixedPrice: '0',
+          packageType: 'QE',
           category: 'BODY',
           listaOperazioni: [
             { TYPE: 'OP', POSIZIONE: '', COD: 'OP1', DESCR: 'Op uno', AV_LOCAL: 0, SCONTO: 0, TIME: '1.5', QTY: '', PRICE: '', CODSIGI: '' },
@@ -360,6 +362,7 @@ describe('PkManager', () => {
         descrizione: 'Forfait test',
         pkPrice: 100,
         isFixedPrice: '1',
+        packageType: 'FP',
       });
     });
 
@@ -391,6 +394,7 @@ describe('PkManager', () => {
           descrizione: 'Job test',
           pkPrice: 50,
           isFixedPrice: '0',
+          packageType: 'QE',
           listaOperazioni: [],
           listaRicambi: [],
           category: 'BODY',
@@ -433,12 +437,13 @@ describe('PkManager', () => {
       );
     });
 
-    test('docsoa: builds request from VIN parts', async () => {
-      const ibxDetailForfaitService = jest.fn().mockResolvedValue({ ok: true });
-      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService }));
+    test('docsoa: builds request from VIN parts and uses forfait when found', async () => {
+      const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: { forfait: { ref_fo: '95R04A' } } });
+      const ibxDetailtpService      = jest.fn();
+      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
 
       const manager = new PkManager();
-      await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', {});
+      const result  = await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', {});
 
       expect(ibxDetailForfaitService).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -449,6 +454,30 @@ describe('PkManager', () => {
           mode: 'MODE_XML',
         })
       );
+      expect(ibxDetailtpService).not.toHaveBeenCalled();
+      expect(result.isFixedPrice).toBe('1');
+      expect(result.packageType).toBe('FP');
+    });
+
+    test('docsoa: falls back to ibxDetailtpService (isFixedPrice 0) when forfait is not found', async () => {
+      const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: null, message: 'Empty resultat' });
+      const ibxDetailtpService      = jest.fn().mockResolvedValue({ data: { tp: { ref: '95R04A' } } });
+      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+
+      const manager = new PkManager();
+      const result  = await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', {});
+
+      expect(ibxDetailtpService).toHaveBeenCalledWith(
+        expect.objectContaining({
+          wmi: 'VF3',
+          vds: 'CABHW6',
+          vis: 'GT204366',
+          refTp: '95R04A',
+          mode: 'MODE_XML',
+        })
+      );
+      expect(result.isFixedPrice).toBe('0');
+      expect(result.packageType).toBe('QE');
     });
 
     test('throws for unrecognized pkwstouse', async () => {
@@ -507,6 +536,8 @@ describe('PkManager', () => {
 
       expect(result.codice).toBe('PK1');
       expect(result.descrizione).toBe('Pacchetto uno');
+      expect(result.isFixedPrice).toBe('0');
+      expect(result.packageType).toBe('QE');
       expect(result.listaOperazioni).toEqual([
         { TYPE: 'OP', POSIZIONE: '', COD: 'OP1', DESCR: 'Op uno', AV_LOCAL: 0, SCONTO: 0, TIME: '1.0', QTY: '', PRICE: '', CODSIGI: '' },
       ]);
@@ -546,6 +577,7 @@ describe('PkManager', () => {
       expect(result.codice).toBe('MP1');
       expect(result.pkPrice).toBe(0);
       expect(result.isFixedPrice).toBe('0');
+      expect(result.packageType).toBe('QE');
       expect(result.listaOperazioni).toEqual([{ COD: 'OP1', AV_LOCAL: 1, SCONTO: 5 }]);
       expect(result.listaRicambi).toEqual([{ COD: 'SP1', AV_LOCAL: 1, SCONTO: 5 }]);
     });
@@ -588,6 +620,7 @@ describe('PkManager', () => {
       expect(result.descrizione).toBe('Forfait uno');
       expect(result.pkPrice).toBe(42);
       expect(result.isFixedPrice).toBe('1');
+      expect(result.packageType).toBe('FP');
       expect(result.listaOperazioni).toHaveLength(1);
       expect(result.listaOperazioni[0]).toMatchObject({ TYPE: 'OP', COD: 'MO1' });
       expect(result.listaRicambi).toHaveLength(1);
@@ -605,6 +638,7 @@ describe('PkManager', () => {
       expect(result.descrizione).toBe('Tp uno');
       expect(result.pkPrice).toBe(0);
       expect(result.isFixedPrice).toBe('0');
+      expect(result.packageType).toBe('QE');
       expect(result.listaOperazioni).toBeUndefined();
       expect(result.listaRicambi).toBeUndefined();
     });

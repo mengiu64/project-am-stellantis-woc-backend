@@ -434,20 +434,28 @@ class PkManager {
       const { DocSOARestClient } = require(path.resolve(__dirname, '../pkDocsoa/DocSOARestClient'));
       const cfg    = this.wsConfig.docsoa;
       const client = new DocSOARestClient();
-      const pkRes  = await client.ibxDetailForfaitService({
-        wmi:     VIN.substring(0, 3),
-        vds:     VIN.substring(3, 9),
-        vis:     VIN.substring(9, 17),
-        langue:  cfg.langue,
-        pays:    cfg.pays,
-        marque:  cfg.codbrand,
+      const commonParams = {
+        wmi:      VIN.substring(0, 3),
+        vds:      VIN.substring(3, 9),
+        vis:      VIN.substring(9, 17),
+        langue:   cfg.langue,
+        pays:     cfg.pays,
+        marque:   cfg.codbrand,
         paysUser: cfg.pays,
-        mode:    'MODE_XML',
-        codeFF:  code,
-        codePdv: cfg.codePdv,
-      });
-      // ibxDetailForfaitService restituisce sempre il dettaglio di un forfait (pacchetto)
-      return this.parseDocSoaRes(pkRes, true);
+        mode:     'MODE_XML',
+        codePdv:  cfg.codePdv,
+      };
+
+      // 1) prova come forfait (pacchetto a prezzo fisso): se trovato, isFixedPrice = '1'
+      const forfaitRes = await client.ibxDetailForfaitService({ ...commonParams, codeFF: code });
+      if (forfaitRes?.data?.forfait) {
+        return this.parseDocSoaRes(forfaitRes, true);
+      }
+
+      // 2) non trovato come forfait: il codice è una singola TP (tempo/prezzo),
+      //    non un pacchetto a prezzo fisso => isFixedPrice = '0'
+      const tpRes = await client.ibxDetailtpService({ ...commonParams, refTp: code });
+      return this.parseDocSoaRes(tpRes, false);
     }
 
     throw new Error(`pkwstouse non riconosciuto: "${pkwstouse}"`);
@@ -472,10 +480,11 @@ class PkManager {
   //                         { success, data: { codice, descrizione, pkPrice,
   //                         isFixedPrice, listaOperazioni, listaRicambi }, message }
   // @returns {object}     - { result, codice, descrizione, pkPrice, isFixedPrice,
-  //                           listaOperazioni, listaRicambi } — le singole righe
-  //                           mantengono AV_LOCAL e SCONTO (allo stesso livello di
-  //                           TYPE/POSIZIONE/COD/DESCR), ma non i campi interni
-  //                           AV_DISTRIGO/AV_CENTRAL.
+  //                           packageType ('FP' se isFixedPrice è '1', altrimenti
+  //                           'QE'), listaOperazioni, listaRicambi } — le singole
+  //                           righe mantengono AV_LOCAL e SCONTO (allo stesso
+  //                           livello di TYPE/POSIZIONE/COD/DESCR), ma non i campi
+  //                           interni AV_DISTRIGO/AV_CENTRAL.
   parseMenupricingRes(pkRes) {
     if (!pkRes?.success) {
       throw new Error(pkRes?.message || 'menupricing: errore sconosciuto');
@@ -488,12 +497,15 @@ class PkManager {
       ({ AV_DISTRIGO, AV_CENTRAL, ...rest }) => rest
     );
 
+    const isFixedPrice = data.isFixedPrice ?? '0';
+
     return {
       result:          true,
       codice:          data.codice,
       descrizione:     data.descrizione,
       pkPrice:         data.pkPrice ?? 0,
-      isFixedPrice:    data.isFixedPrice ?? '0',
+      isFixedPrice,
+      packageType:     isFixedPrice === '1' ? 'FP' : 'QE',
       listaOperazioni: stripAvailability(data.listaOperazioni),
       listaRicambi:    stripAvailability(data.listaRicambi),
     };
@@ -502,7 +514,9 @@ class PkManager {
   // ── parseEperRes ─────────────────────────────────────────────────────────────
   // Porting di WsEperPr.class.php::elaborateXml() (COMMON\classes\WsEperPr.class.php),
   // che normalizza il dettaglio di un pacchetto ePer in { codice, descrizione,
-  // listaOperazioni, listaRicambi } (ricambi + materiali confluiscono in listaRicambi).
+  // isFixedPrice, listaOperazioni, listaRicambi } (ricambi + materiali confluiscono
+  // in listaRicambi). ePer non ha un concetto di prezzo fisso da promozione (a
+  // differenza di DocSOA/MenuPricing): isFixedPrice è quindi sempre '0'.
   //
   // Nota: qui pkRes è già il nodo "pacchetto" (status/data già scartati a monte da
   // WsIQPckEper.elaborateXml/getPackageDetailsPR), quindi corrisponde al ramo
@@ -513,8 +527,8 @@ class PkManager {
   //                         il nodo "pacchetto" { codice, descrizione,
   //                         listaOperazioni, listaRicambi, listaMateriali, ... }
   //                         oppure { error: { exitCode, errorMessage } } in caso di errore ws.
-  // @returns {object}      - { codice, descrizione, listaOperazioni: [...OP],
-  //                            listaRicambi: [...SP (ricambi + materiali)] }
+  // @returns {object}      - { codice, descrizione, isFixedPrice: '0', packageType: 'QE',
+  //                            listaOperazioni: [...OP], listaRicambi: [...SP (ricambi + materiali)] }
   parseEperRes(pkRes) {
     if (pkRes?.error) {
       throw new Error(pkRes.error.errorMessage ?? 'eper: errore sconosciuto');
@@ -581,8 +595,10 @@ class PkManager {
     }
 
     return {
-      codice:      pkRes?.codice,
-      descrizione: pkRes?.descrizione,
+      codice:       pkRes?.codice,
+      descrizione:  pkRes?.descrizione,
+      isFixedPrice: '0', // ePer non ha il concetto di prezzo fisso da promozione
+      packageType:  'QE', // ePer è sempre a preventivo (Quick Estimate), mai forfait
       listaOperazioni,
       listaRicambi,
     };
@@ -598,7 +614,9 @@ class PkManager {
   //                              ibxDetailtpService (isForfait=false)
   // @param {boolean} isForfait - true → legge pkRes.data.forfait, false → pkRes.data.tp
   // @returns {object}          - { listaOperazioni?, listaRicambi?, result, codice,
-  //                                descrizione, pkPrice, '2DigitCode', niveau, isFixedPrice }
+  //                                descrizione, pkPrice, '2DigitCode', niveau,
+  //                                isFixedPrice, packageType ('FP' se isFixedPrice
+  //                                è '1', altrimenti 'QE') }
   parseDocSoaRes(pkRes, isForfait) {
     let refFo, descr, price, pk, niveau, isFixedPrice;
 
@@ -805,6 +823,7 @@ class PkManager {
     returnArray['2DigitCode'] = niveau; // non posso usare var che inizia con numero
     returnArray.niveau        = niveau;
     returnArray.isFixedPrice  = isFixedPrice;
+    returnArray.packageType   = isFixedPrice === '1' ? 'FP' : 'QE';
 
     return returnArray;
   }
