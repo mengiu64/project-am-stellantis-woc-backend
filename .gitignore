@@ -38,3 +38,8 @@ myPeople/coverage/
 */.idea/
 .cfn-import/
 coverage/
+.config/
+.config.kiro/
+**/requirements.md
+**/design.md
+**/tasks.md
