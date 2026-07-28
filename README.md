@@ -842,7 +842,7 @@ cd agendaSoa && npm run test:coverage
 | **agendaSoa** | 7 | 81 | `index`, `agendaSOAClient`, `clientFactory`, `handlers/*` |
 | **agendaSoaNaga** | 5 | 39 | `index`, `agendaNagaClient`, `clientFactory`, `handlers/*` |
 | **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
-| **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
+| **jobcard** | 3 | 67 | `httpClient`, `authService`, `jobCardService` |
 | **djc** | 4 | 61 | `httpClient`, `authService`, `jobCardService`, `DjcManager` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
 | **pkEper** | 1 | 19 | `WsIQPckEper` |
@@ -852,7 +852,7 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **46** | **519** | |
+| **Totale** | **46** | **558** | |
 
 ### Copertura del codice
 
@@ -861,7 +861,7 @@ cd agendaSoa && npm run test:coverage
 | **agendaSoa** | 100% ✅ | 96.96% ✅ | 100% ✅ | 100% ✅ |
 | **agendaSoaNaga** | 100% ✅ | 92.68% ✅ | 100% ✅ | 100% ✅ |
 | **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
-| **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
+| **jobcard** | 99.06% ✅ | 93.89% ✅ | 100% ✅ | 100% ✅ |
 | **djc** | 99.45% ✅ | 97.05% ✅ | 100% ✅ | 100% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
 | **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
