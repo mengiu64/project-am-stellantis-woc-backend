@@ -27,7 +27,10 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
-      "DjcManager.js"
+      "DjcManager.js",
+      "authService.js",
+      "httpClient.js",
+      "jobCardService.js"
     ],
     "coverageReporters": [
       "html",

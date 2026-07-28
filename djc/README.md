@@ -7,24 +7,46 @@ Modulo Node.js autoconsistente che costruisce i payload da inviare alla **Push A
 Se non è disponibile un `jobCardId` (uso locale/CLI senza una jobcard reale), si ricade
 su `get.json`, un'istantanea statica di riferimento usata anche nei test.
 
+Oltre ai metodi `Save*` (che costruiscono solo i payload `json_orig`/`json_mod` in
+locale), `djc` espone anche **`saveJobcard`**: l'azione che invia effettivamente
+il payload alla Push API SRP tramite `POST /jobCard`, usando **lo stesso client
+PingFederate/DGT della lambda `jobcard`** (`config.js`/`authService.js`/`httpClient.js`,
+copie sincronizzate con quelle di `jobcard`, che usa le stesse per le `GET
+/jobCardList` e `/jobCardDetails`). `saveJobcard` è replicata identica anche in
+`jobcard` (stesso `jobCardService.js::saveJobCard`), ma **API Gateway instrada le
+richieste POST verso la lambda `djc`**, non verso `jobcard`.
+
 ## Struttura
 
 ```
 djc/
-├── index.js            ← CLI entry-point + Lambda handler (dispatcher per metodo)
-├── DjcManager.js        ← classe orchestratore
-├── get.json             ← fallback statico (usato solo quando jobCardId è assente)
+├── index.js             ← CLI entry-point + Lambda handler (dispatcher per metodo)
+├── DjcManager.js         ← classe orchestratore (payload json_orig/json_mod)
+├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
+├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
+├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
+├── config.js              ← credenziali/URL DGT (copia di jobcard/config.js)
+├── get.json               ← fallback statico (usato solo quando jobCardId è assente)
 ├── __tests__/
-│   └── DjcManager.test.js ← test automatici (Jest)
+│   ├── DjcManager.test.js    ← test automatici (Jest)
+│   ├── jobCardService.test.js
+│   ├── authService.test.js
+│   └── httpClient.test.js
 ├── package.json
-└── .env                 ← configurazione (non committare)
+├── .env.example           ← template variabili d'ambiente
+└── .env                    ← configurazione locale (non committare)
 ```
+
+> `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
+> omonimi file di `jobcard`: qualsiasi modifica al client PingFederate/DGT va
+> replicata in entrambe le lambda.
 
 ## Setup
 
 ```bash
 cd djc
 npm install
+cp .env.example .env   # solo se si usa saveJobcard — non serve per i metodi Save*
 ```
 
 ## Classe `DjcManager`
@@ -216,6 +238,23 @@ node index.js SaveConsents true false true false true false
 node index.js SaveAppointments "2026-01-01T09:00:00Z" "2026-01-01T09:10:00Z" SA-1 Mario "2026-01-01T17:00:00Z" "2026-01-01T17:10:00Z" SA-2 Luigi
 ```
 
+### `saveJobcard`
+
+```bash
+node index.js saveJobcard <payloadJsonFile>
+```
+
+Legge il payload JSON da inviare (tipicamente il `json_mod` prodotto da uno dei
+metodi `Save*`) da `<payloadJsonFile>` e lo invia con `POST /jobCard` usando lo
+stesso client PingFederate/DGT di `jobcard`. Richiede le variabili d'ambiente
+`JOBCARD_PING_CLIENT_ID`, `JOBCARD_PING_CLIENT_SECRET`, `DGT_CLIENT_ID`,
+`DGT_CLIENT_SECRET` (vedi `.env.example`); a differenza degli altri metodi, non
+richiede `--jobCardId`.
+
+```bash
+node index.js saveJobcard ./payload.json
+```
+
 ## Uso come Lambda
 
 Il file `index.js` espone `exports.handler`, che instrada l'evento in base al campo
@@ -238,6 +277,22 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
   }
 }
 ```
+
+### `saveJobcard` (POST `/jobCard`)
+
+```json
+{
+  "action": "saveJobcard",
+  "body": {
+    "roInfo": { "jobCardSrpId": "JCID-1", "...": "..." }
+  }
+}
+```
+
+`body` è inviato tal quale come payload della `POST /jobCard` (oppure, se presente,
+`body.payload`). **API Gateway instrada le richieste POST verso la lambda `djc`**
+per questa azione; la lambda `jobcard` espone la stessa azione (`jobCardService.js::
+saveJobCard`) per chiamata diretta/CLI, ma non è il target dell'integrazione POST.
 
 ## Test automatici
 

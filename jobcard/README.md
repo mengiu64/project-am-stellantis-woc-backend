@@ -1,7 +1,7 @@
 # JobCard Lambda
 
 Client Node.js per l'integrazione con le API Stellantis DGT (Digital Layer).  
-Ottiene un Bearer token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**.
+Ottiene un token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**, e per inviare (**JobCard Save**) i payload di Digital Job Card costruiti dalla lambda `djc`.
 
 ---
 
@@ -12,7 +12,7 @@ jobcard/
 ├── config.js          # Credenziali e URL di tutti i servizi
 ├── httpClient.js      # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js     # Autenticazione PingFederate → Bearer token
-├── jobCardService.js  # getJobCardList / getJobCardDetails
+├── jobCardService.js  # getJobCardList / getJobCardDetails / saveJobCard
 ├── index.js           # Entry point CLI
 └── package.json
 ```
@@ -35,11 +35,12 @@ jobcard/
 ```
 index.js
    │
-   ├─► authService.js  ──POST──► PingFederate  →  Bearer token
+   ├─► authService.js  ──POST──► PingFederate  →  token
    │
    └─► jobCardService.js
-           ├─► getJobCardList(token, dealerId)    ──GET──► /jobCardList
-           └─► getJobCardDetails(token, jobCardId) ──GET──► /jobCardDetails
+           ├─► getJobCardList(token, dealerId)     ──GET──►  /jobCardList
+           ├─► getJobCardDetails(token, jobCardId)  ──GET──►  /jobCardDetails
+           └─► saveJobCard(token, payload)          ──POST──► /jobCard
 ```
 
 ---
@@ -89,6 +90,37 @@ node index.js details 79
 | `X-IBM-Client-Secret` | configurato in `config.js` |
 | `jobCardId` | parametro di input |
 | `Authorization` | `Bearer <token>` |
+
+---
+
+### JobCard Save
+
+Invia (POST) un payload di Digital Job Card alla Push API SRP. Il payload è
+tipicamente il `json_mod` prodotto da uno dei metodi `Save*` della lambda `djc`
+(`SaveRoInfo`, `SaveCustomer`, ...): questa azione ne effettua l'invio effettivo
+usando lo stesso client PingFederate/DGT di `getJobCardList`/`getJobCardDetails`.
+
+```bash
+node index.js saveJobcard <payloadJsonFile>
+```
+
+**Esempio:**
+```bash
+node index.js saveJobcard ./payload.json
+```
+
+**Header inviati:**
+| Header | Valore |
+|---|---|
+| `X-IBM-Client-Id` | configurato in `config.js` |
+| `X-IBM-Client-Secret` | configurato in `config.js` |
+| `Content-Type` | `application/json` |
+| `Authorization` | `Bearer <token>` |
+
+> **Nota**: `saveJobcard` (POST `/jobCard`) è la stessa azione esposta anche dalla
+> lambda `djc` (stesso client PingFederate/DGT). **API Gateway instrada le
+> richieste POST verso la lambda `djc`**; questa azione resta disponibile qui per
+> chiamata diretta/CLI e per coerenza tra le due lambda.
 
 ---
 

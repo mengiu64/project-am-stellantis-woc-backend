@@ -5,17 +5,31 @@
  *
  * Uso:
  *   node index.js [--jobCardId <id>] SaveRoInfo <interiorCarWash> <exteriorCarWash> <old> <original> <returned> <circularEconomy> <obfcm> <waitOnSite> <vehicleIdentificationTagNumber> <loanerFlag>
+ *   node index.js saveJobcard <payloadJsonFile>
  *
  * --jobCardId <id> (opzionale): legge /tmp/<id>.json (scritto dalla lambda jobcard,
  * jobCardService.js::getJobCardDetails) come json_orig invece del fallback get.json.
+ * Non si applica a "saveJobcard", che invia direttamente il payload alla DGT.
+ *
+ * "saveJobcard" (POST /jobCard) usa lo stesso client PingFederate/DGT di jobcard
+ * (authService.js/httpClient.js/config.js, copie sincronizzate con quelle di
+ * jobcard): API Gateway instrada le richieste POST verso questa lambda, mentre
+ * jobcard resta responsabile delle GET (jobCardList/jobCardDetails) ed espone la
+ * stessa azione "saveJobcard" per chiamata diretta/CLI.
  *
  * Esempio:
  *   node index.js SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N
  *   node index.js --jobCardId 84564621 SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N
+ *   node index.js saveJobcard ./payload.json
  */
 
 require('dotenv').config();
 const { DjcManager } = require('./DjcManager');
+// authService/jobCardService (client PingFederate/DGT condiviso con jobcard)
+// vengono richiesti solo dai rami "saveJobcard" (require lazy più sotto): le
+// altre azioni (SaveRoInfo, ecc.) non chiamano la DGT e non devono richiedere
+// le variabili d'ambiente JOBCARD_PING_CLIENT_ID/DGT_CLIENT_ID/... validate da
+// config.js al require.
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -27,6 +41,7 @@ const VALID_ACTIONS = [
   'SaveJobs',
   'SaveConsents',
   'SaveAppointments',
+  'saveJobcard',
 ];
 
 /**
@@ -73,6 +88,31 @@ exports.handler = async (event) => {
         message: `Unknown action: "${action}". Valid actions: ${VALID_ACTIONS.join(', ')}`,
       }),
     };
+  }
+
+  // "saveJobcard" (POST /jobCard) invia direttamente alla DGT il payload ricevuto
+  // (json_mod costruito lato client a partire dai metodi SaveRoInfo/SaveCustomer/...):
+  // non richiede jobCardId né DjcManager, quindi viene gestito separatamente dal
+  // resto del dispatcher (che invece legge /tmp/<jobCardId>.json).
+  if (action === 'saveJobcard') {
+    try {
+      const { getBearerToken } = require('./authService');
+      const { saveJobCard } = require('./jobCardService');
+      const token = await getBearerToken();
+      const result = await saveJobCard(token, body.payload ?? body);
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(result),
+      };
+    } catch (err) {
+      const statusCode = err.message.includes('is required') ? 400 : 502;
+      return {
+        statusCode,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ success: false, message: err.message }),
+      };
+    }
   }
 
   const {
@@ -198,7 +238,8 @@ function printUsage() {
   console.log('  SaveVehicle <licensePlate> <odometerOut> <mileageUnits> <fuelReserveLevel> <batteryReserveLevel>');
   console.log('  SaveJobs');
   console.log('  SaveConsents <channelCode1> <channelCode2> <channelCode3> <channelCode4> <channelCode5> <channelCode6>');
-  console.log('  SaveAppointments <estimatedReceptionDateTime> <receptionDateTime> <receptionServiceAdvisorId> <receptionServiceAdvisorName> <estimatedDeliveryDateTime> <deliveryDateTime> <deliveryServiceAdvisorId> <deliveryServiceAdvisorName>\n');
+  console.log('  SaveAppointments <estimatedReceptionDateTime> <receptionDateTime> <receptionServiceAdvisorId> <receptionServiceAdvisorName> <estimatedDeliveryDateTime> <deliveryDateTime> <deliveryServiceAdvisorId> <deliveryServiceAdvisorName>');
+  console.log('  saveJobcard <payloadJsonFile>  (POST /jobCard — non richiede --jobCardId)\n');
   console.log('Esempi:');
   console.log('  node index.js SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N');
   console.log('  node index.js --jobCardId 84564621 SaveDmsSync SYNCED');
@@ -206,7 +247,8 @@ function printUsage() {
   console.log('  node index.js SaveVehicle "EH-436-DG" 12345 km 3 85');
   console.log('  node index.js SaveJobs');
   console.log('  node index.js SaveConsents true true false true false true');
-  console.log('  node index.js SaveAppointments "2025-12-05T09:30:00+05:30" "2025-12-05T09:45:00+05:30" SG36544 TEST "2025-12-05T17:30:00+05:30" "2025-12-05T17:45:00+05:30" SG5477 Peter\n');
+  console.log('  node index.js SaveAppointments "2025-12-05T09:30:00+05:30" "2025-12-05T09:45:00+05:30" SG36544 TEST "2025-12-05T17:30:00+05:30" "2025-12-05T17:45:00+05:30" SG5477 Peter');
+  console.log('  node index.js saveJobcard ./payload.json\n');
 }
 
 async function main() {
@@ -230,9 +272,27 @@ async function main() {
     process.exit(command ? 1 : 0);
   }
 
-  const manager = new DjcManager(undefined, jobCardId);
-
   try {
+    if (command === 'saveJobcard') {
+      const [payloadJsonFile] = args;
+      if (!payloadJsonFile) {
+        console.error('\n❌ È richiesto il path del file JSON con il payload.');
+        process.exit(1);
+      }
+      const fs = require('fs');
+      const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
+      const { getBearerToken } = require('./authService');
+      const { saveJobCard } = require('./jobCardService');
+      const token = await getBearerToken();
+      const result = await saveJobCard(token, payload);
+      printResult('saveJobcard', result);
+
+      console.log('\n✅ Completato.');
+      return;
+    }
+
+    const manager = new DjcManager(undefined, jobCardId);
+
     if (command === 'SaveRoInfo') {
       const [
         interiorCarWash,
