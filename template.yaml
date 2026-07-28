@@ -308,6 +308,33 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${JobCardFunction}"
       RetentionInDays: 30
 
+  # DjcFunction: declinazione di JobCardFunction (Digital Job Card). Espone
+  # l'azione "saveJobcard" (POST /jobCard) e riusa lo stesso client
+  # PingFederate/DGT di jobcard, quindi condivide gli stessi parametri
+  # JobcardPingClientId/Secret e DgtClientId/Secret.
+  DjcFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-djc"
+      CodeUri: djc/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
+          JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
+          DGT_CLIENT_ID:      !Ref DgtClientId
+          DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+
+  DjcFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DjcFunction}"
+      RetentionInDays: 30
+
   V360Function:
     Type: AWS::Serverless::Function
     Properties:
@@ -622,6 +649,8 @@ Outputs:
     Value: !GetAtt DmsFunction.Arn
   JobCardFunctionArn:
     Value: !GetAtt JobCardFunction.Arn
+  DjcFunctionArn:
+    Value: !GetAtt DjcFunction.Arn
   V360FunctionArn:
     Value: !GetAtt V360Function.Arn
   PkEperFunctionArn:
