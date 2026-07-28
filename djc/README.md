@@ -294,6 +294,125 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
 per questa azione; la lambda `jobcard` espone la stessa azione (`jobCardService.js::
 saveJobCard`) per chiamata diretta/CLI, ma non è il target dell'integrazione POST.
 
+#### Payload: struttura e regole di obbligatorietà
+
+Riferimento: documento **"SRP - DL DJC Post API Specification"**. Lo swagger
+`swagger-woc.yaml` (path `/api/repairorder/{method}`, `POST`, `method=save`)
+riporta lo schema completo (`JobCardSaveRequest` e schemi `JobCardSave*`) con
+esempi minimo e completo.
+
+Il payload rispecchia la struttura di `jobCardDetail` (stesse sezioni:
+`roInfo`, `customerInfo[]`, `vehicleInfo`, `contractCoverage`, `estimatesLinks[]`,
+`recallCampaigns[]`, `vor`, `vehicleReporting[]`, `jobs[]`, `consents[]`,
+`futureWorks[]`, `prepaymentInfo[]`, `appointments[]`, `mobility[]`,
+`workShopActivities[]`, `attachmentLinks`, `partOrderLinks[]`, `repairOrderDoc`,
+`communication`).
+
+**Creazione vs. aggiornamento** — il server verifica, in ordine, se esiste già
+una Job Card che soddisfa una di queste condizioni (altrimenti ne crea una nuova):
+
+1. `roInfo.jobCardSrpId` corrisponde ad una Job Card esistente;
+2. `roInfo.jobCardLegacyId` + `roInfo.dealerId` corrispondono ad una Job Card esistente;
+3. `roInfo.dmsRepairOrderId` + `roInfo.dealerId` corrispondono ad una Job Card esistente.
+
+**Campi obbligatori:**
+
+| Tipo | Campo | Note |
+|---|---|---|
+| M | `roInfo.sourceApplication` | sempre obbligatorio |
+| M | `roInfo.dealerId` | sempre obbligatorio |
+| M | `roInfo.updateDateTime` | sempre obbligatorio |
+| M(C) | `roInfo.dmsRepairOrderId` **o** `roInfo.jobCardSrpId` **o** `roInfo.jobCardLegacyId` | almeno uno dei tre deve essere presente |
+| M(O) | vedi tabella sotto | obbligatorio **solo se** la relativa sezione/array è incluso nel payload |
+
+Per i campi **M(O)**: se una sezione (array) è presente, **ogni elemento**
+dell'array deve riportare il proprio campo identificativo; in caso contrario
+l'intera richiesta viene rigettata (nessuna sezione viene aggiornata). Il
+server usa l'identificativo per decidere se creare un nuovo elemento
+dell'array oppure aggiornare quello esistente (id noto → update dei soli campi
+inviati; id non noto → create):
+
+| Sezione (array) | Campo identificativo M(O) |
+|---|---|
+| `customerInfo[]` | `customerId` |
+| `estimatesLinks[]` | `internalEstimateId` |
+| `recallCampaigns[]` | `campaignCode` |
+| `contractCoverage.contractInfo[]` | `contractCode` |
+| `jobs[]` | `jobInternalId` |
+| `jobs[].contract[]` | `contractCode` |
+| `jobs[].partInfo[]` | `partId` |
+| `jobs[].laborInfo[]` | `laborOperationId` |
+| `jobs[].externalJobLabor[]` | `externalJobId` |
+| `jobs[].freeText[]` | `textId` |
+| `jobs[].fees[]` | `feeId` |
+| `appointments[]` | `appointmentInternalId` |
+
+**Altre regole funzionali:**
+
+- **Rimozione di un elemento**: impostare `removalAction: true` sull'elemento
+  (in aggiunta al proprio campo identificativo M(O)) invece di rimuoverlo dal
+  payload. Supportato su `customerInfo[]`, `jobs[]`, `jobs[].partInfo[]`,
+  `jobs[].laborInfo[]`, `jobs[].externalJobLabor[]`, `jobs[].freeText[]`,
+  `jobs[].fees[]`. Rimuovere un `job` rimuove anche tutti i suoi sotto-elementi.
+- **Aggiornamento parziale**: per ogni elemento di un array, inviare solo i
+  campi da modificare; i campi assenti mantengono il valore attualmente
+  salvato in DJC.
+- **Azzeramento di un valore**: per nullificare un valore, inviare l'attributo
+  con valore vuoto/`null`; se un attributo non è presente nella push, il suo
+  valore in DJC non viene modificato.
+- Per il source `"PANIER"` (ServiceBox) è prevista una soluzione temporanea:
+  l'intera Job Card viene inviata ad ogni push, e DJC ricava le differenze
+  rispetto al contenuto già salvato.
+- `jobs[].freeText` è un **array** di `{ textId, textContent, removalAction }`
+  (non un singolo oggetto).
+
+**Payload minimo** (solo i campi M + M(C)):
+
+```json
+{
+  "roInfo": {
+    "dmsRepairOrderId": "DMS-PNR-100403",
+    "sourceApplication": "DMS",
+    "dealerId": "RRDI/SINCOM/OIC",
+    "brand": "0P",
+    "stellantisBrand": "AP",
+    "updateDateTime": "2026-04-10T11:55:00Z"
+  }
+}
+```
+
+**Payload completo** (esempio "Full push Request to Create a new Job card"
+tratto dal documento di specifica): vedi l'esempio `full` nello swagger
+`swagger-woc.yaml` (`requestBody.content.application/json.examples.full`).
+
+**Risposta di successo (200):**
+
+```json
+{
+  "response": {
+    "statuscode": "200",
+    "success": true,
+    "jobCardId": "JCID-609",
+    "message": "Job card Transaction Successful"
+  }
+}
+```
+
+**Risposta di errore (400/401/404/500):**
+
+```json
+{
+  "response": {
+    "status": "fail",
+    "message": "Validation error",
+    "code": "ValidationError",
+    "errors": [
+      { "message": "\"roInfo.dealerId\" is required", "path": "roInfo.dealerId" }
+    ]
+  }
+}
+```
+
 ## Test automatici
 
 ```bash

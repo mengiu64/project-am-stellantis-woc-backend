@@ -122,6 +122,42 @@ node index.js saveJobcard ./payload.json
 > richieste POST verso la lambda `djc`**; questa azione resta disponibile qui per
 > chiamata diretta/CLI e per coerenza tra le due lambda.
 
+**Payload e obbligatorietà**: il payload (`roInfo` obbligatorio, più le sezioni
+opzionali `customerInfo[]`, `vehicleInfo`, `jobs[]`, ecc.) segue le stesse
+regole di obbligatorietà (M/M(O)/M(C)) e le stesse regole di
+creazione/aggiornamento del documento **"SRP - DL DJC Post API Specification"**,
+documentate in dettaglio in [`djc/README.md`](../djc/README.md#payload-struttura-e-regole-di-obbligatorietà)
+e nello schema `JobCardSaveRequest` di `swagger-woc.yaml`
+(`POST /api/repairorder/{method}`, `method=save`).
+
+**Payload minimo:**
+
+```json
+{
+  "roInfo": {
+    "dmsRepairOrderId": "DMS-PNR-100403",
+    "sourceApplication": "DMS",
+    "dealerId": "RRDI/SINCOM/OIC",
+    "brand": "0P",
+    "stellantisBrand": "AP",
+    "updateDateTime": "2026-04-10T11:55:00Z"
+  }
+}
+```
+
+**Risposta di successo (200):**
+
+```json
+{
+  "response": {
+    "statuscode": "200",
+    "success": true,
+    "jobCardId": "JCID-609",
+    "message": "Job card Transaction Successful"
+  }
+}
+```
+
 ---
 
 ### Arricchimento della risposta `getJobCardDetails`

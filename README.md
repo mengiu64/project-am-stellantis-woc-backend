@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -16,6 +16,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [agendaSoaNaga](#agendasoaNaga)
    - [dms](#dms)
    - [jobcard](#jobcard)
+   - [djc](#djc)
    - [v360](#v360)
    - [pkEper](#pkeper)
    - [pkDocsoa](#pkdocsoa)
@@ -39,7 +40,8 @@ project-am-stellantis-woc-backend/
 ├── agendaSoa/          # Lambda – pianificazione appuntamenti (AgendaSOA REST)
 ├── agendaSoaNaga/      # Lambda – creazione/aggiornamento appuntamenti NAGA
 ├── dms/                # Lambda – DMS Settings (Stellantis DML API)
-├── jobcard/            # Lambda – JobCard list/details (Stellantis DGT API)
+├── jobcard/            # Lambda – JobCard list/details/save (Stellantis DGT API)
+├── djc/                # Lambda – Digital Job Card: costruzione payload Save* e saveJobcard (POST)
 ├── v360/               # Lambda – OTA Compatibility & Vehicle Details (ASV360 API)
 ├── pkEper/             # Lambda – Pacchetti ePer (Stellantis FCA/Fiat SOAP)
 ├── pkDocsoa/           # Lambda – Pacchetti DocSOA (Stellantis PSA REST)
