@@ -198,6 +198,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) |
 | `jobCardService` | `getJobCardList(token, params)` | Lista JobCard con filtri e paginazione |
 | `jobCardService` | `getJobCardDetails(token, jobCardId)` | Dettaglio di una singola JobCard |
+| `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -226,14 +227,83 @@ Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDeta
 
 Vedi `jobcard/README.md` per la tabella completa delle regole.
 
+#### `saveJobcard` (POST `/jobCard`)
+
+Azione che invia (POST) un payload di **Digital Job Card** alla Push API SRP per
+creare/aggiornare una Job Card — condivisa (stesso client PingFederate/DGT) con
+la lambda **[djc](#djc)**, che ne è la declinazione dedicata alla costruzione dei
+payload (`Save*`). **API Gateway instrada le richieste POST verso la lambda
+`djc`**; questa azione resta disponibile qui per chiamata diretta/CLI e per
+coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
+esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
+`jobcard/README.md` e `djc/README.md`.
+
 #### Utilizzo CLI
 
 ```bash
 node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
+node index.js saveJobcard <payloadJsonFile>
 # es: node index.js list 0062219 vin=VIN123 page=2
 # es: node index.js details 79
+# es: node index.js saveJobcard ./payload.json
 ```
+
+---
+
+### djc
+
+Lambda **Digital Job Card**: declinazione della lambda `jobcard` dedicata alla
+costruzione dei payload da inviare alla **Push API SRP** (Digital Layer) e al
+loro invio effettivo. Legge il contenuto di riferimento (`jobCardDetail`) da
+`/tmp/<jobCardId>.json` (salvato lì dalla lambda `jobcard` durante una
+`getJobCardDetails`, per evitare una nuova chiamata a DGT) oppure, se
+`jobCardId` non è disponibile (uso locale/CLI), da un'istantanea statica di
+riferimento (`get.json`).
+
+#### Funzioni principali
+
+| Modulo | Funzione | Descrizione |
+|---|---|---|
+| `DjcManager` | `Save*(...)` | Costruisce `json_orig`/`json_mod` per una sezione della Job Card (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`) |
+| `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) — copia sincronizzata di `jobcard/authService.js` |
+| `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`) — copia sincronizzata di `jobcard/jobCardService.js` |
+| `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js — copia di `jobcard/httpClient.js` |
+
+> `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
+> omonimi file di `jobcard`: usano lo stesso client PingFederate/DGT (stesse
+> credenziali/URL delle `GET /jobCardList` e `/jobCardDetails` di `jobcard`).
+
+#### `saveJobcard` (POST `/jobCard`)
+
+Azione che invia effettivamente alla Push API SRP il payload di Digital Job
+Card (tipicamente il `json_mod` prodotto da uno dei metodi `Save*`). È
+**replicata identica** nella lambda `jobcard` (stesso `jobCardService.js::
+saveJobCard`), ma **API Gateway instrada le richieste POST verso la lambda
+`djc`**, non verso `jobcard`.
+
+Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
+tabella degli identificativi per array, semantica `removalAction`/update
+parziale, payload minimo/completo e risposte di esempio — riferimento al
+documento **"SRP - DL DJC Post API Specification"** — sono documentate in
+dettaglio in `djc/README.md` e nello schema `JobCardSaveRequest` di
+`swagger-woc.yaml` (`POST /api/repairorder/{method}`, `method=save`).
+
+#### Utilizzo CLI
+
+```bash
+node index.js SaveRoInfo <interiorCarWash> <exteriorCarWash> <old> <original> <returned> <circularEconomy> <obfcm> <waitOnSite> <vehicleIdentificationTagNumber> <loanerFlag>
+node index.js SaveDmsSync <dmsSynchroStatus>
+node index.js SaveCustomer <phone> <mobile> <email> <address> <additionalAddress>
+node index.js SaveVehicle <licensePlate> <odometerOut> <mileageUnits> <fuelReserveLevel> <batteryReserveLevel>
+node index.js SaveJobs
+node index.js SaveConsents <channelCode1> <channelCode2> <channelCode3> <channelCode4> <channelCode5> <channelCode6>
+node index.js SaveAppointments <estimatedReceptionDateTime> <receptionDateTime> <receptionServiceAdvisorId> <receptionServiceAdvisorName> <estimatedDeliveryDateTime> <deliveryDateTime> <deliveryServiceAdvisorId> <deliveryServiceAdvisorName>
+node index.js saveJobcard <payloadJsonFile>
+```
+
+Vedi `djc/README.md` per la descrizione completa di ogni metodo, i parametri e
+l'uso come Lambda (`exports.handler`, dispatch per `action`).
 
 ---
 
@@ -581,6 +651,7 @@ cd agendaSoa      && npm install
 cd agendaSoaNaga  && npm install
 cd dms            && npm install
 cd jobcard        && npm install
+cd djc            && npm install
 cd v360           && npm install
 cd pkEper         && npm install
 cd pkDocsoa       && npm install
@@ -625,6 +696,19 @@ JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate (dedicato jobca
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT
 ```
+
+### djc
+
+```env
+JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate — stesso client di jobcard (richiesto solo per saveJobcard)
+JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate — stesso client di jobcard (richiesto solo per saveJobcard)
+DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT (richiesto solo per saveJobcard)
+DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT (richiesto solo per saveJobcard)
+```
+
+> Non richieste per i metodi `Save*` (che costruiscono solo `json_orig`/`json_mod`
+> in locale) — solo per `saveJobcard`, che invia effettivamente il payload alla
+> Push API SRP.
 
 ### v360
 
@@ -759,6 +843,7 @@ cd agendaSoa && npm run test:coverage
 | **agendaSoaNaga** | 5 | 39 | `index`, `agendaNagaClient`, `clientFactory`, `handlers/*` |
 | **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
 | **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
+| **djc** | 4 | 61 | `httpClient`, `authService`, `jobCardService`, `DjcManager` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
 | **pkEper** | 1 | 19 | `WsIQPckEper` |
 | **pkDocsoa** | 2 | 40 | `DocSOARestClient`, `certService` |
@@ -767,7 +852,7 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **42** | **458** | |
+| **Totale** | **46** | **519** | |
 
 ### Copertura del codice
 
@@ -777,6 +862,7 @@ cd agendaSoa && npm run test:coverage
 | **agendaSoaNaga** | 100% ✅ | 92.68% ✅ | 100% ✅ | 100% ✅ |
 | **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
 | **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
+| **djc** | 99.45% ✅ | 97.05% ✅ | 100% ✅ | 100% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
 | **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
 | **pkDocsoa** | 97.61% ✅ | 93.70% ✅ | 100% ✅ | 98.97% ✅ |
@@ -821,7 +907,12 @@ cd agendaSoa && npm run test:coverage
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
-- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti)
+- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP
+
+#### djc
+- **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
+- **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`
+- **DjcManager** – costruttore (`djcJson` esplicito, lettura da `/tmp/<jobCardId>.json`, fallback su `get.json`, errore su file assente/illeggibile), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – costruzione envelope/richiesta SOAP-REST, parsing risposta, gestione errori HTTP/SOAP, tutti i metodi pubblici del client
