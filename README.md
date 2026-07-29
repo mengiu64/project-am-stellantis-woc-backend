@@ -1044,7 +1044,8 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **46** | **558** | |
+| **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
+| **Totale** | **49** | **594** | |
 
 ### Copertura del codice
 
@@ -1064,6 +1065,7 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.69% ✅ | 93.84% ✅ | 100% ✅ | 99.32% ✅ |
 | **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
+| **isStellantisBrand** | 100% ✅ | 97.87% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
@@ -1132,6 +1134,11 @@ cd agendaSoa && npm run test:coverage
 - **certService** – `fetchSecret` (200 con `SecretString`, status non-200, JSON non valido, errore di rete sulla request, estrazione del PEM quando il secret è salvato come oggetto "JSON-like"), `extractPem` (PEM già valido, blocco PEM estratto da un wrapper con chiavi extra, nessun PEM trovato, input non-stringa), `getHttpsAgent` (fetch parallelo cert/key, cache tra invocazioni, reset cache e retry dopo un fallimento)
 - **myPeopleService** – validazione parametro obbligatorio (`username`), costruzione options (host/porta/path/query string) con `identifier` costante da config, header `X-IBM-Client-Id` + `Authorization: Basic`, uso dell'agent mTLS, errori su risposta non-200
 - **index** – risoluzione parametri da invocazione diretta/`queryStringParameters`/body JSON, 200/400/502, entrypoint CLI
+
+#### isStellantisBrand
+- **index (handler)** – validazione `ar_codbrand` (mancante/null/vuoto/whitespace, >2 caratteri, caratteri non alfabetici) → 400 con messaggio dedicato per ciascun caso; conversione a uppercase prima della query; 200 con `isStellantisBrand: true|false` in base al risultato della query; 500 su errore di connessione DB/Secrets Manager/query, senza esporre stack trace o dettagli interni nel body; formato risposta (`statusCode`/`headers`/`body` JSON) su tutti i path
+- **shared/dbClient** – modalità remota (default): recupero ARN secret + endpoint RDS Proxy da SSM e credenziali da Secrets Manager, creazione del `pg.Pool` con `ssl: true`, errori su variabili d'ambiente mancanti (`DB_SECRET_ARN_PARAM`/`RDS_PROXY_ENDPOINT_PARAM`) o secret senza `SecretString`, cache del pool tra invocazioni (warm start, SSM/Secrets Manager interrogati una sola volta), `invalidatePool()` per forzare il refresh, gestione di `pool.connect()` fallito (invalida il pool, chiama `pool.end()`, propaga l'errore originale anche se `end()` fallisce a sua volta), invalidazione del pool tramite il listener `error` del pool, porta di default 5432; modalità locale (`DB_LOCAL_MODE=true`, case-insensitive): bypassa SSM/Secrets Manager, usa le credenziali/env locali di default con override via env (`DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_PORT`/`DB_SSL`)
+- **property-based (fast-check)** – invarianti sulla validazione di `ar_codbrand` verificate su input generati casualmente: stringhe alfabetiche di 1-2 caratteri sempre accettate (200, query eseguita con il valore uppercase), qualunque stringa non vuota più lunga di 2 caratteri sempre rifiutata con il messaggio "massimo 2 caratteri", qualunque stringa di 1-2 caratteri con almeno un carattere non alfabetico sempre rifiutata con il messaggio "solo caratteri alfabetici", qualunque stringa vuota/whitespace sempre rifiutata con il messaggio "obbligatorio"
 
 ---
 
