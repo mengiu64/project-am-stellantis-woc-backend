@@ -710,7 +710,10 @@ Resources:
 
   # ── pkFavorite (pacchetti/forfait preferiti del dealer per VIN) ───────────
   #
-  # GET  -> elenca i preferiti di un dealer (username, da authorizer.sub) per un VIN
+  # GET  -> elenca i preferiti di un dealer (username, da authorizer.sub) per un VIN,
+  #         arricchiti con i dati DML (Code/PackageDescription/PartsAvailablity/
+  #         TotalPriceInclTax/TotalPriceExclTax) via dms/dmsService::postDmsInquiry
+  #         (MessageType LFP, una chiamata per ciascun codice pacchetto preferito)
   # POST -> crea il preferito se non esiste, altrimenti lo elimina ("toggle")
   # Tabella PKFAVORITE su Aurora PostgreSQL "wiadvisor" (vedi sql/create_tables.sql).
   # Le credenziali dell'utente applicativo Aurora least-privilege ("wiadvisor_app")
@@ -719,11 +722,17 @@ Resources:
   # La funzione gira in VPC (Globals.Function.VpcConfig): il Security Group Lambda
   # deve avere accesso in ingresso consentito sul Security Group dell'RDS Proxy
   # (porta 5432), come già configurato per le altre Lambda del progetto.
+  # CodeUri: ./ + BuildMethod: makefile perché index.js richiede in-process
+  # dms/authService + dms/dmsService (stesso pattern di PkManagerFunction/
+  # SessionFunction, vedi Makefile) per la chiamata al gateway DML.
   PkFavoriteFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkfavorite"
-      CodeUri: pkFavorite/
+      CodeUri: ./
+      Handler: pkFavorite/index.handler
       Layers:
         - !Ref MyPeopleExtensionLayerArn
       Policies:
@@ -748,6 +757,13 @@ Resources:
           PKFAVORITE_DB_PORT:      !Ref PkFavoriteDbPort
           PKFAVORITE_DB_NAME:      !Ref PkFavoriteDbName
           PKFAVORITE_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+          # dms/config.js (in-process, vedi Makefile) — gateway DML per l'arricchimento
+          # dei preferiti (MessageType LFP), stessi valori usati da PkManagerFunction.
+          DMS_PING_CLIENT_ID:    !Ref DmsPingClientId
+          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DML_IBM_CLIENT_ID:     !Ref DmlIbmClientId
+          DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
+          DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
 
   PkFavoriteFunctionLogGroup:
     Type: AWS::Logs::LogGroup

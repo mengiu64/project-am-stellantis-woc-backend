@@ -41,3 +41,16 @@ build-SessionFunction:
 		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
 		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+
+# PkFavoriteFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché,
+# per l'arricchimento dei preferiti in GET (una chiamata al gateway DML per ciascun
+# codice pacchetto preferito, MessageType LFP), pkFavorite/index.js richiede il
+# codice sorgente di dms tramite path relativi (../dms/authService, ../dms/dmsService):
+# stesso identico motivo/pattern di PkManagerFunction/SessionFunction sopra.
+build-PkFavoriteFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/pkFavorite" "$(ARTIFACTS_DIR)/dms"
+	cp -r pkFavorite/. "$(ARTIFACTS_DIR)/pkFavorite/"
+	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/pkFavorite/__tests__ "$(ARTIFACTS_DIR)"/pkFavorite/coverage "$(ARTIFACTS_DIR)"/pkFavorite/.env* \
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
