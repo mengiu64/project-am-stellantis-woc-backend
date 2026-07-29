@@ -1,0 +1,309 @@
+=================================================================
+ ESEMPI fetch() per POST /api/repairorder/saveJobcard (djc)
+=================================================================
+
+Endpoint: https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard
+
+Note generali:
+- Ogni chiamata deve sempre includere "roInfo" con i campi M obbligatori
+  (sourceApplication, dealerId, updateDateTime) + almeno uno tra
+  dmsRepairOrderId / jobCardSrpId / jobCardLegacyId [M(C)].
+- "customerId" e "appointmentInternalId" sono obbligatori quando invii
+  rispettivamente customerInfo[] e appointments[] [M(O)].
+- In customerInfo[], "contactInfo" e "personalInfo" sono campi FRATELLI
+  (non annidare contactInfo dentro personalInfo, viene rifiutato dalla API).
+- Sostituisci i valori (dmsRepairOrderId, dealerId, customerId, ecc.) con
+  quelli reali del Repair Order che stai testando.
+
+
+-----------------------------------------------------------------
+1) SaveRoInfo — car wash, part preferences, obfcm, ecc.
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString(),
+      interiorCarWash: true,
+      exteriorCarWash: true,
+      partPreferences: [
+        { old: true, original: true, returned: false, circularEconomy: false }
+      ],
+      obfcm: true,
+      waitOnSite: false,
+      vehicleIdentificationTagNumber: "TAG-999",
+      loanerFlag: false
+    }
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+2) SaveDmsSync — stato sincronizzazione DMS
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString(),
+      dmsSynchroStatus: "SYNCED"
+    }
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+3) SaveCustomer — contatti cliente
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString()
+    },
+    customerInfo: [{
+      customerId: "854265",
+      contactInfo: {
+        phone: "+39-06-1111111",
+        mobile: "+39-333-2222222",
+        email: "test@example.com",
+        address: "Via Roma 1",
+        additionalAddress: "Interno 2"
+      }
+    }]
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+4) SaveVehicle — targa e stato veicolo
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString()
+    },
+    vehicleInfo: {
+      identification: { licensePlate: "EH-436-DG" },
+      state: {
+        odometerOut: 12345,
+        mileageUnits: "km",
+        fuelReserveLevel: 3,
+        batteryReserveLevel: 85
+      }
+    }
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+5) SaveJobs — lavorazioni (jobInternalId obbligatorio)
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString()
+    },
+    jobs: [{
+      jobInternalId: "JOB-INT-0001",
+      jobDescription: "Cambio olio",
+      jobType: "MNT"
+    }]
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+6) SaveConsents — consensi privacy (repairer[] / stellantis[])
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString()
+    },
+    consents: [{
+      repairer: [
+        { channelCode: "1", privacyIndicator: true },
+        { channelCode: "2", privacyIndicator: false },
+        { channelCode: "3", privacyIndicator: true }
+      ],
+      stellantis: [
+        { channelCode: "4", privacyIndicator: false },
+        { channelCode: "5", privacyIndicator: true },
+        { channelCode: "6", privacyIndicator: false }
+      ]
+    }]
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+7) SaveAppointments — reception/delivery (appointmentInternalId obbligatorio)
+-----------------------------------------------------------------
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString()
+    },
+    appointments: [{
+      appointmentInternalId: "APT-00077",
+      reception: {
+        estimatedReceptionDateTime: "2026-01-01T09:00:00Z",
+        receptionDateTime: "2026-01-01T09:10:00Z",
+        receptionServiceAdvisorId: "SA-1",
+        receptionServiceAdvisorName: "Mario"
+      },
+      delivery: {
+        estimatedDeliveryDateTime: "2026-01-01T17:00:00Z",
+        deliveryDateTime: "2026-01-01T17:10:00Z",
+        deliveryServiceAdvisorId: "SA-2",
+        deliveryServiceAdvisorName: "Luigi"
+      }
+    }]
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));
+
+
+-----------------------------------------------------------------
+8) SALVATAGGIO COMPLETO — tutte le sezioni in un'unica chiamata
+-----------------------------------------------------------------
+(roInfo + customerInfo + vehicleInfo + jobs + consents + appointments
+insieme: utile per un push completo, es. creazione/sync iniziale della
+Job Card, invece di più chiamate separate per sezione)
+
+fetch('https://dev.wiadvisor-woc.stellantis.com/api/repairorder/saveJobcard', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    roInfo: {
+      dmsRepairOrderId: "84564621",
+      sourceApplication: "WIADVISOR",
+      dealerId: "0062230",
+      updateDateTime: new Date().toISOString(),
+      interiorCarWash: true,
+      exteriorCarWash: true,
+      partPreferences: [
+        { old: true, original: true, returned: false, circularEconomy: false }
+      ],
+      obfcm: true,
+      waitOnSite: false,
+      vehicleIdentificationTagNumber: "TAG-999",
+      loanerFlag: false,
+      dmsSynchroStatus: "SYNCED"
+    },
+    customerInfo: [{
+      customerId: "854265",
+      contactInfo: {
+        phone: "+39-06-1111111",
+        mobile: "+39-333-2222222",
+        email: "test@example.com",
+        address: "Via Roma 1",
+        additionalAddress: "Interno 2"
+      }
+    }],
+    vehicleInfo: {
+      identification: { licensePlate: "EH-436-DG" },
+      state: {
+        odometerOut: 12345,
+        mileageUnits: "km",
+        fuelReserveLevel: 3,
+        batteryReserveLevel: 85
+      }
+    },
+    jobs: [{
+      jobInternalId: "JOB-INT-0001",
+      jobDescription: "Cambio olio",
+      jobType: "MNT"
+    }],
+    consents: [{
+      repairer: [
+        { channelCode: "1", privacyIndicator: true },
+        { channelCode: "2", privacyIndicator: false },
+        { channelCode: "3", privacyIndicator: true }
+      ],
+      stellantis: [
+        { channelCode: "4", privacyIndicator: false },
+        { channelCode: "5", privacyIndicator: true },
+        { channelCode: "6", privacyIndicator: false }
+      ]
+    }],
+    appointments: [{
+      appointmentInternalId: "APT-00077",
+      reception: {
+        estimatedReceptionDateTime: "2026-01-01T09:00:00Z",
+        receptionDateTime: "2026-01-01T09:10:00Z",
+        receptionServiceAdvisorId: "SA-1",
+        receptionServiceAdvisorName: "Mario"
+      },
+      delivery: {
+        estimatedDeliveryDateTime: "2026-01-01T17:00:00Z",
+        deliveryDateTime: "2026-01-01T17:10:00Z",
+        deliveryServiceAdvisorId: "SA-2",
+        deliveryServiceAdvisorName: "Luigi"
+      }
+    }]
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error(error));

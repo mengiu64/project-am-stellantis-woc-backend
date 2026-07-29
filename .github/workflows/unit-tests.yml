@@ -883,6 +883,224 @@ jobs:
           path: jobcard/coverage/
           retention-days: 30
 
+  test-djc:
+    name: djc
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: djc
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: djc/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: |
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
+      - name: Run tests with coverage (≥90%)
+        run: npm run test:coverage -- --verbose
+      - name: Generate artifact dashboard
+        if: always()
+        run: |
+          cat > /tmp/gen-index.js << 'NODEOF'
+          const fs = require('fs'), path = require('path');
+          const mod = path.basename(process.cwd());
+          const now = new Date().toLocaleString('it-IT', {timeZone:'Europe/Rome'});
+          let audit=null, tests=null, cov=null;
+          try{audit=JSON.parse(fs.readFileSync('./coverage/audit-report.json','utf8'));}catch(e){}
+          try{tests=JSON.parse(fs.readFileSync('./coverage/jest-results.json','utf8'));}catch(e){}
+          try{cov=JSON.parse(fs.readFileSync('./coverage/coverage-summary.json','utf8'));}catch(e){}
+
+          // ── Security ──────────────────────────────────────────────────────
+          let secHtml='';
+          if(audit){
+            const v=audit.metadata?.vulnerabilities||{};
+            const hc=(v.high||0)+(v.critical||0);
+            const total=(v.info||0)+(v.low||0)+(v.moderate||0)+hc;
+            const badge=hc>0?'<span class="badge err">VULNERABILITA</span>':total>0?'<span class="badge warn">ATTENZIONE</span>':'<span class="badge ok">OK</span>';
+            const sevRows=[['critical','🔴','Critical'],['high','🟠','High'],['moderate','🟡','Moderate'],['low','🟢','Low'],['info','ℹ️','Info']].filter(([k])=>v[k]).map(([k,,l])=>`<tr><td>${l}</td><td><b>${v[k]}</b></td></tr>`).join('');
+            const highs=Object.values(audit.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+            const vrows=highs.map(p=>{const via=(p.via||[]).map(x=>typeof x==='string'?x:(x.title||x.name||'?')).join(', ');const fix=p.fixAvailable===true?'<span class="ok">si</span>':p.fixAvailable?.name?`<span class="warn">breaking: ${p.fixAvailable.name}</span>`:'<span class="err">no</span>';return`<tr><td><code>${p.name}</code></td><td class="err">${p.severity}</td><td>${via}</td><td>${fix}</td></tr>`;}).join('');
+            const vdet=highs.length?`<details><summary>Dettaglio high/critical (${highs.length})</summary><table><tr><th>Package</th><th>Severity</th><th>Problema</th><th>Fix</th></tr>${vrows}</table></details>`:'';
+            secHtml=`<div class="card"><h2>🔒 Security Scan ${badge}</h2>${sevRows?`<table><tr><th>Severity</th><th>Count</th></tr>${sevRows}</table>`:'<p class="ok">Nessuna vulnerabilita trovata</p>'}${vdet}</div>`;
+          } else {
+            secHtml='<div class="card"><h2>🔒 Security Scan</h2><p class="warn">Report non disponibile</p></div>';
+          }
+
+          // ── Test Results ──────────────────────────────────────────────────
+          let testHtml='';
+          if(tests){
+            const p=tests.numPassedTests||0,f=tests.numFailedTests||0,s=tests.numPendingTests||0;
+            const badge=f>0?'<span class="badge err">FALLITI</span>':'<span class="badge ok">OK</span>';
+            const dur=((tests.testResults||[]).reduce((a,x)=>a+(x.endTime-x.startTime),0)/1000).toFixed(2);
+            const srows=(tests.testResults||[]).map(suite=>{const n=path.basename(suite.testFilePath||'?');const sp=(suite.testResults||[]).filter(t=>t.status==='passed').length;const sf=(suite.testResults||[]).filter(t=>t.status==='failed').length;const sd=((suite.endTime-suite.startTime)/1000).toFixed(2);return`<tr><td>${sf?'❌':'✅'} ${n}</td><td class="${sf?'err':'ok'}">${sp}</td><td class="${sf?'err':''}">${sf||''}</td><td>${sd}s</td></tr>`;}).join('');
+            const fails=(tests.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            const frows=fails.map(t=>`<tr><td><b>${t.ancestorTitles.concat(t.title).join(' > ')}</b><pre>${(t.failureMessages||[]).join('\n').substring(0,500).replace(/</g,'&lt;')}</pre></td></tr>`).join('');
+            const fdet=fails.length?`<details><summary>❌ Test falliti (${fails.length})</summary><table>${frows}</table></details>`:'';
+            testHtml=`<div class="card"><h2>🧪 Test Results ${badge}</h2><table><tr><th>Passed</th><th>Failed</th><th>Skipped</th><th>Durata</th></tr><tr><td class="ok"><b>${p}</b></td><td class="${f?'err':'ok'}"><b>${f}</b></td><td>${s}</td><td>${dur}s</td></tr></table><details><summary>Suite (${(tests.testResults||[]).length})</summary><table><tr><th>File</th><th>Passed</th><th>Failed</th><th>Durata</th></tr>${srows}</table></details>${fdet}<p><a href="test-report.html">→ Report completo con tutti i test</a></p></div>`;
+          } else {
+            testHtml='<div class="card"><h2>🧪 Test Results</h2><p class="warn">Report non disponibile</p></div>';
+          }
+
+          // ── Coverage ──────────────────────────────────────────────────────
+          let covHtml='';
+          if(cov){
+            const SKIP=new Set(['branchesTrue']);
+            const pc=m=>typeof m.pct==='number'?m.pct+'%':'N/A';
+            const cls=m=>typeof m.pct==='number'?(m.pct>=90?'ok':'err'):'';
+            const trows=Object.entries(cov.total).filter(([k])=>!SKIP.has(k)).map(([k,m])=>`<tr><td>${k}</td><td class="${cls(m)}"><b>${pc(m)}</b></td><td>${m.covered} / ${m.total}</td></tr>`).join('');
+            const files=Object.entries(cov).filter(([k])=>k!=='total');
+            const frows=files.map(([file,m])=>{const n=file.split('/').pop();const all=[m.statements,m.branches,m.functions,m.lines].every(x=>typeof x.pct==='number'&&x.pct>=90);return`<tr><td>${all?'✅':'❌'} <code>${n}</code></td><td class="${cls(m.statements)}">${pc(m.statements)}</td><td class="${cls(m.branches)}">${pc(m.branches)}</td><td class="${cls(m.functions)}">${pc(m.functions)}</td><td class="${cls(m.lines)}">${pc(m.lines)}</td></tr>`;}).join('');
+            covHtml=`<div class="card"><h2>📊 Coverage</h2><table><tr><th>Metrica</th><th>Copertura</th><th>Covered / Total</th></tr>${trows}</table>${files.length?`<details><summary>📁 Dettaglio per file (${files.length})</summary><table><tr><th>File</th><th>Stmt</th><th>Branch</th><th>Func</th><th>Lines</th></tr>${frows}</table></details>`:''}<p><a href="lcov-report/index.html">→ Coverage riga per riga</a></p></div>`;
+          } else {
+            covHtml='<div class="card"><h2>📊 Coverage</h2><p class="warn">Report non disponibile</p></div>';
+          }
+
+          const css=`body{font-family:-apple-system,system-ui,sans-serif;max-width:960px;margin:0 auto;padding:20px;background:#f6f8fa;color:#24292e}h1{border-bottom:2px solid #e1e4e8;padding-bottom:10px}h2{margin-top:0;font-size:1.1em}.card{background:#fff;border:1px solid #e1e4e8;border-radius:8px;padding:20px;margin:16px 0}table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border:1px solid #e1e4e8;padding:8px 12px;text-align:left;font-size:.9em}th{background:#f6f8fa;font-weight:600}.ok{color:#1a7f37}.err{color:#cf222e}.warn{color:#9a6700}details>summary{cursor:pointer;color:#0366d6;margin:10px 0}pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:4px;padding:8px;font-size:.8em;overflow-x:auto;white-space:pre-wrap;max-height:180px;overflow-y:auto}a{color:#0366d6;text-decoration:none}a:hover{text-decoration:underline}.meta{color:#586069;font-size:.85em}code{background:#f6f8fa;padding:1px 4px;border-radius:3px;font-size:.9em}.badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:.75em;font-weight:700;margin-left:8px;vertical-align:middle}.badge.ok,.ok.badge{background:#dcffe4;color:#1a7f37}.badge.err,.err.badge{background:#ffdce0;color:#cf222e}.badge.warn,.warn.badge{background:#fff8c5;color:#9a6700}`;
+          const html=`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CI Report - ${mod}</title><style>${css}</style></head><body><h1>CI Report — ${mod}</h1><p class="meta">Generato il ${now} &nbsp;|&nbsp; <a href="test-report.html">📋 Test completo</a> &nbsp;|&nbsp; <a href="lcov-report/index.html">🔍 Line coverage</a></p>${secHtml}${testHtml}${covHtml}</body></html>`;
+          fs.mkdirSync('./coverage',{recursive:true});
+          fs.writeFileSync('./coverage/index.html',html);
+          console.log('Generated coverage/index.html');
+          NODEOF
+          node /tmp/gen-index.js
+
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            # ── Security Scan ─────────────────────────────────────────
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità high/critical rilevate"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=90?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-djc
+          path: djc/coverage/
+          retention-days: 30
+
   test-v360:
     name: v360
     runs-on: ubuntu-latest
@@ -2630,6 +2848,224 @@ jobs:
           path: myPeople/coverage/
           retention-days: 30
 
+  test-pkFavorite:
+    name: pkFavorite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkFavorite
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: pkFavorite/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: |
+          mkdir -p coverage
+          npm audit --json > coverage/audit-report.json 2>&1 || true
+          npm audit --audit-level=high && touch .scan-ok || true
+      - name: Run tests with coverage (>=85%)
+        run: npm run test:coverage -- --verbose
+      - name: Generate artifact dashboard
+        if: always()
+        run: |
+          cat > /tmp/gen-index.js << 'NODEOF'
+          const fs = require('fs'), path = require('path');
+          const mod = path.basename(process.cwd());
+          const now = new Date().toLocaleString('it-IT', {timeZone:'Europe/Rome'});
+          let audit=null, tests=null, cov=null;
+          try{audit=JSON.parse(fs.readFileSync('./coverage/audit-report.json','utf8'));}catch(e){}
+          try{tests=JSON.parse(fs.readFileSync('./coverage/jest-results.json','utf8'));}catch(e){}
+          try{cov=JSON.parse(fs.readFileSync('./coverage/coverage-summary.json','utf8'));}catch(e){}
+
+          // ── Security ──────────────────────────────────────────────────────
+          let secHtml='';
+          if(audit){
+            const v=audit.metadata?.vulnerabilities||{};
+            const hc=(v.high||0)+(v.critical||0);
+            const total=(v.info||0)+(v.low||0)+(v.moderate||0)+hc;
+            const badge=hc>0?'<span class="badge err">VULNERABILITA</span>':total>0?'<span class="badge warn">ATTENZIONE</span>':'<span class="badge ok">OK</span>';
+            const sevRows=[['critical','🔴','Critical'],['high','🟠','High'],['moderate','🟡','Moderate'],['low','🟢','Low'],['info','ℹ️','Info']].filter(([k])=>v[k]).map(([k,,l])=>`<tr><td>${l}</td><td><b>${v[k]}</b></td></tr>`).join('');
+            const highs=Object.values(audit.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+            const vrows=highs.map(p=>{const via=(p.via||[]).map(x=>typeof x==='string'?x:(x.title||x.name||'?')).join(', ');const fix=p.fixAvailable===true?'<span class="ok">si</span>':p.fixAvailable?.name?`<span class="warn">breaking: ${p.fixAvailable.name}</span>`:'<span class="err">no</span>';return`<tr><td><code>${p.name}</code></td><td class="err">${p.severity}</td><td>${via}</td><td>${fix}</td></tr>`;}).join('');
+            const vdet=highs.length?`<details><summary>Dettaglio high/critical (${highs.length})</summary><table><tr><th>Package</th><th>Severity</th><th>Problema</th><th>Fix</th></tr>${vrows}</table></details>`:'';
+            secHtml=`<div class="card"><h2>🔒 Security Scan ${badge}</h2>${sevRows?`<table><tr><th>Severity</th><th>Count</th></tr>${sevRows}</table>`:'<p class="ok">Nessuna vulnerabilita trovata</p>'}${vdet}</div>`;
+          } else {
+            secHtml='<div class="card"><h2>🔒 Security Scan</h2><p class="warn">Report non disponibile</p></div>';
+          }
+
+          // ── Test Results ──────────────────────────────────────────────────
+          let testHtml='';
+          if(tests){
+            const p=tests.numPassedTests||0,f=tests.numFailedTests||0,s=tests.numPendingTests||0;
+            const badge=f>0?'<span class="badge err">FALLITI</span>':'<span class="badge ok">OK</span>';
+            const dur=((tests.testResults||[]).reduce((a,x)=>a+(x.endTime-x.startTime),0)/1000).toFixed(2);
+            const srows=(tests.testResults||[]).map(suite=>{const n=path.basename(suite.testFilePath||'?');const sp=(suite.testResults||[]).filter(t=>t.status==='passed').length;const sf=(suite.testResults||[]).filter(t=>t.status==='failed').length;const sd=((suite.endTime-suite.startTime)/1000).toFixed(2);return`<tr><td>${sf?'❌':'✅'} ${n}</td><td class="${sf?'err':'ok'}">${sp}</td><td class="${sf?'err':''}">${sf||''}</td><td>${sd}s</td></tr>`;}).join('');
+            const fails=(tests.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            const frows=fails.map(t=>`<tr><td><b>${t.ancestorTitles.concat(t.title).join(' > ')}</b><pre>${(t.failureMessages||[]).join('\n').substring(0,500).replace(/</g,'&lt;')}</pre></td></tr>`).join('');
+            const fdet=fails.length?`<details><summary>❌ Test falliti (${fails.length})</summary><table>${frows}</table></details>`:'';
+            testHtml=`<div class="card"><h2>🧪 Test Results ${badge}</h2><table><tr><th>Passed</th><th>Failed</th><th>Skipped</th><th>Durata</th></tr><tr><td class="ok"><b>${p}</b></td><td class="${f?'err':'ok'}"><b>${f}</b></td><td>${s}</td><td>${dur}s</td></tr></table><details><summary>Suite (${(tests.testResults||[]).length})</summary><table><tr><th>File</th><th>Passed</th><th>Failed</th><th>Durata</th></tr>${srows}</table></details>${fdet}<p><a href="test-report.html">→ Report completo con tutti i test</a></p></div>`;
+          } else {
+            testHtml='<div class="card"><h2>🧪 Test Results</h2><p class="warn">Report non disponibile</p></div>';
+          }
+
+          // ── Coverage ──────────────────────────────────────────────────────
+          let covHtml='';
+          if(cov){
+            const SKIP=new Set(['branchesTrue']);
+            const pc=m=>typeof m.pct==='number'?m.pct+'%':'N/A';
+            const cls=m=>typeof m.pct==='number'?(m.pct>=85?'ok':'err'):'';
+            const trows=Object.entries(cov.total).filter(([k])=>!SKIP.has(k)).map(([k,m])=>`<tr><td>${k}</td><td class="${cls(m)}"><b>${pc(m)}</b></td><td>${m.covered} / ${m.total}</td></tr>`).join('');
+            const files=Object.entries(cov).filter(([k])=>k!=='total');
+            const frows=files.map(([file,m])=>{const n=file.split('/').pop();const all=[m.statements,m.branches,m.functions,m.lines].every(x=>typeof x.pct==='number'&&x.pct>=85);return`<tr><td>${all?'✅':'❌'} <code>${n}</code></td><td class="${cls(m.statements)}">${pc(m.statements)}</td><td class="${cls(m.branches)}">${pc(m.branches)}</td><td class="${cls(m.functions)}">${pc(m.functions)}</td><td class="${cls(m.lines)}">${pc(m.lines)}</td></tr>`;}).join('');
+            covHtml=`<div class="card"><h2>📊 Coverage</h2><table><tr><th>Metrica</th><th>Copertura</th><th>Covered / Total</th></tr>${trows}</table>${files.length?`<details><summary>📁 Dettaglio per file (${files.length})</summary><table><tr><th>File</th><th>Stmt</th><th>Branch</th><th>Func</th><th>Lines</th></tr>${frows}</table></details>`:''}<p><a href="lcov-report/index.html">→ Coverage riga per riga</a></p></div>`;
+          } else {
+            covHtml='<div class="card"><h2>📊 Coverage</h2><p class="warn">Report non disponibile</p></div>';
+          }
+
+          const css=`body{font-family:-apple-system,system-ui,sans-serif;max-width:960px;margin:0 auto;padding:20px;background:#f6f8fa;color:#24292e}h1{border-bottom:2px solid #e1e4e8;padding-bottom:10px}h2{margin-top:0;font-size:1.1em}.card{background:#fff;border:1px solid #e1e4e8;border-radius:8px;padding:20px;margin:16px 0}table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border:1px solid #e1e4e8;padding:8px 12px;text-align:left;font-size:.9em}th{background:#f6f8fa;font-weight:600}.ok{color:#1a7f37}.err{color:#cf222e}.warn{color:#9a6700}details>summary{cursor:pointer;color:#0366d6;margin:10px 0}pre{background:#f6f8fa;border:1px solid #e1e4e8;border-radius:4px;padding:8px;font-size:.8em;overflow-x:auto;white-space:pre-wrap;max-height:180px;overflow-y:auto}a{color:#0366d6;text-decoration:none}a:hover{text-decoration:underline}.meta{color:#586069;font-size:.85em}code{background:#f6f8fa;padding:1px 4px;border-radius:3px;font-size:.9em}.badge{display:inline-block;padding:3px 10px;border-radius:12px;font-size:.75em;font-weight:700;margin-left:8px;vertical-align:middle}.badge.ok,.ok.badge{background:#dcffe4;color:#1a7f37}.badge.err,.err.badge{background:#ffdce0;color:#cf222e}.badge.warn,.warn.badge{background:#fff8c5;color:#9a6700}`;
+          const html=`<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CI Report - ${mod}</title><style>${css}</style></head><body><h1>CI Report — ${mod}</h1><p class="meta">Generato il ${now} &nbsp;|&nbsp; <a href="test-report.html">📋 Test completo</a> &nbsp;|&nbsp; <a href="lcov-report/index.html">🔍 Line coverage</a></p>${secHtml}${testHtml}${covHtml}</body></html>`;
+          fs.mkdirSync('./coverage',{recursive:true});
+          fs.writeFileSync('./coverage/index.html',html);
+          console.log('Generated coverage/index.html');
+          NODEOF
+          node /tmp/gen-index.js
+
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            # ── Security Scan ─────────────────────────────────────────
+            echo "## 🔒 Security Scan"
+            if [ -f .scan-ok ]; then
+              echo "✅ Nessuna vulnerabilità high/critical trovata"
+            else
+              echo "❌ Vulnerabilità high/critical rilevate"
+            fi
+            rm -f .scan-ok
+            if [ -f coverage/audit-report.json ]; then
+              node << 'AUDEOF'
+          try {
+            const a = require('./coverage/audit-report.json');
+            const v = a.metadata?.vulnerabilities || {};
+            const total = (v.info||0)+(v.low||0)+(v.moderate||0)+(v.high||0)+(v.critical||0);
+            if (total > 0) {
+              console.log('');
+              console.log('| Severity | Conteggio |');
+              console.log('|---|---|');
+              if (v.critical) console.log('| 🔴 Critical | ' + v.critical + ' |');
+              if (v.high)     console.log('| 🟠 High     | ' + v.high + ' |');
+              if (v.moderate) console.log('| 🟡 Moderate | ' + v.moderate + ' |');
+              if (v.low)      console.log('| 🟢 Low      | ' + v.low + ' |');
+              if (v.info)     console.log('| ℹ️ Info    | ' + v.info + ' |');
+              const highs = Object.values(a.vulnerabilities||{}).filter(p=>['high','critical'].includes(p.severity));
+              if (highs.length) {
+                console.log('');
+                console.log('<details><summary>Dettaglio vulnerabilità high/critical</summary>');
+                console.log('');
+                console.log('| Package | Severity | Problema | Fix disponibile |');
+                console.log('|---|---|---|---|');
+                for (const p of highs) {
+                  const via = (p.via||[]).map(v=>typeof v==='string'?v:(v.title||v.name||'?')).join(', ');
+                  const fix = p.fixAvailable===true ? '✅ sì' : p.fixAvailable?.name ? '⚠️ breaking: '+p.fixAvailable.name : '❌ no';
+                  console.log('| `'+p.name+'` | **'+p.severity+'** | '+via+' | '+fix+' |');
+                }
+                console.log('');
+                console.log('</details>');
+              }
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere audit-report.json: ' + e.message); }
+          AUDEOF
+            fi
+            # ── Test Results ──────────────────────────────────────────
+            if [ -f coverage/jest-results.json ]; then
+              echo ""
+              echo "## 🧪 Test Results — $(basename $PWD)"
+              node << 'TSTEOF'
+          try {
+            const r = require('./coverage/jest-results.json');
+            const ok='✅', ko='❌', sk='⏭️';
+            console.log('| | Totale |');
+            console.log('|---|---|');
+            console.log('| ✅ Passed  | **' + r.numPassedTests  + '** |');
+            if (r.numFailedTests)  console.log('| ❌ Failed  | **' + r.numFailedTests  + '** |');
+            if (r.numPendingTests) console.log('| ⏭️ Skipped | **' + r.numPendingTests + '** |');
+            console.log('| ⏱️ Durata  | ' + (r.testResults?.reduce((a,s)=>a+(s.endTime-s.startTime),0)/1000).toFixed(2) + 's |');
+            const failed = (r.testResults||[]).flatMap(s=>(s.testResults||[]).filter(t=>t.status==='failed'));
+            if (failed.length) {
+              console.log('');
+              console.log('<details><summary>❌ Test falliti</summary>');
+              console.log('');
+              for (const t of failed) {
+                console.log('**' + t.ancestorTitles.concat(t.title).join(' › ') + '**');
+                console.log('');
+                console.log('```');
+                console.log((t.failureMessages||[]).join('\n').substring(0,500));
+                console.log('```');
+                console.log('');
+              }
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere jest-results.json: ' + e.message); }
+          TSTEOF
+            fi
+            # ── Coverage ──────────────────────────────────────────────
+            if [ -f coverage/coverage-summary.json ]; then
+              echo ""
+              echo "## 📊 Coverage — $(basename $PWD)"
+              node << 'COVEOF'
+          try {
+            const s = require('./coverage/coverage-summary.json');
+            const ok='✅', ko='❌';
+            const SKIP = new Set(['branchesTrue']);
+            const isNum = m => typeof m.pct === 'number';
+            const fmt  = m => !isNum(m) ? '➖ N/A' : (m.pct>=85?ok:ko)+' **'+m.pct+'%**';
+            const fmt2 = m => !isNum(m) ? '➖ N/A' : (m.pct>=85?ok:ko)+' '+m.pct+'%';
+            const t = s.total;
+            console.log('### Totale');
+            console.log('| Metrica | Copertura | Covered / Total |');
+            console.log('|---|---|---|');
+            for (const [k,m] of Object.entries(t)) {
+              if (SKIP.has(k)) continue;
+              console.log('| '+k+' | '+fmt(m)+' | '+m.covered+' / '+m.total+' |');
+            }
+            const files = Object.entries(s).filter(([k])=>k!=='total');
+            if (files.length) {
+              console.log('');
+              console.log('<details><summary>📁 Dettaglio per file</summary>');
+              console.log('');
+              console.log('| File | Stmt | Branch | Func | Lines |');
+              console.log('|---|---|---|---|---|');
+              for (const [file,m] of files) {
+                const name = file.split('/').pop();
+                console.log('| `'+name+'` | '+fmt2(m.statements)+' | '+fmt2(m.branches)+' | '+fmt2(m.functions)+' | '+fmt2(m.lines)+' |');
+              }
+              console.log('');
+              console.log('</details>');
+            }
+          } catch(e) { console.log('> ⚠️ impossibile leggere coverage-summary.json: ' + e.message); }
+          COVEOF
+            else
+              echo ""
+              echo "## 📊 Coverage"
+              echo "❌ Report non disponibile — test falliti o non eseguiti"
+            fi
+            echo ""
+            echo "> 📁 Scarica l\'artefatto **coverage-$(basename $PWD)** per: HTML coverage (lcov-report/index.html), report test (test-report.html), dettaglio audit (audit-report.json)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-pkFavorite
+          path: pkFavorite/coverage/
+          retention-days: 30
+
   # ── Deploy jobs ────────────────────────────────────────────────────────────────
   # Branch → AWS environment:
   #   develop    → dev   (push diretto)
@@ -2658,6 +3094,7 @@ jobs:
       - test-agendaSoaNaga
       - test-dms
       - test-jobcard
+      - test-djc
       - test-v360
       - test-pkEper
       - test-pkDocsoa
@@ -2666,6 +3103,7 @@ jobs:
       - test-translations
       - test-session
       - test-myPeople
+      - test-pkFavorite
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     permissions:
@@ -2693,6 +3131,7 @@ jobs:
           (cd agendaSoaNaga && npm ci --omit=dev)
           (cd dms           && npm ci --omit=dev)
           (cd jobcard       && npm ci --omit=dev)
+          (cd djc           && npm ci --omit=dev)
           (cd v360          && npm ci --omit=dev)
           (cd pkEper        && npm ci --omit=dev)
           (cd pkDocsoa      && npm ci --omit=dev)
@@ -2701,6 +3140,7 @@ jobs:
           (cd translations  && npm ci --omit=dev)
           (cd session       && npm ci --omit=dev)
           (cd myPeople      && npm ci --omit=dev)
+          (cd pkFavorite    && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -2761,7 +3201,9 @@ jobs:
               MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
               MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
-              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}"
+              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
+              PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
+              PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}"
 
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
@@ -2773,6 +3215,7 @@ jobs:
       - test-agendaSoaNaga
       - test-dms
       - test-jobcard
+      - test-djc
       - test-v360
       - test-pkEper
       - test-pkDocsoa
@@ -2781,6 +3224,7 @@ jobs:
       - test-translations
       - test-session
       - test-myPeople
+      - test-pkFavorite
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     permissions:
@@ -2808,6 +3252,7 @@ jobs:
           (cd agendaSoaNaga && npm ci --omit=dev)
           (cd dms           && npm ci --omit=dev)
           (cd jobcard       && npm ci --omit=dev)
+          (cd djc           && npm ci --omit=dev)
           (cd v360          && npm ci --omit=dev)
           (cd pkEper        && npm ci --omit=dev)
           (cd pkDocsoa      && npm ci --omit=dev)
@@ -2816,6 +3261,7 @@ jobs:
           (cd translations  && npm ci --omit=dev)
           (cd session       && npm ci --omit=dev)
           (cd myPeople      && npm ci --omit=dev)
+          (cd pkFavorite    && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -2876,7 +3322,9 @@ jobs:
               MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
               MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
-              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}"
+              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
+              PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
+              PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}"
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
@@ -2888,6 +3336,7 @@ jobs:
       - test-agendaSoaNaga
       - test-dms
       - test-jobcard
+      - test-djc
       - test-v360
       - test-pkEper
       - test-pkDocsoa
@@ -2896,6 +3345,7 @@ jobs:
       - test-translations
       - test-session
       - test-myPeople
+      - test-pkFavorite
     if: github.event_name == 'push' && github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     environment: prod
@@ -2924,6 +3374,7 @@ jobs:
           (cd agendaSoaNaga && npm ci --omit=dev)
           (cd dms           && npm ci --omit=dev)
           (cd jobcard       && npm ci --omit=dev)
+          (cd djc           && npm ci --omit=dev)
           (cd v360          && npm ci --omit=dev)
           (cd pkEper        && npm ci --omit=dev)
           (cd pkDocsoa      && npm ci --omit=dev)
@@ -2932,6 +3383,7 @@ jobs:
           (cd translations  && npm ci --omit=dev)
           (cd session       && npm ci --omit=dev)
           (cd myPeople      && npm ci --omit=dev)
+          (cd pkFavorite    && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -2992,4 +3444,6 @@ jobs:
               MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
               MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
-              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}"
+              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
+              PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
+              PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}"

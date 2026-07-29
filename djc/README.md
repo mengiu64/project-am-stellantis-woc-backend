@@ -7,24 +7,46 @@ Modulo Node.js autoconsistente che costruisce i payload da inviare alla **Push A
 Se non è disponibile un `jobCardId` (uso locale/CLI senza una jobcard reale), si ricade
 su `get.json`, un'istantanea statica di riferimento usata anche nei test.
 
+Oltre ai metodi `Save*` (che costruiscono solo i payload `json_orig`/`json_mod` in
+locale), `djc` espone anche **`saveJobcard`**: l'azione che invia effettivamente
+il payload alla Push API SRP tramite `POST /jobCard`, usando **lo stesso client
+PingFederate/DGT della lambda `jobcard`** (`config.js`/`authService.js`/`httpClient.js`,
+copie sincronizzate con quelle di `jobcard`, che usa le stesse per le `GET
+/jobCardList` e `/jobCardDetails`). `saveJobcard` è replicata identica anche in
+`jobcard` (stesso `jobCardService.js::saveJobCard`), ma **API Gateway instrada le
+richieste POST verso la lambda `djc`**, non verso `jobcard`.
+
 ## Struttura
 
 ```
 djc/
-├── index.js            ← CLI entry-point + Lambda handler (dispatcher per metodo)
-├── DjcManager.js        ← classe orchestratore
-├── get.json             ← fallback statico (usato solo quando jobCardId è assente)
+├── index.js             ← CLI entry-point + Lambda handler (dispatcher per metodo)
+├── DjcManager.js         ← classe orchestratore (payload json_orig/json_mod)
+├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
+├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
+├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
+├── config.js              ← credenziali/URL DGT (copia di jobcard/config.js)
+├── get.json               ← fallback statico (usato solo quando jobCardId è assente)
 ├── __tests__/
-│   └── DjcManager.test.js ← test automatici (Jest)
+│   ├── DjcManager.test.js    ← test automatici (Jest)
+│   ├── jobCardService.test.js
+│   ├── authService.test.js
+│   └── httpClient.test.js
 ├── package.json
-└── .env                 ← configurazione (non committare)
+├── .env.example           ← template variabili d'ambiente
+└── .env                    ← configurazione locale (non committare)
 ```
+
+> `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
+> omonimi file di `jobcard`: qualsiasi modifica al client PingFederate/DGT va
+> replicata in entrambe le lambda.
 
 ## Setup
 
 ```bash
 cd djc
 npm install
+cp .env.example .env   # solo se si usa saveJobcard — non serve per i metodi Save*
 ```
 
 ## Classe `DjcManager`
@@ -57,21 +79,27 @@ lancia un errore esplicito (`[djc] impossibile leggere /tmp/<jobCardId>.json: ..
 |-----------------------|-----------------------|------------------------------------------------------------------------------|
 | `SaveRoInfo`          | ✅ implementato       | `json_orig`/`json_mod` per `jobCardDetail.roInfo` (sottoinsieme esteso)      |
 | `SaveDmsSync`         | ✅ implementato       | `json_orig`/`json_mod` per `jobCardDetail.roInfo` (sottoinsieme base)       |
-| `SaveCustomer`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `customerInfo[0].personalInfo.contactInfo` |
+| `SaveCustomer`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `customerInfo[0].{customerId,contactInfo}` |
 
 | `SaveVehicle`         | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `vehicleInfo.{identification,state}` |
 | `SaveJobs`            | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + copia di `jobCardDetail.jobs`    |
 | `SaveConsents`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `consents[0].{repairer,stellantis}` |
-| `SaveAppointments`    | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `appointments[0].{reception,delivery}` |
+| `SaveAppointments`    | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `appointments[0].{appointmentInternalId,reception,delivery}` |
 
 I metodi non ancora specificati lanciano un `Error` esplicito (`"<Metodo> non ancora
 implementato"`) finché non verranno definiti.
 
 Tutti i metodi implementati condividono un sottoinsieme "base" di `roInfo`
-(`jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`, `dealerId`, `stellantisBrand`,
-`status`, `updateDateTime`, `dmsSynchroStatus`), a cui `SaveRoInfo` aggiunge i campi
-specifici (`interiorCarWash`, `exteriorCarWash`, `partPreferences`, `obfcm`,
-`waitOnSite`, `vehicleIdentificationTagNumber`, `loanerFlag`).
+(`dmsRepairOrderId`, `jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`, `dealerId`,
+`stellantisBrand`, `status`, `updateDateTime`, `dmsSynchroStatus`), a cui `SaveRoInfo`
+aggiunge i campi specifici (`interiorCarWash`, `exteriorCarWash`, `partPreferences`,
+`obfcm`, `waitOnSite`, `vehicleIdentificationTagNumber`, `loanerFlag`).
+
+> `dmsRepairOrderId` è incluso nel sottoinsieme base per soddisfare il vincolo M(C)
+> della Push API SRP (almeno uno tra `dmsRepairOrderId`/`jobCardSrpId`/`jobCardLegacyId`
+> deve essere presente nel payload `saveJobcard`): senza di esso, una Job Card che ha
+> solo `dmsRepairOrderId` valorizzato (e non ancora `jobCardSrpId`/`jobCardLegacyId`)
+> verrebbe rigettata dalla Push API.
 
 ### `SaveRoInfo`
 
@@ -91,9 +119,9 @@ const { json_orig, json_mod } = manager.SaveRoInfo(
 ```
 
 - **`json_orig`**: `{ roInfo: {...} }` con il sottoinsieme di campi previsto dal payload
-  SaveRoInfo (`jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`, `dealerId`,
-  `stellantisBrand`, `status`, `updateDateTime`, `dmsSynchroStatus`, `interiorCarWash`,
-  `exteriorCarWash`, `partPreferences`, `obfcm`, `waitOnSite`,
+  SaveRoInfo (`dmsRepairOrderId`, `jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`,
+  `dealerId`, `stellantisBrand`, `status`, `updateDateTime`, `dmsSynchroStatus`,
+  `interiorCarWash`, `exteriorCarWash`, `partPreferences`, `obfcm`, `waitOnSite`,
   `vehicleIdentificationTagNumber`, `loanerFlag`), letto da
   `djcJson.jobCardDetail.roInfo` e non alterato.
 - **`json_mod`**: stessa struttura di `json_orig`, con i seguenti campi sovrascritti
@@ -125,12 +153,21 @@ const { json_orig, json_mod } = manager.SaveCustomer(
 );
 ```
 
-- **`json_orig`**: `{ roInfo: {...}, customerInfo: [{ personalInfo: { contactInfo: {...} } }] }`,
-  con il sottoinsieme base di `roInfo` e i dati di contatto correnti letti da
-  `djcJson.jobCardDetail.customerInfo[0].personalInfo.contactInfo`, non alterati.
-- **`json_mod`**: stessa struttura, con `customerInfo[0].personalInfo.contactInfo`
+- **`json_orig`**: `{ roInfo: {...}, customerInfo: [{ customerId, contactInfo: {...} }] }`,
+  con il sottoinsieme base di `roInfo`, `customerId` e i dati di contatto correnti letti
+  da `djcJson.jobCardDetail.customerInfo[0]` (`customerId`) e
+  `djcJson.jobCardDetail.customerInfo[0].personalInfo.contactInfo` (contatti — la
+  sorgente jobCardDetail annida `contactInfo` dentro `personalInfo`), non alterati.
+- **`json_mod`**: stessa struttura, con `customerInfo[0].contactInfo`
   sovrascritto con i valori ricevuti come argomento (`phone`, `mobile`, `email`,
-  `address`, `additionalAddress`).
+  `address`, `additionalAddress`). `customerId` resta invariato.
+
+> ⚠️ Nel payload inviato alla Push API SRP (`saveJobcard`), `contactInfo` è **sibling**
+> di `personalInfo` sotto `customerInfo[]`, **non** annidato in `personalInfo.contactInfo`
+> — la Push API rigetta esplicitamente quel percorso con `"customerInfo[0].personalInfo.
+> contactInfo" is not allowed`. `customerId` è inoltre obbligatorio (M(O)) quando la
+> sezione `customerInfo` è inclusa nel payload: la sua assenza fa rigettare l'intera
+> richiesta.
 
 ### `SaveVehicle`
 
@@ -184,13 +221,18 @@ const { json_orig, json_mod } = manager.SaveAppointments(
 );
 ```
 
-- **`json_orig`**: `{ roInfo: {...}, appointments: [{ reception: {...}, delivery: {...} }] }`,
+- **`json_orig`**: `{ roInfo: {...}, appointments: [{ appointmentInternalId, reception: {...}, delivery: {...} }] }`,
   con il sottoinsieme base di `roInfo` e l'appuntamento corrente letto da
-  `djcJson.jobCardDetail.appointments[0]`, non alterato.
+  `djcJson.jobCardDetail.appointments[0]` (`appointmentInternalId` incluso), non
+  alterato.
 - **`json_mod`**: stessa struttura, con `reception.{estimatedReceptionDateTime,
   receptionDateTime, receptionServiceAdvisorId, receptionServiceAdvisorName}` e
   `delivery.{estimatedDeliveryDateTime, deliveryDateTime, deliveryServiceAdvisorId,
   deliveryServiceAdvisorName}` sovrascritti con i valori ricevuti come argomento.
+  `appointmentInternalId` resta invariato.
+
+> ⚠️ `appointmentInternalId` è obbligatorio (M(O)) quando la sezione `appointments`
+> è inclusa nel payload `saveJobcard`: la sua assenza fa rigettare l'intera richiesta.
 
 ## Uso da CLI (`index.js`)
 
@@ -216,6 +258,23 @@ node index.js SaveConsents true false true false true false
 node index.js SaveAppointments "2026-01-01T09:00:00Z" "2026-01-01T09:10:00Z" SA-1 Mario "2026-01-01T17:00:00Z" "2026-01-01T17:10:00Z" SA-2 Luigi
 ```
 
+### `saveJobcard`
+
+```bash
+node index.js saveJobcard <payloadJsonFile>
+```
+
+Legge il payload JSON da inviare (tipicamente il `json_mod` prodotto da uno dei
+metodi `Save*`) da `<payloadJsonFile>` e lo invia con `POST /jobCard` usando lo
+stesso client PingFederate/DGT di `jobcard`. Richiede le variabili d'ambiente
+`JOBCARD_PING_CLIENT_ID`, `JOBCARD_PING_CLIENT_SECRET`, `DGT_CLIENT_ID`,
+`DGT_CLIENT_SECRET` (vedi `.env.example`); a differenza degli altri metodi, non
+richiede `--jobCardId`.
+
+```bash
+node index.js saveJobcard ./payload.json
+```
+
 ## Uso come Lambda
 
 Il file `index.js` espone `exports.handler`, che instrada l'evento in base al campo
@@ -235,6 +294,141 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
     "waitOnSite": false,
     "vehicleIdentificationTagNumber": "TAG-999",
     "loanerFlag": "Y"
+  }
+}
+```
+
+### `saveJobcard` (POST `/jobCard`)
+
+```json
+{
+  "action": "saveJobcard",
+  "body": {
+    "roInfo": { "jobCardSrpId": "JCID-1", "...": "..." }
+  }
+}
+```
+
+`body` è inviato tal quale come payload della `POST /jobCard` (oppure, se presente,
+`body.payload`). **API Gateway instrada le richieste POST verso la lambda `djc`**
+per questa azione; la lambda `jobcard` espone la stessa azione (`jobCardService.js::
+saveJobCard`) per chiamata diretta/CLI, ma non è il target dell'integrazione POST.
+
+#### Payload: struttura e regole di obbligatorietà
+
+Riferimento: documento **"SRP - DL DJC Post API Specification"**. Lo swagger
+`swagger-woc.yaml` (path `/api/repairorder/{method}`, `POST`, `method=save`)
+riporta lo schema completo (`JobCardSaveRequest` e schemi `JobCardSave*`) con
+esempi minimo e completo.
+
+Il payload rispecchia la struttura di `jobCardDetail` (stesse sezioni:
+`roInfo`, `customerInfo[]`, `vehicleInfo`, `contractCoverage`, `estimatesLinks[]`,
+`recallCampaigns[]`, `vor`, `vehicleReporting[]`, `jobs[]`, `consents[]`,
+`futureWorks[]`, `prepaymentInfo[]`, `appointments[]`, `mobility[]`,
+`workShopActivities[]`, `attachmentLinks`, `partOrderLinks[]`, `repairOrderDoc`,
+`communication`).
+
+**Creazione vs. aggiornamento** — il server verifica, in ordine, se esiste già
+una Job Card che soddisfa una di queste condizioni (altrimenti ne crea una nuova):
+
+1. `roInfo.jobCardSrpId` corrisponde ad una Job Card esistente;
+2. `roInfo.jobCardLegacyId` + `roInfo.dealerId` corrispondono ad una Job Card esistente;
+3. `roInfo.dmsRepairOrderId` + `roInfo.dealerId` corrispondono ad una Job Card esistente.
+
+**Campi obbligatori:**
+
+| Tipo | Campo | Note |
+|---|---|---|
+| M | `roInfo.sourceApplication` | sempre obbligatorio |
+| M | `roInfo.dealerId` | sempre obbligatorio |
+| M | `roInfo.updateDateTime` | sempre obbligatorio |
+| M(C) | `roInfo.dmsRepairOrderId` **o** `roInfo.jobCardSrpId` **o** `roInfo.jobCardLegacyId` | almeno uno dei tre deve essere presente |
+| M(O) | vedi tabella sotto | obbligatorio **solo se** la relativa sezione/array è incluso nel payload |
+
+Per i campi **M(O)**: se una sezione (array) è presente, **ogni elemento**
+dell'array deve riportare il proprio campo identificativo; in caso contrario
+l'intera richiesta viene rigettata (nessuna sezione viene aggiornata). Il
+server usa l'identificativo per decidere se creare un nuovo elemento
+dell'array oppure aggiornare quello esistente (id noto → update dei soli campi
+inviati; id non noto → create):
+
+| Sezione (array) | Campo identificativo M(O) |
+|---|---|
+| `customerInfo[]` | `customerId` |
+| `estimatesLinks[]` | `internalEstimateId` |
+| `recallCampaigns[]` | `campaignCode` |
+| `contractCoverage.contractInfo[]` | `contractCode` |
+| `jobs[]` | `jobInternalId` |
+| `jobs[].contract[]` | `contractCode` |
+| `jobs[].partInfo[]` | `partId` |
+| `jobs[].laborInfo[]` | `laborOperationId` |
+| `jobs[].externalJobLabor[]` | `externalJobId` |
+| `jobs[].freeText[]` | `textId` |
+| `jobs[].fees[]` | `feeId` |
+| `appointments[]` | `appointmentInternalId` |
+
+**Altre regole funzionali:**
+
+- **Rimozione di un elemento**: impostare `removalAction: true` sull'elemento
+  (in aggiunta al proprio campo identificativo M(O)) invece di rimuoverlo dal
+  payload. Supportato su `customerInfo[]`, `jobs[]`, `jobs[].partInfo[]`,
+  `jobs[].laborInfo[]`, `jobs[].externalJobLabor[]`, `jobs[].freeText[]`,
+  `jobs[].fees[]`. Rimuovere un `job` rimuove anche tutti i suoi sotto-elementi.
+- **Aggiornamento parziale**: per ogni elemento di un array, inviare solo i
+  campi da modificare; i campi assenti mantengono il valore attualmente
+  salvato in DJC.
+- **Azzeramento di un valore**: per nullificare un valore, inviare l'attributo
+  con valore vuoto/`null`; se un attributo non è presente nella push, il suo
+  valore in DJC non viene modificato.
+- Per il source `"PANIER"` (ServiceBox) è prevista una soluzione temporanea:
+  l'intera Job Card viene inviata ad ogni push, e DJC ricava le differenze
+  rispetto al contenuto già salvato.
+- `jobs[].freeText` è un **array** di `{ textId, textContent, removalAction }`
+  (non un singolo oggetto).
+
+**Payload minimo** (solo i campi M + M(C)):
+
+```json
+{
+  "roInfo": {
+    "dmsRepairOrderId": "DMS-PNR-100403",
+    "sourceApplication": "DMS",
+    "dealerId": "RRDI/SINCOM/OIC",
+    "brand": "0P",
+    "stellantisBrand": "AP",
+    "updateDateTime": "2026-04-10T11:55:00Z"
+  }
+}
+```
+
+**Payload completo** (esempio "Full push Request to Create a new Job card"
+tratto dal documento di specifica): vedi l'esempio `full` nello swagger
+`swagger-woc.yaml` (`requestBody.content.application/json.examples.full`).
+
+**Risposta di successo (200):**
+
+```json
+{
+  "response": {
+    "statuscode": "200",
+    "success": true,
+    "jobCardId": "JCID-609",
+    "message": "Job card Transaction Successful"
+  }
+}
+```
+
+**Risposta di errore (400/401/404/500):**
+
+```json
+{
+  "response": {
+    "status": "fail",
+    "message": "Validation error",
+    "code": "ValidationError",
+    "errors": [
+      { "message": "\"roInfo.dealerId\" is required", "path": "roInfo.dealerId" }
+    ]
   }
 }
 ```

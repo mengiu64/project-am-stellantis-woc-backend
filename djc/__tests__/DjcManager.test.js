@@ -9,6 +9,7 @@ function makeDjcJson(roInfoOverrides = {}, jobCardDetailOverrides = {}) {
   return {
     jobCardDetail: {
       roInfo: {
+        dmsRepairOrderId: 'DMS-PNR-100403',
         jobCardSrpId: 'JCID-17362',
         jobCardLegacyId: '1JSGR43CT',
         sourceApplication: 'PANIER',
@@ -30,6 +31,7 @@ function makeDjcJson(roInfoOverrides = {}, jobCardDetailOverrides = {}) {
       },
       customerInfo: [
         {
+          customerId: 'CUST-001234',
           personalInfo: {
             contactInfo: {
               phone: '+91-22-40000000',
@@ -74,6 +76,7 @@ function makeDjcJson(roInfoOverrides = {}, jobCardDetailOverrides = {}) {
       ],
       appointments: [
         {
+          appointmentInternalId: 'APT-00077',
           reception: {
             estimatedReceptionDateTime: '2025-12-05T09:30:00+05:30',
             receptionDateTime: '2025-12-05T09:45:00+05:30',
@@ -94,6 +97,7 @@ function makeDjcJson(roInfoOverrides = {}, jobCardDetailOverrides = {}) {
 }
 
 const ROINFO_BASE = {
+  dmsRepairOrderId: 'DMS-PNR-100403',
   jobCardSrpId: 'JCID-17362',
   jobCardLegacyId: '1JSGR43CT',
   sourceApplication: 'PANIER',
@@ -155,6 +159,7 @@ describe('DjcManager', () => {
 
       expect(json_orig).toEqual({
         roInfo: {
+          dmsRepairOrderId: 'DMS-PNR-100403',
           jobCardSrpId: 'JCID-17362',
           jobCardLegacyId: '1JSGR43CT',
           sourceApplication: 'PANIER',
@@ -321,14 +326,13 @@ describe('DjcManager', () => {
         roInfo: ROINFO_BASE,
         customerInfo: [
           {
-            personalInfo: {
-              contactInfo: {
-                phone: '+91-22-40000000',
-                mobile: '+91-9000000000',
-                email: 'TEST@example.com',
-                address: 'TEST',
-                additionalAddress: 'TEST',
-              },
+            customerId: 'CUST-001234',
+            contactInfo: {
+              phone: '+91-22-40000000',
+              mobile: '+91-9000000000',
+              email: 'TEST@example.com',
+              address: 'TEST',
+              additionalAddress: 'TEST',
             },
           },
         ],
@@ -343,13 +347,14 @@ describe('DjcManager', () => {
         '+39-06-1111111', '+39-333-2222222', 'new@example.com', 'Via Nuova 1', 'Scala B'
       );
 
-      expect(json_mod.customerInfo[0].personalInfo.contactInfo).toEqual({
+      expect(json_mod.customerInfo[0].contactInfo).toEqual({
         phone: '+39-06-1111111',
         mobile: '+39-333-2222222',
         email: 'new@example.com',
         address: 'Via Nuova 1',
         additionalAddress: 'Scala B',
       });
+      expect(json_mod.customerInfo[0].customerId).toBe('CUST-001234');
       expect(json_mod.roInfo).toEqual(ROINFO_BASE);
     });
 
@@ -369,9 +374,9 @@ describe('DjcManager', () => {
 
       expect(json_orig).toEqual({
         roInfo: {},
-        customerInfo: [{ personalInfo: { contactInfo: {} } }],
+        customerInfo: [{ contactInfo: {} }],
       });
-      expect(json_mod.customerInfo[0].personalInfo.contactInfo).toEqual({
+      expect(json_mod.customerInfo[0].contactInfo).toEqual({
         phone: 'p', mobile: 'm', email: 'e', address: 'a', additionalAddress: 'aa',
       });
     });
@@ -561,6 +566,7 @@ describe('DjcManager', () => {
         roInfo: ROINFO_BASE,
         appointments: [
           {
+            appointmentInternalId: 'APT-00077',
             reception: {
               estimatedReceptionDateTime: '2025-12-05T09:30:00+05:30',
               receptionDateTime: '2025-12-05T09:45:00+05:30',
@@ -594,6 +600,7 @@ describe('DjcManager', () => {
       );
 
       expect(json_mod.appointments[0]).toEqual({
+        appointmentInternalId: 'APT-00077',
         reception: {
           estimatedReceptionDateTime: '2026-01-01T09:00:00Z',
           receptionDateTime: '2026-01-01T09:10:00Z',

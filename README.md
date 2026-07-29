@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -16,6 +16,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [agendaSoaNaga](#agendasoaNaga)
    - [dms](#dms)
    - [jobcard](#jobcard)
+   - [djc](#djc)
    - [v360](#v360)
    - [pkEper](#pkeper)
    - [pkDocsoa](#pkdocsoa)
@@ -24,6 +25,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [translations](#translations)
    - [session](#session)
    - [myPeople](#mypeople)
+   - [pkFavorite](#pkfavorite)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -39,7 +41,8 @@ project-am-stellantis-woc-backend/
 ├── agendaSoa/          # Lambda – pianificazione appuntamenti (AgendaSOA REST)
 ├── agendaSoaNaga/      # Lambda – creazione/aggiornamento appuntamenti NAGA
 ├── dms/                # Lambda – DMS Settings (Stellantis DML API)
-├── jobcard/            # Lambda – JobCard list/details (Stellantis DGT API)
+├── jobcard/            # Lambda – JobCard list/details/save (Stellantis DGT API)
+├── djc/                # Lambda – Digital Job Card: costruzione payload Save* e saveJobcard (POST)
 ├── v360/               # Lambda – OTA Compatibility & Vehicle Details (ASV360 API)
 ├── pkEper/             # Lambda – Pacchetti ePer (Stellantis FCA/Fiat SOAP)
 ├── pkDocsoa/           # Lambda – Pacchetti DocSOA (Stellantis PSA REST)
@@ -47,7 +50,8 @@ project-am-stellantis-woc-backend/
 ├── pkManager/          # Lambda – Orchestratore multi-WS pacchetti (ePer/DocSOA/MenuPricing)
 ├── translations/       # Lambda – Recupero traduzioni da S3
 ├── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
-└── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
+├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
+└── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 
 ```
 
@@ -160,8 +164,8 @@ Lambda per le **impostazioni DMS** e le **richieste di inquiry** (parti/upgrade/
 | Campo | Obbligatorio | Descrizione |
 |---|---|---|
 | `PartsInquiryHeader.MessageType` | ✅ | Tipo richiesta: `LFP` \| `WL` \| `MP` |
-| `PartsInquiryHeader.DocumentID` | ✅ | Numero Repair Order univoco |
-| `PartsInquiryHeader.CustomerIdDms` | ✅ | ID cliente nel DMS |
+| `PartsInquiryHeader.DocumentID` | ❌ | Numero Repair Order univoco. Contenuto non obbligatorio (può essere sconosciuto/omesso, es. per `LFP` quando l'ordine di riparazione non esiste ancora), ma il DML richiede comunque la chiave presente: se assente/`null`/`undefined`, viene inviata come stringa vuota `''` |
+| `PartsInquiryHeader.CustomerIdDms` | ❌ | ID cliente nel DMS. Come `DocumentID`, contenuto non obbligatorio: se assente/`null`/`undefined`, viene inviata come `null` (chiave sempre presente) |
 | `PartsInquiryHeader.VehicleID` | ✅ | VIN del veicolo |
 | `ApplicationArea` | ✅ | Mittente, timestamp e BODID (UUID) |
 | `UpSelling.Packages` | ❌ | Usato per `LFP` |
@@ -196,6 +200,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) |
 | `jobCardService` | `getJobCardList(token, params)` | Lista JobCard con filtri e paginazione |
 | `jobCardService` | `getJobCardDetails(token, jobCardId)` | Dettaglio di una singola JobCard |
+| `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -215,14 +220,92 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `sortBy` | ❌ | Campo di ordinamento |
 | `sortOrder` | ❌ | `asc` / `desc` |
 
+#### Arricchimento risposta `getJobCardDetails`
+
+Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDetails` con campi calcolati non presenti nella risposta originale della DGT API:
+
+- **`jobs[].packageType` / `jobs[].packageCharge`** — aggiunti a ciascun job (posizionati prima di `partInfo`/`laborInfo` quando presenti), derivati da `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` con `packageCode` valorizzato → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` senza `packageCode` (o assente/vuoto/`null` di `jobType`) → `GC`/`CUSTOMER`; qualsiasi altro `jobType` non vuoto → `GC`/`INTERNAL`. Se il job ha `paymentType` valorizzato, questo sovrascrive sempre `packageCharge` (il `packageType` resta invariato).
+- **`roInfo.roSource`** — aggiunto subito dopo `roInfo.sourceApplication`, con lo stesso valore.
+
+Vedi `jobcard/README.md` per la tabella completa delle regole.
+
+#### `saveJobcard` (POST `/jobCard`)
+
+Azione che invia (POST) un payload di **Digital Job Card** alla Push API SRP per
+creare/aggiornare una Job Card — condivisa (stesso client PingFederate/DGT) con
+la lambda **[djc](#djc)**, che ne è la declinazione dedicata alla costruzione dei
+payload (`Save*`). **API Gateway instrada le richieste POST verso la lambda
+`djc`**; questa azione resta disponibile qui per chiamata diretta/CLI e per
+coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
+esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
+`jobcard/README.md` e `djc/README.md`.
+
 #### Utilizzo CLI
 
 ```bash
 node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
+node index.js saveJobcard <payloadJsonFile>
 # es: node index.js list 0062219 vin=VIN123 page=2
 # es: node index.js details 79
+# es: node index.js saveJobcard ./payload.json
 ```
+
+---
+
+### djc
+
+Lambda **Digital Job Card**: declinazione della lambda `jobcard` dedicata alla
+costruzione dei payload da inviare alla **Push API SRP** (Digital Layer) e al
+loro invio effettivo. Legge il contenuto di riferimento (`jobCardDetail`) da
+`/tmp/<jobCardId>.json` (salvato lì dalla lambda `jobcard` durante una
+`getJobCardDetails`, per evitare una nuova chiamata a DGT) oppure, se
+`jobCardId` non è disponibile (uso locale/CLI), da un'istantanea statica di
+riferimento (`get.json`).
+
+#### Funzioni principali
+
+| Modulo | Funzione | Descrizione |
+|---|---|---|
+| `DjcManager` | `Save*(...)` | Costruisce `json_orig`/`json_mod` per una sezione della Job Card (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`) |
+| `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) — copia sincronizzata di `jobcard/authService.js` |
+| `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`) — copia sincronizzata di `jobcard/jobCardService.js` |
+| `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js — copia di `jobcard/httpClient.js` |
+
+> `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
+> omonimi file di `jobcard`: usano lo stesso client PingFederate/DGT (stesse
+> credenziali/URL delle `GET /jobCardList` e `/jobCardDetails` di `jobcard`).
+
+#### `saveJobcard` (POST `/jobCard`)
+
+Azione che invia effettivamente alla Push API SRP il payload di Digital Job
+Card (tipicamente il `json_mod` prodotto da uno dei metodi `Save*`). È
+**replicata identica** nella lambda `jobcard` (stesso `jobCardService.js::
+saveJobCard`), ma **API Gateway instrada le richieste POST verso la lambda
+`djc`**, non verso `jobcard`.
+
+Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
+tabella degli identificativi per array, semantica `removalAction`/update
+parziale, payload minimo/completo e risposte di esempio — riferimento al
+documento **"SRP - DL DJC Post API Specification"** — sono documentate in
+dettaglio in `djc/README.md` e nello schema `JobCardSaveRequest` di
+`swagger-woc.yaml` (`POST /api/repairorder/{method}`, `method=save`).
+
+#### Utilizzo CLI
+
+```bash
+node index.js SaveRoInfo <interiorCarWash> <exteriorCarWash> <old> <original> <returned> <circularEconomy> <obfcm> <waitOnSite> <vehicleIdentificationTagNumber> <loanerFlag>
+node index.js SaveDmsSync <dmsSynchroStatus>
+node index.js SaveCustomer <phone> <mobile> <email> <address> <additionalAddress>
+node index.js SaveVehicle <licensePlate> <odometerOut> <mileageUnits> <fuelReserveLevel> <batteryReserveLevel>
+node index.js SaveJobs
+node index.js SaveConsents <channelCode1> <channelCode2> <channelCode3> <channelCode4> <channelCode5> <channelCode6>
+node index.js SaveAppointments <estimatedReceptionDateTime> <receptionDateTime> <receptionServiceAdvisorId> <receptionServiceAdvisorName> <estimatedDeliveryDateTime> <deliveryDateTime> <deliveryServiceAdvisorId> <deliveryServiceAdvisorName>
+node index.js saveJobcard <payloadJsonFile>
+```
+
+Vedi `djc/README.md` per la descrizione completa di ogni metodo, i parametri e
+l'uso come Lambda (`exports.handler`, dispatch per `action`).
 
 ---
 
@@ -382,8 +465,12 @@ Lambda orchestratore che gestisce la **configurazione e la validazione dei pacch
 | `getConfigPackages` | `manager.getConfigPackages(market, pkwstouse)` | Configurazione statica pacchetti per il ws indicato |
 | `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersezione tra config e pacchetti live dal WS |
 | `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + dettaglio di ogni pacchetto in parallelo |
+| `getPriceAndAvailability` | `manager.getPriceAndAvailability(market, pkwstouse, VIN)` | `getValidPackagesDetail` + arricchimento `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga di `listaOperazioni`/`listaRicambi` |
+| `getPkList` | `manager.getPkList(market, pkwstouse, VIN)` | Orchestratore end-to-end: come `getPriceAndAvailability`, ma **normalizza** ogni pacchetto allo stesso set di chiavi (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), a prescindere dal `pkwstouse` di origine |
 
 `pkwstouse` accetta i valori: `eper`, `docsoa`, `menupricing`.
+
+Ogni dettaglio pacchetto riporta anche `isFixedPrice`/`packageType`: sempre `"0"`/`"QE"` per `eper`; per `menupricing`/`docsoa`, `"1"`/`"FP"` se il pacchetto è a prezzo fisso (promozione "Lex" per menupricing, forfait `ibxDetailForfaitService` per docsoa), altrimenti `"0"`/`"QE"`. Per `docsoa`, se il forfait non viene trovato si tenta un fallback su `ibxDetailtpService` (tempario). Vedi `pkManager/README.md` per il dettaglio completo.
 
 > ⚠️ **Nota**: `getValidPackages`/`getValidPackagesDetail` invocano internamente metodi (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) non ancora implementati sui client `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient`. Da completare prima di un utilizzo in produzione di queste due action.
 
@@ -461,6 +548,7 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) in `dms/settings`, altrimenti `null` |
 | `dmldiscount` | valore della prima chiave di `dms/settings` contenente `discount`, altrimenti `null` |
 | `oics` | intero array `Response.User.OICs` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `MARKET`→`market`, `CODE`→`code`, `BRANDS`→`brands`, ...) |
+| `applications` | intero array `Response.User.Applications` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `APPLICATION`→`application`, `PROFILE`→`profile`, `STATUS`→`status`, `MARKET`→`market`) |
 | tutti gli altri campi | `null` (non derivabili da myPeople/dms) |
 
 #### Funzioni principali
@@ -556,6 +644,37 @@ node index.js <username>
 
 ---
 
+### pkFavorite
+
+Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per singolo pacchetto + elenco per VIN). I dati sono persistiti su tabella `PKFAVORITE` in **PostgreSQL** (cluster Aurora `rds-np-bsn0027990-dev-aurora`, raggiunto tramite **RDS Proxy**, non direttamente). Le credenziali del DB vengono lette da **AWS Secrets Manager** tramite l'[AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (stesso pattern di `myPeople`), riusando il layer esistente `MyPeopleExtensionLayerArn`.
+
+#### Funzioni principali
+
+| Modulo | Funzione | Descrizione |
+|---|---|---|
+| `db` | `fetchSecretJson(secretId)` | Recupera e fa il parse JSON di un secret da Secrets Manager tramite l'extension Lambda |
+| `db` | `getPool()` | Costruisce (e cachea) un `pg.Pool`: usa le credenziali da env se presenti, altrimenti le recupera da Secrets Manager |
+| `FavoriteRepository` | `listFavorites(pool, { username, vin })` | Elenca i pacchetti preferiti di un dealer per un VIN, ordinati per `created_at` |
+| `FavoriteRepository` | `toggleFavorite(pool, { username, vin, packageCode })` | Elimina il preferito se già presente, altrimenti lo crea (toggle) |
+
+#### Contratto API
+
+| Metodo | Parametri | Descrizione |
+|---|---|---|
+| `GET` | `vin` (query, obbligatorio) | Elenca i pacchetti preferiti dell'utente autenticato per il VIN indicato |
+| `POST` | `vin`, `packageCode` (body, obbligatori) | Aggiunge/rimuove (toggle) il pacchetto preferito |
+
+> **Sicurezza:** lo `username` **non** viene mai letto dal body quando è presente un contesto di autenticazione (`event.requestContext.authorizer.sub`): in quel caso è l'unica fonte accettata (401 se assente). Il fallback su `body.username` è consentito solo in assenza totale di `authorizer` (comodo per test CLI/invocazione diretta), stesso identico criterio già adottato in `session`.
+
+#### Utilizzo CLI
+
+```bash
+node index.js list <username> <vin>
+node index.js toggle <username> <vin> <packageCode>
+```
+
+---
+
 ## Installazione
 
 Ogni modulo è indipendente. Installare le dipendenze separatamente:
@@ -565,6 +684,7 @@ cd agendaSoa      && npm install
 cd agendaSoaNaga  && npm install
 cd dms            && npm install
 cd jobcard        && npm install
+cd djc            && npm install
 cd v360           && npm install
 cd pkEper         && npm install
 cd pkDocsoa       && npm install
@@ -573,6 +693,7 @@ cd pkManager      && npm install
 cd translations   && npm install
 cd session        && npm install
 cd myPeople       && npm install
+cd pkFavorite     && npm install
 ```
 
 ---
@@ -609,6 +730,19 @@ JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate (dedicato jobca
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT
 ```
+
+### djc
+
+```env
+JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate — stesso client di jobcard (richiesto solo per saveJobcard)
+JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate — stesso client di jobcard (richiesto solo per saveJobcard)
+DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT (richiesto solo per saveJobcard)
+DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT (richiesto solo per saveJobcard)
+```
+
+> Non richieste per i metodi `Save*` (che costruiscono solo `json_orig`/`json_mod`
+> in locale) — solo per `saveJobcard`, che invia effettivamente il payload alla
+> Push API SRP.
 
 ### v360
 
@@ -714,6 +848,20 @@ MYPEOPLE_IDENTIFIER=...              # Identificativo richiesta/dispositivo (UUI
 
 > **Nota:** certificato e chiave mTLS **non** vanno messi nel `.env`: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension (layer aggiunto alla Lambda in `template.yaml`).
 
+### pkFavorite
+
+```env
+PKFAVORITE_DB_HOST=rdsproxy-np-bsn0027990-dev.proxy-xxxx.eu-west-1.rds.amazonaws.com  # Host RDS Proxy (obbligatoria)
+PKFAVORITE_DB_PORT=5432                    # (opzionale) default 5432
+PKFAVORITE_DB_NAME=wiadvisor               # (opzionale) default wiadvisor
+PKFAVORITE_DB_USER=...                     # (opzionale) se assente, letto da Secrets Manager
+PKFAVORITE_DB_PASSWORD=...                 # (opzionale) se assente, letto da Secrets Manager
+PKFAVORITE_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (opzionale) id secret con user/password/dbname/port
+PKFAVORITE_DB_SSL=true                     # (opzionale) default true
+```
+
+> **Nota:** user/password del DB **non** vanno messi nel `.env` in produzione: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension, stesso layer riusato da `myPeople`. La connessione avviene sempre tramite **RDS Proxy**, non direttamente sul cluster Aurora.
+
 ---
 
 ## Unit Test & Coverage
@@ -742,7 +890,8 @@ cd agendaSoa && npm run test:coverage
 | **agendaSoa** | 7 | 81 | `index`, `agendaSOAClient`, `clientFactory`, `handlers/*` |
 | **agendaSoaNaga** | 5 | 39 | `index`, `agendaNagaClient`, `clientFactory`, `handlers/*` |
 | **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
-| **jobcard** | 3 | 28 | `httpClient`, `authService`, `jobCardService` |
+| **jobcard** | 3 | 67 | `httpClient`, `authService`, `jobCardService` |
+| **djc** | 4 | 61 | `httpClient`, `authService`, `jobCardService`, `DjcManager` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
 | **pkEper** | 1 | 19 | `WsIQPckEper` |
 | **pkDocsoa** | 2 | 40 | `DocSOARestClient`, `certService` |
@@ -751,7 +900,7 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
-| **Totale** | **42** | **458** | |
+| **Totale** | **46** | **558** | |
 
 ### Copertura del codice
 
@@ -760,7 +909,8 @@ cd agendaSoa && npm run test:coverage
 | **agendaSoa** | 100% ✅ | 96.96% ✅ | 100% ✅ | 100% ✅ |
 | **agendaSoaNaga** | 100% ✅ | 92.68% ✅ | 100% ✅ | 100% ✅ |
 | **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
-| **jobcard** | 100% ✅ | 96.66% ✅ | 100% ✅ | 100% ✅ |
+| **jobcard** | 99.06% ✅ | 93.89% ✅ | 100% ✅ | 100% ✅ |
+| **djc** | 99.45% ✅ | 97.05% ✅ | 100% ✅ | 100% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
 | **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
 | **pkDocsoa** | 97.61% ✅ | 93.70% ✅ | 100% ✅ | 98.97% ✅ |
@@ -804,12 +954,17 @@ cd agendaSoa && npm run test:coverage
 #### dms / jobcard / v360
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
-- **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/DocumentID/CustomerIdDms/VehicleID), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
-- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP
+- **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
+- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP
+
+#### djc
+- **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
+- **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`
+- **DjcManager** – costruttore (`djcJson` esplicito, lettura da `/tmp/<jobCardId>.json`, fallback su `get.json`, errore su file assente/illeggibile), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – costruzione envelope/richiesta SOAP-REST, parsing risposta, gestione errori HTTP/SOAP, tutti i metodi pubblici del client
-- **PkManager** – costruttore (config da env vars), `getConfigPackages` (mappa statica per ws), `getValidPackages` (intersezione config/WS live), `getValidPackagesDetail` (dettaglio parallelo), `_fetchDetail`/`_fetchLiveMap` con mock dei tre client sibling
+- **PkManager** – costruttore (config da env vars), `getConfigPackages` (mappa statica per ws), `getValidPackages` (intersezione config/WS live), `getValidPackagesDetail` (dettaglio parallelo, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalizzazione via `_normalizePkDetail`, gestione elementi in errore), fallback docsoa forfait→tempario (`ibxDetailtpService`, uso di `rowData.ref` come `refTp`), `_fetchDetail`/`_fetchLiveMap` con mock dei tre client sibling
 
 #### translations
 - **index** – dispatch CLI/Lambda verso l'handler `translations`
@@ -824,7 +979,7 @@ cd agendaSoa && npm run test:coverage
 - **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND`, messaggio con il mercato/utente richiesto e `label` opzionale (`"il mercato"` di default, `"l'utente"` per il flusso username)
 - **sessionRepository** – la classe base lancia errore "non implementato"
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
-- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione (incluso `oics`, l'intero blocco `OICs` di myPeople con chiavi in minuscolo), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`), `oics: []` quando myPeople non restituisce OIC; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
+- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione (incluso `oics`/`applications`, gli interi blocchi `OICs`/`Applications` di myPeople con chiavi in minuscolo), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `dms/settings` (errore wrappato), fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`), `oics: []`/`applications: []` quando myPeople non restituisce OIC/Applications, `applications` assente dal blocco `User`; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms` quando non sono iniettate funzioni mock
 - **repositoryFactory** – costruzione dell'istanza di default e con override, sia per `buildRepository` (S3) che per `buildMyPeopleDmsRepository` (myPeople/dms)
 
 #### myPeople

@@ -10,17 +10,18 @@ const config = require('./config');
 /**
  * Builds common HTTPS request options for DGT API calls.
  * @param {string} path         - API path (e.g. '/jobCardList')
+ * @param {string} method       - HTTP method ('GET'|'POST'|...)
  * @param {object} extraHeaders - additional request headers (parameters included)
- * @param {string} bearerToken  - Bearer token
+ * @param {string} bearerToken  - Bearer token value
  * @returns {object} https.request options
  */
-function buildDgtOptions(path, extraHeaders, bearerToken) {
+function buildDgtOptions(path, method, extraHeaders, bearerToken) {
   const base = new URL(config.dgt.baseUrl);
   return {
     hostname: base.hostname,
     port: base.port || 443,
     path: `${config.dgt.basePath}${path}`,
-    method: 'GET',
+    method,
     headers: {
       'X-IBM-Client-Id': config.dgt.clientId,
       'X-IBM-Client-Secret': config.dgt.clientSecret,
@@ -94,7 +95,7 @@ async function getJobCardList(bearerToken, params = {}) {
   if (sortBy)             headers.sortBy             = sortBy;
   if (sortOrder)          headers.sortOrder          = sortOrder;
 
-  const options = buildDgtOptions('/jobCardList', headers, bearerToken);
+  const options = buildDgtOptions('/jobCardList', 'GET', headers, bearerToken);
 
   console.log(`[jobCard] GET jobCardList - dealerId: ${dealerId}`);
   const response = await httpsRequest(options);
@@ -180,22 +181,81 @@ function computePackageInfo(job) {
 }
 
 /**
+ * Returns a copy of the job with packageType/packageCharge inserted right
+ * before partInfo/laborInfo (whichever comes first), so that they stay easy
+ * to spot instead of being buried after the (often long) parts/labor arrays.
+ * If neither partInfo nor laborInfo is present, they are simply appended.
+ * @param {object} job            - original job entry
+ * @param {string} packageType    - computed packageType
+ * @param {string} packageCharge  - computed packageCharge
+ * @returns {object} new job object with the same keys, reordered
+ */
+function insertPackageInfoBeforePartsAndLabor(job, packageType, packageCharge) {
+  const entries      = Object.entries(job);
+  const insertIndex  = entries.findIndex(([key]) => key === 'partInfo' || key === 'laborInfo');
+  const packageEntries = [['packageType', packageType], ['packageCharge', packageCharge]];
+
+  const newEntries = insertIndex === -1
+    ? [...entries, ...packageEntries]
+    : [...entries.slice(0, insertIndex), ...packageEntries, ...entries.slice(insertIndex)];
+
+  return Object.fromEntries(newEntries);
+}
+
+/**
  * Adds packageType and packageCharge to every entry of jobCardDetail.jobs in
- * a jobCardDetails response body, in place. See computePackageInfo for the
- * derivation rules.
+ * a jobCardDetails response body. The two fields are placed right before
+ * partInfo/laborInfo for readability (see computePackageInfo for the
+ * derivation rules), which requires replacing each job with a reordered copy.
  * @param {object} body - jobCardDetails response body
  * @returns {object} the same body, with packageType/packageCharge added to jobs
  */
 function enrichJobsWithPackageInfo(body) {
   const jobs = body?.jobCardDetail?.jobs;
   if (Array.isArray(jobs)) {
-    for (const job of jobs) {
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
       if (job && typeof job === 'object') {
         const { packageType, packageCharge } = computePackageInfo(job);
-        job.packageType   = packageType;
-        job.packageCharge = packageCharge;
+        jobs[i] = insertPackageInfoBeforePartsAndLabor(job, packageType, packageCharge);
       }
     }
+  }
+  return body;
+}
+
+/**
+ * Returns a copy of obj with a new key inserted right after an existing key
+ * (or appended at the end if that key is not found), preserving all other
+ * keys/order. Used to keep derived fields close to the field they mirror.
+ * @param {object} obj      - source object
+ * @param {string} afterKey - key after which the new key should be inserted
+ * @param {string} newKey   - key to insert
+ * @param {*} value         - value for newKey
+ * @returns {object} new object with the same keys plus newKey, reordered
+ */
+function insertKeyAfter(obj, afterKey, newKey, value) {
+  const entries  = Object.entries(obj);
+  const idx      = entries.findIndex(([key]) => key === afterKey);
+  const newEntry = [newKey, value];
+
+  const newEntries = idx === -1
+    ? [...entries, newEntry]
+    : [...entries.slice(0, idx + 1), newEntry, ...entries.slice(idx + 1)];
+
+  return Object.fromEntries(newEntries);
+}
+
+/**
+ * Adds roInfo.roSource to a jobCardDetails response body, mirroring
+ * roInfo.sourceApplication (placed right after it for readability).
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with roInfo.roSource added
+ */
+function addRoSource(body) {
+  const roInfo = body?.jobCardDetail?.roInfo;
+  if (roInfo && typeof roInfo === 'object') {
+    body.jobCardDetail.roInfo = insertKeyAfter(roInfo, 'sourceApplication', 'roSource', roInfo.sourceApplication);
   }
   return body;
 }
@@ -216,6 +276,7 @@ function sanitizeJobCardDetails(body) {
     }
   }
   enrichJobsWithPackageInfo(body);
+  addRoSource(body);
   return body;
 }
 
@@ -248,7 +309,7 @@ async function getJobCardDetails(bearerToken, jobCardId) {
     throw new Error('[jobCard] jobCardId is required');
   }
 
-  const options = buildDgtOptions('/jobCardDetails', { jobCardId: String(jobCardId) }, bearerToken);
+  const options = buildDgtOptions('/jobCardDetails', 'GET', { jobCardId: String(jobCardId) }, bearerToken);
 
   console.log(`[jobCard] GET jobCardDetails - jobCardId: ${jobCardId}`);
   const response = await httpsRequest(options);
@@ -265,4 +326,40 @@ async function getJobCardDetails(bearerToken, jobCardId) {
   return sanitized;
 }
 
-module.exports = { getJobCardList, getJobCardDetails };
+/**
+ * Calls the jobCard (POST) endpoint to persist a Digital Job Card payload —
+ * i.e. the same "declination" (djc) payload built by djc/DjcManager.js
+ * Save* methods (json_mod). Uses the same PingFederate/DGT client
+ * (config.js/authService.js/httpClient.js) as getJobCardList/getJobCardDetails,
+ * only the HTTP method and path differ (POST /jobCard vs GET /jobCardList|
+ * /jobCardDetails).
+ * @param {string} bearerToken - Bearer token from PingFederate
+ * @param {object} payload     - Digital Job Card payload to persist
+ * @returns {Promise<object>} parsed response body
+ */
+async function saveJobCard(bearerToken, payload) {
+  if (payload === undefined || payload === null || typeof payload !== 'object') {
+    throw new Error('[jobCard] payload is required');
+  }
+
+  const body = JSON.stringify(payload);
+  const options = buildDgtOptions(
+    '/jobCard',
+    'POST',
+    { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    bearerToken
+  );
+
+  console.log('[jobCard] POST jobCard');
+  const response = await httpsRequest(options, body);
+
+  if (response.statusCode !== 200 && response.statusCode !== 201) {
+    throw new Error(
+      `[jobCard] jobCard failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}`
+    );
+  }
+
+  return response.body;
+}
+
+module.exports = { getJobCardList, getJobCardDetails, saveJobCard };

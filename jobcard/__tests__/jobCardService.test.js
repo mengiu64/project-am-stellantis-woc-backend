@@ -20,7 +20,7 @@ jest.mock('fs');
 
 const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
-const { getJobCardList, getJobCardDetails } = require('../jobCardService');
+const { getJobCardList, getJobCardDetails, saveJobCard } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -214,6 +214,37 @@ describe('jobCardService', () => {
     await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
   });
 
+  // ── roInfo.roSource enrichment ───────────────────────────────────────────────
+
+  describe('roSource enrichment', () => {
+    test('mirrors roInfo.sourceApplication into roInfo.roSource, placed right after it', async () => {
+      const body = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-504', sourceApplication: 'PANIER', dealerId: '017721L' },
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      const result = await getJobCardDetails('token', '79');
+
+      expect(result.jobCardDetail.roInfo.roSource).toBe('PANIER');
+      expect(Object.keys(result.jobCardDetail.roInfo)).toEqual([
+        'jobCardSrpId', 'sourceApplication', 'roSource', 'dealerId',
+      ]);
+    });
+
+    test('does not fail when roInfo or sourceApplication is missing', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+
+      const body = { jobCardDetail: { roInfo: { dealerId: '017721L' } } };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+      const result = await getJobCardDetails('token', '79');
+      expect(result.jobCardDetail.roInfo.roSource).toBeUndefined();
+      expect(result.jobCardDetail.roInfo.dealerId).toBe('017721L');
+    });
+  });
+
   // ── packageType / packageCharge enrichment on jobs ──────────────────────────
 
   describe('packageType/packageCharge enrichment', () => {
@@ -304,6 +335,53 @@ describe('jobCardService', () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
       await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
     });
+
+    test('places packageType/packageCharge before partInfo when partInfo is present', async () => {
+      const [job] = await detailsFor([
+        {
+          jobInternalId: 'j1',
+          jobType: 'STD',
+          packageCode: '42001A',
+          partInfo: [{ partId: '1' }],
+        },
+      ]);
+      expect(Object.keys(job)).toEqual([
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo',
+      ]);
+    });
+
+    test('places packageType/packageCharge before laborInfo when laborInfo is present', async () => {
+      const [job] = await detailsFor([
+        {
+          jobInternalId: 'j1',
+          jobType: 'MFP',
+          laborInfo: [{ laborOperationId: '1' }],
+        },
+      ]);
+      expect(Object.keys(job)).toEqual([
+        'jobInternalId', 'jobType', 'packageType', 'packageCharge', 'laborInfo',
+      ]);
+    });
+
+    test('places packageType/packageCharge before whichever of partInfo/laborInfo comes first', async () => {
+      const [job] = await detailsFor([
+        {
+          jobInternalId: 'j1',
+          jobType: 'STD',
+          packageCode: '42001A',
+          partInfo: [{ partId: '1' }],
+          laborInfo: [{ laborOperationId: '1' }],
+        },
+      ]);
+      expect(Object.keys(job)).toEqual([
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'laborInfo',
+      ]);
+    });
+
+    test('appends packageType/packageCharge at the end when neither partInfo nor laborInfo is present', async () => {
+      const [job] = await detailsFor([{ jobInternalId: 'j1', jobType: 'STD' }]);
+      expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge']);
+    });
   });
 
   // ── /tmp persistence (readable later by djc lambda) ─────────────────────────
@@ -388,5 +466,77 @@ describe('jobCardService', () => {
     expect(options.headers.dealerId).toBe('0062219');
     expect(options.headers.vin).toBeUndefined();
     expect(result).toEqual({ items: [] });
+  });
+
+  // ── saveJobCard ──────────────────────────────────────────────────────────────
+
+  describe('saveJobCard', () => {
+    test('throws if payload is missing', async () => {
+      await expect(saveJobCard('token', undefined)).rejects.toThrow('[jobCard] payload is required');
+      await expect(saveJobCard('token', null)).rejects.toThrow('[jobCard] payload is required');
+    });
+
+    test('throws if payload is not an object', async () => {
+      await expect(saveJobCard('token', 'not-an-object')).rejects.toThrow('[jobCard] payload is required');
+    });
+
+    test('calls httpsRequest with POST method and correct path', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { success: true } });
+
+      await saveJobCard('token', { roInfo: { jobCardSrpId: 'JCID-1' } });
+
+      const [options] = httpsRequest.mock.calls[0];
+      expect(options.method).toBe('POST');
+      expect(options.path).toContain('/jobCard');
+      expect(options.path).not.toContain('/jobCardList');
+      expect(options.path).not.toContain('/jobCardDetails');
+      expect(options.hostname).toBe('api.dgt.test');
+    });
+
+    test('sends the JSON-serialized payload as request body with Content-Type/Content-Length headers', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = { roInfo: { jobCardSrpId: 'JCID-1' } };
+      await saveJobCard('token', payload);
+
+      const [options, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual(payload);
+      expect(options.headers['Content-Type']).toBe('application/json');
+      expect(options.headers['Content-Length']).toBe(Buffer.byteLength(JSON.stringify(payload)));
+    });
+
+    test('includes IBM client credentials and Authorization header', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      await saveJobCard('bearer-token', { roInfo: {} });
+
+      const [options] = httpsRequest.mock.calls[0];
+      expect(options.headers['X-IBM-Client-Id']).toBe('dgt-client-id');
+      expect(options.headers['X-IBM-Client-Secret']).toBe('dgt-client-secret');
+      expect(options.headers.Authorization).toBe('Bearer bearer-token');
+    });
+
+    test('returns response body on 200 success', async () => {
+      const body = { success: true, jobCardId: '79' };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      const result = await saveJobCard('token', { roInfo: {} });
+      expect(result).toEqual(body);
+    });
+
+    test('returns response body on 201 success', async () => {
+      const body = { success: true, jobCardId: '79' };
+      httpsRequest.mockResolvedValue({ statusCode: 201, headers: {}, body });
+
+      const result = await saveJobCard('token', { roInfo: {} });
+      expect(result).toEqual(body);
+    });
+
+    test('throws on HTTP error', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 500, headers: {}, body: { error: 'server error' } });
+
+      await expect(saveJobCard('token', { roInfo: {} }))
+        .rejects.toThrow('[jobCard] jobCard failed: HTTP 500');
+    });
   });
 });

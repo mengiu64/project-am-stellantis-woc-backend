@@ -1,7 +1,7 @@
 # JobCard Lambda
 
 Client Node.js per l'integrazione con le API Stellantis DGT (Digital Layer).  
-Ottiene un Bearer token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**.
+Ottiene un token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**, e per inviare (**JobCard Save**) i payload di Digital Job Card costruiti dalla lambda `djc`.
 
 ---
 
@@ -12,7 +12,7 @@ jobcard/
 ├── config.js          # Credenziali e URL di tutti i servizi
 ├── httpClient.js      # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js     # Autenticazione PingFederate → Bearer token
-├── jobCardService.js  # getJobCardList / getJobCardDetails
+├── jobCardService.js  # getJobCardList / getJobCardDetails / saveJobCard
 ├── index.js           # Entry point CLI
 └── package.json
 ```
@@ -35,11 +35,12 @@ jobcard/
 ```
 index.js
    │
-   ├─► authService.js  ──POST──► PingFederate  →  Bearer token
+   ├─► authService.js  ──POST──► PingFederate  →  token
    │
    └─► jobCardService.js
-           ├─► getJobCardList(token, dealerId)    ──GET──► /jobCardList
-           └─► getJobCardDetails(token, jobCardId) ──GET──► /jobCardDetails
+           ├─► getJobCardList(token, dealerId)     ──GET──►  /jobCardList
+           ├─► getJobCardDetails(token, jobCardId)  ──GET──►  /jobCardDetails
+           └─► saveJobCard(token, payload)          ──POST──► /jobCard
 ```
 
 ---
@@ -89,6 +90,98 @@ node index.js details 79
 | `X-IBM-Client-Secret` | configurato in `config.js` |
 | `jobCardId` | parametro di input |
 | `Authorization` | `Bearer <token>` |
+
+---
+
+### JobCard Save
+
+Invia (POST) un payload di Digital Job Card alla Push API SRP. Il payload è
+tipicamente il `json_mod` prodotto da uno dei metodi `Save*` della lambda `djc`
+(`SaveRoInfo`, `SaveCustomer`, ...): questa azione ne effettua l'invio effettivo
+usando lo stesso client PingFederate/DGT di `getJobCardList`/`getJobCardDetails`.
+
+```bash
+node index.js saveJobcard <payloadJsonFile>
+```
+
+**Esempio:**
+```bash
+node index.js saveJobcard ./payload.json
+```
+
+**Header inviati:**
+| Header | Valore |
+|---|---|
+| `X-IBM-Client-Id` | configurato in `config.js` |
+| `X-IBM-Client-Secret` | configurato in `config.js` |
+| `Content-Type` | `application/json` |
+| `Authorization` | `Bearer <token>` |
+
+> **Nota**: `saveJobcard` (POST `/jobCard`) è la stessa azione esposta anche dalla
+> lambda `djc` (stesso client PingFederate/DGT). **API Gateway instrada le
+> richieste POST verso la lambda `djc`**; questa azione resta disponibile qui per
+> chiamata diretta/CLI e per coerenza tra le due lambda.
+
+**Payload e obbligatorietà**: il payload (`roInfo` obbligatorio, più le sezioni
+opzionali `customerInfo[]`, `vehicleInfo`, `jobs[]`, ecc.) segue le stesse
+regole di obbligatorietà (M/M(O)/M(C)) e le stesse regole di
+creazione/aggiornamento del documento **"SRP - DL DJC Post API Specification"**,
+documentate in dettaglio in [`djc/README.md`](../djc/README.md#payload-struttura-e-regole-di-obbligatorietà)
+e nello schema `JobCardSaveRequest` di `swagger-woc.yaml`
+(`POST /api/repairorder/{method}`, `method=save`).
+
+**Payload minimo:**
+
+```json
+{
+  "roInfo": {
+    "dmsRepairOrderId": "DMS-PNR-100403",
+    "sourceApplication": "DMS",
+    "dealerId": "RRDI/SINCOM/OIC",
+    "brand": "0P",
+    "stellantisBrand": "AP",
+    "updateDateTime": "2026-04-10T11:55:00Z"
+  }
+}
+```
+
+**Risposta di successo (200):**
+
+```json
+{
+  "response": {
+    "statuscode": "200",
+    "success": true,
+    "jobCardId": "JCID-609",
+    "message": "Job card Transaction Successful"
+  }
+}
+```
+
+---
+
+### Arricchimento della risposta `getJobCardDetails`
+
+Prima di essere restituita, la risposta di `getJobCardDetails` viene arricchita da `sanitizeJobCardDetails` con i seguenti campi calcolati (non presenti nella risposta originale della DGT API):
+
+#### `jobs[].packageType` / `jobs[].packageCharge`
+
+Aggiunti a ciascun elemento di `jobs`, posizionati **prima** di `partInfo`/`laborInfo` quando presenti (per leggibilità). Derivati da `jobType`/`packageCode` del job:
+
+| `jobType`                              | `packageCode`            | `packageType` | `packageCharge`                                  |
+|-----------------------------------------|---------------------------|----------------|---------------------------------------------------|
+| `MFP`                                    | -                          | `FP`           | `CUSTOMER`                                        |
+| `STD`                                    | presente (non vuoto/null) | `QE`           | `CUSTOMER`                                        |
+| `LFP`                                    | -                          | `LFP`          | `CUSTOMER`                                        |
+| `STD`                                    | assente/vuoto/null        | `GC`           | `CUSTOMER`                                        |
+| assente/vuoto/null                       | -                          | `GC`           | `CUSTOMER`                                        |
+| qualsiasi altro valore non vuoto/null   | -                          | `GC`           | `INTERNAL`                                        |
+
+Se il job ha un campo `paymentType` valorizzato, `packageCharge` assume **sempre** quel valore (sovrascrive il risultato della tabella sopra); `packageType` resta invece sempre derivato da `jobType`/`packageCode` come sopra.
+
+#### `roInfo.roSource`
+
+Aggiunto subito dopo `roInfo.sourceApplication`, con lo **stesso valore** di quest'ultimo (se `roInfo`/`sourceApplication` sono assenti, `roSource` non viene aggiunto).
 
 ---
 

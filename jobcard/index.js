@@ -4,8 +4,9 @@
  * index.js — Entry point
  *
  * Usage:
- *   node index.js list    <dealerId> [options]
- *   node index.js details <jobCardId>
+ *   node index.js list       <dealerId> [options]
+ *   node index.js details    <jobCardId>
+ *   node index.js saveJobcard <payloadJsonFile>
  *
  * Options for "list" (key=value):
  *   vin=<value>
@@ -25,14 +26,20 @@
  *   node index.js list 0062219 page=2 pageSize=10 sortBy=creationDate sortOrder=desc
  *   node index.js list 0062219 vin=3C4NJCBH7KT831816 creationStartDate=2024-01-01T00:00:00Z
  *   node index.js details 79
+ *   node index.js saveJobcard ./payload.json
+ *
+ * "saveJobcard" (POST /jobCard) è la stessa azione esposta anche dalla lambda
+ * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
+ * API Gateway instrada le richieste POST verso la lambda djc, ma il metodo è
+ * disponibile anche qui (chiamata diretta/CLI, coerenza tra le due lambda).
  */
 
 const { getBearerToken } = require('./authService');
-const { getJobCardList, getJobCardDetails } = require('./jobCardService');
+const { getJobCardList, getJobCardDetails, saveJobCard } = require('./jobCardService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'details'];
+const VALID_ACTIONS = ['list', 'details', 'saveJobcard'];
 
 /**
  * Resolves { action, body } from either:
@@ -83,9 +90,14 @@ exports.handler = async (event) => {
 
   try {
     const token = await getBearerToken();
-    const result = action === 'list'
-      ? await getJobCardList(token, body)
-      : await getJobCardDetails(token, body.jobCardId ?? body.id);
+    let result;
+    if (action === 'list') {
+      result = await getJobCardList(token, body);
+    } else if (action === 'details') {
+      result = await getJobCardDetails(token, body.jobCardId ?? body.id);
+    } else {
+      result = await saveJobCard(token, body.payload ?? body);
+    }
 
     return {
       statusCode: 200,
@@ -137,6 +149,16 @@ async function runDetails(jobCardId) {
   return result;
 }
 
+async function runSaveJobcard(payloadJsonFile) {
+  console.log('\n=== Save JobCard ===');
+  const fs = require('fs');
+  const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
+  const token = await getBearerToken();
+  const result = await saveJobCard(token, payload);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 async function main() {
   const [, , command, param, ...rest] = process.argv;
 
@@ -147,10 +169,17 @@ async function main() {
     } else if (command === 'details') {
       const jobCardId = param || '79';
       await runDetails(jobCardId);
+    } else if (command === 'saveJobcard') {
+      if (!param) {
+        console.error('[ERROR] È richiesto il path del file JSON con il payload.');
+        process.exit(1);
+      }
+      await runSaveJobcard(param);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
-      console.error('  node index.js list    <dealerId> [key=value ...]');
-      console.error('  node index.js details <jobCardId>');
+      console.error('  node index.js list        <dealerId> [key=value ...]');
+      console.error('  node index.js details     <jobCardId>');
+      console.error('  node index.js saveJobcard <payloadJsonFile>');
       process.exit(1);
     }
   } catch (err) {

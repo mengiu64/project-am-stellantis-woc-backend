@@ -104,11 +104,33 @@ node index.js getValidPackagesDetail menupricing  W0VZT6GT7M1017935 1000
 | `getConfigPackages`       | `market` `pkwstouse`               | Configurazione statica: mappa `{ CATEGORY: [codici] }` per il ws indicato                          |
 | `getValidPackages`        | `market` `pkwstouse` `VIN`         | Intersezione tra config e pacchetti live dal WS: `{ CATEGORY: { [codice]: obj } }`                 |
 | `getValidPackagesDetail`  | `market` `pkwstouse` `VIN`         | Chiama `getValidPackages` poi recupera in parallelo il dettaglio di ogni pacchetto: `{ [codice]: detail }` |
+| `getPriceAndAvailability` | `market` `pkwstouse` `VIN`         | Arricchisce il dettaglio di `getValidPackagesDetail` con `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga  |
+| `getPkList`               | `market` `pkwstouse` `VIN`         | Orchestratore end-to-end: `getValidPackagesDetail` + `getPriceAndAvailability`, poi **normalizza** ogni pacchetto allo stesso set di chiavi (vedi sotto), a prescindere dal `pkwstouse` di origine |
 
 ### Metodi di dettaglio per ws
 
-| `pkwstouse`    | Metodo di dettaglio chiamato              |
-|----------------|-------------------------------------------|
-| `eper`         | `WsIQPckEper.getPackageDetailsPR`         |
-| `menupricing`  | `MenuPricingSoapClient.getJobDetails`     |
-| `docsoa`       | `DocSOARestClient.ibxDetailForfaitService`|
+| `pkwstouse`    | Metodo di dettaglio chiamato                                                        |
+|----------------|--------------------------------------------------------------------------------------|
+| `eper`         | `WsIQPckEper.getPackageDetailsPR`                                                    |
+| `menupricing`  | `MenuPricingSoapClient.getJobDetails`                                                |
+| `docsoa`       | `DocSOARestClient.ibxDetailForfaitService`, con fallback a `ibxDetailtpService` (`getIbxDetailTp`) quando il forfait non viene trovato — usando `rowData.ref` come `refTp` (fallback su `code` solo se `ref` non è presente) |
+
+### `isFixedPrice` / `packageType`
+
+Ogni dettaglio pacchetto (da `getValidPackagesDetail` e `getPkList`) riporta questi due campi:
+
+| `pkwstouse`    | `isFixedPrice`                                                                 | `packageType`                        |
+|----------------|----------------------------------------------------------------------------------|---------------------------------------|
+| `eper`         | sempre `"0"`                                                                     | sempre `"QE"`                        |
+| `menupricing`  | `"1"` se prezzo fisso da promozione ("Lex"), altrimenti `"0"`                    | `"FP"` se `isFixedPrice==="1"`, altrimenti `"QE"` |
+| `docsoa`       | `"1"` se trovato come forfait, `"0"` se trovato via fallback tempario (tp)       | `"FP"` se `isFixedPrice==="1"`, altrimenti `"QE"` |
+
+### Normalizzazione `getPkList` (`_normalizePkDetail`)
+
+A differenza di `getValidPackagesDetail` (shape "grezza", dipendente dal `pkwstouse`), ogni elemento restituito da `getPkList` viene normalizzato allo **stesso set di chiavi**:
+
+```
+{ result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category }
+```
+
+In caso di errore nel recupero del dettaglio di un singolo pacchetto, l'elemento NON viene normalizzato e riporta invece `{ error, category }`. Nota: il campo `2DigitCode` (presente in alcune risposte grezze) viene volutamente scartato in fase di normalizzazione a favore di `niveau`.

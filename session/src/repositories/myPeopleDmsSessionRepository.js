@@ -70,7 +70,10 @@ const BRAND_CODE_TO_REFTECH = {
  *      (stesse chiavi), valorizzando solo i campi ricavabili da myPeople/dms — gli altri
  *      (es. physicalsite, pdvId, preferenze pezzi, sconti massimi, ...) provengono da
  *      un'altra fonte dati (tabella HQ_DEALERDEFAULTVALUES) non interrogata da questo
- *      flusso e vengono quindi impostati a `null`.
+ *      flusso e vengono quindi impostati a `null`. In aggiunta alle chiavi storiche,
+ *      espone anche `oics` e `applications`: gli interi blocchi User.OICs/User.Applications
+ *      di myPeople, con le chiavi di ciascun elemento riportate in minuscolo (stessa
+ *      convenzione usata per tutte le altre chiavi di questo oggetto).
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({ readUserProfilesFn, getBearerTokenFn, getDmsSettingsFn } = {}) {
@@ -99,6 +102,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
     const attributes = result.User.Attributes || {};
     const oics = Array.isArray(result.User.OICs) ? result.User.OICs : [];
+    const applications = Array.isArray(result.User.Applications) ? result.User.Applications : [];
     const mainOic = oics.find((oic) => oic.MAIN === 'Y') || oics[0] || {};
 
     const rawBrandCode = mainOic.BRANDS
@@ -159,6 +163,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       maxdiscountperc: null,
       maxdiscountval: null,
       oics: oics.map(lowercaseKeys),
+      applications: applications.map(lowercaseKeys),
     };
   }
 }
