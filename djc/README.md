@@ -79,21 +79,27 @@ lancia un errore esplicito (`[djc] impossibile leggere /tmp/<jobCardId>.json: ..
 |-----------------------|-----------------------|------------------------------------------------------------------------------|
 | `SaveRoInfo`          | ✅ implementato       | `json_orig`/`json_mod` per `jobCardDetail.roInfo` (sottoinsieme esteso)      |
 | `SaveDmsSync`         | ✅ implementato       | `json_orig`/`json_mod` per `jobCardDetail.roInfo` (sottoinsieme base)       |
-| `SaveCustomer`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `customerInfo[0].personalInfo.contactInfo` |
+| `SaveCustomer`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `customerInfo[0].{customerId,contactInfo}` |
 
 | `SaveVehicle`         | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `vehicleInfo.{identification,state}` |
 | `SaveJobs`            | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + copia di `jobCardDetail.jobs`    |
 | `SaveConsents`        | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `consents[0].{repairer,stellantis}` |
-| `SaveAppointments`    | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `appointments[0].{reception,delivery}` |
+| `SaveAppointments`    | ✅ implementato       | `json_orig`/`json_mod` per roInfo (base) + `appointments[0].{appointmentInternalId,reception,delivery}` |
 
 I metodi non ancora specificati lanciano un `Error` esplicito (`"<Metodo> non ancora
 implementato"`) finché non verranno definiti.
 
 Tutti i metodi implementati condividono un sottoinsieme "base" di `roInfo`
-(`jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`, `dealerId`, `stellantisBrand`,
-`status`, `updateDateTime`, `dmsSynchroStatus`), a cui `SaveRoInfo` aggiunge i campi
-specifici (`interiorCarWash`, `exteriorCarWash`, `partPreferences`, `obfcm`,
-`waitOnSite`, `vehicleIdentificationTagNumber`, `loanerFlag`).
+(`dmsRepairOrderId`, `jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`, `dealerId`,
+`stellantisBrand`, `status`, `updateDateTime`, `dmsSynchroStatus`), a cui `SaveRoInfo`
+aggiunge i campi specifici (`interiorCarWash`, `exteriorCarWash`, `partPreferences`,
+`obfcm`, `waitOnSite`, `vehicleIdentificationTagNumber`, `loanerFlag`).
+
+> `dmsRepairOrderId` è incluso nel sottoinsieme base per soddisfare il vincolo M(C)
+> della Push API SRP (almeno uno tra `dmsRepairOrderId`/`jobCardSrpId`/`jobCardLegacyId`
+> deve essere presente nel payload `saveJobcard`): senza di esso, una Job Card che ha
+> solo `dmsRepairOrderId` valorizzato (e non ancora `jobCardSrpId`/`jobCardLegacyId`)
+> verrebbe rigettata dalla Push API.
 
 ### `SaveRoInfo`
 
@@ -113,9 +119,9 @@ const { json_orig, json_mod } = manager.SaveRoInfo(
 ```
 
 - **`json_orig`**: `{ roInfo: {...} }` con il sottoinsieme di campi previsto dal payload
-  SaveRoInfo (`jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`, `dealerId`,
-  `stellantisBrand`, `status`, `updateDateTime`, `dmsSynchroStatus`, `interiorCarWash`,
-  `exteriorCarWash`, `partPreferences`, `obfcm`, `waitOnSite`,
+  SaveRoInfo (`dmsRepairOrderId`, `jobCardSrpId`, `jobCardLegacyId`, `sourceApplication`,
+  `dealerId`, `stellantisBrand`, `status`, `updateDateTime`, `dmsSynchroStatus`,
+  `interiorCarWash`, `exteriorCarWash`, `partPreferences`, `obfcm`, `waitOnSite`,
   `vehicleIdentificationTagNumber`, `loanerFlag`), letto da
   `djcJson.jobCardDetail.roInfo` e non alterato.
 - **`json_mod`**: stessa struttura di `json_orig`, con i seguenti campi sovrascritti
@@ -147,12 +153,21 @@ const { json_orig, json_mod } = manager.SaveCustomer(
 );
 ```
 
-- **`json_orig`**: `{ roInfo: {...}, customerInfo: [{ personalInfo: { contactInfo: {...} } }] }`,
-  con il sottoinsieme base di `roInfo` e i dati di contatto correnti letti da
-  `djcJson.jobCardDetail.customerInfo[0].personalInfo.contactInfo`, non alterati.
-- **`json_mod`**: stessa struttura, con `customerInfo[0].personalInfo.contactInfo`
+- **`json_orig`**: `{ roInfo: {...}, customerInfo: [{ customerId, contactInfo: {...} }] }`,
+  con il sottoinsieme base di `roInfo`, `customerId` e i dati di contatto correnti letti
+  da `djcJson.jobCardDetail.customerInfo[0]` (`customerId`) e
+  `djcJson.jobCardDetail.customerInfo[0].personalInfo.contactInfo` (contatti — la
+  sorgente jobCardDetail annida `contactInfo` dentro `personalInfo`), non alterati.
+- **`json_mod`**: stessa struttura, con `customerInfo[0].contactInfo`
   sovrascritto con i valori ricevuti come argomento (`phone`, `mobile`, `email`,
-  `address`, `additionalAddress`).
+  `address`, `additionalAddress`). `customerId` resta invariato.
+
+> ⚠️ Nel payload inviato alla Push API SRP (`saveJobcard`), `contactInfo` è **sibling**
+> di `personalInfo` sotto `customerInfo[]`, **non** annidato in `personalInfo.contactInfo`
+> — la Push API rigetta esplicitamente quel percorso con `"customerInfo[0].personalInfo.
+> contactInfo" is not allowed`. `customerId` è inoltre obbligatorio (M(O)) quando la
+> sezione `customerInfo` è inclusa nel payload: la sua assenza fa rigettare l'intera
+> richiesta.
 
 ### `SaveVehicle`
 
@@ -206,13 +221,18 @@ const { json_orig, json_mod } = manager.SaveAppointments(
 );
 ```
 
-- **`json_orig`**: `{ roInfo: {...}, appointments: [{ reception: {...}, delivery: {...} }] }`,
+- **`json_orig`**: `{ roInfo: {...}, appointments: [{ appointmentInternalId, reception: {...}, delivery: {...} }] }`,
   con il sottoinsieme base di `roInfo` e l'appuntamento corrente letto da
-  `djcJson.jobCardDetail.appointments[0]`, non alterato.
+  `djcJson.jobCardDetail.appointments[0]` (`appointmentInternalId` incluso), non
+  alterato.
 - **`json_mod`**: stessa struttura, con `reception.{estimatedReceptionDateTime,
   receptionDateTime, receptionServiceAdvisorId, receptionServiceAdvisorName}` e
   `delivery.{estimatedDeliveryDateTime, deliveryDateTime, deliveryServiceAdvisorId,
   deliveryServiceAdvisorName}` sovrascritti con i valori ricevuti come argomento.
+  `appointmentInternalId` resta invariato.
+
+> ⚠️ `appointmentInternalId` è obbligatorio (M(O)) quando la sezione `appointments`
+> è inclusa nel payload `saveJobcard`: la sua assenza fa rigettare l'intera richiesta.
 
 ## Uso da CLI (`index.js`)
 

@@ -59,10 +59,17 @@ class DjcManager {
 
   // ── _buildRoInfoBase ─────────────────────────────────────────────────────────
   // Sottoinsieme "base" di roInfo, comune a tutti i metodi Save* che includono
-  // roInfo nel payload (jobCardSrpId, jobCardLegacyId, sourceApplication, dealerId,
-  // stellantisBrand, status, updateDateTime, dmsSynchroStatus).
+  // roInfo nel payload (dmsRepairOrderId, jobCardSrpId, jobCardLegacyId,
+  // sourceApplication, dealerId, stellantisBrand, status, updateDateTime,
+  // dmsSynchroStatus).
+  //
+  // dmsRepairOrderId è incluso per soddisfare il vincolo M(C) della Push API SRP
+  // (almeno uno tra dmsRepairOrderId/jobCardSrpId/jobCardLegacyId deve essere
+  // presente nel payload): jobCardSrpId/jobCardLegacyId da soli non bastano se
+  // la Job Card sorgente ha solo dmsRepairOrderId valorizzato.
   static _buildRoInfoBase(roInfoSrc) {
     return {
+      dmsRepairOrderId:  roInfoSrc.dmsRepairOrderId,
       jobCardSrpId:      roInfoSrc.jobCardSrpId,
       jobCardLegacyId:   roInfoSrc.jobCardLegacyId,
       sourceApplication: roInfoSrc.sourceApplication,
@@ -162,9 +169,22 @@ class DjcManager {
   }
 
   // ── SaveCustomer ─────────────────────────────────────────────────────────────
-  // Costruisce json_orig (sottoinsieme base di roInfo + customerInfo con solo
-  // personalInfo.contactInfo, invariato) e json_mod (stessa struttura, con i campi
-  // di contatto aggiornati ai valori ricevuti come argomento).
+  // Costruisce json_orig (sottoinsieme base di roInfo + customerInfo con
+  // customerId e contactInfo, invariato) e json_mod (stessa struttura, con i
+  // campi di contatto aggiornati ai valori ricevuti come argomento).
+  //
+  // NB: nel payload Push API SRP (POST /jobCard) `contactInfo` è **sibling**
+  // di `personalInfo` sotto `customerInfo[]`, non annidato dentro
+  // `personalInfo.contactInfo` (la Push API rigetta esplicitamente
+  // `customerInfo[0].personalInfo.contactInfo` con "is not allowed"). La
+  // sorgente (jobCardDetail, prodotta dalla GET) continua invece ad annidare
+  // contactInfo dentro personalInfo: la lettura da djcJson resta quindi
+  // `customerInfoSrc.personalInfo.contactInfo`, ma l'output ricostruisce
+  // customerInfo[0] con contactInfo a livello sibling.
+  //
+  // `customerId` è incluso perché richiesto (M(O)) dalla Push API SRP quando
+  // la sezione `customerInfo` è presente nel payload: senza di esso l'intera
+  // richiesta viene rigettata.
   //
   // @param {string} phone
   // @param {string} mobile
@@ -179,14 +199,13 @@ class DjcManager {
 
     const buildCustomerInfo = () => [
       {
-        personalInfo: {
-          contactInfo: {
-            phone:             contactInfoSrc.phone,
-            mobile:            contactInfoSrc.mobile,
-            email:             contactInfoSrc.email,
-            address:           contactInfoSrc.address,
-            additionalAddress: contactInfoSrc.additionalAddress,
-          },
+        customerId: customerInfoSrc.customerId,
+        contactInfo: {
+          phone:             contactInfoSrc.phone,
+          mobile:            contactInfoSrc.mobile,
+          email:             contactInfoSrc.email,
+          address:           contactInfoSrc.address,
+          additionalAddress: contactInfoSrc.additionalAddress,
         },
       },
     ];
@@ -200,7 +219,7 @@ class DjcManager {
       customerInfo: buildCustomerInfo(),
     };
 
-    json_mod.customerInfo[0].personalInfo.contactInfo = {
+    json_mod.customerInfo[0].contactInfo = {
       phone,
       mobile,
       email,
@@ -326,9 +345,14 @@ class DjcManager {
   }
 
   // ── SaveAppointments ─────────────────────────────────────────────────────────
-  // Costruisce json_orig (sottoinsieme base di roInfo + appointments[0].{reception,delivery},
-  // invariato) e json_mod (stessa struttura, con i campi di reception/delivery
-  // aggiornati ai valori ricevuti come argomento).
+  // Costruisce json_orig (sottoinsieme base di roInfo + appointments[0].{
+  // appointmentInternalId, reception, delivery}, invariato) e json_mod (stessa
+  // struttura, con i campi di reception/delivery aggiornati ai valori ricevuti
+  // come argomento).
+  //
+  // `appointmentInternalId` è incluso, invariato rispetto alla sorgente, perché
+  // richiesto (M(O)) dalla Push API SRP quando la sezione `appointments` è
+  // presente nel payload: senza di esso l'intera richiesta viene rigettata.
   //
   // @param {string} estimatedReceptionDateTime
   // @param {string} receptionDateTime
@@ -356,6 +380,7 @@ class DjcManager {
 
     const buildAppointments = () => [
       {
+        appointmentInternalId: appointmentSrc.appointmentInternalId,
         reception: {
           estimatedReceptionDateTime: receptionSrc.estimatedReceptionDateTime,
           receptionDateTime:          receptionSrc.receptionDateTime,
