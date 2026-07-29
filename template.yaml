@@ -734,6 +734,14 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # isStellantisBrand).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           PKFAVORITE_DB_HOST:      !Ref PkFavoriteDbHost
