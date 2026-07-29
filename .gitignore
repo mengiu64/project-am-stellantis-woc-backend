@@ -33,8 +33,14 @@ session/coverage/
 myPeople/node_modules/
 myPeople/.env
 myPeople/coverage/
+isStellantisBrand/node_modules/
 .aws-sam/
 .idea/
 */.idea/
 .cfn-import/
 coverage/
+.kiro/
+.nvmrc
+wiadvisor-backend-lambda-examples/
+bashscripts/
+.env.example

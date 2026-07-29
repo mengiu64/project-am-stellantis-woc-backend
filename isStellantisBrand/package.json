@@ -1,0 +1,43 @@
+{
+  "name": "is-stellantis-brand",
+  "version": "1.0.0",
+  "description": "Lambda isStellantisBrand — verifica se un codice brand ARCAD appartiene a Stellantis",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.800.0",
+    "@aws-sdk/client-ssm": "^3.800.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "fast-check": "^4.1.1",
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "index.js",
+      "shared/**/*.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
+  }
+}
