@@ -50,7 +50,7 @@ function resolveUsername(event, body) {
   if (authz) {
     const sub = authz.sub || null;
     if (!sub) {
-      return null;
+        return body.username || null;
     }
     return sub;
   }
