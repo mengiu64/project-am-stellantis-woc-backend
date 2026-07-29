@@ -80,6 +80,23 @@ Parameters:
     NoEcho: true
     Description: PingFederate client secret dedicated to jobcard (scope prd:dgt)
 
+  # ── MoparDoc (job-docs connector + MoparDocs Browser API) ─────────────────
+  MoparDocPingClientId:
+    Type: String
+    Description: PingFederate client id dedicato a moparDoc (scope prd:dgt)
+  MoparDocPingClientSecret:
+    Type: String
+    NoEcho: true
+    Description: PingFederate client secret dedicato a moparDoc (scope prd:dgt)
+  MoparDocIbmClientId:
+    Type: String
+    NoEcho: true
+    Description: X-IBM-Client-Id per job-docs connector e MoparDocs Browser API
+  MoparDocIbmClientSecret:
+    Type: String
+    NoEcho: true
+    Description: X-IBM-Client-Secret per job-docs connector e MoparDocs Browser API
+
   # ── V360 (ASV API) ────────────────────────────────────────────────────────
   AsvClientId:
     Type: String
@@ -359,6 +376,33 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${DjcFunction}"
+      RetentionInDays: 30
+
+  # MoparDocFunction: gestisce createJobCard (job-docs connector PSA),
+  # getUploadDocURL e uploadedDoc (MoparDocs Browser API FCA/Fiat). Usa un
+  # client PingFederate dedicato (scope prd:dgt, credenziali diverse da
+  # jobcard/djc) e credenziali IBM API Connect proprie.
+  MoparDocFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-mopardoc"
+      CodeUri: moparDoc/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          MOPARDOC_PING_CLIENT_ID:     !Ref MoparDocPingClientId
+          MOPARDOC_PING_CLIENT_SECRET: !Ref MoparDocPingClientSecret
+          MOPARDOC_IBM_CLIENT_ID:      !Ref MoparDocIbmClientId
+          MOPARDOC_IBM_CLIENT_SECRET:  !Ref MoparDocIbmClientSecret
+
+  MoparDocFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${MoparDocFunction}"
       RetentionInDays: 30
 
   V360Function:
@@ -690,6 +734,14 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # isStellantisBrand).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           PKFAVORITE_DB_HOST:      !Ref PkFavoriteDbHost
@@ -763,6 +815,8 @@ Outputs:
     Value: !GetAtt JobCardFunction.Arn
   DjcFunctionArn:
     Value: !GetAtt DjcFunction.Arn
+  MoparDocFunctionArn:
+    Value: !GetAtt MoparDocFunction.Arn
   V360FunctionArn:
     Value: !GetAtt V360Function.Arn
   PkEperFunctionArn:

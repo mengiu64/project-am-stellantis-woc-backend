@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, isStellantisBrand).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, moparDoc, isStellantisBrand).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -26,6 +26,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [session](#session)
    - [myPeople](#mypeople)
    - [pkFavorite](#pkfavorite)
+   - [moparDoc](#mopardoc)
    - [isStellantisBrand](#isstellantisbrand)   
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
@@ -53,6 +54,7 @@ project-am-stellantis-woc-backend/
 ├── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
+├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
 └── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 
 ```
@@ -308,6 +310,77 @@ node index.js saveJobcard <payloadJsonFile>
 
 Vedi `djc/README.md` per la descrizione completa di ogni metodo, i parametri e
 l'uso come Lambda (`exports.handler`, dispatch per `action`).
+
+---
+
+### moparDoc
+
+Lambda che espone 3 azioni verso i due gateway MoparDoc/job-docs usati per la
+gestione della documentazione allegata alle job card:
+
+- **`createJobCard`** — `POST /job-docs/connector/v1/CreateJobCard` (connector job-docs, PSA)
+- **`getUploadDocURL`** — `POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL` (MoparDocs Browser API, FCA/Fiat)
+- **`uploadedDoc`** — `POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc` (MoparDocs Browser API, FCA/Fiat)
+
+Tutte e tre condividono lo stesso token PingFederate (stesso host/scope `prd:dgt`
+di `jobcard`/`djc`, ma con un **client dedicato**: client_id/secret propri, non
+condivisi) e le stesse credenziali **IBM API Connect** (`X-IBM-Client-Id`/
+`X-IBM-Client-Secret`).
+
+#### Funzioni principali
+
+| Modulo | Funzione | Descrizione |
+|---|---|---|
+| `moparDocService` | `createJobCard(payload)` | POST `/CreateJobCard` sul connector job-docs |
+| `moparDocService` | `getUploadDocURL(payload)` | POST `/getUploadDocURL` sul MoparDocs Browser API |
+| `moparDocService` | `uploadedDoc(payload)` | POST `/UploadedDoc` sul MoparDocs Browser API |
+| `authService` | `getBearerToken()` | Ottiene/rinnova il token PingFederate (cache su file, client dedicato MoparDoc) |
+| `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js (redazione dati sensibili nei log) |
+
+URL/basePath (PingFederate + job-docs + MoparDocs Browser API) sono **hardcoded**
+in `config.js` (stessa convenzione di `jobcard`/`djc`/`v360`); solo le
+credenziali (`MOPARDOC_PING_CLIENT_ID/SECRET`, `MOPARDOC_IBM_CLIENT_ID/SECRET`)
+sono configurabili via ambiente.
+
+#### API contract (Lambda handler)
+
+L'azione è risolta da `event.action` (invocazione diretta) o dall'ultimo
+segmento del path (integrazione API Gateway, es. `.../moparDoc/createJobCard`).
+
+```json
+{ "action": "createJobCard", "body": {
+  "vin": "VF3CABHW6GT204366", "market": "IT", "source": "WOC",
+  "UserName": "mario.rossi", "dealerCode": "0062230",
+  "JobCard_Title": "Tagliando 30.000km", "TAMAccessCode": "ACC123"
+} }
+```
+
+```json
+{ "action": "getUploadDocURL", "body": {
+  "JobCardId": "JC123456", "Filename": "fattura.pdf",
+  "ContentType": "application/pdf", "AccessToken": "eyJhbGciOi...", "Filetype": "pdf"
+} }
+```
+
+```json
+{ "action": "uploadedDoc", "body": {
+  "JobCardId": "JC123456", "DocumentId": "DOC987654",
+  "Action": "confirm", "AccessToken": "eyJhbGciOi..."
+} }
+```
+
+Risposta: `200` con il body upstream in caso di successo; `400` se manca un
+campo obbligatorio; `502` per errori upstream/di rete.
+
+#### Utilizzo CLI
+
+```bash
+node index.js createJobCard   ./payload-createJobCard.json
+node index.js getUploadDocURL ./payload-getUploadDocURL.json
+node index.js uploadedDoc     ./payload-uploadedDoc.json
+```
+
+Vedi `moparDoc/README.md` per il dettaglio completo.
 
 ---
 
@@ -744,6 +817,7 @@ cd translations   && npm install
 cd session        && npm install
 cd myPeople       && npm install
 cd pkFavorite     && npm install
+cd moparDoc       && npm install
 cd isStellantisBrand && npm install
 ```
 
@@ -794,6 +868,15 @@ DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT (richies
 > Non richieste per i metodi `Save*` (che costruiscono solo `json_orig`/`json_mod`
 > in locale) — solo per `saveJobcard`, che invia effettivamente il payload alla
 > Push API SRP.
+
+### moparDoc
+
+```env
+MOPARDOC_PING_CLIENT_ID=...         # Client ID PingFederate dedicato a moparDoc (scope prd:dgt)
+MOPARDOC_PING_CLIENT_SECRET=...     # Client Secret PingFederate dedicato a moparDoc
+MOPARDOC_IBM_CLIENT_ID=...          # X-IBM-Client-Id (job-docs connector + MoparDocs Browser API)
+MOPARDOC_IBM_CLIENT_SECRET=...      # X-IBM-Client-Secret (job-docs connector + MoparDocs Browser API)
+```
 
 ### v360
 
@@ -952,6 +1035,7 @@ cd agendaSoa && npm run test:coverage
 | **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
 | **jobcard** | 3 | 67 | `httpClient`, `authService`, `jobCardService` |
 | **djc** | 4 | 61 | `httpClient`, `authService`, `jobCardService`, `DjcManager` |
+| **moparDoc** | 4 | 37 | `httpClient`, `authService`, `moparDocService`, `index` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
 | **pkEper** | 1 | 19 | `WsIQPckEper` |
 | **pkDocsoa** | 2 | 40 | `DocSOARestClient`, `certService` |
@@ -971,6 +1055,7 @@ cd agendaSoa && npm run test:coverage
 | **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
 | **jobcard** | 99.06% ✅ | 93.89% ✅ | 100% ✅ | 100% ✅ |
 | **djc** | 99.45% ✅ | 97.05% ✅ | 100% ✅ | 100% ✅ |
+| **moparDoc** | 99.17% ✅ | 96.36% ✅ | 100% ✅ | 100% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
 | **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
 | **pkDocsoa** | 97.61% ✅ | 93.70% ✅ | 100% ✅ | 98.97% ✅ |
