@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, isStellantisBrand).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -26,6 +26,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [session](#session)
    - [myPeople](#mypeople)
    - [pkFavorite](#pkfavorite)
+   - [isStellantisBrand](#isstellantisbrand)   
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -52,6 +53,7 @@ project-am-stellantis-woc-backend/
 ├── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 └── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
+└── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 
 ```
 
@@ -644,6 +646,54 @@ node index.js <username>
 
 ---
 
+### isStellantisBrand
+
+Lambda per la **verifica dell'appartenenza di un brand al gruppo Stellantis**, esposta come endpoint `GET /api/isStellantisBrand`. Riceve un codice brand ARCAD (`ar_codbrand`) e verifica se esiste nella tabella `woc.anag_brand` del database Aurora PostgreSQL "wiadvisor" tramite RDS Proxy.
+
+#### Endpoint
+
+| Metodo | Path | Parametro | Descrizione |
+|---|---|---|---|
+| `GET` | `/api/isStellantisBrand` | `ar_codbrand` (query, required, max 2 chars, solo A-Z) | Verifica se il brand è Stellantis |
+
+#### Risposte
+
+| Status | Body | Descrizione |
+|---|---|---|
+| 200 | `{ "success": true, "isStellantisBrand": true }` | Brand presente in anagrafica |
+| 200 | `{ "success": true, "isStellantisBrand": false }` | Brand non presente |
+| 400 | `{ "success": false, "message": "..." }` | Errore di validazione input |
+| 500 | `{ "success": false, "message": "Errore interno del server" }` | Errore interno (DB, Secrets Manager, ecc.) |
+
+#### Struttura
+
+```
+isStellantisBrand/
+├── index.js                    # Lambda handler (validazione + query)
+├── package.json                # Dipendenze (pg, @aws-sdk/client-secrets-manager)
+├── openapi.yaml                # Specifica OpenAPI 3.0
+├── infrastructure.csv          # Riga CSV per team infrastruttura
+├── shared/
+│   └── dbClient.js             # Libreria condivisa connessione DB (pool pg riutilizzabile)
+└── __tests__/                  # Unit test Jest + property-based test (fast-check)
+```
+
+#### Validazione input
+
+1. `ar_codbrand` mancante/null/vuoto/whitespace → 400 `"ar_codbrand è obbligatorio"`
+2. Lunghezza > 2 caratteri → 400 `"ar_codbrand deve essere di massimo 2 caratteri"`
+3. Caratteri non alfabetici → 400 `"ar_codbrand deve contenere solo caratteri alfabetici"`
+4. Conversione a uppercase prima della query
+
+#### Connessione DB (shared/dbClient.js)
+
+- Credenziali recuperate da **Secrets Manager** (`DB_SECRET_ARN`)
+- Pool `pg` con TLS verso **RDS Proxy** (`RDS_PROXY_ENDPOINT`)
+- Pool riutilizzato tra invocazioni (warm start), invalidato in caso di errore
+- Timeout connessione: 5 secondi
+
+---
+
 ### pkFavorite
 
 Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per singolo pacchetto + elenco per VIN). I dati sono persistiti su tabella `PKFAVORITE` in **PostgreSQL** (cluster Aurora `rds-np-bsn0027990-dev-aurora`, raggiunto tramite **RDS Proxy**, non direttamente). Le credenziali del DB vengono lette da **AWS Secrets Manager** tramite l'[AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (stesso pattern di `myPeople`), riusando il layer esistente `MyPeopleExtensionLayerArn`.
@@ -694,6 +744,7 @@ cd translations   && npm install
 cd session        && npm install
 cd myPeople       && npm install
 cd pkFavorite     && npm install
+cd isStellantisBrand && npm install
 ```
 
 ---
@@ -847,6 +898,15 @@ MYPEOPLE_IDENTIFIER=...              # Identificativo richiesta/dispositivo (UUI
 ```
 
 > **Nota:** certificato e chiave mTLS **non** vanno messi nel `.env`: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension (layer aggiunto alla Lambda in `template.yaml`).
+
+### isStellantisBrand
+
+```env
+DB_SECRET_ARN=arn:aws:secretsmanager:...   # ARN del secret con le credenziali DB (sm-np-bsn0027990-${Environment}-aurora-app)
+RDS_PROXY_ENDPOINT=...                     # Endpoint del RDS Proxy per la connessione ad Aurora PostgreSQL
+```
+
+> **Nota:** il secret in Secrets Manager contiene un payload JSON con le chiavi `dbname` ("wiadvisor"), `engine` ("postgres"), `password`, `port` (5432), `username` ("wiadvisor_app"). La connessione è TLS via RDS Proxy. La Lambda gira in VPC.
 
 ### pkFavorite
 

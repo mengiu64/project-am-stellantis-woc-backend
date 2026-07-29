@@ -2,7 +2,7 @@
 
 > 🇮🇹 [Leggi in italiano](README.md) &nbsp;|&nbsp; 🇬🇧 English
 
-Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session).
+Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, isStellantisBrand).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -23,6 +23,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [pkManager](#pkmanager)
    - [translations](#translations)
    - [session](#session)
+   - [isStellantisBrand](#isstellantisbrand)
 3. [Installation](#installation)
 4. [Environment variables](#environment-variables)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -45,7 +46,8 @@ project-am-stellantis-woc-backend/
 ├── pkMenupricing/      # Lambda – MenuPricing packages (Opel/Vauxhall SOAP)
 ├── pkManager/          # Lambda – multi-WS package orchestrator (ePer/DocSOA/MenuPricing)
 ├── translations/       # Lambda – translation retrieval from S3
-└── session/            # Lambda – session data (codmarket, oic, sincom, ...)
+├── session/            # Lambda – session data (codmarket, oic, sincom, ...)
+└── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
 
 ```
 
@@ -486,6 +488,54 @@ node src/index.js 3109    # specific market
 
 ---
 
+### isStellantisBrand
+
+Lambda for **Stellantis brand verification**, exposed as a `GET /api/isStellantisBrand` endpoint. Receives an ARCAD brand code (`ar_codbrand`) and checks whether it exists in the `woc.anag_brand` table of the "wiadvisor" Aurora PostgreSQL database via RDS Proxy.
+
+#### Endpoint
+
+| Method | Path | Parameter | Description |
+|---|---|---|---|
+| `GET` | `/api/isStellantisBrand` | `ar_codbrand` (query, required, max 2 chars, A-Z only) | Checks if a brand belongs to Stellantis |
+
+#### Responses
+
+| Status | Body | Description |
+|---|---|---|
+| 200 | `{ "success": true, "isStellantisBrand": true }` | Brand found in registry |
+| 200 | `{ "success": true, "isStellantisBrand": false }` | Brand not found |
+| 400 | `{ "success": false, "message": "..." }` | Input validation error |
+| 500 | `{ "success": false, "message": "Errore interno del server" }` | Internal error (DB, Secrets Manager, etc.) |
+
+#### Structure
+
+```
+isStellantisBrand/
+├── index.js                    # Lambda handler (validation + query)
+├── package.json                # Dependencies (pg, @aws-sdk/client-secrets-manager)
+├── openapi.yaml                # OpenAPI 3.0 specification
+├── infrastructure.csv          # CSV row for infrastructure team
+├── shared/
+│   └── dbClient.js             # Shared DB connection library (reusable pg pool)
+└── __tests__/                  # Jest unit tests + property-based tests (fast-check)
+```
+
+#### Input validation
+
+1. `ar_codbrand` missing/null/empty/whitespace → 400 `"ar_codbrand è obbligatorio"`
+2. Length > 2 characters → 400 `"ar_codbrand deve essere di massimo 2 caratteri"`
+3. Non-alphabetic characters → 400 `"ar_codbrand deve contenere solo caratteri alfabetici"`
+4. Converted to uppercase before querying
+
+#### DB connection (shared/dbClient.js)
+
+- Credentials retrieved from **Secrets Manager** (`DB_SECRET_ARN`)
+- `pg` pool with TLS to **RDS Proxy** (`RDS_PROXY_ENDPOINT`)
+- Pool reused across invocations (warm start), invalidated on error
+- Connection timeout: 5 seconds
+
+---
+
 ## Installation
 
 Each module is independent. Install dependencies separately:
@@ -502,6 +552,7 @@ cd pkMenupricing  && npm install
 cd pkManager      && npm install
 cd translations   && npm install
 cd session        && npm install
+cd isStellantisBrand && npm install
 ```
 
 ---
@@ -625,6 +676,15 @@ SESSION_DEFAULT_MARKET=1000          # (optional) default market when "codmarket
 ```
 
 > **Note:** session data is read from a single JSON file on S3 (`session/session_data.json`, same bucket as `translations`), keyed by 4-character market code. If the requested market is not present in the file, the Lambda responds with `404`.
+
+### isStellantisBrand
+
+```env
+DB_SECRET_ARN=arn:aws:secretsmanager:...   # ARN of the Secrets Manager secret with DB credentials (sm-np-bsn0027990-${Environment}-aurora-app)
+RDS_PROXY_ENDPOINT=...                     # RDS Proxy endpoint for Aurora PostgreSQL connection
+```
+
+> **Note:** the Secrets Manager secret contains a JSON payload with keys `dbname` ("wiadvisor"), `engine` ("postgres"), `password`, `port` (5432), `username` ("wiadvisor_app"). Connection uses TLS via RDS Proxy. The Lambda runs inside the VPC.
 
 ---
 

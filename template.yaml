@@ -208,6 +208,11 @@ Parameters:
       dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
       and Secrets Lambda Extension (stesso meccanismo di MyPeopleCertSecretId/MyPeopleKeySecretId)
 
+# ── Conditions ─────────────────────────────────────────────────────────────────
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
 # ── Globals ───────────────────────────────────────────────────────────────────
 
 Globals:
@@ -700,6 +705,48 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${PkFavoriteFunction}"
       RetentionInDays: 30
 
+ # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
+
+  IsStellantisBrandFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-isstellantisbrand"
+      CodeUri: isStellantisBrand/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub
+                  - "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/DB_SECRET_ARN", !Sub "/app/np-BSN0027990-${Environment}/DB_SECRET_ARN"]
+                - !Sub
+                  - "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/RDS_PROXY_ENDPOINT", !Sub "/app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT"]
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: "*"
+      Environment:
+        Variables:
+          DB_SECRET_ARN_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/DB_SECRET_ARN
+            - !Sub /app/np-BSN0027990-${Environment}/DB_SECRET_ARN
+          RDS_PROXY_ENDPOINT_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/RDS_PROXY_ENDPOINT
+            - !Sub /app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT
+
+  IsStellantisBrandFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${IsStellantisBrandFunction}"
+      RetentionInDays: 30
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 Outputs:
@@ -733,3 +780,5 @@ Outputs:
     Value: !GetAtt MyPeopleFunction.Arn
   PkFavoriteFunctionArn:
     Value: !GetAtt PkFavoriteFunction.Arn
+  IsStellantisBrandFunctionArn:
+    Value: !GetAtt IsStellantisBrandFunction.Arn
