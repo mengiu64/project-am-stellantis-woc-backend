@@ -163,5 +163,8 @@ CREATE TRIGGER trg_user_lfp_favorite_updated_at
     BEFORE UPDATE ON woc.user_lfp_favorite
     FOR EACH ROW EXECUTE FUNCTION woc.set_updated_at();
 
+GRANT USAGE ON SCHEMA woc TO wiadvisor_app;
+GRANT SELECT ON TABLE woc.anag_brand TO wiadvisor_app;
+GRANT SELECT ON TABLE woc.anag_brand_genome TO wiadvisor_app;
 
 COMMIT;
