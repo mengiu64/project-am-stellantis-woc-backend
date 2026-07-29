@@ -46,9 +46,13 @@ function resolveMethod(event) {
  * come comodità per i test.
  */
 function resolveUsername(event, body) {
-  const hasAuthorizerContext = !!(event.requestContext && event.requestContext.authorizer);
-  if (hasAuthorizerContext) {
-    return event.requestContext.authorizer.sub || null;
+  const authz = (event.requestContext && event.requestContext.authorizer) || {};
+  if (authz) {
+    const sub = authz.sub || null;
+    if (!sub) {
+      return null;
+    }
+    return sub;
   }
   return body.username || null;
 }
