@@ -29,8 +29,7 @@
     ],
     "collectCoverageFrom": [
       "FavoriteRepository.js",
-      "db.js",
-      "index.js"
+      "db.js"
     ],
     "coverageReporters": [
       "html",
