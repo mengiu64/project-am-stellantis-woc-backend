@@ -772,6 +772,9 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: "*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           DB_SECRET_ARN_PARAM: !If
