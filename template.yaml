@@ -705,7 +705,7 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${PkFavoriteFunction}"
       RetentionInDays: 30
 
- # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
+  # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
 
   IsStellantisBrandFunction:
     Type: AWS::Serverless::Function

@@ -52,7 +52,7 @@ project-am-stellantis-woc-backend/
 ├── translations/       # Lambda – Recupero traduzioni da S3
 ├── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
-└── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
+├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 └── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 
 ```
