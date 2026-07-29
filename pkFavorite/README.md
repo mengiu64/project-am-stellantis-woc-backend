@@ -36,7 +36,7 @@ Risposta:
   "username": "0062230.d001",
   "vin": "VF3CABHW6GT204366",
   "favorites": [
-    { "packageCode": "42001AER01FR0201", "createdAt": "2026-01-01T09:00:00.000Z" }
+    { "package": "42001AER01FR0201", "createdAt": "2026-01-01T09:00:00.000Z" }
   ]
 }
 ```
@@ -50,19 +50,19 @@ Se il pacchetto **non** è già tra i preferiti (per quel dealer+VIN) lo crea
 POST /api/pkfavorite
 Content-Type: application/json
 
-{ "vin": "VF3CABHW6GT204366", "packageCode": "42001AER01FR0201" }
+{ "vin": "VF3CABHW6GT204366", "package": "42001AER01FR0201" }
 ```
 
 Risposta (creazione):
 
 ```json
-{ "success": true, "username": "0062230.d001", "vin": "VF3CABHW6GT204366", "action": "added", "packageCode": "42001AER01FR0201", "id": 1, "createdAt": "2026-01-01T09:00:00.000Z" }
+{ "success": true, "username": "0062230.d001", "vin": "VF3CABHW6GT204366", "package": "42001AER01FR0201", "action": "added", "id": 1, "createdAt": "2026-01-01T09:00:00.000Z" }
 ```
 
 Risposta (rimozione, stessa chiamata ripetuta):
 
 ```json
-{ "success": true, "username": "0062230.d001", "vin": "VF3CABHW6GT204366", "action": "removed", "packageCode": "42001AER01FR0201" }
+{ "success": true, "username": "0062230.d001", "vin": "VF3CABHW6GT204366", "package": "42001AER01FR0201", "action": "removed" }
 ```
 
 ## Identità del dealer (`username`)

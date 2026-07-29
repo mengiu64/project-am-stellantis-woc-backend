@@ -92,16 +92,22 @@ exports.handler = async (event = {}) => {
         return response(400, { success: false, message: '"vin" è obbligatorio' });
       }
       const favorites = await listFavorites(pool, { username, vin });
-      return response(200, { success: true, username, vin, favorites });
+      return response(200, {
+        success: true,
+        username,
+        vin,
+        favorites: favorites.map(({ packageCode, createdAt }) => ({ package: packageCode, createdAt })),
+      });
     }
 
     if (method === 'POST') {
-      const { vin, packageCode } = body;
+      // Il FE invia il codice pacchetto nel campo "package" (non "packageCode").
+      const { vin, package: packageCode } = body;
       if (!vin || !packageCode) {
-        return response(400, { success: false, message: '"vin" e "packageCode" sono obbligatori' });
+        return response(400, { success: false, message: '"vin" e "package" sono obbligatori' });
       }
-      const result = await toggleFavorite(pool, { username, vin, packageCode });
-      return response(200, { success: true, username, vin, ...result });
+      const { action, id, createdAt } = await toggleFavorite(pool, { username, vin, packageCode });
+      return response(200, { success: true, username, vin, package: packageCode, action, id, createdAt });
     }
 
     return response(405, {

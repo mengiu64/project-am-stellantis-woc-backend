@@ -63,10 +63,10 @@ describe('pkfavorite index.handler', () => {
     expect(parsed.success).toBe(true);
     expect(parsed.username).toBe('0062230.d001');
     expect(parsed.vin).toBe('VF3CABHW6GT204366');
-    expect(parsed.favorites).toHaveLength(1);
+    expect(parsed.favorites).toEqual([{ package: 'FORFAIT-A', createdAt: '2026-01-01T09:00:00Z' }]);
   });
 
-  it('POST: returns 400 when vin or packageCode is missing', async () => {
+  it('POST: returns 400 when vin or package is missing', async () => {
     const event = apiGwEvent({
       method: 'POST',
       authorizerSub: '0062230.d001',
@@ -77,12 +77,12 @@ describe('pkfavorite index.handler', () => {
     expect(toggleFavorite).not.toHaveBeenCalled();
   });
 
-  it('POST: toggles favorite using username (authorizer) + vin/packageCode (body)', async () => {
+  it('POST: toggles favorite using username (authorizer) + vin/package (body)', async () => {
     toggleFavorite.mockResolvedValue({ action: 'added', packageCode: 'FORFAIT-A', id: 1, createdAt: 'now' });
     const event = apiGwEvent({
       method: 'POST',
       authorizerSub: '0062230.d001',
-      body: { vin: 'VF3CABHW6GT204366', packageCode: 'FORFAIT-A' },
+      body: { vin: 'VF3CABHW6GT204366', package: 'FORFAIT-A' },
     });
 
     const res = await handler(event);
@@ -97,8 +97,8 @@ describe('pkfavorite index.handler', () => {
       success: true,
       username: '0062230.d001',
       vin: 'VF3CABHW6GT204366',
+      package: 'FORFAIT-A',
       action: 'added',
-      packageCode: 'FORFAIT-A',
       id: 1,
       createdAt: 'now',
     });
