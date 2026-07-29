@@ -1,0 +1,65 @@
+{
+  "name": "pkfavorite",
+  "version": "1.0.0",
+  "description": "Pacchetti (forfait/package) preferiti del dealer per VIN — Aurora PostgreSQL (tabella PKFAVORITE)",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci --outputFile=coverage/jest-results.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-html-reporters": "^3.1.7"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "FavoriteRepository.js",
+      "db.js",
+      "index.js"
+    ],
+    "coverageReporters": [
+      "html",
+      "text",
+      "lcov",
+      "json-summary",
+      "cobertura"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 85,
+        "functions": 85,
+        "lines": 85,
+        "statements": 85
+      }
+    },
+    "reporters": [
+      "default",
+      [
+        "jest-html-reporters",
+        {
+          "publicPath": "./coverage",
+          "filename": "test-report.html",
+          "openReport": false,
+          "includeConsoleLog": true,
+          "includeFailureMsg": true,
+          "expand": true
+        }
+      ]
+    ]
+  }
+}

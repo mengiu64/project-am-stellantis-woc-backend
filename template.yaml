@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite)
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -186,6 +186,27 @@ Parameters:
       SSM dynamic reference, because the deploy role lacks ssm:GetParameters on the public parameter).
       Bump this when AWS publishes a newer version — see
       https://docs.aws.amazon.com/systems-manager/latest/userguide/ps-integration-lambda-extensions.html#intel
+
+  # ── pkFavorite (pacchetti/forfait preferiti del dealer per VIN — Aurora PostgreSQL) ──
+  PkFavoriteDbHost:
+    Type: String
+    Description: >-
+      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
+      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
+      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
+  PkFavoriteDbPort:
+    Type: String
+    Default: '5432'
+  PkFavoriteDbName:
+    Type: String
+    Default: wiadvisor
+  PkFavoriteDbSecretId:
+    Type: String
+    Default: sm-np-bsn0027990-dev-aurora-app
+    Description: >-
+      Secrets Manager secret id con le credenziali least-privilege (username/password)
+      dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
+      and Secrets Lambda Extension (stesso meccanismo di MyPeopleCertSecretId/MyPeopleKeySecretId)
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -638,6 +659,47 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${MyPeopleFunction}"
       RetentionInDays: 30
 
+  # ── pkFavorite (pacchetti/forfait preferiti del dealer per VIN) ───────────
+  #
+  # GET  -> elenca i preferiti di un dealer (username, da authorizer.sub) per un VIN
+  # POST -> crea il preferito se non esiste, altrimenti lo elimina ("toggle")
+  # Tabella PKFAVORITE su Aurora PostgreSQL "wiadvisor" (vedi sql/create_tables.sql).
+  # Le credenziali dell'utente applicativo Aurora least-privilege ("wiadvisor_app")
+  # sono lette da Secrets Manager tramite la AWS Parameters and Secrets Lambda
+  # Extension (layer), stesso meccanismo già usato da myPeople/pkDocsoa/session.
+  # La funzione gira in VPC (Globals.Function.VpcConfig): il Security Group Lambda
+  # deve avere accesso in ingresso consentito sul Security Group dell'RDS Proxy
+  # (porta 5432), come già configurato per le altre Lambda del progetto.
+  PkFavoriteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkfavorite"
+      CodeUri: pkFavorite/
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+      Environment:
+        Variables:
+          PKFAVORITE_DB_HOST:      !Ref PkFavoriteDbHost
+          PKFAVORITE_DB_PORT:      !Ref PkFavoriteDbPort
+          PKFAVORITE_DB_NAME:      !Ref PkFavoriteDbName
+          PKFAVORITE_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+
+  PkFavoriteFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${PkFavoriteFunction}"
+      RetentionInDays: 30
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 Outputs:
@@ -669,3 +731,5 @@ Outputs:
     Value: !GetAtt SessionFunction.Arn
   MyPeopleFunctionArn:
     Value: !GetAtt MyPeopleFunction.Arn
+  PkFavoriteFunctionArn:
+    Value: !GetAtt PkFavoriteFunction.Arn

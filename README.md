@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -25,6 +25,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [translations](#translations)
    - [session](#session)
    - [myPeople](#mypeople)
+   - [pkFavorite](#pkfavorite)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -49,7 +50,8 @@ project-am-stellantis-woc-backend/
 ├── pkManager/          # Lambda – Orchestratore multi-WS pacchetti (ePer/DocSOA/MenuPricing)
 ├── translations/       # Lambda – Recupero traduzioni da S3
 ├── session/            # Lambda – Dati di sessione (codmarket, oic, sincom, ...)
-└── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
+├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
+└── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 
 ```
 
@@ -642,6 +644,37 @@ node index.js <username>
 
 ---
 
+### pkFavorite
+
+Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per singolo pacchetto + elenco per VIN). I dati sono persistiti su tabella `PKFAVORITE` in **PostgreSQL** (cluster Aurora `rds-np-bsn0027990-dev-aurora`, raggiunto tramite **RDS Proxy**, non direttamente). Le credenziali del DB vengono lette da **AWS Secrets Manager** tramite l'[AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (stesso pattern di `myPeople`), riusando il layer esistente `MyPeopleExtensionLayerArn`.
+
+#### Funzioni principali
+
+| Modulo | Funzione | Descrizione |
+|---|---|---|
+| `db` | `fetchSecretJson(secretId)` | Recupera e fa il parse JSON di un secret da Secrets Manager tramite l'extension Lambda |
+| `db` | `getPool()` | Costruisce (e cachea) un `pg.Pool`: usa le credenziali da env se presenti, altrimenti le recupera da Secrets Manager |
+| `FavoriteRepository` | `listFavorites(pool, { username, vin })` | Elenca i pacchetti preferiti di un dealer per un VIN, ordinati per `created_at` |
+| `FavoriteRepository` | `toggleFavorite(pool, { username, vin, packageCode })` | Elimina il preferito se già presente, altrimenti lo crea (toggle) |
+
+#### Contratto API
+
+| Metodo | Parametri | Descrizione |
+|---|---|---|
+| `GET` | `vin` (query, obbligatorio) | Elenca i pacchetti preferiti dell'utente autenticato per il VIN indicato |
+| `POST` | `vin`, `packageCode` (body, obbligatori) | Aggiunge/rimuove (toggle) il pacchetto preferito |
+
+> **Sicurezza:** lo `username` **non** viene mai letto dal body quando è presente un contesto di autenticazione (`event.requestContext.authorizer.sub`): in quel caso è l'unica fonte accettata (401 se assente). Il fallback su `body.username` è consentito solo in assenza totale di `authorizer` (comodo per test CLI/invocazione diretta), stesso identico criterio già adottato in `session`.
+
+#### Utilizzo CLI
+
+```bash
+node index.js list <username> <vin>
+node index.js toggle <username> <vin> <packageCode>
+```
+
+---
+
 ## Installazione
 
 Ogni modulo è indipendente. Installare le dipendenze separatamente:
@@ -660,6 +693,7 @@ cd pkManager      && npm install
 cd translations   && npm install
 cd session        && npm install
 cd myPeople       && npm install
+cd pkFavorite     && npm install
 ```
 
 ---
@@ -813,6 +847,20 @@ MYPEOPLE_IDENTIFIER=...              # Identificativo richiesta/dispositivo (UUI
 ```
 
 > **Nota:** certificato e chiave mTLS **non** vanno messi nel `.env`: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension (layer aggiunto alla Lambda in `template.yaml`).
+
+### pkFavorite
+
+```env
+PKFAVORITE_DB_HOST=rdsproxy-np-bsn0027990-dev.proxy-xxxx.eu-west-1.rds.amazonaws.com  # Host RDS Proxy (obbligatoria)
+PKFAVORITE_DB_PORT=5432                    # (opzionale) default 5432
+PKFAVORITE_DB_NAME=wiadvisor               # (opzionale) default wiadvisor
+PKFAVORITE_DB_USER=...                     # (opzionale) se assente, letto da Secrets Manager
+PKFAVORITE_DB_PASSWORD=...                 # (opzionale) se assente, letto da Secrets Manager
+PKFAVORITE_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (opzionale) id secret con user/password/dbname/port
+PKFAVORITE_DB_SSL=true                     # (opzionale) default true
+```
+
+> **Nota:** user/password del DB **non** vanno messi nel `.env` in produzione: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension, stesso layer riusato da `myPeople`. La connessione avviene sempre tramite **RDS Proxy**, non direttamente sul cluster Aurora.
 
 ---
 
