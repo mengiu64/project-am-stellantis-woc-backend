@@ -2,9 +2,16 @@ name: Unit Tests & Security Scan
 
 on:
   push:
-    branches: ["**"]
+    branches: [develop, staging, production]
   pull_request:
     branches: ["**"]
+
+# Evita run duplicate/accumulo di artifact quando si susseguono più push sullo
+# stesso branch o sulla stessa PR: la run precedente ancora in corso viene
+# cancellata, la nuova la sostituisce.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Permessi minimi per tutti i job (principio del privilegio minimo)
 permissions:
@@ -227,7 +234,7 @@ jobs:
         with:
           name: coverage-agendaSoa
           path: agendaSoa/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-agendaSoaNaga:
     name: agendaSoaNaga
@@ -445,7 +452,7 @@ jobs:
         with:
           name: coverage-agendaSoaNaga
           path: agendaSoaNaga/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-dms:
     name: dms
@@ -663,7 +670,7 @@ jobs:
         with:
           name: coverage-dms
           path: dms/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-jobcard:
     name: jobcard
@@ -881,7 +888,7 @@ jobs:
         with:
           name: coverage-jobcard
           path: jobcard/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-djc:
     name: djc
@@ -1099,7 +1106,7 @@ jobs:
         with:
           name: coverage-djc
           path: djc/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-v360:
     name: v360
@@ -1317,7 +1324,7 @@ jobs:
         with:
           name: coverage-v360
           path: v360/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-pkEper:
     name: pkEper
@@ -1535,7 +1542,7 @@ jobs:
         with:
           name: coverage-pkEper
           path: pkEper/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-pkDocsoa:
     name: pkDocsoa
@@ -1753,7 +1760,7 @@ jobs:
         with:
           name: coverage-pkDocsoa
           path: pkDocsoa/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-pkMenupricing:
     name: pkMenupricing
@@ -1971,7 +1978,7 @@ jobs:
         with:
           name: coverage-pkMenupricing
           path: pkMenupricing/coverage/
-          retention-days: 30
+          retention-days: 7
 
 
   test-pkManager:
@@ -2190,7 +2197,7 @@ jobs:
         with:
           name: coverage-pkManager
           path: pkManager/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-translations:
     name: translations
@@ -2408,7 +2415,7 @@ jobs:
         with:
           name: coverage-translations
           path: translations/coverage/
-          retention-days: 30
+          retention-days: 7
 
 
   test-session:
@@ -2627,7 +2634,7 @@ jobs:
         with:
           name: coverage-session
           path: session/coverage/
-          retention-days: 30
+          retention-days: 7
 
 
   test-myPeople:
@@ -2846,7 +2853,7 @@ jobs:
         with:
           name: coverage-myPeople
           path: myPeople/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-pkFavorite:
     name: pkFavorite
@@ -3064,7 +3071,7 @@ jobs:
         with:
           name: coverage-pkFavorite
           path: pkFavorite/coverage/
-          retention-days: 30
+          retention-days: 7
 
   test-moparDoc:
     name: moparDoc
@@ -3282,7 +3289,7 @@ jobs:
         with:
           name: coverage-moparDoc
           path: moparDoc/coverage/
-          retention-days: 30
+          retention-days: 7
 
 
   test-isStellantisBrand:
@@ -3501,7 +3508,7 @@ jobs:
         with:
           name: coverage-isStellantisBrand
           path: isStellantisBrand/coverage/
-          retention-days: 30
+          retention-days: 7
 
   # ── Deploy jobs ────────────────────────────────────────────────────────────────
   # Branch → AWS environment:
