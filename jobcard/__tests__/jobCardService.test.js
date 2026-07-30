@@ -505,6 +505,40 @@ describe('jobCardService', () => {
       expect(options.headers['Content-Length']).toBe(Buffer.byteLength(JSON.stringify(payload)));
     });
 
+    test('strips packageType/packageCharge from payload.jobs before sending (DGT rejects them with "is not allowed")', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          { jobInternalId: 'JOB-1', jobType: 'STD', packageType: 'GC', packageCharge: 'CUSTOMER' },
+          { jobInternalId: 'JOB-2', packageType: 'FP', packageCharge: 'MANUFACTURER', laborInfo: [] },
+        ],
+      };
+      await saveJobCard('token', payload);
+
+      const [, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual({
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          { jobInternalId: 'JOB-1', jobType: 'STD' },
+          { jobInternalId: 'JOB-2', laborInfo: [] },
+        ],
+      });
+      // The original payload passed in is left untouched
+      expect(payload.jobs[0]).toHaveProperty('packageType', 'GC');
+    });
+
+    test('leaves payload without a jobs array untouched', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = { roInfo: { jobCardSrpId: 'JCID-1' } };
+      await saveJobCard('token', payload);
+
+      const [, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual(payload);
+    });
+
     test('includes IBM client credentials and Authorization header', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 

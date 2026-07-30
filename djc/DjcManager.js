@@ -285,6 +285,12 @@ class DjcManager {
   // Il metodo non riceve argomenti (nessun campo da modificare rispetto alla
   // sorgente): json_mod è quindi identico a json_orig.
   //
+  // jobCardDetail.jobs (letto da /tmp) proviene dalla GET jobCardDetails, la cui
+  // risposta viene arricchita da jobcard/jobCardService.js::enrichJobsWithPackageInfo
+  // con i campi packageType/packageCharge (calcolati lato nostro solo per la UI).
+  // Il DGT API POST /jobCard non li accetta ("is not allowed"): vanno quindi
+  // rimossi prima di ricostruire il payload da rimandare indietro.
+  //
   // @returns {{ json_orig: object, json_mod: object }}
   SaveJobs() {
     const roInfoSrc = this.djcJson?.jobCardDetail?.roInfo ?? {};
@@ -292,7 +298,7 @@ class DjcManager {
 
     const buildPayload = () => ({
       roInfo: DjcManager._buildRoInfoBase(roInfoSrc),
-      jobs:   DjcManager._deepClone(jobsSrc),
+      jobs:   DjcManager._stripJobEnrichment(DjcManager._deepClone(jobsSrc)),
     });
 
     const json_orig = buildPayload();
@@ -424,6 +430,24 @@ class DjcManager {
   // ── _deepClone ───────────────────────────────────────────────────────────────
   static _deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
+  }
+
+  // ── _stripJobEnrichment ────────────────────────────────────────────────────
+  // Rimuove da ciascun job i campi packageType/packageCharge aggiunti da
+  // jobcard/jobCardService.js::enrichJobsWithPackageInfo alla risposta di GET
+  // jobCardDetails (derivati solo per la UI): il DGT API non li accetta in
+  // POST /jobCard e li rifiuta con "is not allowed".
+  // @param {Array<object>} jobs - array di job (già copiato/deep-cloned)
+  // @returns {Array<object>} lo stesso array, senza packageType/packageCharge
+  static _stripJobEnrichment(jobs) {
+    if (!Array.isArray(jobs)) return jobs;
+    for (const job of jobs) {
+      if (job && typeof job === 'object') {
+        delete job.packageType;
+        delete job.packageCharge;
+      }
+    }
+    return jobs;
   }
 }
 

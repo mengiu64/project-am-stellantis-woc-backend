@@ -485,6 +485,22 @@ describe('DjcManager', () => {
 
       expect(json_orig).toEqual({ roInfo: {}, jobs: [] });
     });
+
+    test('strips packageType/packageCharge added by jobCardService enrichment to GET jobCardDetails', () => {
+      const djcJson = makeDjcJson({}, {
+        jobs: [
+          { jobInternalId: 'JOB-1', jobDescription: 'Cambio olio', packageType: 'GC', packageCharge: 'CUSTOMER' },
+        ],
+      });
+      const manager = new DjcManager(djcJson);
+
+      const { json_orig, json_mod } = manager.SaveJobs();
+
+      expect(json_orig.jobs).toEqual([{ jobInternalId: 'JOB-1', jobDescription: 'Cambio olio' }]);
+      expect(json_mod.jobs).toEqual([{ jobInternalId: 'JOB-1', jobDescription: 'Cambio olio' }]);
+      expect(djcJson.jobCardDetail.jobs[0]).toHaveProperty('packageType', 'GC');
+      expect(djcJson.jobCardDetail.jobs[0]).toHaveProperty('packageCharge', 'CUSTOMER');
+    });
   });
 
   describe('SaveConsents', () => {

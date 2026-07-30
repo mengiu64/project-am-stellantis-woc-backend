@@ -327,12 +327,32 @@ async function getJobCardDetails(bearerToken, jobCardId) {
 }
 
 /**
+ * Returns a copy of a job entry without the packageType/packageCharge fields
+ * added by enrichJobsWithPackageInfo to jobCardDetails GET responses. Those
+ * are derived only for UI display: if a caller round-trips a previously
+ * fetched jobCardDetail.jobs entry back into saveJobCard, the DGT API
+ * rejects them with "is not allowed" validation errors.
+ * @param {object} job - job entry (possibly enriched)
+ * @returns {object} job entry without packageType/packageCharge
+ */
+function stripPackageEnrichment(job) {
+  if (!job || typeof job !== 'object') return job;
+  const { packageType, packageCharge, ...rest } = job;
+  return rest;
+}
+
+/**
  * Calls the jobCard (POST) endpoint to persist a Digital Job Card payload —
  * i.e. the same "declination" (djc) payload built by djc/DjcManager.js
  * Save* methods (json_mod). Uses the same PingFederate/DGT client
  * (config.js/authService.js/httpClient.js) as getJobCardList/getJobCardDetails,
  * only the HTTP method and path differ (POST /jobCard vs GET /jobCardList|
  * /jobCardDetails).
+ *
+ * Difensivo: se payload.jobs porta ancora packageType/packageCharge (es.
+ * round-trip di una jobCardDetails GET arricchita — v. enrichJobsWithPackageInfo
+ * sopra), vengono rimossi prima di inoltrare a DGT, che li rifiuta in
+ * POST /jobCard con "is not allowed".
  * @param {string} bearerToken - Bearer token from PingFederate
  * @param {object} payload     - Digital Job Card payload to persist
  * @returns {Promise<object>} parsed response body
@@ -342,7 +362,11 @@ async function saveJobCard(bearerToken, payload) {
     throw new Error('[jobCard] payload is required');
   }
 
-  const body = JSON.stringify(payload);
+  const sanitizedPayload = Array.isArray(payload.jobs)
+    ? { ...payload, jobs: payload.jobs.map(stripPackageEnrichment) }
+    : payload;
+
+  const body = JSON.stringify(sanitizedPayload);
   const options = buildDgtOptions(
     '/jobCard',
     'POST',
