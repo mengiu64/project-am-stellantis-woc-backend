@@ -238,9 +238,10 @@ Globals:
     # 128MB (default AWS) assegna una frazione minima di vCPU: penalizza pesantemente
     # le operazioni CPU-bound (handshake TLS verso RDS Proxy, PingFederate, gateway
     # DML/DMS/job-docs — quest'ultime spesso multiple e in parallelo per singola
-    # invocazione). 512MB riduce sensibilmente le latenze percepite (es. GET
-    # pkfavorite con più preferiti, che combina lettura DB + N chiamate DMS parallele).
-    MemorySize: 512
+    # invocazione). Portato a 1024MB (vCPU quasi intera) per ridurre ulteriormente
+    # le latenze percepite (es. GET pkfavorite con più preferiti, che combina
+    # lettura DB + N chiamate DMS parallele).
+    MemorySize: 1024
     Timeout: 30
     Tracing: Active
     Handler: index.handler
