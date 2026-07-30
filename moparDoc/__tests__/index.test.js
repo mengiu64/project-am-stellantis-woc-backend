@@ -2,11 +2,12 @@
 
 jest.mock('../moparDocService', () => ({
   createJobCard: jest.fn(),
+  createAccessToken: jest.fn(),
   getUploadDocURL: jest.fn(),
   uploadedDoc: jest.fn(),
 }));
 
-const { createJobCard, getUploadDocURL, uploadedDoc } = require('../moparDocService');
+const { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc } = require('../moparDocService');
 const { handler } = require('../index');
 
 describe('moparDoc index.handler', () => {
@@ -38,6 +39,21 @@ describe('moparDoc index.handler', () => {
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ JobCardId: 'JC1' });
     expect(createJobCard).toHaveBeenCalledWith({ vin: 'VF3CABHW6GT204366' });
+  });
+
+  test('createAccessToken: direct invoke payload with action + body', async () => {
+    createAccessToken.mockResolvedValue({ AccessToken: 'tok' });
+
+    const res = await handler({
+      action: 'createAccessToken',
+      body: JSON.stringify({ JobCardId: 'JC1', UserName: 'user1', dealerCode: '0062230', market: 'IT', APIAccessCode: 'ACC123' }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ AccessToken: 'tok' });
+    expect(createAccessToken).toHaveBeenCalledWith({
+      JobCardId: 'JC1', UserName: 'user1', dealerCode: '0062230', market: 'IT', APIAccessCode: 'ACC123',
+    });
   });
 
   test('getUploadDocURL: API Gateway proxy event (path + query string)', async () => {

@@ -33,12 +33,12 @@ if (missing.length > 0) {
 }
 
 module.exports = {
-  // PingFederate token endpoint — stesso host/scope (prd:dgt) di jobcard/djc,
-  // ma con un client dedicato a MoparDoc (client_id/secret diversi).
+  // PingFederate token endpoint — stesso host di jobcard/djc, ma con scope
+  // (prd:mdo) e client dedicati a MoparDoc (client_id/secret diversi).
   auth: {
     url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
-    scope: 'prd:dgt',
+    scope: 'prd:mdo',
     clientId: process.env.MOPARDOC_PING_CLIENT_ID,
     clientSecret: process.env.MOPARDOC_PING_CLIENT_SECRET,
   },

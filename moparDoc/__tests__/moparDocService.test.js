@@ -19,7 +19,7 @@ jest.mock('../httpClient');
 
 const { getBearerToken } = require('../authService');
 const { httpsRequest } = require('../httpClient');
-const { createJobCard, getUploadDocURL, uploadedDoc } = require('../moparDocService');
+const { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc } = require('../moparDocService');
 
 describe('moparDocService', () => {
   beforeEach(() => {
@@ -38,6 +38,14 @@ describe('moparDocService', () => {
     dealerCode: '0062230',
     JobCard_Title: 'Title',
     TAMAccessCode: 'ACC123',
+  };
+
+  const accessTokenPayload = {
+    JobCardId: 'JC1',
+    UserName: 'user1',
+    dealerCode: '0062230',
+    market: 'IT',
+    APIAccessCode: 'ACC123',
   };
 
   const uploadUrlPayload = {
@@ -83,6 +91,37 @@ describe('moparDocService', () => {
     test('throws when downstream returns non-2xx', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 400, headers: {}, body: { message: 'bad' } });
       await expect(createJobCard(jobCardPayload)).rejects.toThrow('CreateJobCard failed: HTTP 400');
+    });
+  });
+
+  describe('createAccessToken', () => {
+    test('throws when a required field is missing', async () => {
+      await expect(createAccessToken({ ...accessTokenPayload, APIAccessCode: undefined }))
+        .rejects.toThrow('Missing required field(s): APIAccessCode');
+    });
+
+    test('throws when params is undefined', async () => {
+      await expect(createAccessToken(undefined)).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('calls job-docs connector host with ****** X-IBM headers', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { AccessToken: 'tok' } });
+
+      const result = await createAccessToken(accessTokenPayload);
+
+      expect(result).toEqual({ AccessToken: 'tok' });
+      const [options, body] = httpsRequest.mock.calls[0];
+      expect(options.hostname).toBe('jobdocs.test');
+      expect(options.path).toBe('/job-docs/connector/v1/CreateAccessToken');
+      expect(options.headers.Authorization).toBe('Bearer test-bearer-token');
+      expect(options.headers['X-IBM-Client-Id']).toBe('ibm-id');
+      expect(options.headers['X-IBM-Client-Secret']).toBe('ibm-secret');
+      expect(JSON.parse(body)).toEqual(accessTokenPayload);
+    });
+
+    test('throws when downstream returns non-2xx', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 401, headers: {}, body: { message: 'bad' } });
+      await expect(createAccessToken(accessTokenPayload)).rejects.toThrow('CreateAccessToken failed: HTTP 401');
     });
   });
 

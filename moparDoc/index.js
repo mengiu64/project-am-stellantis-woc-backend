@@ -3,27 +3,33 @@
 /**
  * index.js — Entry point (moparDoc)
  *
- * Espone 3 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
- *  - createJobCard    (POST /job-docs/connector/v1/CreateJobCard)
- *  - getUploadDocURL  (POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL)
- *  - uploadedDoc      (POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc)
+ * Espone 4 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
+ *  - createJobCard     (POST /job-docs/connector/v1/CreateJobCard)
+ *  - createAccessToken (POST /job-docs/connector/v1/CreateAccessToken)
+ *  - getUploadDocURL   (POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL)
+ *  - uploadedDoc       (POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc)
  *
  * Usage:
- *   node index.js createJobCard   <payloadJsonFile>
- *   node index.js getUploadDocURL <payloadJsonFile>
- *   node index.js uploadedDoc     <payloadJsonFile>
+ *   node index.js createJobCard     <payloadJsonFile>
+ *   node index.js createAccessToken <payloadJsonFile>
+ *   node index.js getUploadDocURL   <payloadJsonFile>
+ *   node index.js uploadedDoc       <payloadJsonFile>
  *
  * Esempio payload createJobCard:
  *   { "vin": "...", "market": "IT", "source": "WOC", "UserName": "...",
  *     "dealerCode": "0062230", "JobCard_Title": "...", "TAMAccessCode": "..." }
+ *
+ * Esempio payload createAccessToken:
+ *   { "JobCardId": "...", "UserName": "...", "dealerCode": "0062230",
+ *     "market": "IT", "APIAccessCode": "..." }
  */
 
 const fs = require('fs');
-const { createJobCard, getUploadDocURL, uploadedDoc } = require('./moparDocService');
+const { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc } = require('./moparDocService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['createJobCard', 'getUploadDocURL', 'uploadedDoc'];
+const VALID_ACTIONS = ['createJobCard', 'createAccessToken', 'getUploadDocURL', 'uploadedDoc'];
 
 /**
  * Resolves { action, body } from either:
@@ -59,6 +65,7 @@ function resolveActionAndBody(event) {
 
 const ACTIONS = {
   createJobCard,
+  createAccessToken,
   getUploadDocURL,
   uploadedDoc,
 };
@@ -116,9 +123,10 @@ async function main() {
       await runAction(command, param);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
-      console.error('  node index.js createJobCard   <payloadJsonFile>');
-      console.error('  node index.js getUploadDocURL <payloadJsonFile>');
-      console.error('  node index.js uploadedDoc     <payloadJsonFile>');
+      console.error('  node index.js createJobCard     <payloadJsonFile>');
+      console.error('  node index.js createAccessToken <payloadJsonFile>');
+      console.error('  node index.js getUploadDocURL   <payloadJsonFile>');
+      console.error('  node index.js uploadedDoc       <payloadJsonFile>');
       process.exit(1);
     }
   } catch (err) {

@@ -1,18 +1,21 @@
 # moparDoc — Node.js MoparDoc / Job-Docs Connector client
 
-Modulo Node.js autoconsistente che espone 3 azioni verso due gateway Stellantis/FCA
+Modulo Node.js autoconsistente che espone 4 azioni verso due gateway Stellantis/FCA
 per la gestione della documentazione allegata alle job card (Mopar):
 
 - **`createJobCard`** — crea una job card sul connector `job-docs` (PSA):
   `POST https://api-oidc-preprod.groupe-psa.com/job-docs/connector/v1/CreateJobCard`
+- **`createAccessToken`** — ottiene un `AccessToken` per una job card già creata,
+  necessario per autenticare `getUploadDocURL`/`uploadedDoc`:
+  `POST https://api-oidc-preprod.groupe-psa.com/job-docs/connector/v1/CreateAccessToken`
 - **`getUploadDocURL`** — richiede una URL pre-firmata per l'upload di un documento
   sul MoparDocs Browser API (FCA/Fiat):
   `POST https://lab-examaftersales.fiat.com/Mopardocs/MoparDocsApi/Browser/getUploadDocURL`
 - **`uploadedDoc`** — notifica il completamento dell'upload di un documento:
   `POST https://lab-examaftersales.fiat.com/Mopardocs/MoparDocsApi/Browser/UploadedDoc`
 
-Tutte e tre le chiamate usano lo stesso **Bearer token PingFederate** (stesso host/scope
-`prd:dgt` di `jobcard`/`djc`, ma con un **client PingFederate dedicato** — client_id/secret
+Tutte e quattro le chiamate usano lo stesso ******** PingFederate** (stesso host, scope
+`prd:mdo`, con un **client PingFederate dedicato** — client_id/secret
 diversi, non condivisi) e le stesse credenziali **IBM API Connect** (`X-IBM-Client-Id` /
 `X-IBM-Client-Secret`).
 
@@ -21,7 +24,7 @@ diversi, non condivisi) e le stesse credenziali **IBM API Connect** (`X-IBM-Clie
 ```
 moparDoc/
 ├── index.js             ← CLI entry-point + Lambda handler (dispatcher per azione)
-├── moparDocService.js    ← createJobCard / getUploadDocURL / uploadedDoc
+├── moparDocService.js    ← createJobCard / createAccessToken / getUploadDocURL / uploadedDoc
 ├── authService.js        ← autenticazione PingFederate → token (client dedicato MoparDoc)
 ├── httpClient.js         ← wrapper HTTPS generico (redazione dati sensibili nei log)
 ├── config.js              ← credenziali/URL (PingFederate + job-docs + MoparDocs Browser API)
@@ -47,7 +50,7 @@ cp .env.example .env   # valorizzare con le credenziali reali
 
 | Variabile                      | Descrizione                                                        |
 |---------------------------------|----------------------------------------------------------------------|
-| `MOPARDOC_PING_CLIENT_ID`       | Client id PingFederate dedicato a moparDoc (scope `prd:dgt`)         |
+| `MOPARDOC_PING_CLIENT_ID`       | Client id PingFederate dedicato a moparDoc (scope `prd:mdo`)         |
 | `MOPARDOC_PING_CLIENT_SECRET`   | Client secret PingFederate dedicato a moparDoc                       |
 | `MOPARDOC_IBM_CLIENT_ID`        | `X-IBM-Client-Id` (job-docs connector + MoparDocs Browser API)       |
 | `MOPARDOC_IBM_CLIENT_SECRET`    | `X-IBM-Client-Secret` (job-docs connector + MoparDocs Browser API)   |
@@ -73,6 +76,21 @@ del path (integrazione API Gateway, es. `.../moparDoc/createJobCard`).
     "dealerCode": "0062230",
     "JobCard_Title": "Tagliando 30.000km",
     "TAMAccessCode": "ACC123"
+  }
+}
+```
+
+### `createAccessToken`
+
+```json
+{
+  "action": "createAccessToken",
+  "body": {
+    "JobCardId": "JC123456",
+    "UserName": "mario.rossi",
+    "dealerCode": "0062230",
+    "market": "IT",
+    "APIAccessCode": "ACC123"
   }
 }
 ```
@@ -112,9 +130,10 @@ campo obbligatorio; `502` per errori upstream/di rete.
 ## CLI
 
 ```bash
-node index.js createJobCard   ./payload-createJobCard.json
-node index.js getUploadDocURL ./payload-getUploadDocURL.json
-node index.js uploadedDoc     ./payload-uploadedDoc.json
+node index.js createJobCard     ./payload-createJobCard.json
+node index.js createAccessToken ./payload-createAccessToken.json
+node index.js getUploadDocURL   ./payload-getUploadDocURL.json
+node index.js uploadedDoc       ./payload-uploadedDoc.json
 ```
 
 ## Test
