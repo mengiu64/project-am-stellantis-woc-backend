@@ -125,6 +125,50 @@ describe('pkfavorite index.handler', () => {
     ]);
   });
 
+  it('GET: con più preferiti, esegue tutte le chiamate DML in parallelo (non in coda)', async () => {
+    // Regressione: le N chiamate a postDmsInquiry devono partire tutte
+    // "subito" (stesso tick), non attendere il completamento l'una
+    // dell'altra. Se fossero sequenziali, la seconda chiamata verrebbe
+    // avviata solo dopo la risoluzione della prima (dopo ~50ms), quindi il
+    // tempo totale sarebbe la SOMMA dei ritardi; se sono in parallelo, il
+    // tempo totale è vicino al MASSIMO dei ritardi.
+    listFavorites.mockResolvedValue([
+      { packageCode: 'P1', createdAt: '2026-01-01T09:00:00Z' },
+      { packageCode: 'P2', createdAt: '2026-01-01T09:00:00Z' },
+      { packageCode: 'P3', createdAt: '2026-01-01T09:00:00Z' },
+    ]);
+    getBearerToken.mockResolvedValue('fake-bearer-token');
+
+    const callOrder = [];
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    postDmsInquiry.mockImplementation(async (_token, { package: packageCode }) => {
+      callOrder.push({ packageCode, startedAt: Date.now() });
+      await delay(50);
+      return { UpSelling: { Packages: [] } };
+    });
+
+    const event = apiGwEvent({
+      method: 'GET',
+      authorizerSub: '0062230.d001',
+      query: { vin: 'VF3CABHW6GT204366' },
+    });
+
+    const startedAt = Date.now();
+    const res = await handler(event);
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(res.statusCode).toBe(200);
+    expect(postDmsInquiry).toHaveBeenCalledTimes(3);
+    // Tutte e 3 le chiamate devono essere partite entro pochi ms l'una
+    // dall'altra (stesso "giro" di Promise.all), non a ~50ms di distanza
+    // l'una dall'altra come sarebbe con un await in sequenza.
+    const spread = Math.max(...callOrder.map((c) => c.startedAt)) - Math.min(...callOrder.map((c) => c.startedAt));
+    expect(spread).toBeLessThan(40);
+    // Tempo totale vicino al singolo delay (50ms), non alla somma (150ms).
+    expect(elapsedMs).toBeLessThan(120);
+  });
+
   it('GET: with no favorites, returns an empty list without calling the DML gateway', async () => {
     listFavorites.mockResolvedValue([]);
     const event = apiGwEvent({

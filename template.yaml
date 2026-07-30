@@ -83,11 +83,11 @@ Parameters:
   # ── MoparDoc (job-docs connector + MoparDocs Browser API) ─────────────────
   MoparDocPingClientId:
     Type: String
-    Description: PingFederate client id dedicato a moparDoc (scope prd:dgt)
+    Description: PingFederate client id dedicato a moparDoc (scope prd:mdo)
   MoparDocPingClientSecret:
     Type: String
     NoEcho: true
-    Description: PingFederate client secret dedicato a moparDoc (scope prd:dgt)
+    Description: PingFederate client secret dedicato a moparDoc (scope prd:mdo)
   MoparDocIbmClientId:
     Type: String
     NoEcho: true
@@ -378,10 +378,10 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${DjcFunction}"
       RetentionInDays: 30
 
-  # MoparDocFunction: gestisce createJobCard (job-docs connector PSA),
-  # getUploadDocURL e uploadedDoc (MoparDocs Browser API FCA/Fiat). Usa un
-  # client PingFederate dedicato (scope prd:dgt, credenziali diverse da
-  # jobcard/djc) e credenziali IBM API Connect proprie.
+  # MoparDocFunction: gestisce createJobCard/createAccessToken (job-docs
+  # connector PSA), getUploadDocURL e uploadedDoc (MoparDocs Browser API
+  # FCA/Fiat). Usa un client PingFederate dedicato (scope prd:mdo,
+  # credenziali diverse da jobcard/djc) e credenziali IBM API Connect proprie.
   MoparDocFunction:
     Type: AWS::Serverless::Function
     Properties:
