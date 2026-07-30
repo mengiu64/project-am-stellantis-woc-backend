@@ -2,10 +2,10 @@
 
 /**
  * moparDocService.js — Chiamate downstream verso i due gateway MoparDoc:
- *  - job-docs connector (api-oidc-preprod.groupe-psa.com): CreateJobCard
+ *  - job-docs connector (api-oidc-preprod.groupe-psa.com): CreateJobCard, CreateAccessToken
  *  - MoparDocs Browser API (lab-examaftersales.fiat.com): getUploadDocURL, UploadedDoc
  *
- * Tutte e tre le chiamate condividono lo stesso Bearer token PingFederate
+ * Tutte e quattro le chiamate condividono lo stesso ****** PingFederate
  * (authService.getBearerToken) e le stesse credenziali IBM API Connect
  * (X-IBM-Client-Id / X-IBM-Client-Secret), ma usano host diversi.
  */
@@ -81,6 +81,30 @@ async function createJobCard(params) {
 }
 
 /**
+ * CreateAccessToken — ottiene un APIAccessCode/AccessToken per una job card
+ * già creata (necessario per autenticare getUploadDocURL/uploadedDoc verso
+ * MoparDocs Browser API). Stesso connector job-docs (PSA) di createJobCard.
+ * @param {{JobCardId: string, UserName: string, dealerCode: string, market: string, APIAccessCode: string}} params
+ */
+async function createAccessToken(params) {
+  const required = ['JobCardId', 'UserName', 'dealerCode', 'market', 'APIAccessCode'];
+  const missing = required.filter((k) => !params || !params[k]);
+  if (missing.length > 0) {
+    throw new Error(`[createAccessToken] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  const payload = {
+    JobCardId: params.JobCardId,
+    UserName: params.UserName,
+    dealerCode: params.dealerCode,
+    market: params.market,
+    APIAccessCode: params.APIAccessCode,
+  };
+
+  return postJson(config.jobDocs, '/CreateAccessToken', payload);
+}
+
+/**
  * getUploadDocURL — ottiene la URL pre-firmata per l'upload di un documento.
  * @param {{JobCardId: string, Filename: string, ContentType: string, AccessToken: string, Filetype: string}} params
  */
@@ -123,4 +147,4 @@ async function uploadedDoc(params) {
   return postJson(config.moparDocsApi, '/UploadedDoc', payload);
 }
 
-module.exports = { createJobCard, getUploadDocURL, uploadedDoc };
+module.exports = { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc };

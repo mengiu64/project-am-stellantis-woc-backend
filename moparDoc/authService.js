@@ -3,8 +3,8 @@
 /**
  * authService.js — Client PingFederate dedicato a MoparDoc.
  *
- * Stesso host/scope (prd:dgt) usato da jobcard/djc, ma con un client_id/secret
- * dedicato (config.auth.clientId/clientSecret, env MOPARDOC_PING_CLIENT_ID/
+ * Stesso host di jobcard/djc, ma con scope (prd:mdo) e client_id/secret
+ * dedicati (config.auth.clientId/clientSecret, env MOPARDOC_PING_CLIENT_ID/
  * MOPARDOC_PING_CLIENT_SECRET): un client PingFederate diverso produce un
  * token diverso, quindi la cache è tenuta separata (.token.cache.json in
  * questa stessa cartella, non condivisa con jobcard/djc).
