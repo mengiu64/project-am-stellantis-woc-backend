@@ -56,14 +56,41 @@ describe('translations handler', () => {
     expect(mockRepository.getTranslations).toHaveBeenCalledWith('it');
   });
 
-  test('returns 404 when repository throws TranslationNotFoundError', async () => {
+  test('returns 404 when repository throws TranslationNotFoundError for both requested and fallback lang', async () => {
     const err = new Error('Traduzioni non trovate per la lingua "xx"');
     err.code = 'TRANSLATION_NOT_FOUND';
     mockRepository.getTranslations.mockRejectedValue(err);
     const event = { queryStringParameters: { lang: 'xx' } };
     const res = await handler(event);
+    expect(mockRepository.getTranslations).toHaveBeenNthCalledWith(1, 'xx');
+    expect(mockRepository.getTranslations).toHaveBeenNthCalledWith(2, 'en');
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body).success).toBe(false);
+    expect(JSON.parse(res.body).message).toBe('Traduzioni non trovate per la lingua "xx"');
+  });
+
+  test('falls back to default lang ("en") when the requested lang file is not found', async () => {
+    const notFoundErr = new Error('Traduzioni non trovate per la lingua "fr"');
+    notFoundErr.code = 'TRANSLATION_NOT_FOUND';
+    mockRepository.getTranslations
+      .mockRejectedValueOnce(notFoundErr)
+      .mockResolvedValueOnce({ common: { welcome: 'Welcome' } });
+    const event = { queryStringParameters: { lang: 'fr' } };
+    const res = await handler(event);
+    expect(mockRepository.getTranslations).toHaveBeenNthCalledWith(1, 'fr');
+    expect(mockRepository.getTranslations).toHaveBeenNthCalledWith(2, 'en');
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ common: { welcome: 'Welcome' } });
+  });
+
+  test('does not retry when the requested lang is already the default lang', async () => {
+    const err = new Error('Traduzioni non trovate per la lingua "en"');
+    err.code = 'TRANSLATION_NOT_FOUND';
+    mockRepository.getTranslations.mockRejectedValue(err);
+    const event = { queryStringParameters: { lang: 'en' } };
+    const res = await handler(event);
+    expect(mockRepository.getTranslations).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(404);
   });
 
   test('returns 502 on generic repository error', async () => {
