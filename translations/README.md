@@ -45,7 +45,7 @@ l'unico punto da modificare quando si vorrà introdurre una
 |--------------------------------|----------------------------------------------------------|------------|
 | `TRANSLATIONS_BUCKET_NAME`     | Nome del bucket S3 con i file di traduzione               | *(nessuno, obbligatoria)* |
 | `TRANSLATIONS_KEY_PREFIX`      | Prefisso della key S3 (`{prefix}/{lang}/translation.json`)| `locales`  |
-| `TRANSLATIONS_DEFAULT_LANG`    | Lingua di default quando `lang` non è passato             | `en`       |
+| `TRANSLATIONS_DEFAULT_LANG`    | Lingua di default quando `lang` non è passato **e usata come fallback quando il file della lingua richiesta non esiste su S3** | `en`       |
 
 ## Utilizzo (Lambda)
 
@@ -62,8 +62,12 @@ GET /translations?lang=en
 ```
 
 Risposte:
-- `200` — JSON con le traduzioni.
-- `404` — lingua non trovata nel bucket (`locales/{lang}/translation.json` assente).
+- `200` — JSON con le traduzioni. Se il file `locales/{lang}/translation.json`
+  non esiste per la lingua richiesta, viene effettuato automaticamente un
+  **fallback su `TRANSLATIONS_DEFAULT_LANG`** (`en` di default) e la risposta
+  resta comunque `200` con le traduzioni inglesi.
+- `404` — lingua non trovata nel bucket **e** non trovata nemmeno la lingua di
+  fallback (`locales/{lang}/translation.json` assente per entrambe).
 - `502` — errore tecnico (es. bucket non raggiungibile).
 
 ## CLI
