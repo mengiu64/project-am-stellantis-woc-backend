@@ -125,13 +125,13 @@ function addDays(dateStr, days) {
 
 /**
  * Converts a "YYYY-MM-DD" date string into an ISO 8601 UTC date-time, at
- * either the start (00:01:00.000Z) or the end (00:23:59.000Z) of that day.
+ * either the start (00:01:00.000Z) or the end (23:59:00.000Z) of that day.
  * @param {string} dateStr     - date in "YYYY-MM-DD" format
  * @param {boolean} [endOfDay] - true for the end of the day, false (default) for the start
  * @returns {string} ISO 8601 date-time string
  */
 function toIsoDateTime(dateStr, endOfDay = false) {
-  return `${dateStr}T${endOfDay ? '00:23:59.000' : '00:01:00.000'}Z`;
+  return `${dateStr}T${endOfDay ? '23:59:00.000' : '00:01:00.000'}Z`;
 }
 
 /**
