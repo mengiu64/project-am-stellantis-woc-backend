@@ -125,13 +125,13 @@ function addDays(dateStr, days) {
 
 /**
  * Converts a "YYYY-MM-DD" date string into an ISO 8601 UTC date-time, at
- * either the start (00:00:00.000Z) or the end (23:59:59.999Z) of that day.
+ * either the start (00:01:00.000Z) or the end (00:23:59.000Z) of that day.
  * @param {string} dateStr     - date in "YYYY-MM-DD" format
  * @param {boolean} [endOfDay] - true for the end of the day, false (default) for the start
  * @returns {string} ISO 8601 date-time string
  */
 function toIsoDateTime(dateStr, endOfDay = false) {
-  return `${dateStr}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`;
+  return `${dateStr}T${endOfDay ? '00:23:59.000' : '00:01:00.000'}Z`;
 }
 
 /**
@@ -211,19 +211,18 @@ async function getJobCardListCurrent(bearerToken, dealerId, currentDate) {
     throw new Error('[jobCard] currentDate is required');
   }
 
-  const nextDate    = addDays(currentDate, 1);
   const weekAgoDate = addDays(currentDate, -7);
 
   const [receptionResult, deliveryResult, createdResult] = await Promise.all([
     getJobCardList(bearerToken, {
       dealerId,
       receptionStartDate: toIsoDateTime(currentDate),
-      receptionEndDate:   toIsoDateTime(nextDate),
+      receptionEndDate:   toIsoDateTime(currentDate, true),
     }),
     getJobCardList(bearerToken, {
       dealerId,
       deliveryStartDate: toIsoDateTime(currentDate),
-      deliveryEndDate:   toIsoDateTime(nextDate),
+      deliveryEndDate:   toIsoDateTime(currentDate, true),
     }),
     getJobCardList(bearerToken, {
       dealerId,

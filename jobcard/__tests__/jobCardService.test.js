@@ -244,14 +244,14 @@ describe('jobCardService', () => {
       expect(httpsRequest).toHaveBeenCalledTimes(3);
       const [receptionOpts, deliveryOpts, createdOpts] = httpsRequest.mock.calls.map(([opts]) => opts);
 
-      expect(receptionOpts.headers.receptionStartDate).toBe('2026-05-20T00:00:00.000Z');
-      expect(receptionOpts.headers.receptionEndDate).toBe('2026-05-21T00:00:00.000Z');
+      expect(receptionOpts.headers.receptionStartDate).toBe('2026-05-20T00:01:00.000Z');
+      expect(receptionOpts.headers.receptionEndDate).toBe('2026-05-20T00:23:59.000Z');
 
-      expect(deliveryOpts.headers.deliveryStartDate).toBe('2026-05-20T00:00:00.000Z');
-      expect(deliveryOpts.headers.deliveryEndDate).toBe('2026-05-21T00:00:00.000Z');
+      expect(deliveryOpts.headers.deliveryStartDate).toBe('2026-05-20T00:01:00.000Z');
+      expect(deliveryOpts.headers.deliveryEndDate).toBe('2026-05-20T00:23:59.000Z');
 
-      expect(createdOpts.headers.creationStartDate).toBe('2026-05-13T00:00:00.000Z');
-      expect(createdOpts.headers.creationEndDate).toBe('2026-05-20T23:59:59.999Z');
+      expect(createdOpts.headers.creationStartDate).toBe('2026-05-13T00:01:00.000Z');
+      expect(createdOpts.headers.creationEndDate).toBe('2026-05-20T00:23:59.000Z');
     });
 
     test('merges arrayReception, arrayDelivery and arrayCreated without duplicates', async () => {
