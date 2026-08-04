@@ -54,8 +54,8 @@ if (missing.length > 0) {
 module.exports = {
   // Configurazione autenticazione PingFederate
   auth: {
-    // URL endpoint PingFederate (default: preprod)
-    url: process.env.SRP_V360_OTA_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    // URL endpoint PingFederate (default: produzione)
+    url: process.env.SRP_V360_OTA_PING_URL || 'https://idfed.mpsa.com:443/as/token.oauth2',
     // Tipo di grant OAuth2
     grantType: 'client_credentials',
     // Scope OAuth2 per il servizio ASV360
@@ -69,9 +69,9 @@ module.exports = {
   // Configurazione servizio upstream SRP-V360 (IBM API Connect)
   srp: {
     // URL base del servizio upstream (differente per dev/stage/prod)
-    baseUrl: process.env.SRP_V360_OTA_BASE_URL || 'https://emea-aws.dev.np-api.stellantis.com',
+    baseUrl: process.env.SRP_V360_OTA_BASE_URL || 'https://emea-aws.api.stellantis.com',
     // Base path dell'API upstream
-    basePath: process.env.SRP_V360_OTA_BASE_PATH || '/ps-dev/extra/srp/asv360/v1',
+    basePath: process.env.SRP_V360_OTA_BASE_PATH || '/ps-prod/extra/asv360/vehicle/v1',
     // X-IBM-Client-Id per autenticazione IBM API Connect
     clientId: process.env.SRP_V360_OTA_IBM_CLIENT_ID,
     // X-IBM-Client-Secret per autenticazione IBM API Connect

@@ -6,7 +6,7 @@
 jest.mock('../httpClient');
 jest.mock('../config', () => ({
   auth: {
-    url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    url: 'https://idfed.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:asv',
     clientId: 'test-client-id',
@@ -115,7 +115,7 @@ describe('authService – getBearerToken', () => {
 
       // Verifica log POST verso PingFederate
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        '[auth] POST https://idfed-preprod.mpsa.com:443/as/token.oauth2'
+        '[auth] POST https://idfed.mpsa.com:443/as/token.oauth2'
       );
       // Verifica log nuovo token ottenuto in italiano
       expect(consoleLogSpy).toHaveBeenCalledWith(

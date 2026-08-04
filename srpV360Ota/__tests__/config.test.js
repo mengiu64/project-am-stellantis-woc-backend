@@ -20,10 +20,10 @@ const REQUIRED_ENV = {
 
 // Valori di default per le variabili opzionali
 const DEFAULTS = {
-  PING_URL: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+  PING_URL: 'https://idfed.mpsa.com:443/as/token.oauth2',
   PING_SCOPE: 'prd:asv',
-  BASE_URL: 'https://emea-aws.dev.np-api.stellantis.com',
-  BASE_PATH: '/ps-dev/extra/srp/asv360/v1',
+  BASE_URL: 'https://emea-aws.api.stellantis.com',
+  BASE_PATH: '/ps-prod/extra/asv360/vehicle/v1',
 };
 
 describe('config.js', () => {
