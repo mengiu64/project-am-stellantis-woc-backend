@@ -112,27 +112,47 @@ exports.handler = async (event, context) => {
     // ── Query al database ──
     const pool = await getPool();
 
-    const queryText = 'SELECT 1 FROM woc.anag_brand WHERE ar_codbrand = $1 LIMIT 1';
+    const queryText = 'SELECT logo_s3_key FROM woc.anag_brand WHERE ar_codbrand = $1 LIMIT 1';
     const result = await pool.query({
       text: queryText,
       values: [arCodbrandUpper],
       statement_timeout: 5000,
     });
 
-    // Log strutturato della query (senza valori dei parametri)
-    log('info', awsRequestId, {
-      operation: 'query',
-      message: 'Query eseguita',
-      queryText,
-      rowCount: result.rows.length,
-    });
+    if (result.rows.length > 0) {
+      const row = result.rows[0];
+      const logoS3Key = row.logo_s3_key && row.logo_s3_key.trim() !== ''
+        ? row.logo_s3_key
+        : null;
 
-    const isStellantisBrand = result.rows.length > 0;
+      // Log strutturato della query riuscita con logoS3Key
+      log('info', awsRequestId, {
+        operation: 'query',
+        message: 'Query eseguita — brand trovato',
+        queryText,
+        rowCount: result.rows.length,
+        logoS3Key,
+      });
 
-    return buildResponse(200, {
-      success: true,
-      isStellantisBrand,
-    });
+      return buildResponse(200, {
+        success: true,
+        isStellantisBrand: true,
+        logoS3Key,
+      });
+    } else {
+      // Log strutturato della query riuscita — brand non trovato
+      log('info', awsRequestId, {
+        operation: 'query',
+        message: 'Query eseguita — brand non trovato',
+        queryText,
+        rowCount: result.rows.length,
+      });
+
+      return buildResponse(200, {
+        success: true,
+        isStellantisBrand: false,
+      });
+    }
   } catch (err) {
     // Errore interno — log strutturato senza esporre dettagli al client
     log('error', awsRequestId, {

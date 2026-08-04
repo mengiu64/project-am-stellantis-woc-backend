@@ -26,6 +26,7 @@ CREATE TABLE woc.anag_brand
     ar_codbrand   VARCHAR(2)   NOT NULL,
     codbrand      VARCHAR(2)   NOT NULL,
     brandname     VARCHAR(50)  NOT NULL,
+    logo_s3_key   VARCHAR(512) DEFAULT NULL,
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
 
@@ -38,6 +39,7 @@ COMMENT ON TABLE woc.anag_brand IS 'Anagrafica brand con codice ARCAD e codice n
 COMMENT ON COLUMN woc.anag_brand.ar_codbrand IS 'Codice brand ARCAD (PK) — es. AR, FT, LA';
 COMMENT ON COLUMN woc.anag_brand.codbrand IS 'Codice brand numerico/LINK — es. 83, 00, 70';
 COMMENT ON COLUMN woc.anag_brand.brandname IS 'Nome completo del brand';
+COMMENT ON COLUMN woc.anag_brand.logo_s3_key IS 'Chiave oggetto S3 del logo del brand (percorso relativo, es. logos/Alfa Romeo.png)';
 
 INSERT INTO woc.anag_brand (ar_codbrand, codbrand, brandname) VALUES
     ('AR', '83', 'Alfa Romeo'),
@@ -52,8 +54,7 @@ INSERT INTO woc.anag_brand (ar_codbrand, codbrand, brandname) VALUES
     ('AC', '30', 'CITROEN'),
     ('AP', '31', 'PEUGEOT'),
     ('DS', '33', 'DS'),
-    ('OV', '43', 'OPEL'),
-    ('CT', '97', 'CHEVROLET');
+    ('OV', '43', 'OPEL');
 
 
 -- ============================================================================

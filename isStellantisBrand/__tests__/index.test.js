@@ -110,8 +110,8 @@ describe('isStellantisBrand handler', () => {
   // ── Test di lookup brand ─────────────────────────────────────────────────
 
   describe('Lookup brand nel database', () => {
-    test('brand trovato → 200 + isStellantisBrand: true', async () => {
-      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] }));
+    test('brand trovato con logo_s3_key valorizzato → 200 + isStellantisBrand: true + logoS3Key stringa', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'assets/images/logo/brand-stla/ALFAROMEO.png' }] }));
 
       const res = await handler(makeEvent('AR'), mockContext);
 
@@ -119,9 +119,34 @@ describe('isStellantisBrand handler', () => {
       const body = JSON.parse(res.body);
       expect(body.success).toBe(true);
       expect(body.isStellantisBrand).toBe(true);
+      expect(body.logoS3Key).toBe('assets/images/logo/brand-stla/ALFAROMEO.png');
     });
 
-    test('brand non trovato → 200 + isStellantisBrand: false', async () => {
+    test('brand trovato con logo_s3_key NULL → 200 + isStellantisBrand: true + logoS3Key: null', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: null }] }));
+
+      const res = await handler(makeEvent('CT'), mockContext);
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+      expect(body.isStellantisBrand).toBe(true);
+      expect(body.logoS3Key).toBeNull();
+    });
+
+    test('brand trovato con logo_s3_key stringa vuota → 200 + isStellantisBrand: true + logoS3Key: null', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: '' }] }));
+
+      const res = await handler(makeEvent('AR'), mockContext);
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(true);
+      expect(body.isStellantisBrand).toBe(true);
+      expect(body.logoS3Key).toBeNull();
+    });
+
+    test('brand non trovato → 200 + isStellantisBrand: false + logoS3Key assente', async () => {
       setupPoolMock(jest.fn().mockResolvedValue({ rows: [] }));
 
       const res = await handler(makeEvent('ZZ'), mockContext);
@@ -130,10 +155,11 @@ describe('isStellantisBrand handler', () => {
       const body = JSON.parse(res.body);
       expect(body.success).toBe(true);
       expect(body.isStellantisBrand).toBe(false);
+      expect(body).not.toHaveProperty('logoS3Key');
     });
 
     test('input lowercase viene convertito a uppercase nella query', async () => {
-      const mockQuery = jest.fn().mockResolvedValue({ rows: [{ '?column?': 1 }] });
+      const mockQuery = jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'assets/images/logo/brand-stla/ALFAROMEO.png' }] });
       setupPoolMock(mockQuery);
 
       await handler(makeEvent('ar'), mockContext);
@@ -153,11 +179,65 @@ describe('isStellantisBrand handler', () => {
       const res = await handler(makeEvent('a'), mockContext);
 
       expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.isStellantisBrand).toBe(false);
+      expect(body).not.toHaveProperty('logoS3Key');
       expect(mockQuery).toHaveBeenCalledWith(
         expect.objectContaining({
           values: ['A'],
         })
       );
+    });
+
+    test('query usa SELECT logo_s3_key (non SELECT 1)', async () => {
+      const mockQuery = jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'assets/images/logo/brand-stla/FIAT.png' }] });
+      setupPoolMock(mockQuery);
+
+      await handler(makeEvent('FT'), mockContext);
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('SELECT logo_s3_key'),
+        })
+      );
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.not.stringContaining('SELECT 1'),
+        })
+      );
+    });
+
+    test('log strutturato include logoS3Key nel messaggio di query riuscita (brand trovato)', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'assets/images/logo/brand-stla/JEEP.png' }] }));
+
+      await handler(makeEvent('JE'), mockContext);
+
+      // Verifica che console.log sia stato chiamato con un JSON che include logoS3Key
+      const logCalls = console.log.mock.calls.map(call => {
+        try { return JSON.parse(call[0]); } catch { return null; }
+      }).filter(Boolean);
+
+      const queryLog = logCalls.find(
+        log => log.operation === 'query' && log.message && log.message.includes('brand trovato')
+      );
+      expect(queryLog).toBeDefined();
+      expect(queryLog).toHaveProperty('logoS3Key', 'assets/images/logo/brand-stla/JEEP.png');
+    });
+
+    test('log strutturato include logoS3Key: null quando logo_s3_key è NULL', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: null }] }));
+
+      await handler(makeEvent('CT'), mockContext);
+
+      const logCalls = console.log.mock.calls.map(call => {
+        try { return JSON.parse(call[0]); } catch { return null; }
+      }).filter(Boolean);
+
+      const queryLog = logCalls.find(
+        log => log.operation === 'query' && log.message && log.message.includes('brand trovato')
+      );
+      expect(queryLog).toBeDefined();
+      expect(queryLog).toHaveProperty('logoS3Key', null);
     });
   });
 
