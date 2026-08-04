@@ -129,6 +129,7 @@ function addDays(dateStr, days) {
  * @param {string} dateStr     - date in "YYYY-MM-DD" format
  * @param {boolean} [endOfDay] - true for the end of the day, false (default) for the start
  * @returns {string} ISO 8601 date-time string
+ * commit
  */
 function toIsoDateTime(dateStr, endOfDay = false) {
   return `${dateStr}T${endOfDay ? '23:59:00.000' : '00:01:00.000'}Z`;
