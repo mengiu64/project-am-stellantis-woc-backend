@@ -7,15 +7,15 @@
 jest.mock('../httpClient');
 jest.mock('../config', () => ({
   auth: {
-    url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    url: 'https://idfed.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:asv',
     clientId: 'ping-id',
     clientSecret: 'ping-secret',
   },
   srp: {
-    baseUrl: 'https://emea-aws.dev.np-api.stellantis.com',
-    basePath: '/ps-dev/extra/srp/asv360/v1',
+    baseUrl: 'https://emea-aws.api.stellantis.com',
+    basePath: '/ps-prod/extra/asv360/vehicle/v1',
     clientId: 'ibm-client-id',
     clientSecret: 'ibm-client-secret',
   },
@@ -219,8 +219,8 @@ describe('otaService – otaCompatibility', () => {
       await otaCompatibility('token', { vin: 'VR3UPHPX5P4347291' });
 
       const [options] = httpsRequest.mock.calls[0];
-      expect(options.hostname).toBe('emea-aws.dev.np-api.stellantis.com');
-      expect(options.path).toBe('/ps-dev/extra/srp/asv360/v1/otaCompatibility');
+      expect(options.hostname).toBe('emea-aws.api.stellantis.com');
+      expect(options.path).toBe('/ps-prod/extra/asv360/vehicle/v1/otaCompatibility');
       expect(options.method).toBe('POST');
     });
   });
