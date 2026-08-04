@@ -110,6 +110,140 @@ async function getJobCardList(bearerToken, params = {}) {
 }
 
 /**
+ * Adds `days` days to a "YYYY-MM-DD" date string, returning the result in the
+ * same format (UTC-based, avoids timezone/DST surprises).
+ * @param {string} dateStr - date in "YYYY-MM-DD" format
+ * @param {number} days    - number of days to add (may be negative)
+ * @returns {string} resulting date in "YYYY-MM-DD" format
+ */
+function addDays(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Converts a "YYYY-MM-DD" date string into an ISO 8601 UTC date-time, at
+ * either the start (00:00:00.000Z) or the end (23:59:59.999Z) of that day.
+ * @param {string} dateStr     - date in "YYYY-MM-DD" format
+ * @param {boolean} [endOfDay] - true for the end of the day, false (default) for the start
+ * @returns {string} ISO 8601 date-time string
+ */
+function toIsoDateTime(dateStr, endOfDay = false) {
+  return `${dateStr}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`;
+}
+
+/**
+ * Checks whether a JobCard list entry already has an estimated reception or
+ * delivery date/time set on any of its appointments
+ * (appointments[].reception.estimatedReceptionDateTime /
+ * appointments[].delivery.estimatedDeliveryDateTime).
+ * @param {object} item - JobCard list entry
+ * @returns {boolean} true if at least one estimated date/time is set
+ */
+function hasEstimatedDateTime(item) {
+  const appointments = Array.isArray(item?.appointments) ? item.appointments : [];
+  return appointments.some((appt) => {
+    const estimatedReception = appt?.reception?.estimatedReceptionDateTime;
+    const estimatedDelivery  = appt?.delivery?.estimatedDeliveryDateTime;
+    return (estimatedReception !== undefined && estimatedReception !== null)
+        || (estimatedDelivery !== undefined && estimatedDelivery !== null);
+  });
+}
+
+/**
+ * Builds a stable dedup key for a JobCard list entry, preferring jobCardSrpId
+ * (the most specific identifier in the JobCard schema), falling back to
+ * jobCardLegacyId then dmsRepairOrderId when it is missing.
+ * @param {object} item - JobCard list entry
+ * @returns {string} dedup key
+ */
+function jobCardKey(item) {
+  return String(item?.jobCardSrpId ?? item?.jobCardLegacyId ?? item?.dmsRepairOrderId ?? JSON.stringify(item));
+}
+
+/**
+ * Merges several JobCard list arrays into a single array without duplicates:
+ * the same JobCard present in more than one input array (e.g. a card with
+ * both reception and delivery scheduled today) is kept only once, using the
+ * first occurrence found (in the order the arrays are passed).
+ * @param {...object[]} arrays - JobCard arrays to merge
+ * @returns {object[]} merged, deduplicated JobCard array
+ */
+function mergeDistinctJobCards(...arrays) {
+  const seen = new Map();
+  for (const arr of arrays) {
+    for (const item of arr) {
+      const key = jobCardKey(item);
+      if (!seen.has(key)) seen.set(key, item);
+    }
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Retrieves the "current" JobCard list for a dealer, merging three
+ * getJobCardList queries anchored on a reference date:
+ *
+ *  1) arrayReception — jobCardList filtered by receptionStartDate=currentDate,
+ *     receptionEndDate=currentDate+1 day (reception scheduled "today").
+ *  2) arrayDelivery  — jobCardList filtered by deliveryStartDate=currentDate,
+ *     deliveryEndDate=currentDate+1 day (delivery scheduled "today").
+ *  3) arrayCreated   — jobCardList filtered by creationStartDate=currentDate-7 days,
+ *     creationEndDate=currentDate (created over the last week), excluding entries
+ *     that already have an estimated reception/delivery date/time set (already
+ *     covered by arrayReception/arrayDelivery above) or whose status is "CREATED".
+ *
+ * The three arrays are merged into a single, deduplicated JobCard list
+ * (same JobCard appearing in more than one array is kept only once).
+ *
+ * @param {string} bearerToken - ****** from PingFederate
+ * @param {string} dealerId    - (Mandatory) Dealer identifier
+ * @param {string} currentDate - Reference date, "YYYY-MM-DD" format (e.g. "2026-05-20")
+ * @returns {Promise<{ jobCardList: object[] }>} merged, deduplicated JobCard list
+ */
+async function getJobCardListCurrent(bearerToken, dealerId, currentDate) {
+  if (!dealerId) {
+    throw new Error('[jobCard] dealerId is required');
+  }
+  if (!currentDate) {
+    throw new Error('[jobCard] currentDate is required');
+  }
+
+  const nextDate    = addDays(currentDate, 1);
+  const weekAgoDate = addDays(currentDate, -7);
+
+  const [receptionResult, deliveryResult, createdResult] = await Promise.all([
+    getJobCardList(bearerToken, {
+      dealerId,
+      receptionStartDate: toIsoDateTime(currentDate),
+      receptionEndDate:   toIsoDateTime(nextDate),
+    }),
+    getJobCardList(bearerToken, {
+      dealerId,
+      deliveryStartDate: toIsoDateTime(currentDate),
+      deliveryEndDate:   toIsoDateTime(nextDate),
+    }),
+    getJobCardList(bearerToken, {
+      dealerId,
+      creationStartDate: toIsoDateTime(weekAgoDate),
+      creationEndDate:   toIsoDateTime(currentDate, true),
+    }),
+  ]);
+
+  const arrayReception  = Array.isArray(receptionResult?.jobCardList) ? receptionResult.jobCardList : [];
+  const arrayDelivery   = Array.isArray(deliveryResult?.jobCardList)  ? deliveryResult.jobCardList  : [];
+  const arrayCreatedRaw = Array.isArray(createdResult?.jobCardList)   ? createdResult.jobCardList   : [];
+
+  const arrayCreated = arrayCreatedRaw.filter(
+    (item) => !hasEstimatedDateTime(item) && item?.status !== 'CREATED',
+  );
+
+  return { jobCardList: mergeDistinctJobCards(arrayReception, arrayDelivery, arrayCreated) };
+}
+
+/**
  * Normalizes an address string coming from the upstream DL API, which separates
  * its sub-fields (street number, city, ...) with ";" (e.g. "13;poissy ;test").
  * Replaces every ";" with a space and collapses/trims extra whitespace.
@@ -386,4 +520,4 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardDetails, saveJobCard };
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard };

@@ -20,7 +20,7 @@ jest.mock('fs');
 
 const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
-const { getJobCardList, getJobCardDetails, saveJobCard } = require('../jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -212,6 +212,121 @@ describe('jobCardService', () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
     await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
+  });
+
+  // ── roInfo.roSource enrichment ───────────────────────────────────────────────
+
+  describe('getJobCardListCurrent', () => {
+    function jobCard(overrides = {}) {
+      return {
+        jobCardSrpId: overrides.jobCardSrpId ?? 'SRP-1',
+        appointments: overrides.appointments ?? [],
+        status: overrides.status ?? 'BOOKED',
+        ...overrides,
+      };
+    }
+
+    test('throws if dealerId is missing', async () => {
+      await expect(getJobCardListCurrent('token', undefined, '2026-05-20'))
+        .rejects.toThrow('[jobCard] dealerId is required');
+    });
+
+    test('throws if currentDate is missing', async () => {
+      await expect(getJobCardListCurrent('token', '0062219', undefined))
+        .rejects.toThrow('[jobCard] currentDate is required');
+    });
+
+    test('calls getJobCardList 3 times with the expected date ranges/headers', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardList: [] } });
+
+      await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(httpsRequest).toHaveBeenCalledTimes(3);
+      const [receptionOpts, deliveryOpts, createdOpts] = httpsRequest.mock.calls.map(([opts]) => opts);
+
+      expect(receptionOpts.headers.receptionStartDate).toBe('2026-05-20T00:00:00.000Z');
+      expect(receptionOpts.headers.receptionEndDate).toBe('2026-05-21T00:00:00.000Z');
+
+      expect(deliveryOpts.headers.deliveryStartDate).toBe('2026-05-20T00:00:00.000Z');
+      expect(deliveryOpts.headers.deliveryEndDate).toBe('2026-05-21T00:00:00.000Z');
+
+      expect(createdOpts.headers.creationStartDate).toBe('2026-05-13T00:00:00.000Z');
+      expect(createdOpts.headers.creationEndDate).toBe('2026-05-20T23:59:59.999Z');
+    });
+
+    test('merges arrayReception, arrayDelivery and arrayCreated without duplicates', async () => {
+      const cardA = jobCard({ jobCardSrpId: 'A' });
+      const cardB = jobCard({ jobCardSrpId: 'B' });
+      const cardC = jobCard({ jobCardSrpId: 'C' });
+
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [cardA, cardB] } }) // reception
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [cardB] } })        // delivery (dup of B)
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [cardC] } });        // created
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result.jobCardList).toHaveLength(3);
+      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['A', 'B', 'C']);
+    });
+
+    test('excludes arrayCreated entries with an estimated reception date/time set', async () => {
+      const withEstimatedReception = jobCard({
+        jobCardSrpId: 'D',
+        appointments: [{ reception: { estimatedReceptionDateTime: '2026-05-20T09:00:00Z' } }],
+      });
+      const withoutEstimated = jobCard({ jobCardSrpId: 'E' });
+
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [withEstimatedReception, withoutEstimated] } });
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['E']);
+    });
+
+    test('excludes arrayCreated entries with an estimated delivery date/time set', async () => {
+      const withEstimatedDelivery = jobCard({
+        jobCardSrpId: 'F',
+        appointments: [{ delivery: { estimatedDeliveryDateTime: '2026-05-20T17:00:00Z' } }],
+      });
+
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [withEstimatedDelivery] } });
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result.jobCardList).toEqual([]);
+    });
+
+    test('excludes arrayCreated entries with status "CREATED"', async () => {
+      const createdStatus = jobCard({ jobCardSrpId: 'G', status: 'CREATED' });
+      const otherStatus    = jobCard({ jobCardSrpId: 'H', status: 'BOOKED' });
+
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [createdStatus, otherStatus] } });
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['H']);
+    });
+
+    test('handles missing jobCardList arrays in any of the three responses', async () => {
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: {} })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: {} })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: {} });
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result).toEqual({ jobCardList: [] });
+    });
   });
 
   // ── roInfo.roSource enrichment ───────────────────────────────────────────────
