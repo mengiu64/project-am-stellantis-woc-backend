@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite)
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -435,6 +435,34 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${V360Function}"
       RetentionInDays: 30
 
+  # ── srpV360Ota (OTA Compatibility BFF — riuso credenziali V360/ASV) ────────
+  #
+  # Lambda indipendente dal modulo v360 a livello di codice sorgente, ma riutilizza
+  # le stesse credenziali PingFederate (V360PingClientId/Secret) e IBM API Connect
+  # (AsvClientId/Secret) poiché invoca lo stesso servizio upstream ASV360.
+  SrpV360OtaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-srpv360ota"
+      CodeUri: srpV360Ota/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+      Environment:
+        Variables:
+          SRP_V360_OTA_PING_CLIENT_ID:     !Ref V360PingClientId
+          SRP_V360_OTA_PING_CLIENT_SECRET: !Ref V360PingClientSecret
+          SRP_V360_OTA_IBM_CLIENT_ID:      !Ref AsvClientId
+          SRP_V360_OTA_IBM_CLIENT_SECRET:  !Ref AsvClientSecret
+
+  SrpV360OtaFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${SrpV360OtaFunction}"
+      RetentionInDays: 30
+
   PkEperFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -841,6 +869,8 @@ Outputs:
     Value: !GetAtt MoparDocFunction.Arn
   V360FunctionArn:
     Value: !GetAtt V360Function.Arn
+  SrpV360OtaFunctionArn:
+    Value: !GetAtt SrpV360OtaFunction.Arn
   PkEperFunctionArn:
     Value: !GetAtt PkEperFunction.Arn
   PkDocsoaFunctionArn:
