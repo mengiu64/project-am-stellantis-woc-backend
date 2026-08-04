@@ -13,6 +13,10 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.800.0",
+    "@aws-sdk/client-ssm": "^3.800.0"
+  },
   "devDependencies": {
     "fast-check": "^4.1.1",
     "jest": "^29.7.0",

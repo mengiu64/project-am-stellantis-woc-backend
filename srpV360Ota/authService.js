@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 
 // In AWS Lambda il filesystem del pacchetto (__dirname, /var/task) è read-only:
 // solo /tmp è scrivibile. In locale (CLI) continuiamo a usare __dirname.
@@ -72,6 +72,9 @@ async function getBearerToken() {
   const cached = readCachedToken();
   // Se il token in cache è ancora valido, lo restituisce direttamente
   if (cached) return cached;
+
+  // Carica la configurazione (asincrona — credenziali da SSM/Secrets Manager)
+  const config = await getConfig();
 
   // Costruisce l'URL dell'endpoint PingFederate dalla configurazione
   const endpoint = new URL(config.auth.url);

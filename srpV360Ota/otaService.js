@@ -7,7 +7,7 @@
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 
 /**
  * Invoca l'endpoint upstream otaCompatibility per verificare la compatibilità OTA di un veicolo.
@@ -28,10 +28,13 @@ async function otaCompatibility(bearerToken, params = {}) {
     throw new Error('[srpV360Ota] vin is required for otaCompatibility');
   }
 
+  // Carica la configurazione (asincrona — credenziali da SSM/Secrets Manager)
+  const config = await getConfig();
+
   // Costruisce il body della richiesta con i valori di default dalla configurazione
   const body = {
     vin,
-    // Applica il default 'false' se includeOtaHistoryData non è fornito
+    // Applica il default 'true' se includeOtaHistoryData non è fornito
     includeOtaHistoryData: includeOtaHistoryData !== undefined ? includeOtaHistoryData : config.otaDefaults.includeOtaHistoryData,
     // Applica il default 'en_US' se locale non è fornito
     locale: locale || config.otaDefaults.locale,

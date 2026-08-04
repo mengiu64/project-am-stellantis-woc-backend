@@ -6,20 +6,22 @@
 
 jest.mock('../httpClient');
 jest.mock('../config', () => ({
-  auth: {
-    url: 'https://idfed.mpsa.com:443/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:asv',
-    clientId: 'ping-id',
-    clientSecret: 'ping-secret',
-  },
-  srp: {
-    baseUrl: 'https://emea-aws.api.stellantis.com',
-    basePath: '/ps-prod/extra/asv360/vehicle/v1',
-    clientId: 'ibm-client-id',
-    clientSecret: 'ibm-client-secret',
-  },
-  otaDefaults: { includeOtaHistoryData: 'false', locale: 'en_US' },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: {
+      url: 'https://idfed.mpsa.com:443/as/token.oauth2',
+      grantType: 'client_credentials',
+      scope: 'prd:asv',
+      clientId: 'ping-id',
+      clientSecret: 'ping-secret',
+    },
+    srp: {
+      baseUrl: 'https://emea-aws.api.stellantis.com',
+      basePath: '/ps-prod/extra/asv360/vehicle/v1',
+      clientId: 'ibm-client-id',
+      clientSecret: 'ibm-client-secret',
+    },
+    otaDefaults: { includeOtaHistoryData: 'true', locale: 'en_US' },
+  }),
 }));
 
 const { httpsRequest } = require('../httpClient');
@@ -71,14 +73,14 @@ describe('otaService – otaCompatibility', () => {
 
   // --- Requirement 5.3, 5.4: Parametri di default ---
   describe('parametri di default', () => {
-    it('applica includeOtaHistoryData=false e locale=en_US quando non forniti', async () => {
+    it('applica includeOtaHistoryData=true e locale=en_US quando non forniti', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { otaCompatible: true } });
 
       await otaCompatibility('my-token', { vin: 'VR3UPHPX5P4347291' });
 
       const [options, bodyStr] = httpsRequest.mock.calls[0];
       const body = JSON.parse(bodyStr);
-      expect(body.includeOtaHistoryData).toBe('false');
+      expect(body.includeOtaHistoryData).toBe('true');
       expect(body.locale).toBe('en_US');
     });
 

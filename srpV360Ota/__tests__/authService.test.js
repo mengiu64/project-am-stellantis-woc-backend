@@ -5,15 +5,17 @@
 
 jest.mock('../httpClient');
 jest.mock('../config', () => ({
-  auth: {
-    url: 'https://idfed.mpsa.com:443/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:asv',
-    clientId: 'test-client-id',
-    clientSecret: 'test-client-secret',
-  },
-  srp: { baseUrl: '', basePath: '', clientId: '', clientSecret: '' },
-  otaDefaults: { includeOtaHistoryData: 'false', locale: 'en_US' },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: {
+      url: 'https://idfed.mpsa.com:443/as/token.oauth2',
+      grantType: 'client_credentials',
+      scope: 'prd:asv',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    },
+    srp: { baseUrl: '', basePath: '', clientId: '', clientSecret: '' },
+    otaDefaults: { includeOtaHistoryData: 'true', locale: 'en_US' },
+  }),
 }));
 jest.mock('fs');
 
