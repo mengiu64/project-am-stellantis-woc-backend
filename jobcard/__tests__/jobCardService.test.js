@@ -221,7 +221,7 @@ describe('jobCardService', () => {
       return {
         jobCardSrpId: overrides.jobCardSrpId ?? 'SRP-1',
         appointments: overrides.appointments ?? [],
-        status: overrides.status ?? 'BOOKED',
+        status: overrides.status ?? 'CREATED',
         ...overrides,
       };
     }
@@ -303,7 +303,40 @@ describe('jobCardService', () => {
       expect(result.jobCardList).toEqual([]);
     });
 
-    test('excludes arrayCreated entries with status "CREATED"', async () => {
+    test('excludes arrayCreated entries with an actual (non-estimated) reception date/time set', async () => {
+      const withActualReception = jobCard({
+        jobCardSrpId: 'I',
+        appointments: [{ reception: { estimatedReceptionDateTime: null, receptionDateTime: '2026-05-18T08:30:00.000Z' } }],
+      });
+      const withoutAny = jobCard({ jobCardSrpId: 'J' });
+
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [withActualReception, withoutAny] } });
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['J']);
+    });
+
+    test('excludes arrayCreated entries with an actual (non-estimated) delivery date/time set', async () => {
+      const withActualDelivery = jobCard({
+        jobCardSrpId: 'K',
+        appointments: [{ delivery: { estimatedDeliveryDateTime: null, deliveryDateTime: '2026-05-19T11:30:00.000Z' } }],
+      });
+
+      httpsRequest
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [] } })
+        .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { jobCardList: [withActualDelivery] } });
+
+      const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
+
+      expect(result.jobCardList).toEqual([]);
+    });
+
+    test('excludes arrayCreated entries with status different from "CREATED"', async () => {
       const createdStatus = jobCard({ jobCardSrpId: 'G', status: 'CREATED' });
       const otherStatus    = jobCard({ jobCardSrpId: 'H', status: 'BOOKED' });
 
@@ -314,7 +347,7 @@ describe('jobCardService', () => {
 
       const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
 
-      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['H']);
+      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['G']);
     });
 
     test('handles missing jobCardList arrays in any of the three responses', async () => {

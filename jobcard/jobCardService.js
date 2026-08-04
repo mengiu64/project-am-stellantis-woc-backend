@@ -136,21 +136,24 @@ function toIsoDateTime(dateStr, endOfDay = false) {
 }
 
 /**
- * Checks whether a JobCard list entry already has an estimated reception or
- * delivery date/time set on any of its appointments
+ * Checks whether a JobCard list entry already has a reception or delivery
+ * date/time set (estimated or actual) on any of its appointments
  * (appointments[].reception.estimatedReceptionDateTime /
- * appointments[].delivery.estimatedDeliveryDateTime).
+ * appointments[].reception.receptionDateTime /
+ * appointments[].delivery.estimatedDeliveryDateTime /
+ * appointments[].delivery.deliveryDateTime).
  * @param {object} item - JobCard list entry
- * @returns {boolean} true if at least one estimated date/time is set
+ * @returns {boolean} true if at least one of these date/times is set
  */
 function hasEstimatedDateTime(item) {
   const appointments = Array.isArray(item?.appointments) ? item.appointments : [];
-  return appointments.some((appt) => {
-    const estimatedReception = appt?.reception?.estimatedReceptionDateTime;
-    const estimatedDelivery  = appt?.delivery?.estimatedDeliveryDateTime;
-    return (estimatedReception !== undefined && estimatedReception !== null)
-        || (estimatedDelivery !== undefined && estimatedDelivery !== null);
-  });
+  const isSet = (value) => value !== undefined && value !== null;
+  return appointments.some((appt) => (
+    isSet(appt?.reception?.estimatedReceptionDateTime)
+    || isSet(appt?.reception?.receptionDateTime)
+    || isSet(appt?.delivery?.estimatedDeliveryDateTime)
+    || isSet(appt?.delivery?.deliveryDateTime)
+  ));
 }
 
 /**
@@ -193,8 +196,9 @@ function mergeDistinctJobCards(...arrays) {
  *     deliveryEndDate=currentDate+1 day (delivery scheduled "today").
  *  3) arrayCreated   — jobCardList filtered by creationStartDate=currentDate-7 days,
  *     creationEndDate=currentDate (created over the last week), excluding entries
- *     that already have an estimated reception/delivery date/time set (already
- *     covered by arrayReception/arrayDelivery above) or whose status is "CREATED".
+ *     that already have a reception/delivery date/time (estimated or actual) set
+ *     (already covered by arrayReception/arrayDelivery above, or scheduled/completed
+ *     on a different day) or whose status is not "CREATED".
  *
  * The three arrays are merged into a single, deduplicated JobCard list
  * (same JobCard appearing in more than one array is kept only once).
@@ -237,7 +241,7 @@ async function getJobCardListCurrent(bearerToken, dealerId, currentDate) {
   const arrayCreatedRaw = Array.isArray(createdResult?.jobCardList)   ? createdResult.jobCardList   : [];
 
   const arrayCreated = arrayCreatedRaw.filter(
-    (item) => !hasEstimatedDateTime(item) && item?.status !== 'CREATED',
+    (item) => !hasEstimatedDateTime(item) && item?.status === 'CREATED',
   );
 
   return { jobCardList: mergeDistinctJobCards(arrayReception, arrayDelivery, arrayCreated) };
