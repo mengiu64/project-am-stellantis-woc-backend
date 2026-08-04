@@ -80,8 +80,8 @@ module.exports = {
 
   // Valori di default per i parametri della richiesta OTA
   otaDefaults: {
-    // Inclusione storico dati OTA (default: 'false')
-    includeOtaHistoryData: 'false',
+    // Inclusione storico dati OTA (default: 'true')
+    includeOtaHistoryData: 'true',
     // Locale per la risposta (default: 'en_US')
     locale: 'en_US',
   },
