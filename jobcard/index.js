@@ -4,8 +4,9 @@
  * index.js — Entry point
  *
  * Usage:
- *   node index.js list       <dealerId> [options]
- *   node index.js details    <jobCardId>
+ *   node index.js list        <dealerId> [options]
+ *   node index.js listCurrent <dealerId> <currentDate>
+ *   node index.js details     <jobCardId>
  *   node index.js saveJobcard <payloadJsonFile>
  *
  * Options for "list" (key=value):
@@ -21,10 +22,16 @@
  *   sortBy=<field>       (default: jobCardId)
  *   sortOrder=asc|desc   (default: asc)
  *
+ * "listCurrent" (getJobCardListCurrent) richiede dealerId e currentDate
+ * ("YYYY-MM-DD", es. "2026-05-20"): combina reception/delivery/creation di
+ * oggi/ultimi 7 giorni in un unico jobCardList deduplicato (v.
+ * jobCardService.getJobCardListCurrent).
+ *
  * Examples:
  *   node index.js list 0062219
  *   node index.js list 0062219 page=2 pageSize=10 sortBy=creationDate sortOrder=desc
  *   node index.js list 0062219 vin=3C4NJCBH7KT831816 creationStartDate=2024-01-01T00:00:00Z
+ *   node index.js listCurrent 0062219 2026-05-20
  *   node index.js details 79
  *   node index.js saveJobcard ./payload.json
  *
@@ -35,11 +42,11 @@
  */
 
 const { getBearerToken } = require('./authService');
-const { getJobCardList, getJobCardDetails, saveJobCard } = require('./jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard } = require('./jobCardService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'details', 'saveJobcard'];
+const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard'];
 
 /**
  * Resolves { action, body } from either:
@@ -93,6 +100,8 @@ exports.handler = async (event) => {
     let result;
     if (action === 'list') {
       result = await getJobCardList(token, body);
+    } else if (action === 'listCurrent') {
+      result = await getJobCardListCurrent(token, body.dealerId, body.currentDate);
     } else if (action === 'details') {
       result = await getJobCardDetails(token, body.jobCardId ?? body.id);
     } else {
@@ -141,6 +150,14 @@ async function runList(dealerId, extraArgs) {
   return result;
 }
 
+async function runListCurrent(dealerId, currentDate) {
+  console.log('\n=== JobCard List Current ===');
+  const token = await getBearerToken();
+  const result = await getJobCardListCurrent(token, dealerId, currentDate);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 async function runDetails(jobCardId) {
   console.log('\n=== JobCard Details ===');
   const token = await getBearerToken();
@@ -166,6 +183,14 @@ async function main() {
     if (command === 'list') {
       const dealerId = param || '0062219';
       await runList(dealerId, rest);
+    } else if (command === 'listCurrent') {
+      const dealerId    = param || '0062219';
+      const currentDate = rest[0];
+      if (!currentDate) {
+        console.error('[ERROR] È richiesto currentDate ("YYYY-MM-DD").');
+        process.exit(1);
+      }
+      await runListCurrent(dealerId, currentDate);
     } else if (command === 'details') {
       const jobCardId = param || '79';
       await runDetails(jobCardId);
@@ -178,6 +203,7 @@ async function main() {
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js list        <dealerId> [key=value ...]');
+      console.error('  node index.js listCurrent <dealerId> <currentDate>');
       console.error('  node index.js details     <jobCardId>');
       console.error('  node index.js saveJobcard <payloadJsonFile>');
       process.exit(1);
