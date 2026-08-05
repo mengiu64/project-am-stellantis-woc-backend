@@ -100,6 +100,28 @@ async function getJobCardList(bearerToken, params = {}) {
   console.log(`[jobCard] GET jobCardList - dealerId: ${dealerId}`);
   const response = await httpsRequest(options);
 
+  // The DGT API returns HTTP 404 (instead of 200 with an empty array) when a
+  // filtered query matches no job cards (e.g. { "message": "No job cards found" }).
+  // Treat this as a normal, empty result set rather than a fatal error, so that
+  // callers combining several queries (e.g. getJobCardListCurrent) don't abort
+  // just because one of the date ranges has no matches.
+  if (response.statusCode === 404) {
+    console.log(`[jobCard] jobCardList - dealerId: ${dealerId} - no job cards found (404), treating as empty result`);
+    return {
+      statusCode: 200,
+      success: true,
+      jobCardList: [],
+      pagination: {
+        page: page != null ? page : 1,
+        pageSize: resolvedPageSize,
+        totalItems: 0,
+        totalPages: 0,
+        hasPrevious: false,
+        hasNext: false,
+      },
+    };
+  }
+
   if (response.statusCode !== 200) {
     throw new Error(
       `[jobCard] jobCardList failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}`
