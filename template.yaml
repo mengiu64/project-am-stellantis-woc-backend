@@ -435,11 +435,12 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${V360Function}"
       RetentionInDays: 30
 
-  # ── srpV360Ota (OTA Compatibility BFF — riuso credenziali V360/ASV) ────────
+  # ── srpV360Ota (OTA Compatibility BFF — credenziali da SSM/Secrets Manager) ──
   #
-  # Lambda indipendente dal modulo v360 a livello di codice sorgente, ma riutilizza
-  # le stesse credenziali PingFederate (V360PingClientId/Secret) e IBM API Connect
-  # (AsvClientId/Secret) poiché invoca lo stesso servizio upstream ASV360.
+  # Lambda indipendente dal modulo v360 a livello di codice sorgente.
+  # Le credenziali PingFederate e IBM API Connect sono recuperate a runtime
+  # da Secrets Manager (ARN letto da un parametro SSM), stesso pattern di
+  # isStellantisBrand per il database.
   SrpV360OtaFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -448,12 +449,25 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub
+                  - "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/SRP_V360_OTA", !Sub "/app/np-BSN0027990-${Environment}/SRP_V360_OTA"]
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: "*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
-          SRP_V360_OTA_PING_CLIENT_ID:     !Ref V360PingClientId
-          SRP_V360_OTA_PING_CLIENT_SECRET: !Ref V360PingClientSecret
-          SRP_V360_OTA_IBM_CLIENT_ID:      !Ref AsvClientId
-          SRP_V360_OTA_IBM_CLIENT_SECRET:  !Ref AsvClientSecret
+          SRP_V360_OTA_SECRET_ARN_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/SRP_V360_OTA
+            - !Sub /app/np-BSN0027990-${Environment}/SRP_V360_OTA
 
   SrpV360OtaFunctionLogGroup:
     Type: AWS::Logs::LogGroup

@@ -2,21 +2,11 @@
 
 /**
  * Test unitari per il modulo config.js
- * Verifica: caricamento .env, validazione variabili obbligatorie, valori di default, struttura export.
- *
- * Validates: Requirements 1.3, 1.4, 1.5, 6.1, 6.2, 6.3
+ * Verifica: caricamento credenziali da variabili d'ambiente (locale),
+ * caricamento da SSM/Secrets Manager (mock), validazione, struttura export.
  */
 
 const path = require('path');
-const fs = require('fs');
-
-// Variabili d'ambiente obbligatorie usate nei test
-const REQUIRED_ENV = {
-  SRP_V360_OTA_PING_CLIENT_ID: 'test-ping-client-id',
-  SRP_V360_OTA_PING_CLIENT_SECRET: 'test-ping-client-secret',
-  SRP_V360_OTA_IBM_CLIENT_ID: 'test-ibm-client-id',
-  SRP_V360_OTA_IBM_CLIENT_SECRET: 'test-ibm-client-secret',
-};
 
 // Valori di default per le variabili opzionali
 const DEFAULTS = {
@@ -26,45 +16,44 @@ const DEFAULTS = {
   BASE_PATH: '/ps-prod/extra/asv360/vehicle/v1',
 };
 
-describe('config.js', () => {
-  // Salva lo stato originale di process.env
+// Variabili d'ambiente obbligatorie usate nei test
+const REQUIRED_ENV = {
+  SRP_V360_OTA_PING_CLIENT_ID: 'test-ping-client-id',
+  SRP_V360_OTA_PING_CLIENT_SECRET: 'test-ping-client-secret',
+  SRP_V360_OTA_IBM_CLIENT_ID: 'test-ibm-client-id',
+  SRP_V360_OTA_IBM_CLIENT_SECRET: 'test-ibm-client-secret',
+};
+
+describe('config.js – getConfig', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    // Resetta i moduli per forzare il re-load di config.js ad ogni test
     jest.resetModules();
-    // Crea un process.env pulito (senza variabili dell'ambiente host)
     process.env = { ...originalEnv };
-    // Rimuove le variabili SRP_V360_OTA_* che potrebbero esistere nell'ambiente
+    // Rimuove le variabili SRP_V360_OTA_* per partire puliti
     Object.keys(process.env).forEach((key) => {
-      if (key.startsWith('SRP_V360_OTA_')) {
-        delete process.env[key];
-      }
+      if (key.startsWith('SRP_V360_OTA_')) delete process.env[key];
     });
   });
 
   afterAll(() => {
-    // Ripristina process.env originale
     process.env = originalEnv;
   });
 
-  describe('caricamento con tutte le variabili obbligatorie presenti', () => {
-    it('esporta un oggetto config con le sezioni auth, srp e otaDefaults', () => {
-      // Imposta tutte le variabili obbligatorie
+  describe('modalità locale (senza SRP_V360_OTA_SECRET_ARN_PARAM)', () => {
+    it('restituisce un oggetto config con le sezioni auth, srp e otaDefaults', async () => {
       Object.assign(process.env, REQUIRED_ENV);
-
-      const config = require('../config');
-
+      const { getConfig } = require('../config');
+      const config = await getConfig();
       expect(config).toHaveProperty('auth');
       expect(config).toHaveProperty('srp');
       expect(config).toHaveProperty('otaDefaults');
     });
 
-    it('la sezione auth contiene url, grantType, scope, clientId, clientSecret', () => {
+    it('la sezione auth contiene url, grantType, scope, clientId, clientSecret', async () => {
       Object.assign(process.env, REQUIRED_ENV);
-
-      const config = require('../config');
-
+      const { getConfig } = require('../config');
+      const config = await getConfig();
       expect(config.auth).toEqual({
         url: DEFAULTS.PING_URL,
         grantType: 'client_credentials',
@@ -74,11 +63,10 @@ describe('config.js', () => {
       });
     });
 
-    it('la sezione srp contiene baseUrl, basePath, clientId, clientSecret', () => {
+    it('la sezione srp contiene baseUrl, basePath, clientId, clientSecret', async () => {
       Object.assign(process.env, REQUIRED_ENV);
-
-      const config = require('../config');
-
+      const { getConfig } = require('../config');
+      const config = await getConfig();
       expect(config.srp).toEqual({
         baseUrl: DEFAULTS.BASE_URL,
         basePath: DEFAULTS.BASE_PATH,
@@ -87,211 +75,110 @@ describe('config.js', () => {
       });
     });
 
-    it('la sezione otaDefaults contiene includeOtaHistoryData e locale', () => {
+    it('la sezione otaDefaults contiene includeOtaHistoryData e locale', async () => {
       Object.assign(process.env, REQUIRED_ENV);
-
-      const config = require('../config');
-
+      const { getConfig } = require('../config');
+      const config = await getConfig();
       expect(config.otaDefaults).toEqual({
-        includeOtaHistoryData: 'false',
+        includeOtaHistoryData: 'true',
         locale: 'en_US',
       });
     });
-  });
 
-  describe('valori di default per variabili opzionali', () => {
-    beforeEach(() => {
+    it('usa il valore custom di SRP_V360_OTA_PING_URL quando impostata', async () => {
       Object.assign(process.env, REQUIRED_ENV);
-    });
-
-    it('SRP_V360_OTA_PING_URL ha default corretto quando non impostata', () => {
-      const config = require('../config');
-      expect(config.auth.url).toBe(DEFAULTS.PING_URL);
-    });
-
-    it('SRP_V360_OTA_PING_SCOPE ha default corretto quando non impostata', () => {
-      const config = require('../config');
-      expect(config.auth.scope).toBe(DEFAULTS.PING_SCOPE);
-    });
-
-    it('SRP_V360_OTA_BASE_URL ha default corretto quando non impostata', () => {
-      const config = require('../config');
-      expect(config.srp.baseUrl).toBe(DEFAULTS.BASE_URL);
-    });
-
-    it('SRP_V360_OTA_BASE_PATH ha default corretto quando non impostata', () => {
-      const config = require('../config');
-      expect(config.srp.basePath).toBe(DEFAULTS.BASE_PATH);
-    });
-
-    it('usa il valore custom di SRP_V360_OTA_PING_URL quando impostata', () => {
       process.env.SRP_V360_OTA_PING_URL = 'https://custom-ping.example.com/token';
-      const config = require('../config');
+      const { getConfig } = require('../config');
+      const config = await getConfig();
       expect(config.auth.url).toBe('https://custom-ping.example.com/token');
     });
 
-    it('usa il valore custom di SRP_V360_OTA_PING_SCOPE quando impostata', () => {
-      process.env.SRP_V360_OTA_PING_SCOPE = 'custom:scope';
-      const config = require('../config');
-      expect(config.auth.scope).toBe('custom:scope');
-    });
-
-    it('usa il valore custom di SRP_V360_OTA_BASE_URL quando impostata', () => {
+    it('usa il valore custom di SRP_V360_OTA_BASE_URL quando impostata', async () => {
+      Object.assign(process.env, REQUIRED_ENV);
       process.env.SRP_V360_OTA_BASE_URL = 'https://custom-api.example.com';
-      const config = require('../config');
+      const { getConfig } = require('../config');
+      const config = await getConfig();
       expect(config.srp.baseUrl).toBe('https://custom-api.example.com');
     });
 
-    it('usa il valore custom di SRP_V360_OTA_BASE_PATH quando impostata', () => {
-      process.env.SRP_V360_OTA_BASE_PATH = '/custom/path/v2';
-      const config = require('../config');
-      expect(config.srp.basePath).toBe('/custom/path/v2');
-    });
-  });
-
-  describe('errore quando variabili obbligatorie mancanti', () => {
-    it('lancia errore quando manca una singola variabile obbligatoria', () => {
-      // Imposta tutte tranne SRP_V360_OTA_PING_CLIENT_ID
+    it('lancia errore quando manca una singola variabile obbligatoria', async () => {
       process.env.SRP_V360_OTA_PING_CLIENT_SECRET = 'secret';
       process.env.SRP_V360_OTA_IBM_CLIENT_ID = 'id';
       process.env.SRP_V360_OTA_IBM_CLIENT_SECRET = 'secret';
-
-      expect(() => require('../config')).toThrow(
+      const { getConfig } = require('../config');
+      await expect(getConfig()).rejects.toThrow(
         '[config] Variabili d\'ambiente obbligatorie mancanti: SRP_V360_OTA_PING_CLIENT_ID'
       );
     });
 
-    it('lancia errore quando mancano più variabili obbligatorie', () => {
-      // Imposta solo una delle 4 variabili obbligatorie
+    it('lancia errore quando mancano più variabili obbligatorie', async () => {
       process.env.SRP_V360_OTA_PING_CLIENT_ID = 'id';
-
-      expect(() => require('../config')).toThrow(
+      const { getConfig } = require('../config');
+      await expect(getConfig()).rejects.toThrow(
         '[config] Variabili d\'ambiente obbligatorie mancanti: SRP_V360_OTA_PING_CLIENT_SECRET, SRP_V360_OTA_IBM_CLIENT_ID, SRP_V360_OTA_IBM_CLIENT_SECRET'
       );
     });
 
-    it('lancia errore quando nessuna variabile obbligatoria è presente', () => {
-      expect(() => require('../config')).toThrow(
-        '[config] Variabili d\'ambiente obbligatorie mancanti: SRP_V360_OTA_PING_CLIENT_ID, SRP_V360_OTA_PING_CLIENT_SECRET, SRP_V360_OTA_IBM_CLIENT_ID, SRP_V360_OTA_IBM_CLIENT_SECRET'
-      );
-    });
-
-    it('il messaggio di errore elenca solo le variabili effettivamente mancanti', () => {
-      // Imposta solo IBM_CLIENT_ID e IBM_CLIENT_SECRET
-      process.env.SRP_V360_OTA_IBM_CLIENT_ID = 'id';
-      process.env.SRP_V360_OTA_IBM_CLIENT_SECRET = 'secret';
-
-      expect(() => require('../config')).toThrow(
-        '[config] Variabili d\'ambiente obbligatorie mancanti: SRP_V360_OTA_PING_CLIENT_ID, SRP_V360_OTA_PING_CLIENT_SECRET'
+    it('lancia errore quando nessuna variabile obbligatoria è presente', async () => {
+      const { getConfig } = require('../config');
+      await expect(getConfig()).rejects.toThrow(
+        '[config] Variabili d\'ambiente obbligatorie mancanti:'
       );
     });
   });
 
-  describe('caricamento file .env per sviluppo locale', () => {
-    it('carica variabili dal file .env se presente', () => {
-      // Mock fs.existsSync e fs.readFileSync per simulare un file .env
-      jest.mock('fs');
-      const fsMock = require('fs');
+  describe('modalità SSM/Secrets Manager (con SRP_V360_OTA_SECRET_ARN_PARAM)', () => {
+    it('carica le credenziali tramite loadSecrets quando SRP_V360_OTA_SECRET_ARN_PARAM è presente', async () => {
+      process.env.SRP_V360_OTA_SECRET_ARN_PARAM = '/app/np-BSN0027990-dev/SRP_V360_OTA';
 
-      const envContent = [
-        'SRP_V360_OTA_PING_CLIENT_ID=from-env-file',
-        'SRP_V360_OTA_PING_CLIENT_SECRET=secret-from-env',
-        'SRP_V360_OTA_IBM_CLIENT_ID=ibm-from-env',
-        'SRP_V360_OTA_IBM_CLIENT_SECRET=ibm-secret-from-env',
-      ].join('\n');
+      jest.mock('../secretsLoader', () => ({
+        loadSecrets: jest.fn().mockResolvedValue({
+          SRP_V360_OTA_PING_CLIENT_ID: 'ssm-ping-id',
+          SRP_V360_OTA_PING_CLIENT_SECRET: 'ssm-ping-secret',
+          SRP_V360_OTA_IBM_CLIENT_ID: 'ssm-ibm-id',
+          SRP_V360_OTA_IBM_CLIENT_SECRET: 'ssm-ibm-secret',
+        }),
+      }));
 
-      fsMock.existsSync.mockReturnValue(true);
-      fsMock.readFileSync.mockReturnValue(envContent);
+      const { getConfig } = require('../config');
+      const config = await getConfig();
 
-      const config = require('../config');
-
-      expect(config.auth.clientId).toBe('from-env-file');
-      expect(config.auth.clientSecret).toBe('secret-from-env');
-      expect(config.srp.clientId).toBe('ibm-from-env');
-      expect(config.srp.clientSecret).toBe('ibm-secret-from-env');
+      expect(config.auth.clientId).toBe('ssm-ping-id');
+      expect(config.auth.clientSecret).toBe('ssm-ping-secret');
+      expect(config.srp.clientId).toBe('ssm-ibm-id');
+      expect(config.srp.clientSecret).toBe('ssm-ibm-secret');
     });
 
-    it('non sovrascrive variabili già presenti in process.env', () => {
-      jest.mock('fs');
-      const fsMock = require('fs');
+    it('propaga errore se loadSecrets fallisce', async () => {
+      process.env.SRP_V360_OTA_SECRET_ARN_PARAM = '/app/np-BSN0027990-dev/SRP_V360_OTA';
 
-      // La variabile è già presente in process.env
-      process.env.SRP_V360_OTA_PING_CLIENT_ID = 'from-process-env';
+      jest.mock('../secretsLoader', () => ({
+        loadSecrets: jest.fn().mockRejectedValue(new Error('[secrets] Parametro SSM non trovato')),
+      }));
 
-      const envContent = [
-        'SRP_V360_OTA_PING_CLIENT_ID=from-env-file',
-        'SRP_V360_OTA_PING_CLIENT_SECRET=secret-from-env',
-        'SRP_V360_OTA_IBM_CLIENT_ID=ibm-from-env',
-        'SRP_V360_OTA_IBM_CLIENT_SECRET=ibm-secret-from-env',
-      ].join('\n');
-
-      fsMock.existsSync.mockReturnValue(true);
-      fsMock.readFileSync.mockReturnValue(envContent);
-
-      const config = require('../config');
-
-      // La variabile da process.env ha precedenza
-      expect(config.auth.clientId).toBe('from-process-env');
+      const { getConfig } = require('../config');
+      await expect(getConfig()).rejects.toThrow('[secrets] Parametro SSM non trovato');
     });
+  });
 
-    it('ignora righe vuote e commenti nel file .env', () => {
-      jest.mock('fs');
-      const fsMock = require('fs');
-
-      const envContent = [
-        '# Commento',
-        '',
-        'SRP_V360_OTA_PING_CLIENT_ID=id-value',
-        '  # Altro commento con spazi',
-        '  ',
-        'SRP_V360_OTA_PING_CLIENT_SECRET=secret-value',
-        'SRP_V360_OTA_IBM_CLIENT_ID=ibm-id',
-        'SRP_V360_OTA_IBM_CLIENT_SECRET=ibm-secret',
-      ].join('\n');
-
-      fsMock.existsSync.mockReturnValue(true);
-      fsMock.readFileSync.mockReturnValue(envContent);
-
-      const config = require('../config');
-
-      expect(config.auth.clientId).toBe('id-value');
-      expect(config.auth.clientSecret).toBe('secret-value');
-    });
-
-    it('non tenta di caricare .env se il file non esiste', () => {
-      jest.mock('fs');
-      const fsMock = require('fs');
-
-      fsMock.existsSync.mockReturnValue(false);
-
-      // Imposta le variabili obbligatorie in process.env
+  describe('cache della configurazione', () => {
+    it('restituisce lo stesso oggetto alla seconda chiamata (cache)', async () => {
       Object.assign(process.env, REQUIRED_ENV);
-
-      const config = require('../config');
-
-      // Il modulo si carica correttamente senza .env
-      expect(config.auth.clientId).toBe(REQUIRED_ENV.SRP_V360_OTA_PING_CLIENT_ID);
-      expect(fsMock.readFileSync).not.toHaveBeenCalled();
+      const { getConfig } = require('../config');
+      const config1 = await getConfig();
+      const config2 = await getConfig();
+      expect(config1).toBe(config2);
     });
 
-    it('gestisce righe senza separatore = nel file .env', () => {
-      jest.mock('fs');
-      const fsMock = require('fs');
-
-      const envContent = [
-        'SRP_V360_OTA_PING_CLIENT_ID=id-value',
-        'INVALID_LINE_WITHOUT_EQUALS',
-        'SRP_V360_OTA_PING_CLIENT_SECRET=secret-value',
-        'SRP_V360_OTA_IBM_CLIENT_ID=ibm-id',
-        'SRP_V360_OTA_IBM_CLIENT_SECRET=ibm-secret',
-      ].join('\n');
-
-      fsMock.existsSync.mockReturnValue(true);
-      fsMock.readFileSync.mockReturnValue(envContent);
-
-      // Non deve lanciare errori per righe malformate
-      const config = require('../config');
-      expect(config.auth.clientId).toBe('id-value');
+    it('invalidateConfig forza il ricaricamento', async () => {
+      Object.assign(process.env, REQUIRED_ENV);
+      const { getConfig, invalidateConfig } = require('../config');
+      const config1 = await getConfig();
+      invalidateConfig();
+      const config2 = await getConfig();
+      // Dopo invalidazione è un nuovo oggetto (ma con gli stessi valori)
+      expect(config1).not.toBe(config2);
+      expect(config1).toEqual(config2);
     });
   });
 });

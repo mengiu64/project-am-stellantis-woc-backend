@@ -11,9 +11,11 @@ jest.mock('../otaService', () => ({
   otaCompatibility: jest.fn(),
 }));
 jest.mock('../config', () => ({
-  auth: { url: '', grantType: '', scope: '', clientId: '', clientSecret: '' },
-  srp: { baseUrl: '', basePath: '', clientId: '', clientSecret: '' },
-  otaDefaults: { includeOtaHistoryData: 'false', locale: 'en_US' },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: { url: '', grantType: '', scope: '', clientId: '', clientSecret: '' },
+    srp: { baseUrl: '', basePath: '', clientId: '', clientSecret: '' },
+    otaDefaults: { includeOtaHistoryData: 'true', locale: 'en_US' },
+  }),
 }));
 
 const { handler } = require('../index');
