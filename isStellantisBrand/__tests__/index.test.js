@@ -516,3 +516,53 @@ describe('Multi-action routing — action dispatch', () => {
     expect(body.message).toContain('deleteUserSign');
   });
 });
+
+describe('Multi-action routing — edge cases for branch coverage', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    console.log.mockRestore();
+  });
+
+  test('API Gateway event with unparseable JSON body gracefully ignores it', async () => {
+    // Copre il branch catch in resolveActionAndBody quando event.body non è JSON valido
+    const mockResponse = {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ success: true, data: {} }),
+    };
+    userSignsService.getUserSign.mockResolvedValue(mockResponse);
+
+    const event = {
+      path: '/isStellantisBrand/getUserSign',
+      body: '{invalid json!!!',
+      queryStringParameters: { dealer_login_userid: 'test123' },
+    };
+    const res = await handler(event, mockContext);
+
+    // Il body non parsabile viene ignorato; il query string parameter viene comunque usato
+    expect(userSignsService.getUserSign).toHaveBeenCalledWith(
+      expect.objectContaining({ dealer_login_userid: 'test123' }),
+      'test-request-id-123'
+    );
+    expect(res.statusCode).toBe(200);
+  });
+
+  test('API Gateway event with no action in path returns 400', async () => {
+    // Copre il branch quando segments è vuoto (path senza segmenti utili)
+    const event = {
+      path: '',
+      body: null,
+      queryStringParameters: null,
+    };
+    const res = await handler(event, mockContext);
+
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body);
+    expect(body.success).toBe(false);
+    expect(body.message).toContain('Azione sconosciuta');
+  });
+});

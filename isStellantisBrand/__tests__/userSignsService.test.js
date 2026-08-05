@@ -293,3 +293,60 @@ describe('userSignsService', () => {
     });
   });
 });
+
+describe('userSignsService — error without constructor.name (branch coverage)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    console.log.mockRestore();
+  });
+
+  test('createUserSign: error without constructor.name → 500 with UnexpectedError in log', async () => {
+    const err = { message: 'weird error' };
+    Object.setPrototypeOf(err, null); // rimuove constructor
+    getPool.mockResolvedValue({ query: jest.fn().mockRejectedValue(err) });
+
+    const body = { dealer_login_userid: 'dealer1', sign_image: Buffer.from('x').toString('base64') };
+    const res = await createUserSign(body, 'req-1');
+
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body).message).toBe('Errore interno del server');
+  });
+
+  test('getUserSign: error without constructor.name → 500', async () => {
+    const err = { message: 'weird error' };
+    Object.setPrototypeOf(err, null);
+    getPool.mockResolvedValue({ query: jest.fn().mockRejectedValue(err) });
+
+    const res = await getUserSign({ dealer_login_userid: 'dealer1' }, 'req-2');
+
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body).message).toBe('Errore interno del server');
+  });
+
+  test('updateUserSign: error without constructor.name → 500', async () => {
+    const err = { message: 'weird error' };
+    Object.setPrototypeOf(err, null);
+    getPool.mockResolvedValue({ query: jest.fn().mockRejectedValue(err) });
+
+    const body = { dealer_login_userid: 'dealer1', sign_image: Buffer.from('x').toString('base64') };
+    const res = await updateUserSign(body, 'req-3');
+
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body).message).toBe('Errore interno del server');
+  });
+
+  test('deleteUserSign: error without constructor.name → 500', async () => {
+    const err = { message: 'weird error' };
+    Object.setPrototypeOf(err, null);
+    getPool.mockResolvedValue({ query: jest.fn().mockRejectedValue(err) });
+
+    const res = await deleteUserSign({ dealer_login_userid: 'dealer1' }, 'req-4');
+
+    expect(res.statusCode).toBe(500);
+    expect(JSON.parse(res.body).message).toBe('Errore interno del server');
+  });
+});

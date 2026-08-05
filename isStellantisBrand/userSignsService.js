@@ -151,7 +151,7 @@ async function createUserSign(body, awsRequestId) {
     // Log di errore strutturato senza esporre dettagli interni al client
     log('error', awsRequestId, {
       operation: 'createUserSign', // Operazione in cui si è verificato l'errore
-      errorType: err.constructor.name || 'UnexpectedError', // Tipo di errore per diagnostica
+      errorType: (err.constructor && err.constructor.name) || 'UnexpectedError', // Tipo di errore per diagnostica
       message: err.message, // Messaggio di errore per i log (non esposto al client)
     });
 
@@ -253,7 +253,7 @@ async function getUserSign(body, awsRequestId) {
     // Log di errore strutturato senza esporre dettagli interni al client
     log('error', awsRequestId, {
       operation: 'getUserSign', // Operazione in cui si è verificato l'errore
-      errorType: err.constructor.name || 'UnexpectedError', // Tipo di errore per diagnostica
+      errorType: (err.constructor && err.constructor.name) || 'UnexpectedError', // Tipo di errore per diagnostica
       message: err.message, // Messaggio di errore per i log (non esposto al client)
     });
 
@@ -361,7 +361,7 @@ async function updateUserSign(body, awsRequestId) {
     // Log di errore strutturato senza esporre dettagli interni al client
     log('error', awsRequestId, {
       operation: 'updateUserSign', // Operazione in cui si è verificato l'errore
-      errorType: err.constructor.name || 'UnexpectedError', // Tipo di errore per diagnostica
+      errorType: (err.constructor && err.constructor.name) || 'UnexpectedError', // Tipo di errore per diagnostica
       message: err.message, // Messaggio di errore per i log (non esposto al client)
     });
 
@@ -451,7 +451,7 @@ async function deleteUserSign(body, awsRequestId) {
     // Log di errore strutturato senza esporre dettagli interni al client
     log('error', awsRequestId, {
       operation: 'deleteUserSign', // Operazione in cui si è verificato l'errore
-      errorType: err.constructor.name || 'UnexpectedError', // Tipo di errore per diagnostica
+      errorType: (err.constructor && err.constructor.name) || 'UnexpectedError', // Tipo di errore per diagnostica
       message: err.message, // Messaggio di errore per i log (non esposto al client)
     });
 
