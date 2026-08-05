@@ -29,6 +29,7 @@
     ],
     "collectCoverageFrom": [
       "index.js",
+      "userSignsService.js",
       "shared/**/*.js"
     ],
     "coverageThreshold": {
