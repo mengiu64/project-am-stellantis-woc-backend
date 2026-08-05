@@ -262,7 +262,7 @@ exports.handler = async (event, context) => {
     // Errore interno — log strutturato senza esporre dettagli al client
     log('error', awsRequestId, {
       operation: 'handler',
-      errorType: err.constructor.name || 'UnexpectedError',
+      errorType: (err.constructor && err.constructor.name) || 'UnexpectedError',
       message: err.message,
     });
 
