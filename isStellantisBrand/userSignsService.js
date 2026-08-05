@@ -134,6 +134,20 @@ async function createUserSign(body, awsRequestId) {
       dealer_sign_id: dealerSignId, // ID numerico della firma creata
     });
   } catch (err) {
+    // ── Gestione errore duplicato (vincolo UNIQUE su dealer_login_userid) ──
+    if (err.code === '23505') {
+      // Log di warning per tentativo di inserimento duplicato
+      log('warn', awsRequestId, {
+        operation: 'createUserSign', // Operazione in cui si è verificato il conflitto
+        message: 'Validazione fallita: dealer_login_userid già esistente', // Dettaglio errore
+      });
+      // Risposta 409 Conflict con messaggio specifico in italiano
+      return buildResponse(409, {
+        success: false, // Indicatore di operazione non riuscita
+        message: 'Esiste già una firma per questo dealer_login_userid', // Messaggio per il client
+      });
+    }
+
     // Log di errore strutturato senza esporre dettagli interni al client
     log('error', awsRequestId, {
       operation: 'createUserSign', // Operazione in cui si è verificato l'errore
@@ -150,18 +164,18 @@ async function createUserSign(body, awsRequestId) {
 }
 
 /**
- * Recupera una firma dealer per ID.
+ * Recupera una firma dealer per dealer_login_userid.
  *
- * Valida il parametro dealer_sign_id, esegue una query SELECT sulla tabella
+ * Valida il parametro dealer_login_userid, esegue una query SELECT sulla tabella
  * woc.dealer_sign e restituisce il record con l'immagine codificata in base64.
  *
- * @param {object} body - { dealer_sign_id }
+ * @param {object} body - { dealer_login_userid }
  * @param {string} awsRequestId - ID univoco della richiesta Lambda
  * @returns {Promise<{statusCode: number, headers: object, body: string}>}
  */
 async function getUserSign(body, awsRequestId) {
-  // Estrae il campo dealer_sign_id dal body della richiesta
-  const dealerSignId = body ? body.dealer_sign_id : undefined;
+  // Estrae il campo dealer_login_userid dal body della richiesta
+  const dealerLoginUserid = body ? body.dealer_login_userid : undefined;
 
   // Log dell'operazione ricevuta
   log('info', awsRequestId, {
@@ -169,33 +183,17 @@ async function getUserSign(body, awsRequestId) {
     message: 'Richiesta di lettura firma ricevuta', // Messaggio descrittivo
   });
 
-  // ── Validazione 1: dealer_sign_id obbligatorio ──
-  if (dealerSignId === undefined || dealerSignId === null || String(dealerSignId).trim() === '') {
+  // ── Validazione: dealer_login_userid obbligatorio e non vuoto dopo trim ──
+  if (dealerLoginUserid === undefined || dealerLoginUserid === null || String(dealerLoginUserid).trim() === '') {
     // Log di warning per campo mancante
     log('warn', awsRequestId, {
       operation: 'getUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_sign_id mancante', // Dettaglio errore
+      message: 'Validazione fallita: dealer_login_userid mancante o vuoto', // Dettaglio errore
     });
     // Risposta 400 con messaggio di errore in italiano
     return buildResponse(400, {
       success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_sign_id è obbligatorio', // Messaggio di errore per il client
-    });
-  }
-
-  // ── Validazione 2: dealer_sign_id deve essere un intero positivo ──
-  const idStr = String(dealerSignId); // Converte il valore in stringa per la validazione regex
-  if (!/^\d+$/.test(idStr) || parseInt(idStr, 10) <= 0) {
-    // Log di warning per formato non valido
-    log('warn', awsRequestId, {
-      operation: 'getUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_sign_id non è un intero positivo', // Dettaglio errore
-      value: dealerSignId, // Valore ricevuto per diagnostica
-    });
-    // Risposta 400 con messaggio di errore sul formato
-    return buildResponse(400, {
-      success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_sign_id deve essere un intero positivo', // Messaggio di vincolo formato
+      message: 'dealer_login_userid è obbligatorio', // Messaggio di errore per il client
     });
   }
 
@@ -204,10 +202,10 @@ async function getUserSign(body, awsRequestId) {
     const pool = await getPool();
 
     // Query parametrizzata SELECT per prevenire SQL injection (parametro posizionale $1)
-    const queryText = 'SELECT dealer_sign_id, dealer_login_userid, sign_image, created_at, updated_at FROM woc.dealer_sign WHERE dealer_sign_id = $1';
+    const queryText = 'SELECT dealer_sign_id, dealer_login_userid, sign_image, created_at, updated_at FROM woc.dealer_sign WHERE dealer_login_userid = $1';
 
-    // Valore del parametro: ID parsato come intero
-    const values = [parseInt(idStr, 10)];
+    // Valore del parametro: userid trimmato
+    const values = [String(dealerLoginUserid).trim()];
 
     // Esecuzione della query parametrizzata con statement_timeout di sicurezza
     const result = await pool.query({ text: queryText, values, statement_timeout: 5000 });
@@ -217,8 +215,8 @@ async function getUserSign(body, awsRequestId) {
       // Log informativo per record non trovato
       log('info', awsRequestId, {
         operation: 'getUserSign', // Operazione corrente
-        message: 'Record non trovato', // Nessun record corrispondente all'ID
-        dealer_sign_id: parseInt(idStr, 10), // ID cercato
+        message: 'Record non trovato', // Nessun record corrispondente
+        dealer_login_userid: String(dealerLoginUserid).trim(), // Valore cercato
       });
       // Risposta 404 con messaggio di record non trovato
       return buildResponse(404, {
@@ -233,11 +231,11 @@ async function getUserSign(body, awsRequestId) {
     // Codifica il Buffer BYTEA dell'immagine in stringa base64 per il trasporto JSON
     const signImageBase64 = row.sign_image.toString('base64');
 
-    // Log di successo con l'ID del record recuperato
+    // Log di successo con l'userid del record recuperato
     log('info', awsRequestId, {
       operation: 'getUserSign', // Operazione completata con successo
       message: 'Firma recuperata con successo', // Messaggio di conferma
-      dealer_sign_id: row.dealer_sign_id, // ID del record restituito
+      dealer_login_userid: row.dealer_login_userid, // Userid del record restituito
     });
 
     // Risposta 200 OK con i dati del record inclusa l'immagine in base64
@@ -270,19 +268,17 @@ async function getUserSign(body, awsRequestId) {
 /**
  * Aggiorna una firma dealer esistente.
  *
- * Valida l'ID del record, verifica che almeno un campo aggiornabile sia presente,
- * costruisce una query UPDATE dinamica con parametri posizionali e restituisce
- * il risultato dell'operazione.
+ * Usa dealer_login_userid come chiave di ricerca (obbligatorio).
+ * L'unico campo aggiornabile è sign_image.
  *
- * @param {object} body - { dealer_sign_id, dealer_login_userid?, sign_image? }
+ * @param {object} body - { dealer_login_userid, sign_image }
  * @param {string} awsRequestId - ID univoco della richiesta Lambda
  * @returns {Promise<{statusCode: number, headers: object, body: string}>}
  */
 async function updateUserSign(body, awsRequestId) {
   // Estrae i campi dal body della richiesta
-  const dealerSignId = body ? body.dealer_sign_id : undefined; // ID del record da aggiornare
-  const dealerLoginUserid = body ? body.dealer_login_userid : undefined; // Nuovo valore dealer userid (opzionale)
-  const signImage = body ? body.sign_image : undefined; // Nuova immagine firma in base64 (opzionale)
+  const dealerLoginUserid = body ? body.dealer_login_userid : undefined; // Chiave di ricerca del record
+  const signImage = body ? body.sign_image : undefined; // Nuova immagine firma in base64
 
   // Log dell'operazione ricevuta
   log('info', awsRequestId, {
@@ -290,95 +286,46 @@ async function updateUserSign(body, awsRequestId) {
     message: 'Richiesta di aggiornamento firma ricevuta', // Messaggio descrittivo
   });
 
-  // ── Validazione 1: dealer_sign_id obbligatorio ──
-  if (dealerSignId === undefined || dealerSignId === null || String(dealerSignId).trim() === '') {
+  // ── Validazione 1: dealer_login_userid obbligatorio e non vuoto dopo trim ──
+  if (dealerLoginUserid === undefined || dealerLoginUserid === null || String(dealerLoginUserid).trim() === '') {
     // Log di warning per campo mancante
     log('warn', awsRequestId, {
       operation: 'updateUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_sign_id mancante', // Dettaglio errore
+      message: 'Validazione fallita: dealer_login_userid mancante o vuoto', // Dettaglio errore
     });
     // Risposta 400 con messaggio di errore in italiano
     return buildResponse(400, {
       success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_sign_id è obbligatorio', // Messaggio di errore per il client
+      message: 'dealer_login_userid è obbligatorio', // Messaggio di errore per il client
     });
   }
 
-  // ── Validazione 2: dealer_sign_id deve essere un intero positivo ──
-  const idStr = String(dealerSignId); // Converte il valore in stringa per la validazione regex
-  if (!/^\d+$/.test(idStr) || parseInt(idStr, 10) <= 0) {
-    // Log di warning per formato non valido
+  // ── Validazione 2: sign_image obbligatorio per l'aggiornamento ──
+  if (signImage === undefined || signImage === null || String(signImage).trim() === '') {
+    // Log di warning per campo immagine mancante
     log('warn', awsRequestId, {
       operation: 'updateUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_sign_id non è un intero positivo', // Dettaglio errore
-      value: dealerSignId, // Valore ricevuto per diagnostica
-    });
-    // Risposta 400 con messaggio di errore sul formato
-    return buildResponse(400, {
-      success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_sign_id deve essere un intero positivo', // Messaggio di vincolo formato
-    });
-  }
-
-  // ── Validazione 3: almeno un campo aggiornabile deve essere presente ──
-  const hasDealerLoginUserid = dealerLoginUserid !== undefined && dealerLoginUserid !== null && String(dealerLoginUserid).trim() !== ''; // Verifica se dealer_login_userid è fornito e non vuoto
-  const hasSignImage = signImage !== undefined && signImage !== null && String(signImage).trim() !== ''; // Verifica se sign_image è fornito e non vuoto
-
-  if (!hasDealerLoginUserid && !hasSignImage) {
-    // Log di warning per nessun campo aggiornabile
-    log('warn', awsRequestId, {
-      operation: 'updateUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: nessun campo aggiornabile fornito', // Dettaglio errore
+      message: 'Validazione fallita: sign_image mancante o vuoto', // Dettaglio errore
     });
     // Risposta 400 con messaggio di errore in italiano
     return buildResponse(400, {
       success: false, // Indicatore di operazione non riuscita
-      message: 'Almeno un campo da aggiornare è richiesto', // Messaggio di errore per il client
-    });
-  }
-
-  // ── Validazione 4: se dealer_login_userid fornito, massimo 50 caratteri ──
-  if (hasDealerLoginUserid && String(dealerLoginUserid).length > 50) {
-    // Log di warning per superamento lunghezza massima
-    log('warn', awsRequestId, {
-      operation: 'updateUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_login_userid supera 50 caratteri', // Dettaglio errore
-      length: String(dealerLoginUserid).length, // Lunghezza effettiva del valore
-    });
-    // Risposta 400 con messaggio di errore sulla lunghezza massima
-    return buildResponse(400, {
-      success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_login_userid deve essere di massimo 50 caratteri', // Messaggio di vincolo lunghezza
+      message: 'sign_image è obbligatorio', // Messaggio di errore per il client
     });
   }
 
   try {
-    // ── Costruzione dinamica della query UPDATE ──
-    const setClauses = []; // Array delle clausole SET da costruire dinamicamente
-    const values = []; // Array dei valori parametrizzati per prevenire SQL injection
-    let paramIndex = 1; // Indice del parametro posizionale corrente ($1, $2, ...)
-
-    // Aggiunge dealer_login_userid alla query solo se fornito
-    if (hasDealerLoginUserid) {
-      setClauses.push(`dealer_login_userid = $${paramIndex++}`); // Clausola SET con parametro posizionale
-      values.push(String(dealerLoginUserid).trim()); // Valore trimmato del dealer userid
-    }
-
-    // Aggiunge sign_image alla query solo se fornito
-    if (hasSignImage) {
-      setClauses.push(`sign_image = $${paramIndex++}`); // Clausola SET con parametro posizionale
-      values.push(Buffer.from(String(signImage), 'base64')); // Decodifica base64 in Buffer binario per BYTEA
-    }
-
-    // Aggiunge dealer_sign_id come ultimo parametro per la clausola WHERE
-    const parsedId = parseInt(idStr, 10); // Converte l'ID in intero per il parametro
-    values.push(parsedId); // Aggiunge l'ID alla fine dell'array dei valori
-
-    // Costruisce la query UPDATE completa con clausole SET dinamiche e RETURNING
-    const queryText = `UPDATE woc.dealer_sign SET ${setClauses.join(', ')} WHERE dealer_sign_id = $${paramIndex} RETURNING dealer_sign_id`;
+    // Decodifica l'immagine da stringa base64 a Buffer binario per il tipo BYTEA
+    const imageBuffer = Buffer.from(String(signImage), 'base64');
 
     // Ottiene il pool di connessione al database
     const pool = await getPool();
+
+    // Query parametrizzata UPDATE con WHERE su dealer_login_userid (chiave univoca)
+    const queryText = 'UPDATE woc.dealer_sign SET sign_image = $1 WHERE dealer_login_userid = $2 RETURNING dealer_sign_id';
+
+    // Valori: nuova immagine e userid trimmato come chiave di ricerca
+    const values = [imageBuffer, String(dealerLoginUserid).trim()];
 
     // Esecuzione della query parametrizzata con statement_timeout di sicurezza
     const result = await pool.query({ text: queryText, values, statement_timeout: 5000 });
@@ -388,8 +335,8 @@ async function updateUserSign(body, awsRequestId) {
       // Log informativo per record non trovato
       log('info', awsRequestId, {
         operation: 'updateUserSign', // Operazione corrente
-        message: 'Record non trovato', // Nessun record corrispondente all'ID
-        dealer_sign_id: parsedId, // ID cercato
+        message: 'Record non trovato', // Nessun record corrispondente
+        dealer_login_userid: String(dealerLoginUserid).trim(), // Valore cercato
       });
       // Risposta 404 con messaggio di record non trovato
       return buildResponse(404, {
@@ -398,11 +345,11 @@ async function updateUserSign(body, awsRequestId) {
       });
     }
 
-    // Log di successo con l'ID del record aggiornato
+    // Log di successo
     log('info', awsRequestId, {
       operation: 'updateUserSign', // Operazione completata con successo
       message: 'Firma aggiornata con successo', // Messaggio di conferma
-      dealer_sign_id: parsedId, // ID del record aggiornato
+      dealer_login_userid: String(dealerLoginUserid).trim(), // Chiave del record aggiornato
     });
 
     // Risposta 200 OK con messaggio di conferma aggiornamento
@@ -427,18 +374,18 @@ async function updateUserSign(body, awsRequestId) {
 }
 
 /**
- * Elimina una firma dealer per ID.
+ * Elimina una firma dealer per dealer_login_userid.
  *
- * Valida il parametro dealer_sign_id, esegue una query DELETE sulla tabella
+ * Valida il parametro dealer_login_userid, esegue una query DELETE sulla tabella
  * woc.dealer_sign e restituisce il risultato dell'operazione di cancellazione.
  *
- * @param {object} body - { dealer_sign_id }
+ * @param {object} body - { dealer_login_userid }
  * @param {string} awsRequestId - ID univoco della richiesta Lambda
  * @returns {Promise<{statusCode: number, headers: object, body: string}>}
  */
 async function deleteUserSign(body, awsRequestId) {
-  // Estrae il campo dealer_sign_id dal body della richiesta
-  const dealerSignId = body ? body.dealer_sign_id : undefined;
+  // Estrae il campo dealer_login_userid dal body della richiesta
+  const dealerLoginUserid = body ? body.dealer_login_userid : undefined;
 
   // Log dell'operazione ricevuta
   log('info', awsRequestId, {
@@ -446,33 +393,17 @@ async function deleteUserSign(body, awsRequestId) {
     message: 'Richiesta di eliminazione firma ricevuta', // Messaggio descrittivo
   });
 
-  // ── Validazione 1: dealer_sign_id obbligatorio ──
-  if (dealerSignId === undefined || dealerSignId === null || String(dealerSignId).trim() === '') {
+  // ── Validazione: dealer_login_userid obbligatorio e non vuoto dopo trim ──
+  if (dealerLoginUserid === undefined || dealerLoginUserid === null || String(dealerLoginUserid).trim() === '') {
     // Log di warning per campo mancante
     log('warn', awsRequestId, {
       operation: 'deleteUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_sign_id mancante', // Dettaglio errore
+      message: 'Validazione fallita: dealer_login_userid mancante o vuoto', // Dettaglio errore
     });
     // Risposta 400 con messaggio di errore in italiano
     return buildResponse(400, {
       success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_sign_id è obbligatorio', // Messaggio di errore per il client
-    });
-  }
-
-  // ── Validazione 2: dealer_sign_id deve essere un intero positivo ──
-  const idStr = String(dealerSignId); // Converte il valore in stringa per la validazione regex
-  if (!/^\d+$/.test(idStr) || parseInt(idStr, 10) <= 0) {
-    // Log di warning per formato non valido
-    log('warn', awsRequestId, {
-      operation: 'deleteUserSign', // Operazione in cui si è verificato l'errore
-      message: 'Validazione fallita: dealer_sign_id non è un intero positivo', // Dettaglio errore
-      value: dealerSignId, // Valore ricevuto per diagnostica
-    });
-    // Risposta 400 con messaggio di errore sul formato
-    return buildResponse(400, {
-      success: false, // Indicatore di operazione non riuscita
-      message: 'dealer_sign_id deve essere un intero positivo', // Messaggio di vincolo formato
+      message: 'dealer_login_userid è obbligatorio', // Messaggio di errore per il client
     });
   }
 
@@ -480,11 +411,11 @@ async function deleteUserSign(body, awsRequestId) {
     // Ottiene il pool di connessione al database
     const pool = await getPool();
 
-    // Query parametrizzata DELETE con RETURNING per verificare l'esistenza del record
-    const queryText = 'DELETE FROM woc.dealer_sign WHERE dealer_sign_id = $1 RETURNING dealer_sign_id';
+    // Query parametrizzata DELETE con WHERE su dealer_login_userid (chiave univoca)
+    const queryText = 'DELETE FROM woc.dealer_sign WHERE dealer_login_userid = $1 RETURNING dealer_sign_id';
 
-    // Valore del parametro: ID parsato come intero
-    const values = [parseInt(idStr, 10)];
+    // Valore del parametro: userid trimmato
+    const values = [String(dealerLoginUserid).trim()];
 
     // Esecuzione della query parametrizzata con statement_timeout di sicurezza
     const result = await pool.query({ text: queryText, values, statement_timeout: 5000 });
@@ -494,8 +425,8 @@ async function deleteUserSign(body, awsRequestId) {
       // Log informativo per record non trovato
       log('info', awsRequestId, {
         operation: 'deleteUserSign', // Operazione corrente
-        message: 'Record non trovato', // Nessun record corrispondente all'ID
-        dealer_sign_id: parseInt(idStr, 10), // ID cercato
+        message: 'Record non trovato', // Nessun record corrispondente
+        dealer_login_userid: String(dealerLoginUserid).trim(), // Valore cercato
       });
       // Risposta 404 con messaggio di record non trovato
       return buildResponse(404, {
@@ -504,11 +435,11 @@ async function deleteUserSign(body, awsRequestId) {
       });
     }
 
-    // Log di successo con l'ID del record eliminato
+    // Log di successo
     log('info', awsRequestId, {
       operation: 'deleteUserSign', // Operazione completata con successo
       message: 'Firma eliminata con successo', // Messaggio di conferma
-      dealer_sign_id: parseInt(idStr, 10), // ID del record eliminato
+      dealer_login_userid: String(dealerLoginUserid).trim(), // Chiave del record eliminato
     });
 
     // Risposta 200 OK con messaggio di conferma eliminazione
@@ -531,7 +462,6 @@ async function deleteUserSign(body, awsRequestId) {
     });
   }
 }
-
 module.exports = {
   createUserSign, // Esporta la funzione di creazione firma
   getUserSign, // Esporta la funzione di lettura firma

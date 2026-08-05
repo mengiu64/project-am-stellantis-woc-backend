@@ -157,7 +157,7 @@ DROP TABLE IF EXISTS woc.dealer_sign CASCADE;
 CREATE TABLE woc.dealer_sign
 (
     dealer_sign_id       BIGINT         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    dealer_login_userid  VARCHAR(50)    NOT NULL,
+    dealer_login_userid  VARCHAR(50)    NOT NULL UNIQUE,
     sign_image           BYTEA          NOT NULL,
     created_at           TIMESTAMPTZ    NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ    NOT NULL DEFAULT now()
