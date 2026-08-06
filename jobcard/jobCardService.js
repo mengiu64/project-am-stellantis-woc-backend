@@ -179,56 +179,29 @@ function hasEstimatedDateTime(item) {
 }
 
 /**
- * Builds a stable dedup key for a JobCard list entry, preferring jobCardSrpId
- * (the most specific identifier in the JobCard schema), falling back to
- * jobCardLegacyId then dmsRepairOrderId when it is missing.
- * @param {object} item - JobCard list entry
- * @returns {string} dedup key
- */
-function jobCardKey(item) {
-  return String(item?.jobCardSrpId ?? item?.jobCardLegacyId ?? item?.dmsRepairOrderId ?? JSON.stringify(item));
-}
-
-/**
- * Merges several JobCard list arrays into a single array without duplicates:
- * the same JobCard present in more than one input array (e.g. a card with
- * both reception and delivery scheduled today) is kept only once, using the
- * first occurrence found (in the order the arrays are passed).
- * @param {...object[]} arrays - JobCard arrays to merge
- * @returns {object[]} merged, deduplicated JobCard array
- */
-function mergeDistinctJobCards(...arrays) {
-  const seen = new Map();
-  for (const arr of arrays) {
-    for (const item of arr) {
-      const key = jobCardKey(item);
-      if (!seen.has(key)) seen.set(key, item);
-    }
-  }
-  return [...seen.values()];
-}
-
-/**
- * Retrieves the "current" JobCard list for a dealer, merging three
+ * Retrieves the "current" JobCard list for a dealer, combining three
  * getJobCardList queries anchored on a reference date:
  *
  *  1) arrayReception — jobCardList filtered by receptionStartDate=currentDate,
- *     receptionEndDate=currentDate+1 day (reception scheduled "today").
+ *     receptionEndDate=currentDate+1 day (reception scheduled "today"), each
+ *     entry tagged with 'type': 'reception'.
  *  2) arrayDelivery  — jobCardList filtered by deliveryStartDate=currentDate,
- *     deliveryEndDate=currentDate+1 day (delivery scheduled "today").
+ *     deliveryEndDate=currentDate+1 day (delivery scheduled "today"), each
+ *     entry tagged with 'type': 'delivery'.
  *  3) arrayCreated   — jobCardList filtered by creationStartDate=currentDate-7 days,
  *     creationEndDate=currentDate (created over the last week), excluding entries
  *     that already have a reception/delivery date/time (estimated or actual) set
  *     (already covered by arrayReception/arrayDelivery above, or scheduled/completed
  *     on a different day) or whose status is not "CREATED".
  *
- * The three arrays are merged into a single, deduplicated JobCard list
- * (same JobCard appearing in more than one array is kept only once).
+ * The three arrays are concatenated as-is: arrayReception, arrayDelivery and
+ * arrayCreatedRaw may contain duplicate JobCards (e.g. a card with both
+ * reception and delivery scheduled today).
  *
  * @param {string} bearerToken - ****** from PingFederate
  * @param {string} dealerId    - (Mandatory) Dealer identifier
  * @param {string} currentDate - Reference date, "YYYY-MM-DD" format (e.g. "2026-05-20")
- * @returns {Promise<{ jobCardList: object[] }>} merged, deduplicated JobCard list
+ * @returns {Promise<{ jobCardList: object[] }>} combined JobCard list (may contain duplicates)
  */
 async function getJobCardListCurrent(bearerToken, dealerId, currentDate) {
   if (!dealerId) {
@@ -258,15 +231,17 @@ async function getJobCardListCurrent(bearerToken, dealerId, currentDate) {
     }),
   ]);
 
-  const arrayReception  = Array.isArray(receptionResult?.jobCardList) ? receptionResult.jobCardList : [];
-  const arrayDelivery   = Array.isArray(deliveryResult?.jobCardList)  ? deliveryResult.jobCardList  : [];
-  const arrayCreatedRaw = Array.isArray(createdResult?.jobCardList)   ? createdResult.jobCardList   : [];
+  const arrayReception  = (Array.isArray(receptionResult?.jobCardList) ? receptionResult.jobCardList : [])
+    .map((item) => ({ ...item, type: 'reception' }));
+  const arrayDelivery   = (Array.isArray(deliveryResult?.jobCardList) ? deliveryResult.jobCardList : [])
+    .map((item) => ({ ...item, type: 'delivery' }));
+  const arrayCreatedRaw = Array.isArray(createdResult?.jobCardList) ? createdResult.jobCardList : [];
 
   const arrayCreated = arrayCreatedRaw.filter(
     (item) => !hasEstimatedDateTime(item) && item?.status === 'CREATED',
   );
 
-  return { jobCardList: mergeDistinctJobCards(arrayReception, arrayDelivery, arrayCreated) };
+  return { jobCardList: [...arrayReception, ...arrayDelivery, ...arrayCreated] };
 }
 
 /**

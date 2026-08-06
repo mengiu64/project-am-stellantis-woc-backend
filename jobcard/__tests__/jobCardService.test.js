@@ -254,7 +254,7 @@ describe('jobCardService', () => {
       expect(createdOpts.headers.creationEndDate).toBe('2026-05-20T23:59:00.000Z');
     });
 
-    test('merges arrayReception, arrayDelivery and arrayCreated without duplicates', async () => {
+    test('combines arrayReception, arrayDelivery and arrayCreated, tagging type and keeping duplicates', async () => {
       const cardA = jobCard({ jobCardSrpId: 'A' });
       const cardB = jobCard({ jobCardSrpId: 'B' });
       const cardC = jobCard({ jobCardSrpId: 'C' });
@@ -266,8 +266,9 @@ describe('jobCardService', () => {
 
       const result = await getJobCardListCurrent('token', '0062219', '2026-05-20');
 
-      expect(result.jobCardList).toHaveLength(3);
-      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['A', 'B', 'C']);
+      expect(result.jobCardList).toHaveLength(4);
+      expect(result.jobCardList.map((c) => c.jobCardSrpId)).toEqual(['A', 'B', 'B', 'C']);
+      expect(result.jobCardList.map((c) => c.type)).toEqual(['reception', 'reception', 'delivery', undefined]);
     });
 
     test('excludes arrayCreated entries with an estimated reception date/time set', async () => {
