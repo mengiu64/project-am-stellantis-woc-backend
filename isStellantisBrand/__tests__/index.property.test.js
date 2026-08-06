@@ -9,6 +9,7 @@
 const fc = require('fast-check');
 
 jest.mock('../shared/dbClient');
+jest.mock('../userSignsService');
 
 const { getPool } = require('../shared/dbClient');
 const { handler } = require('../index');
@@ -19,7 +20,7 @@ const ALPHA_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'.split
 const NON_ALPHA_CHARS = '0123456789 !@#$%^&*()_+-=[]{}|;:,.<>?/'.split('');
 
 function makeEvent(arCodbrand) {
-  return { queryStringParameters: { ar_codbrand: arCodbrand } };
+  return { action: 'isStellantisBrand', body: { ar_codbrand: arCodbrand } };
 }
 
 describe('isStellantisBrand handler — property-based (fast-check)', () => {

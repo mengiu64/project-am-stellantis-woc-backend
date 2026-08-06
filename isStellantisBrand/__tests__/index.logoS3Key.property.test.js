@@ -10,6 +10,7 @@
 const fc = require('fast-check');
 
 jest.mock('../shared/dbClient');
+jest.mock('../userSignsService');
 
 const { getPool } = require('../shared/dbClient');
 const { handler } = require('../index');
@@ -17,7 +18,7 @@ const { handler } = require('../index');
 const mockContext = { awsRequestId: 'pbt-logo-request-id' };
 
 function makeEvent(arCodbrand) {
-  return { queryStringParameters: { ar_codbrand: arCodbrand } };
+  return { action: 'isStellantisBrand', body: { ar_codbrand: arCodbrand } };
 }
 
 // Feature: brand-logo-url, Property 3: Error sanitization
@@ -84,8 +85,8 @@ describe('Property 4: Response always valid JSON', () => {
           });
 
           const event = arCodbrand !== undefined
-            ? { queryStringParameters: { ar_codbrand: arCodbrand } }
-            : { queryStringParameters: null };
+            ? { action: 'isStellantisBrand', body: { ar_codbrand: arCodbrand } }
+            : { action: 'isStellantisBrand', body: {} };
 
           const res = await handler(event, mockContext);
           
@@ -106,7 +107,7 @@ describe('Property 4: Response always valid JSON', () => {
             query: jest.fn().mockRejectedValue(new Error('DB error')),
           });
 
-          const event = { queryStringParameters: { ar_codbrand: arCodbrand } };
+          const event = { action: 'isStellantisBrand', body: { ar_codbrand: arCodbrand } };
           const res = await handler(event, mockContext);
           
           expect(() => JSON.parse(res.body)).not.toThrow();
@@ -192,7 +193,7 @@ describe('Property 5: Structured logging with context', () => {
             query: jest.fn().mockResolvedValue(dbResult),
           });
 
-          const event = { queryStringParameters: { ar_codbrand: arCodbrand } };
+          const event = { action: 'isStellantisBrand', body: { ar_codbrand: arCodbrand } };
           await handler(event, { awsRequestId: 'pbt-logging-test' });
 
           // Verify ALL console.log calls produce valid JSON with awsRequestId

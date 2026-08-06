@@ -6,6 +6,7 @@
 -- Tabelle:
 --   1) anag_brand        — anagrafica brand (PK: ar_codbrand)
 --   2) anag_brand_genome — mapping Genome Code (PK: genome_code, FK: reftech_code → anag_brand)
+--   3) dealer_sign       — firme dei dealer (PK: dealer_sign_id)
 -- ============================================================================
 
 BEGIN;
@@ -41,20 +42,20 @@ COMMENT ON COLUMN woc.anag_brand.codbrand IS 'Codice brand numerico/LINK — es.
 COMMENT ON COLUMN woc.anag_brand.brandname IS 'Nome completo del brand';
 COMMENT ON COLUMN woc.anag_brand.logo_s3_key IS 'Chiave oggetto S3 del logo del brand (percorso relativo, es. logos/Alfa Romeo.png)';
 
-INSERT INTO woc.anag_brand (ar_codbrand, codbrand, brandname) VALUES
-    ('AR', '83', 'Alfa Romeo'),
-    ('FT', '00', 'FIAT'),
-    ('LA', '70', 'LANCIA'),
-    ('JE', '57', 'JEEP'),
-    ('CY', '55', 'CHRYSLER'),
-    ('FO', '77', 'FIAT PROFESSIONAL'),
-    ('AH', '66', 'ABARTH'),
-    ('DG', '56', 'DODGE'),
-    ('RM', '58', 'RAM'),
-    ('AC', '30', 'CITROEN'),
-    ('AP', '31', 'PEUGEOT'),
-    ('DS', '33', 'DS'),
-    ('OV', '43', 'OPEL');
+INSERT INTO woc.anag_brand (ar_codbrand, codbrand, brandname, logo_s3_key) VALUES
+    ('AR', '83', 'Alfa Romeo',        'assets/images/logo/brand-stla/ALFAROMEO.png'),
+    ('FT', '00', 'FIAT',              'assets/images/logo/brand-stla/FIAT.png'),
+    ('LA', '70', 'LANCIA',            'assets/images/logo/brand-stla/LANCIA.png'),
+    ('JE', '57', 'JEEP',              'assets/images/logo/brand-stla/JEEP.png'),
+    ('CY', '55', 'CHRYSLER',          'assets/images/logo/brand-stla/CHRYSLER.png'),
+    ('FO', '77', 'FIAT PROFESSIONAL', 'assets/images/logo/brand-stla/FIAT PROFESSIONAL.png'),
+    ('AH', '66', 'ABARTH',           'assets/images/logo/brand-stla/ABARTH.png'),
+    ('DG', '56', 'DODGE',             'assets/images/logo/brand-stla/DODGE.png'),
+    ('RM', '58', 'RAM',               'assets/images/logo/brand-stla/RAM.png'),
+    ('AC', '30', 'CITROEN',           'assets/images/logo/brand-stla/CITROEN.png'),
+    ('AP', '31', 'PEUGEOT',           'assets/images/logo/brand-stla/PEUGEOT.png'),
+    ('DS', '33', 'DS',                'assets/images/logo/brand-stla/DS.png'),
+    ('OV', '43', 'OPEL',              'assets/images/logo/brand-stla/OPEL.png');
 
 
 -- ============================================================================
@@ -102,13 +103,15 @@ INSERT INTO woc.anag_brand_genome (genome_code, reftech_code, description) VALUE
     ('0W', 'DG', 'Dodge'),
     ('5K', 'OV', 'Vauxhall');
 
+-- DROP TABLE IF EXISTS woc.user_lfp_favorite CASCADE;
 
 -- ============================================================================
--- 3) USER_LFP_FAVORITE
+-- 3) USER_LFP_FAVORITE (commentata — non più in uso)
 --    PK: user_lfp_favorite_id
 --    UK: (service_advisor_id, vin, lfp_code)
 -- ============================================================================
 
+/*
 CREATE TABLE woc.user_lfp_favorite
 (
     user_lfp_favorite_id  UUID           NOT NULL DEFAULT gen_random_uuid(),
@@ -138,6 +141,36 @@ COMMENT ON COLUMN woc.user_lfp_favorite.created_at IS 'Timestamp creazione recor
 COMMENT ON COLUMN woc.user_lfp_favorite.updated_at IS 'Timestamp ultimo aggiornamento';
 COMMENT ON CONSTRAINT uk_user_lfp_favorite_unique ON woc.user_lfp_favorite 
     IS 'Non possono esistere 2 record con stesso (service_advisor_id, vin, lfp_code)';
+*/
+
+
+-- ============================================================================
+-- 4) DEALER_SIGN
+--    Firme digitali dei dealer (immagini JPEG).
+--    PK: dealer_sign_id (BIGINT auto-generato)
+--    Il campo sign_image usa BYTEA per memorizzare il binario dell'immagine JPEG.
+--    Il frontend recupera il record via GET con dealer_sign_id e riceve il JPEG
+--    come base64 o binary nella response.
+-- ============================================================================
+DROP TABLE IF EXISTS woc.dealer_sign CASCADE;
+
+CREATE TABLE woc.dealer_sign
+(
+    dealer_sign_id       BIGINT         GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    dealer_login_userid  VARCHAR(50)    NOT NULL UNIQUE,
+    sign_image           BYTEA          NOT NULL,
+    created_at           TIMESTAMPTZ    NOT NULL DEFAULT now(),
+    updated_at           TIMESTAMPTZ    NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_dealer_sign_dealer ON woc.dealer_sign (dealer_login_userid);
+
+COMMENT ON TABLE woc.dealer_sign IS 'Firme digitali dei dealer — immagini JPEG memorizzate come BYTEA';
+COMMENT ON COLUMN woc.dealer_sign.dealer_sign_id IS 'Chiave primaria tecnica auto-generata (BIGINT IDENTITY)';
+COMMENT ON COLUMN woc.dealer_sign.dealer_login_userid IS 'ID utente dealer loggato (es. 0073741.d235)';
+COMMENT ON COLUMN woc.dealer_sign.sign_image IS 'Immagine JPEG della firma del dealer (binary)';
+COMMENT ON COLUMN woc.dealer_sign.created_at IS 'Timestamp creazione record';
+COMMENT ON COLUMN woc.dealer_sign.updated_at IS 'Timestamp ultimo aggiornamento';
 
 
 -- ============================================================================
@@ -160,12 +193,20 @@ CREATE TRIGGER trg_anag_brand_genome_updated_at
     BEFORE UPDATE ON woc.anag_brand_genome
     FOR EACH ROW EXECUTE FUNCTION woc.set_updated_at();
 
+-- Trigger per user_lfp_favorite commentato (tabella non più in uso)
+/*
 CREATE TRIGGER trg_user_lfp_favorite_updated_at
     BEFORE UPDATE ON woc.user_lfp_favorite
+    FOR EACH ROW EXECUTE FUNCTION woc.set_updated_at();
+*/
+
+CREATE TRIGGER trg_dealer_sign_updated_at
+    BEFORE UPDATE ON woc.dealer_sign
     FOR EACH ROW EXECUTE FUNCTION woc.set_updated_at();
 
 GRANT USAGE ON SCHEMA woc TO wiadvisor_app;
 GRANT SELECT ON TABLE woc.anag_brand TO wiadvisor_app;
 GRANT SELECT ON TABLE woc.anag_brand_genome TO wiadvisor_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE woc.dealer_sign TO wiadvisor_app;
 
 COMMIT;
