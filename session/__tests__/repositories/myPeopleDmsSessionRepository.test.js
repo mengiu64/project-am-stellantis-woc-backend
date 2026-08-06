@@ -72,6 +72,9 @@ describe('MyPeopleDmsSessionRepository', () => {
       codmarket: '1000',
       oic: '00007584',
       sincom: '0073741',
+      firstname: 'GUIDO',
+      lastname: 'FANTINI',
+      profile: null,
       physicalsite: null,
       pdvId: null,
       sessionbrand: '00',
@@ -371,6 +374,49 @@ describe('MyPeopleDmsSessionRepository', () => {
       { application: 'IT.ESERVICE.LINK', profile: 'GARAGE CHIEF', status: 'ACTIVE', market: '1000' },
       { application: 'wiADV.DL', profile: 'Service Manager', status: 'ACTIVE', market: '1000' },
     ]);
+  });
+
+  test('profile è valorizzato con il PROFILE dell\'Application con APPLICATION="wiADV.DL"', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            Applications: [
+              { APPLICATION: 'IT.ESERVICE.LINK', PROFILE: 'GARAGE CHIEF', STATUS: 'ACTIVE', MARKET: '1000' },
+              { APPLICATION: 'wiADV.DL', PROFILE: 'Service Manager', STATUS: 'ACTIVE', MARKET: '1000' },
+            ],
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.profile).toBe('Service Manager');
+  });
+
+  test('profile è null quando myPeople non restituisce alcuna Application con APPLICATION="wiADV.DL"', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            Applications: [
+              { APPLICATION: 'IT.ESERVICE.LINK', PROFILE: 'GARAGE CHIEF', STATUS: 'ACTIVE', MARKET: '1000' },
+            ],
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.profile).toBeNull();
   });
 
   test('applications è un array vuoto quando myPeople non restituisce alcuna Application', async () => {

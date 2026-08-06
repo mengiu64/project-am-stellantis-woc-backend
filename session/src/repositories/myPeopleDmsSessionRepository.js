@@ -73,7 +73,9 @@ const BRAND_CODE_TO_REFTECH = {
  *      flusso e vengono quindi impostati a `null`. In aggiunta alle chiavi storiche,
  *      espone anche `oics` e `applications`: gli interi blocchi User.OICs/User.Applications
  *      di myPeople, con le chiavi di ciascun elemento riportate in minuscolo (stessa
- *      convenzione usata per tutte le altre chiavi di questo oggetto).
+ *      convenzione usata per tutte le altre chiavi di questo oggetto). Espone inoltre
+ *      `firstname`/`lastname` (da User.Attributes.FIRSTNAME/LASTNAME) e `profile`
+ *      (da User.Applications, campo PROFILE dell'item con APPLICATION="wiADV.DL").
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({ readUserProfilesFn, getBearerTokenFn, getDmsSettingsFn } = {}) {
@@ -116,6 +118,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const country = iso2 ? iso2.toLowerCase() : null;
     const dealer = attributes.MAINSINCOM || null;
 
+    const wiAdvDlApp = applications.find((app) => app && app.APPLICATION === 'wiADV.DL');
+
     const getBearerToken = this._getBearerTokenFn || loadGetBearerToken();
     const getDmsSettings = this._getDmsSettingsFn || loadGetDmsSettings();
 
@@ -133,6 +137,9 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       codmarket: attributes.MARKETCODE || null,
       oic: mainOic.CODE || null,
       sincom: dealer,
+      firstname: attributes.FIRSTNAME || null,
+      lastname: attributes.LASTNAME || null,
+      profile: (wiAdvDlApp && wiAdvDlApp.PROFILE) || null,
       physicalsite: null,
       pdvId: null,
       sessionbrand: rawBrandCode,
