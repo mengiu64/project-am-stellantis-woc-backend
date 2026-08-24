@@ -225,6 +225,27 @@ Parameters:
       dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
       and Secrets Lambda Extension (stesso meccanismo di MyPeopleCertSecretId/MyPeopleKeySecretId)
 
+  # ── pkDocsoa (functionServiceDb — tabella woc.listfunctions su Aurora PostgreSQL) ──
+  DocsoaDbHost:
+    Type: String
+    Description: >-
+      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
+      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
+      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
+  DocsoaDbPort:
+    Type: String
+    Default: '5432'
+  DocsoaDbName:
+    Type: String
+    Default: wiadvisor
+  DocsoaDbSecretId:
+    Type: String
+    Default: sm-np-bsn0027990-dev-aurora-app
+    Description: >-
+      Secrets Manager secret id con le credenziali least-privilege (username/password)
+      dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
+      and Secrets Lambda Extension (stesso meccanismo di PkFavoriteDbSecretId)
+
 # ── Conditions ─────────────────────────────────────────────────────────────────
 
 Conditions:
@@ -622,6 +643,13 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            # pkDocsoa/functionServiceDb legge da Aurora tramite Secrets Manager: il secret
+            # è cifrato con una chiave KMS gestita dal cliente (non la default
+            # aws/secretsmanager), stesso caso già risolto per PkFavoriteFunction.
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           EPER_HOST:                    !Ref EperHost
@@ -637,6 +665,12 @@ Resources:
           DOCSOA_KEY_SECRET_ID:         !Ref MyPeopleKeySecretId
           DOCSOA_CODBRAND:              !Ref DocsoaCodbrand
           DOCSOA_LANGUE:                !Ref DocsoaLangue
+          # functionServiceDb (pkDocsoa/db.js + config.js) — lettura di woc.listfunctions
+          # da Aurora PostgreSQL "wiadvisor" tramite RDS Proxy, stesso pattern di PkFavoriteFunction.
+          DOCSOA_DB_HOST:               !Ref DocsoaDbHost
+          DOCSOA_DB_PORT:               !Ref DocsoaDbPort
+          DOCSOA_DB_NAME:               !Ref DocsoaDbName
+          DOCSOA_DB_SECRET_ID:          !Ref DocsoaDbSecretId
           DOCSOA_PAYS:                  !Ref DocsoaPays
           DOCSOA_CODEPDV:               !Ref DocsoaCodepdv
           MENUPRICING_WSDL:             !Ref MenupricingWsdl
