@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * ListFunctionsRepository.js — Query SQL sulla tabella woc.listfunctions (Aurora PostgreSQL).
+ * ListFunctionsRepository.js — Query SQL sulla tabella woc.docsoafunctions (Aurora PostgreSQL).
  *
  * Schema (vedi sql/create_table_listFunctions.sql):
- *   woc.listfunctions(function VARCHAR(10) PRIMARY KEY)
+ *   woc.docsoafunctions(function VARCHAR(10) PRIMARY KEY)
  *
  * Usata da DocSOARestClient.functionServiceDb per sostituire functionsService
  * (chiamata SOAP a DocSOA) con un sottoinsieme di funzioni gestito localmente
@@ -18,7 +18,7 @@
 async function listFunctions(pool) {
   const { rows } = await pool.query(
     `SELECT function
-       FROM woc.listfunctions
+       FROM woc.docsoafunctions
       ORDER BY function ASC`,
   );
 

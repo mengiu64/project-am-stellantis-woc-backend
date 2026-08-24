@@ -27,7 +27,7 @@ describe('DocSOARestClient.functionServiceDb', () => {
     client = new DocSOARestClient();
   });
 
-  test('returns the same output shape as functionsService, sourced from woc.listfunctions', async () => {
+  test('returns the same output shape as functionsService, sourced from woc.docsoafunctions', async () => {
     const fakePool = { query: jest.fn() };
     getPool.mockResolvedValue(fakePool);
     listFunctions.mockResolvedValue([{ function: 'FCT0040' }, { function: 'FCT0050' }]);

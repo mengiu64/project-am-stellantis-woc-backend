@@ -2,7 +2,7 @@
 
 /**
  * db.js — Connessione al database Aurora PostgreSQL "wiadvisor" (tabella
- * woc.listfunctions), usata da functionServiceDb (DocSOARestClient.js) come
+ * woc.docsoafunctions), usata da functionServiceDb (DocSOARestClient.js) come
  * sorgente dati alternativa al servizio SOAP functionsService.
  *
  * Le credenziali (username/password) dell'utente applicativo Aurora least-privilege

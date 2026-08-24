@@ -8,7 +8,7 @@ function makePool(queryImpl) {
 
 describe('ListFunctionsRepository', () => {
   describe('listFunctions', () => {
-    it('queries woc.listfunctions and returns the raw rows', async () => {
+    it('queries woc.docsoafunctions and returns the raw rows', async () => {
       const pool = makePool(async () => ({
         rows: [{ function: 'FCT0040' }, { function: 'FCT0050' }],
       }));
@@ -16,7 +16,7 @@ describe('ListFunctionsRepository', () => {
       const result = await listFunctions(pool);
 
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('FROM woc.listfunctions'),
+        expect.stringContaining('FROM woc.docsoafunctions'),
       );
       expect(result).toEqual([{ function: 'FCT0040' }, { function: 'FCT0050' }]);
     });

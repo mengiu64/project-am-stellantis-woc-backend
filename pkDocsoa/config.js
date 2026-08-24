@@ -2,7 +2,7 @@
 
 /**
  * config.js — Configurazione della connessione al database Aurora PostgreSQL
- * "wiadvisor" (tabella woc.listfunctions), usata da functionServiceDb come
+ * "wiadvisor" (tabella woc.docsoafunctions), usata da functionServiceDb come
  * sorgente dati alternativa al servizio SOAP functionsService.
  *
  * Stesso pattern di pkFavorite/config.js: solo l'host è realmente obbligatorio,

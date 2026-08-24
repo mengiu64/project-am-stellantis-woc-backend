@@ -412,7 +412,7 @@ class DocSOARestClient {
   // ── functionServiceDb ────────────────────────────────────────────────────────
   // Sostituisce functionsService (senza rimuoverlo): stessa struttura di output
   // ({ success, data: [{ ordreAffichage, idFunction, IdFunctionPath, Label, image,
-  // listFunctions }] }), ma i dati arrivano dalla tabella woc.listfunctions su
+  // listFunctions }] }), ma i dati arrivano dalla tabella woc.docsoafunctions su
   // Aurora PostgreSQL "wiadvisor" invece che dal servizio SOAP DocSOA. Lettura dal
   // DB con lo stesso pattern (config/db/Repository + Secrets Manager) già usato
   // da pkFavorite per la tabella PKFAVORITE. Il require di ./db è volutamente
