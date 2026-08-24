@@ -3668,6 +3668,8 @@ jobs:
               MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
               PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
+              DocsoaDbHost="${{ vars.DOCSOA_DB_HOST }}" \
+              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}" \
               MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
               MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
               MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
@@ -3797,6 +3799,8 @@ jobs:
               MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
               PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
+              DocsoaDbHost="${{ vars.DOCSOA_DB_HOST }}" \
+              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}" \
               MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
               MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
               MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
@@ -3927,6 +3931,8 @@ jobs:
               MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
               PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
+              DocsoaDbHost="${{ vars.DOCSOA_DB_HOST }}" \
+              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}" \
               MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
               MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
               MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
