@@ -41,16 +41,16 @@ module.exports = {
   // l'endpoint dell'RDS Proxy (non l'endpoint diretto del cluster: il Proxy fa
   // da pool di connessioni condiviso tra le invocazioni Lambda).
   db: {
-    host: process.env.DOCSOA_DB_HOST,
-    // port/name/user/password: se assenti vengono ricavati dal secret (db.js).
-    // Utili in locale/CI per bypassare Secrets Manager/l'estensione Lambda.
-    port: process.env.DOCSOA_DB_PORT ? Number(process.env.DOCSOA_DB_PORT) : undefined,
-    name: process.env.DOCSOA_DB_NAME,
-    user: process.env.DOCSOA_DB_USER,
-    password: process.env.DOCSOA_DB_PASSWORD,
-    // Aurora richiede/accetta TLS; impostare DOCSOA_DB_SSL=false solo per
-    // test locali contro un Postgres senza TLS.
-    ssl: process.env.DOCSOA_DB_SSL !== 'false',
+      host: process.env.PKFAVORITE_DB_HOST,
+      // port/name/user/password: se assenti vengono ricavati dal secret (db.js).
+      // Utili in locale/CI per bypassare Secrets Manager/l'estensione Lambda.
+      port: process.env.PKFAVORITE_DB_PORT ? Number(process.env.PKFAVORITE_DB_PORT) : undefined,
+      name: process.env.PKFAVORITE_DB_NAME,
+      user: process.env.PKFAVORITE_DB_USER,
+      password: process.env.PKFAVORITE_DB_PASSWORD,
+      // Aurora richiede/accetta TLS; impostare PKFAVORITE_DB_SSL=false solo per
+      // test locali contro un Postgres senza TLS.
+      ssl: process.env.PKFAVORITE_DB_SSL !== 'false',
   },
 
   // Credenziali (username/password) dell'utente applicativo Aurora
