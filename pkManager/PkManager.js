@@ -317,11 +317,15 @@ class PkManager {
   //   - righe TYPE='SP' (listaRicambi)    ↔ WorkLines[].PartsItem[].PartNumber
   //   - righe TYPE='OP' (listaOperazioni) ↔ WorkLines[].LaborItems[].LaborOperationID
   //
-  // @param {string} pkwstouse               - 'eper' | 'docsoa' | 'menupricing'
+  // @param {string} codbrand                 - Codice brand (CODBRAND in HQ_PKCONFIG), usato
+  //                                              insieme a market/codmarket per risolvere via
+  //                                              dbManager.getPkwstouse() quale web service
+  //                                              pacchetti (eper/docsoa/menupricing) usare
   // @param {string} documentId               - Repair Order number (PartsInquiryHeader.DocumentID)
   // @param {string} customerId                - Customer ID DMS (PartsInquiryHeader.CustomerIdDms)
   // @param {string} vehicleId                 - VIN del veicolo
-  // @param {string} [market]                  - Codice mercato (default '1000')
+  // @param {string} [market]                  - Codice mercato (default '1000'), usato anche
+  //                                              come CODMARKET nella query dbManager.getPkwstouse
   // @param {string} [dealerIdentificationCode] - Override di wsConfig.menupricing.dealerIdentificationCode,
   //                                              usato dai metodi menupricing (_fetchLiveMap/_fetchDetail)
   //                                              quando pkwstouse === 'menupricing'
@@ -334,8 +338,16 @@ class PkManager {
   //                              voci per cui il dettaglio del singolo pacchetto
   //                              non è stato recuperabile restano invece
   //                              { error, category } (non normalizzate).
-  async getPkList(pkwstouse, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode) {
-    console.log('[PkManager.getPkList] parametri chiamata:', { pkwstouse, documentId, customerId, vehicleId, market, dealerIdentificationCode });
+  async getPkList(codbrand, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode) {
+    console.log('[PkManager.getPkList] parametri chiamata:', { codbrand, documentId, customerId, vehicleId, market, dealerIdentificationCode });
+
+    // 0) risolvo pkwstouse (eper/docsoa/menupricing) leggendo HQ_PKCONFIG tramite
+    //    dbManager, per la coppia (codmarket=market, codbrand) — vedi
+    //    dbManager/PkConfigRepository.js per la logica di fallback su CODMARKET NULL.
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { getPkwstouse } = require(path.resolve(__dirname, '../dbManager/PkConfigRepository'));
+    const pool = await getPool();
+    const pkwstouse = await getPkwstouse(pool, { codmarket: market, codbrand });
 
     // Se fornito, sovrascrive il dealerIdentificationCode di menupricing (letto di
     // default da MP_DEALER_IDENTIFICATION_CODE / wsConfig del costruttore), così

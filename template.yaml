@@ -653,6 +653,9 @@ Resources:
       # pkDocsoa (imbarcato in-process via Makefile) richiede l'estensione Lambda +
       # il permesso Secrets Manager per il proprio mTLS (certificato/chiave "apicCert"/"apicKey",
       # gli STESSI usati da myPeople) — vedi PkDocsoaFunction/MyPeopleFunction.
+      # dbManager (anch'esso imbarcato in-process via Makefile) richiede invece il
+      # permesso Secrets Manager per le credenziali Aurora "wiadvisor_app" (usato da
+      # getPkList per risolvere pkwstouse da HQ_PKCONFIG via dbManager.getPkwstouse).
       Layers:
         - !Ref MyPeopleExtensionLayerArn
       Policies:
@@ -665,9 +668,11 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-            # pkDocsoa/functionServiceDb legge da Aurora tramite Secrets Manager: il secret
-            # è cifrato con una chiave KMS gestita dal cliente (non la default
-            # aws/secretsmanager), stesso caso già risolto per PkFavoriteFunction.
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbManagerDbSecretId}-*"
+            # pkDocsoa/functionServiceDb e dbManager/db.js leggono da Aurora tramite
+            # Secrets Manager: il secret è cifrato con una chiave KMS gestita dal
+            # cliente (non la default aws/secretsmanager), stesso caso già risolto
+            # per PkFavoriteFunction.
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
@@ -694,6 +699,13 @@ Resources:
           DOCSOA_DB_SECRET_ID:          !Ref DocsoaDbSecretId
           DOCSOA_PAYS:                  !Ref DocsoaPays
           DOCSOA_CODEPDV:               !Ref DocsoaCodepdv
+          # dbManager/db.js + config.js (in-process, vedi Makefile) — getPkList risolve
+          # pkwstouse leggendo HQ_PKCONFIG da Aurora PostgreSQL "wiadvisor" tramite RDS
+          # Proxy, stesso pattern di PkFavoriteFunction/DOCSOA_DB_*.
+          DBMANAGER_DB_HOST:            !Ref DbManagerDbHost
+          DBMANAGER_DB_PORT:            !Ref DbManagerDbPort
+          DBMANAGER_DB_NAME:            !Ref DbManagerDbName
+          DBMANAGER_DB_SECRET_ID:       !Ref DbManagerDbSecretId
           MENUPRICING_WSDL:             !Ref MenupricingWsdl
           MENUPRICING_USR:              !Ref MenupricingUsr
           MENUPRICING_PWS:              !Ref MenupricingPws

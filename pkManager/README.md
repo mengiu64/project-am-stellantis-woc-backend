@@ -105,7 +105,7 @@ node index.js getValidPackagesDetail menupricing  W0VZT6GT7M1017935 1000
 | `getValidPackages`        | `market` `pkwstouse` `VIN`         | Intersezione tra config e pacchetti live dal WS: `{ CATEGORY: { [codice]: obj } }`                 |
 | `getValidPackagesDetail`  | `market` `pkwstouse` `VIN`         | Chiama `getValidPackages` poi recupera in parallelo il dettaglio di ogni pacchetto: `{ [codice]: detail }` |
 | `getPriceAndAvailability` | `market` `pkwstouse` `VIN`         | Arricchisce il dettaglio di `getValidPackagesDetail` con `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga  |
-| `getPkList`               | `market` `pkwstouse` `VIN`         | Orchestratore end-to-end: `getValidPackagesDetail` + `getPriceAndAvailability`, poi **normalizza** ogni pacchetto allo stesso set di chiavi (vedi sotto), a prescindere dal `pkwstouse` di origine |
+| `getPkList`               | `codbrand` `documentId` `customerId` `vehicleId` `market` `dealerIdentificationCode` | Orchestratore end-to-end: risolve `pkwstouse` da `HQ_PKCONFIG` chiamando `dbManager.getPkwstouse(pool, { codmarket: market, codbrand })` (vedi `dbManager/README` se presente, o `dbManager/PkConfigRepository.js`), poi `getValidPackagesDetail` + `getPriceAndAvailability`, poi **normalizza** ogni pacchetto allo stesso set di chiavi (vedi sotto), a prescindere dal `pkwstouse` risolto |
 
 ### Metodi di dettaglio per ws
 

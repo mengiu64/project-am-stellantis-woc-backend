@@ -8,12 +8,19 @@ jest.mock('../../pkDocsoa/DocSOARestClient', () => ({ DocSOARestClient: jest.fn(
 jest.mock('../../pkMenupricing/MenuPricingSoapClient', () => ({ MenuPricingSoapClient: jest.fn() }));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
+// dbManager (usato da getPkList per risolvere pkwstouse da HQ_PKCONFIG via
+// dbManager.getPkwstouse(pool, { codmarket, codbrand })), stesso pattern dei
+// mock sopra: PkManager.js lo richiede con path.resolve(__dirname, '../dbManager/...').
+jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
+jest.mock('../../dbManager/PkConfigRepository', () => ({ getPkwstouse: jest.fn() }));
 
 const { WsIQPckEper } = require('../../pkEper/WsIQPckEper');
 const { DocSOARestClient } = require('../../pkDocsoa/DocSOARestClient');
 const { MenuPricingSoapClient } = require('../../pkMenupricing/MenuPricingSoapClient');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry } = require('../../dms/dmsService');
+const { getPool } = require('../../dbManager/db');
+const { getPkwstouse } = require('../../dbManager/PkConfigRepository');
 const { PkManager } = require('../PkManager');
 
 describe('PkManager', () => {
@@ -23,6 +30,14 @@ describe('PkManager', () => {
     ORIGINAL_ENV = { ...process.env };
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
+    // Nei test di getPkList il primo argomento è ormai "codbrand", non più
+    // "pkwstouse": per non dover riscrivere ogni asserzione esistente (che si
+    // aspetta getValidPackagesDetail chiamato con 'eper'/'docsoa'/'menupricing'),
+    // il mock di dbManager.getPkwstouse ritorna semplicemente il codbrand
+    // ricevuto, così i valori storici usati nei test ('eper', 'docsoa',
+    // 'menupricing') continuano a fluire invariati come pkwstouse risolto.
+    getPool.mockResolvedValue({});
+    getPkwstouse.mockImplementation(async (pool, { codbrand }) => codbrand);
   });
 
   afterEach(() => {
@@ -899,6 +914,23 @@ describe('PkManager', () => {
   // ── getPkList ──────────────────────────────────────────────────────────────
 
   describe('getPkList', () => {
+    test('resolves pkwstouse via dbManager.getPkwstouse(pool, { codmarket, codbrand }) before fetching the detail', async () => {
+      const manager = new PkManager();
+      getPkwstouse.mockResolvedValue('menupricing'); // diverso da codbrand, per provare che il valore risolto è quello realmente usato
+
+      jest.spyOn(manager, 'getValidPackagesDetail').mockImplementation(async () => {
+        manager.pkDetailList = [];
+        return {};
+      });
+      jest.spyOn(manager, 'getPriceAndAvailability').mockResolvedValue({});
+
+      await manager.getPkList('FIAT', 'DOC1', 'CUST1', 'VIN123', '1000');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(getPkwstouse).toHaveBeenCalledWith({}, { codmarket: '1000', codbrand: 'FIAT' });
+      expect(manager.getValidPackagesDetail).toHaveBeenCalledWith('1000', 'menupricing', 'VIN123');
+    });
+
     test('orchestrates detail => price/availability => merges AV_LOCAL/PRICE/SCONTO into pkDetailList', async () => {
       const manager = new PkManager();
 
