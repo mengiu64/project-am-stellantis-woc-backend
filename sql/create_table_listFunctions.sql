@@ -14,3 +14,5 @@ COMMENT ON TABLE woc.docsoafunctions IS 'DocSoa lista di un sottinsieme di funct
 INSERT INTO woc.docsoafunctions (function) VALUES
                                                ('FCT0040'),
                                                ('FCT0050');
+
+GRANT SELECT ON TABLE woc.docsoafunctions TO wiadvisor_app;
