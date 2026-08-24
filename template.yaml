@@ -246,27 +246,6 @@ Parameters:
       dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
       and Secrets Lambda Extension (stesso meccanismo di PkFavoriteDbSecretId)
 
-  # ── dbManager (getPkwstouse — tabella HQ_PKCONFIG su Aurora PostgreSQL) ──
-  DbManagerDbHost:
-    Type: String
-    Description: >-
-      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
-      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
-      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
-  DbManagerDbPort:
-    Type: String
-    Default: '5432'
-  DbManagerDbName:
-    Type: String
-    Default: wiadvisor
-  DbManagerDbSecretId:
-    Type: String
-    Default: sm-np-bsn0027990-dev-aurora-app
-    Description: >-
-      Secrets Manager secret id con le credenziali least-privilege (username/password)
-      dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
-      and Secrets Lambda Extension (stesso meccanismo di PkFavoriteDbSecretId)
-
 # ── Conditions ─────────────────────────────────────────────────────────────────
 
 Conditions:
@@ -653,9 +632,9 @@ Resources:
       # pkDocsoa (imbarcato in-process via Makefile) richiede l'estensione Lambda +
       # il permesso Secrets Manager per il proprio mTLS (certificato/chiave "apicCert"/"apicKey",
       # gli STESSI usati da myPeople) — vedi PkDocsoaFunction/MyPeopleFunction.
-      # dbManager (anch'esso imbarcato in-process via Makefile) richiede invece il
-      # permesso Secrets Manager per le credenziali Aurora "wiadvisor_app" (usato da
-      # getPkList per risolvere pkwstouse da HQ_PKCONFIG via dbManager.getPkwstouse).
+      # dbManager (anch'esso imbarcato in-process via Makefile) richiede lo stesso
+      # secret Aurora "wiadvisor_app" di pkDocsoa (DocsoaDbSecretId): nessun nuovo
+      # parametro/permesso da aggiungere.
       Layers:
         - !Ref MyPeopleExtensionLayerArn
       Policies:
@@ -668,7 +647,6 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbManagerDbSecretId}-*"
             # pkDocsoa/functionServiceDb e dbManager/db.js leggono da Aurora tramite
             # Secrets Manager: il secret è cifrato con una chiave KMS gestita dal
             # cliente (non la default aws/secretsmanager), stesso caso già risolto
@@ -700,12 +678,12 @@ Resources:
           DOCSOA_PAYS:                  !Ref DocsoaPays
           DOCSOA_CODEPDV:               !Ref DocsoaCodepdv
           # dbManager/db.js + config.js (in-process, vedi Makefile) — getPkList risolve
-          # pkwstouse leggendo HQ_PKCONFIG da Aurora PostgreSQL "wiadvisor" tramite RDS
-          # Proxy, stesso pattern di PkFavoriteFunction/DOCSOA_DB_*.
-          DBMANAGER_DB_HOST:            !Ref DbManagerDbHost
-          DBMANAGER_DB_PORT:            !Ref DbManagerDbPort
-          DBMANAGER_DB_NAME:            !Ref DbManagerDbName
-          DBMANAGER_DB_SECRET_ID:       !Ref DbManagerDbSecretId
+          # pkwstouse leggendo HQ_PKCONFIG dallo STESSO cluster Aurora "wiadvisor"
+          # (stesso RDS Proxy/secret di DOCSOA_DB_*, nessun nuovo parametro necessario).
+          DBMANAGER_DB_HOST:            !Ref DocsoaDbHost
+          DBMANAGER_DB_PORT:            !Ref DocsoaDbPort
+          DBMANAGER_DB_NAME:            !Ref DocsoaDbName
+          DBMANAGER_DB_SECRET_ID:       !Ref DocsoaDbSecretId
           MENUPRICING_WSDL:             !Ref MenupricingWsdl
           MENUPRICING_USR:              !Ref MenupricingUsr
           MENUPRICING_PWS:              !Ref MenupricingPws
@@ -891,10 +869,13 @@ Resources:
   # ── dbManager (getPkwstouse — configurazione pacchetti per mercato/brand) ─
   #
   # Risolve, per una coppia (codmarket, codbrand), quale web service pacchetti
-  # (eper/docsoa/menupricing) usare, leggendo la tabella HQ_PKCONFIG su Aurora
-  # PostgreSQL "wiadvisor" (match esatto CODMARKET+CODBRAND, altrimenti
-  # fallback su CODMARKET IS NULL). Nessuna dipendenza cross-folder: CodeUri
-  # punta direttamente alla cartella del modulo (niente BuildMethod: makefile).
+  # (eper/docsoa/menupricing) usare, leggendo la tabella HQ_PKCONFIG sullo STESSO
+  # cluster Aurora PostgreSQL "wiadvisor" già usato da pkDocsoa/pkFavorite (match
+  # esatto CODMARKET+CODBRAND, altrimenti fallback su CODMARKET IS NULL). Riusa i
+  # parametri Docsoa* (stesso RDS Proxy/secret) invece di dichiararne di nuovi, per
+  # non richiedere modifiche alla pipeline di deploy esterna (parameter-overrides).
+  # Nessuna dipendenza cross-folder: CodeUri punta direttamente alla cartella del
+  # modulo (niente BuildMethod: makefile).
   DbManagerFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -909,7 +890,7 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbManagerDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -920,10 +901,10 @@ Resources:
               Resource: "*"
       Environment:
         Variables:
-          DBMANAGER_DB_HOST:      !Ref DbManagerDbHost
-          DBMANAGER_DB_PORT:      !Ref DbManagerDbPort
-          DBMANAGER_DB_NAME:      !Ref DbManagerDbName
-          DBMANAGER_DB_SECRET_ID: !Ref DbManagerDbSecretId
+          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
+          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
+          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
+          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
 
   DbManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
