@@ -30,7 +30,7 @@ if (fs.existsSync(envFile)) {
     });
 }
 
-const REQUIRED_ENV = ['DOCSOA_DB_HOST'];
+const REQUIRED_ENV = ['PKFAVORITE_DB_HOST'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
 if (missing.length > 0) {
   throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
@@ -57,8 +57,8 @@ module.exports = {
   // (least-privilege, "wiadvisor_app"), lette da AWS Secrets Manager tramite la
   // AWS Parameters and Secrets Lambda Extension (http://localhost:<port>/secretsmanager/get),
   // stesso meccanismo già usato da pkFavorite/db.js.
-  secrets: {
-    dbSecretId: process.env.DOCSOA_DB_SECRET_ID || 'sm-np-bsn0027990-dev-aurora-app',
-    extensionPort: Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773,
-  },
+    secrets: {
+        dbSecretId: process.env.PKFAVORITE_DB_SECRET_ID || 'sm-np-bsn0027990-dev-aurora-app',
+        extensionPort: Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773,
+    },
 };
