@@ -385,7 +385,7 @@ describe('DocSOARestClient', () => {
   });
 
   // ── getCompletePkSOAList ─────────────────────────────────────────────────────
-  // Usa jest.spyOn sui metodi già testati (functionsService/forfaitService/
+  // Usa jest.spyOn sui metodi già testati (functionServiceDb/forfaitService/
   // ibxParametrageService) per pilotare direttamente ogni ramo dell'orchestratore
   // senza dover ricostruire XML/SOAP grezzi per ogni scenario.
   describe('getCompletePkSOAList', () => {
@@ -411,8 +411,8 @@ describe('DocSOARestClient', () => {
       typeInternet: 'INTERNET',
     };
 
-    test('returns early when functionsService fails', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: false, data: null, message: 'boom' });
+    test('returns early when functionServiceDb fails', async () => {
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({ success: false, data: null, message: 'boom' });
       const forfaitSpy = jest.spyOn(client, 'forfaitService');
       const qeSpy      = jest.spyOn(client, 'ibxParametrageService');
 
@@ -424,7 +424,7 @@ describe('DocSOARestClient', () => {
     });
 
     test('returns "No functions found" when idFunctionArr is empty', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [] });
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({ success: true, data: [] });
       const forfaitSpy = jest.spyOn(client, 'forfaitService');
       const qeSpy      = jest.spyOn(client, 'ibxParametrageService');
 
@@ -436,7 +436,7 @@ describe('DocSOARestClient', () => {
     });
 
     test('extracts idFunction from the 3-level nested hierarchy and merges FP+QE on success', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({
         success: true,
         data: [
           {
@@ -463,7 +463,7 @@ describe('DocSOARestClient', () => {
     test('extracts nested doc records (refAff) from the real ibxParametrageService response shape', async () => {
       // Struttura reale osservata su ibxParametrageService: il codice pacchetto (refAff)
       // è annidato in parametrage.paramTP.docByFonctionListe.doc[], non al primo livello.
-      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'FCT0040' }] });
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({ success: true, data: [{ idFunction: 'FCT0040' }] });
       jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: true, data: null });
       jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({
         success: true,
@@ -500,7 +500,7 @@ describe('DocSOARestClient', () => {
     });
 
     test('skips rows without idFunction at every nesting level and defaults paysUser/mode/typeInternet', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({
         success: true,
         data: [
           { idFunction: 'F1' }, // senza listFunctions annidate
@@ -533,7 +533,7 @@ describe('DocSOARestClient', () => {
     });
 
     test('keeps QE results when forfaitService rejects', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
       jest.spyOn(client, 'forfaitService').mockRejectedValue(new Error('forfait down'));
       jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({ success: true, data: [{ ref_fo: 'QE1' }] });
 
@@ -543,7 +543,7 @@ describe('DocSOARestClient', () => {
     });
 
     test('keeps FP results when ibxParametrageService rejects with a non-Error value (String(err) fallback)', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
       jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: true, data: [{ ref_fo: 'FP1' }] });
       jest.spyOn(client, 'ibxParametrageService').mockRejectedValue('qe down');
 
@@ -553,7 +553,7 @@ describe('DocSOARestClient', () => {
     });
 
     test('returns data:null when both forfaitService and ibxParametrageService fail', async () => {
-      jest.spyOn(client, 'functionsService').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
+      jest.spyOn(client, 'functionServiceDb').mockResolvedValue({ success: true, data: [{ idFunction: 'F1' }] });
       jest.spyOn(client, 'forfaitService').mockResolvedValue({ success: false, data: null, message: 'fp fail' });
       jest.spyOn(client, 'ibxParametrageService').mockResolvedValue({ success: false, data: null, message: 'qe fail' });
 

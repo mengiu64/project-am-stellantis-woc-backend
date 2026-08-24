@@ -409,6 +409,38 @@ class DocSOARestClient {
     return { success: true, data };
   }
 
+  // ── functionServiceDb ────────────────────────────────────────────────────────
+  // Sostituisce functionsService (senza rimuoverlo): stessa struttura di output
+  // ({ success, data: [{ ordreAffichage, idFunction, IdFunctionPath, Label, image,
+  // listFunctions }] }), ma i dati arrivano dalla tabella woc.listfunctions su
+  // Aurora PostgreSQL "wiadvisor" invece che dal servizio SOAP DocSOA. Lettura dal
+  // DB con lo stesso pattern (config/db/Repository + Secrets Manager) già usato
+  // da pkFavorite per la tabella PKFAVORITE. Il require di ./db è volutamente
+  // lazy (solo qui, non a livello di modulo) per non richiedere DOCSOA_DB_HOST
+  // a chi usa solo i metodi SOAP di questa classe (es. i test esistenti).
+  async functionServiceDb() {
+    try {
+      const { getPool } = require('./db');
+      const { listFunctions } = require('./ListFunctionsRepository');
+
+      const pool = await getPool();
+      const rows = await listFunctions(pool);
+
+      const data = rows.map((row, index) => ({
+        ordreAffichage: index + 1,
+        idFunction:     row.function,
+        IdFunctionPath: row.function,
+        Label:          row.function,
+        image:          '',
+        listFunctions:  '',
+      }));
+
+      return { success: true, data };
+    } catch (err) {
+      return { success: false, data: null, message: err.message };
+    }
+  }
+
   // ── forfaitService ───────────────────────────────────────────────────────────
   // Lista dei forfait (pacchetti manutenzione) per funzioni + VIN
   async forfaitService(params) {
@@ -508,11 +540,12 @@ class DocSOARestClient {
     };
 
     // Step 1: struttura funzioni (chiamata sequenziale obbligatoria)
-    console.log('[getCompletePkSOAList] Step 1: functionsService...');
-    const lev1 = await this.functionsService({ ...vinParams, ...ioParams });
+    console.log('[getCompletePkSOAList] Step 1: functionServiceDb...');
+    const lev1 = await this.functionServiceDb();
+    console.log('[getCompletePkSOAList] Step 1 risultato functionServiceDb:', JSON.stringify(lev1.data));
 
     if (!lev1.success) {
-      console.warn('[getCompletePkSOAList] functionsService fallito:', lev1.message);
+      console.warn('[getCompletePkSOAList] functionServiceDb fallito:', lev1.message);
       return { success: false, data: null, message: lev1.message };
     }
 
