@@ -246,6 +246,27 @@ Parameters:
       dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
       and Secrets Lambda Extension (stesso meccanismo di PkFavoriteDbSecretId)
 
+  # ── dbManager (getPkwstouse — tabella HQ_PKCONFIG su Aurora PostgreSQL) ──
+  DbManagerDbHost:
+    Type: String
+    Description: >-
+      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
+      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
+      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
+  DbManagerDbPort:
+    Type: String
+    Default: '5432'
+  DbManagerDbName:
+    Type: String
+    Default: wiadvisor
+  DbManagerDbSecretId:
+    Type: String
+    Default: sm-np-bsn0027990-dev-aurora-app
+    Description: >-
+      Secrets Manager secret id con le credenziali least-privilege (username/password)
+      dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
+      and Secrets Lambda Extension (stesso meccanismo di PkFavoriteDbSecretId)
+
 # ── Conditions ─────────────────────────────────────────────────────────────────
 
 Conditions:
@@ -855,6 +876,51 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${PkFavoriteFunction}"
       RetentionInDays: 30
 
+  # ── dbManager (getPkwstouse — configurazione pacchetti per mercato/brand) ─
+  #
+  # Risolve, per una coppia (codmarket, codbrand), quale web service pacchetti
+  # (eper/docsoa/menupricing) usare, leggendo la tabella HQ_PKCONFIG su Aurora
+  # PostgreSQL "wiadvisor" (match esatto CODMARKET+CODBRAND, altrimenti
+  # fallback su CODMARKET IS NULL). Nessuna dipendenza cross-folder: CodeUri
+  # punta direttamente alla cartella del modulo (niente BuildMethod: makefile).
+  DbManagerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dbmanager"
+      CodeUri: dbManager/
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DbManagerDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # PkFavoriteFunction/isStellantisBrand).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+      Environment:
+        Variables:
+          DBMANAGER_DB_HOST:      !Ref DbManagerDbHost
+          DBMANAGER_DB_PORT:      !Ref DbManagerDbPort
+          DBMANAGER_DB_NAME:      !Ref DbManagerDbName
+          DBMANAGER_DB_SECRET_ID: !Ref DbManagerDbSecretId
+
+  DbManagerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DbManagerFunction}"
+      RetentionInDays: 30
+
   # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
 
   IsStellantisBrandFunction:
@@ -937,5 +1003,7 @@ Outputs:
     Value: !GetAtt MyPeopleFunction.Arn
   PkFavoriteFunctionArn:
     Value: !GetAtt PkFavoriteFunction.Arn
+  DbManagerFunctionArn:
+    Value: !GetAtt DbManagerFunction.Arn
   IsStellantisBrandFunctionArn:
     Value: !GetAtt IsStellantisBrandFunction.Arn
