@@ -23,14 +23,14 @@ describe('PkConfigRepository', () => {
       expect(result).toBe('eper');
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('WHERE codmarket = $1'),
+        expect.stringContaining('UPPER(TRIM(codmarket)) = UPPER(TRIM($1))'),
         ['IT', 'FIAT'],
       );
     });
 
     it('falls back to codmarket IS NULL when no exact match is found', async () => {
       const pool = makePool(async (sql) => {
-        if (sql.includes('codmarket = $1')) return { rows: [] };
+        if (sql.includes('UPPER(TRIM(codmarket))')) return { rows: [] };
         if (sql.includes('codmarket IS NULL')) return { rows: [{ application: 'docsoa' }] };
         throw new Error('unexpected query');
       });
@@ -63,6 +63,20 @@ describe('PkConfigRepository', () => {
 
       expect(result).toBeNull();
       expect(pool.query).toHaveBeenCalledTimes(2);
+    });
+
+    it('matches codbrand regardless of case/whitespace (query relies on UPPER/TRIM in SQL)', async () => {
+      const pool = makePool(async () => ({ rows: [{ application: 'eper' }] }));
+
+      const result = await getPkwstouse(pool, { codmarket: ' it ', codbrand: ' fiat ' });
+
+      expect(result).toBe('eper');
+      // I valori vengono passati as-is come parametri: la normalizzazione
+      // (UPPER+TRIM) avviene lato SQL su entrambi i lati del confronto.
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPPER(TRIM(codbrand)) = UPPER(TRIM($2))'),
+        [' it ', ' fiat '],
+      );
     });
   });
 });

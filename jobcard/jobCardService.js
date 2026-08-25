@@ -188,7 +188,7 @@ function hasEstimatedDateTime(item) {
  *  2) arrayDelivery  — jobCardList filtered by deliveryStartDate=currentDate,
  *     deliveryEndDate=currentDate+1 day (delivery scheduled "today"), each
  *     entry tagged with 'type': 'delivery'.
- *  3) arrayCreated   — jobCardList filtered by creationStartDate=currentDate-7 days,
+ *  3) arrayCreated   — jobCardList filtered by creationStartDate=currentDate-6 days,
  *     creationEndDate=currentDate (created over the last week), excluding entries
  *     that already have a reception/delivery date/time (estimated or actual) set
  *     (already covered by arrayReception/arrayDelivery above, or scheduled/completed
@@ -211,7 +211,7 @@ async function getJobCardListCurrent(bearerToken, dealerId, currentDate) {
     throw new Error('[jobCard] currentDate is required');
   }
 
-  const weekAgoDate = addDays(currentDate, -7);
+  const weekAgoDate = addDays(currentDate, -6);
 
   const [receptionResult, deliveryResult, createdResult] = await Promise.all([
     getJobCardList(bearerToken, {
@@ -396,6 +396,34 @@ function addRoSource(body) {
 }
 
 /**
+ * Coerces a value coming from the upstream DGT API (which may serialize
+ * booleans as strings, e.g. "true"/"false"/"1"/"0") into a real JS boolean.
+ * @param {*} value - raw value to coerce
+ * @returns {boolean} coerced boolean value
+ */
+function toBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') return ['true', '1'].includes(value.trim().toLowerCase());
+  return Boolean(value);
+}
+
+/**
+ * Ensures jobCardDetail.workshopReturn.workshopReturn is a real boolean, as
+ * documented in the swagger schema (`WorkshopReturn.workshopReturn`), coercing
+ * any string/number value returned by the upstream DGT API.
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with workshopReturn.workshopReturn coerced to boolean
+ */
+function sanitizeWorkshopReturn(body) {
+  const workshopReturn = body?.jobCardDetail?.workshopReturn;
+  if (workshopReturn && typeof workshopReturn === 'object' && 'workshopReturn' in workshopReturn) {
+    workshopReturn.workshopReturn = toBoolean(workshopReturn.workshopReturn);
+  }
+  return body;
+}
+
+/**
  * Sanitizes the address field of every customerInfo.contactInfo entry in a
  * jobCardDetails response body, in place.
  * @param {object} body - jobCardDetails response body
@@ -412,6 +440,7 @@ function sanitizeJobCardDetails(body) {
   }
   enrichJobsWithPackageInfo(body);
   addRoSource(body);
+  sanitizeWorkshopReturn(body);
   return body;
 }
 

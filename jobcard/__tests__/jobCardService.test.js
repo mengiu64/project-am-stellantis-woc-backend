@@ -250,7 +250,7 @@ describe('jobCardService', () => {
       expect(deliveryOpts.headers.deliveryStartDate).toBe('2026-05-20T00:01:00.000Z');
       expect(deliveryOpts.headers.deliveryEndDate).toBe('2026-05-20T23:59:00.000Z');
 
-      expect(createdOpts.headers.creationStartDate).toBe('2026-05-13T00:01:00.000Z');
+      expect(createdOpts.headers.creationStartDate).toBe('2026-05-14T00:01:00.000Z');
       expect(createdOpts.headers.creationEndDate).toBe('2026-05-20T23:59:00.000Z');
     });
 
@@ -530,6 +530,55 @@ describe('jobCardService', () => {
     test('appends packageType/packageCharge at the end when neither partInfo nor laborInfo is present', async () => {
       const [job] = await detailsFor([{ jobInternalId: 'j1', jobType: 'STD' }]);
       expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge']);
+    });
+  });
+
+  // ── workshopReturn.workshopReturn boolean coercion ──────────────────────────
+
+  describe('workshopReturn sanitization', () => {
+    async function workshopReturnFor(rawWorkshopReturn) {
+      httpsRequest.mockResolvedValue({
+        statusCode: 200,
+        headers: {},
+        body: { jobCardDetail: { workshopReturn: { workshopReturn: rawWorkshopReturn } } },
+      });
+      const result = await getJobCardDetails('token', '79');
+      return result.jobCardDetail.workshopReturn.workshopReturn;
+    }
+
+    test.each([
+      [true, true],
+      [false, false],
+      ['true', true],
+      ['false', false],
+      ['TRUE', true],
+      ['1', true],
+      ['0', false],
+      [1, true],
+      [0, false],
+    ])('coerces workshopReturn %p to boolean %p', async (raw, expected) => {
+      expect(await workshopReturnFor(raw)).toBe(expected);
+    });
+
+    test('does not fail when workshopReturn is missing', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+    });
+
+    test('leaves the rest of jobCardDetail untouched', async () => {
+      const body = {
+        jobCardDetail: {
+          workshopReturn: { workshopReturn: 'true', comeBackRepairOrder: false },
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      const result = await getJobCardDetails('token', '79');
+
+      expect(result.jobCardDetail.workshopReturn).toEqual({
+        workshopReturn: true,
+        comeBackRepairOrder: false,
+      });
     });
   });
 

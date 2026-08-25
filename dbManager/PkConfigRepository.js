@@ -10,6 +10,9 @@
  * getPkwstouse cerca prima una riga specifica per (CODMARKET, CODBRAND); se non
  * trova nessun risultato, ripete la ricerca con CODMARKET IS NULL (riga di
  * default/fallback valida per tutti i mercati) mantenendo lo stesso CODBRAND.
+ * Il confronto è case-insensitive e trim-safe (UPPER+TRIM su entrambi i lati),
+ * per tollerare eventuali differenze di maiuscole/spazi tra il valore inviato
+ * dal chiamante e quello salvato in tabella.
  */
 
 /**
@@ -24,8 +27,8 @@ async function getPkwstouse(pool, { codmarket, codbrand }) {
     const { rows } = await pool.query(
       `SELECT application
          FROM woc.hq_pkconfig
-        WHERE codmarket = $1
-          AND codbrand = $2
+        WHERE UPPER(TRIM(codmarket)) = UPPER(TRIM($1))
+          AND UPPER(TRIM(codbrand)) = UPPER(TRIM($2))
         LIMIT 1`,
       [codmarket, codbrand],
     );
@@ -38,7 +41,7 @@ async function getPkwstouse(pool, { codmarket, codbrand }) {
     `SELECT application
        FROM woc.hq_pkconfig
       WHERE codmarket IS NULL
-        AND codbrand = $1
+        AND UPPER(TRIM(codbrand)) = UPPER(TRIM($1))
       LIMIT 1`,
     [codbrand],
   );
