@@ -98,7 +98,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const peopleResponse = await readUserProfiles({ username });
 
     const result = peopleResponse && peopleResponse.Response;
-    if (!result || result.RC !== '0' || result.STATUS !== 'SUCCESS' || !result.User) {
+    if (!result || String(result.RC) !== '0' || result.STATUS !== 'SUCCESS' || !result.User) {
       throw new SessionNotFoundError(username, "l'utente");
     }
 

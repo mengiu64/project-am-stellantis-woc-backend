@@ -42,6 +42,12 @@ async function getDmsSettings(bearerToken, params = {}) {
   console.log(`[dms] GET https://${base.hostname}${fullPath}`);
   const response = await httpsRequest(options);
 
+  // AGGIUNTO il blocco:
+  if (response.statusCode === 404) {
+    console.log(`[dms] settings not available (404) for ${qs} — isdml will be false`);
+    return { success: false, data: [] };
+  }
+
   if (response.statusCode !== 200) {
     throw new Error(
       `[dms] settings failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}`
