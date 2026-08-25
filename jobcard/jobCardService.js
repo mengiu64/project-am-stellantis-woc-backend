@@ -128,7 +128,26 @@ async function getJobCardList(bearerToken, params = {}) {
     );
   }
 
-  return response.body;
+  return sanitizeJobCardList(response.body);
+}
+
+/**
+ * Ensures workshopReturn is a real boolean on every entry of body.jobCardList,
+ * as documented in the swagger schema (`JobCard.workshopReturn`), coercing any
+ * string/number value returned by the upstream DGT API.
+ * @param {object} body - jobCardList response body
+ * @returns {object} the same body, with each entry's workshopReturn coerced to boolean
+ */
+function sanitizeJobCardList(body) {
+  const jobCardList = body?.jobCardList;
+  if (Array.isArray(jobCardList)) {
+    for (const jobCard of jobCardList) {
+      if (jobCard && 'workshopReturn' in jobCard) {
+        jobCard.workshopReturn = toBoolean(jobCard.workshopReturn);
+      }
+    }
+  }
+  return body;
 }
 
 /**
@@ -423,6 +442,52 @@ function sanitizeWorkshopReturn(body) {
   return body;
 }
 
+// Matches an ISO 8601 UTC date-time with optional milliseconds (e.g.
+// "2026-08-24T16:45:00.000Z" or "2026-08-24T16:45:00Z"); capture group 1 is
+// the same date-time without milliseconds/"Z".
+const ISO_DATETIME_UTC_REGEX = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?Z$/;
+
+/**
+ * Strips milliseconds and the trailing "Z" from an ISO 8601 UTC date-time
+ * string (e.g. "2026-08-24T16:45:00.000Z" -> "2026-08-24T16:45:00"). Values
+ * that don't match this pattern (including non-strings) are returned as-is.
+ * @param {*} value - raw value to normalize
+ * @returns {*} normalized date-time string, or the original value
+ */
+function stripIsoMillisAndZ(value) {
+  if (typeof value !== 'string') return value;
+  const match = ISO_DATETIME_UTC_REGEX.exec(value);
+  return match ? match[1] : value;
+}
+
+/**
+ * Normalizes the date-time fields of every jobCardDetail.appointments[] entry
+ * (reception.estimatedReceptionDateTime, reception.receptionDateTime,
+ * delivery.estimatedDeliveryDateTime, delivery.deliveryDateTime), stripping
+ * milliseconds/"Z" (e.g. "2026-08-24T16:45:00.000Z" -> "2026-08-24T16:45:00"),
+ * in place.
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with appointment date-time fields normalized
+ */
+function sanitizeAppointmentDateTimes(body) {
+  const appointments = body?.jobCardDetail?.appointments;
+  if (!Array.isArray(appointments)) return body;
+
+  for (const appointment of appointments) {
+    const reception = appointment?.reception;
+    if (reception) {
+      reception.estimatedReceptionDateTime = stripIsoMillisAndZ(reception.estimatedReceptionDateTime);
+      reception.receptionDateTime = stripIsoMillisAndZ(reception.receptionDateTime);
+    }
+    const delivery = appointment?.delivery;
+    if (delivery) {
+      delivery.estimatedDeliveryDateTime = stripIsoMillisAndZ(delivery.estimatedDeliveryDateTime);
+      delivery.deliveryDateTime = stripIsoMillisAndZ(delivery.deliveryDateTime);
+    }
+  }
+  return body;
+}
+
 /**
  * Sanitizes the address field of every customerInfo.contactInfo entry in a
  * jobCardDetails response body, in place.
@@ -441,6 +506,7 @@ function sanitizeJobCardDetails(body) {
   enrichJobsWithPackageInfo(body);
   addRoSource(body);
   sanitizeWorkshopReturn(body);
+  sanitizeAppointmentDateTimes(body);
   return body;
 }
 

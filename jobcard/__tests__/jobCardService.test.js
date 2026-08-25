@@ -119,6 +119,29 @@ describe('jobCardService', () => {
     expect(result).toEqual(body);
   });
 
+  test('coerces workshopReturn to boolean on every jobCardList entry', async () => {
+    const body = {
+      jobCardList: [
+        { jobCardSrpId: 'JCID-1', workshopReturn: 'false' },
+        { jobCardSrpId: 'JCID-2', workshopReturn: 'true' },
+        { jobCardSrpId: 'JCID-3', workshopReturn: true },
+      ],
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+    const result = await getJobCardList('token', { dealerId: '0062219' });
+
+    expect(result.jobCardList.map(j => j.workshopReturn)).toEqual([false, true, true]);
+  });
+
+  test('does not fail when jobCardList is missing or workshopReturn is absent', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardList: [{ jobCardSrpId: 'JCID-1' }] } });
+
+    const result = await getJobCardList('token', { dealerId: '0062219' });
+
+    expect(result.jobCardList[0].workshopReturn).toBeUndefined();
+  });
+
   test('throws on HTTP error', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 500, headers: {}, body: { error: 'server error' } });
 
@@ -579,6 +602,66 @@ describe('jobCardService', () => {
         workshopReturn: true,
         comeBackRepairOrder: false,
       });
+    });
+  });
+
+  // ── date-time fields normalization (strip milliseconds/"Z") ─────────────────
+
+  describe('date-time fields sanitization', () => {
+    test('strips milliseconds and "Z" from appointments[].reception/delivery date-time fields', async () => {
+      const body = {
+        jobCardDetail: {
+          roInfo: { creationDateTime: '2026-08-24T16:45:00.000Z' },
+          appointments: [
+            {
+              reception: { estimatedReceptionDateTime: '2026-08-20T09:30:00.123Z', receptionDateTime: '2026-08-20T09:45:00Z' },
+              delivery: { estimatedDeliveryDateTime: '2026-08-20T17:00:00.000Z', deliveryDateTime: null },
+            },
+          ],
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      const result = await getJobCardDetails('token', '79');
+
+      const [{ reception, delivery }] = result.jobCardDetail.appointments;
+      expect(reception.estimatedReceptionDateTime).toBe('2026-08-20T09:30:00');
+      expect(reception.receptionDateTime).toBe('2026-08-20T09:45:00');
+      expect(delivery.estimatedDeliveryDateTime).toBe('2026-08-20T17:00:00');
+      expect(delivery.deliveryDateTime).toBeNull();
+      // roInfo.creationDateTime is out of scope: left untouched
+      expect(result.jobCardDetail.roInfo.creationDateTime).toBe('2026-08-24T16:45:00.000Z');
+    });
+
+    test('normalizes date-time fields independently across multiple appointments', async () => {
+      const body = {
+        jobCardDetail: {
+          appointments: [
+            { reception: { estimatedReceptionDateTime: '2026-08-20T09:30:00.000Z' } },
+            { delivery: { deliveryDateTime: '2026-08-21T17:00:00.000Z' } },
+          ],
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      const result = await getJobCardDetails('token', '79');
+
+      expect(result.jobCardDetail.appointments[0].reception.estimatedReceptionDateTime).toBe('2026-08-20T09:30:00');
+      expect(result.jobCardDetail.appointments[1].delivery.deliveryDateTime).toBe('2026-08-21T17:00:00');
+    });
+
+    test('does not fail when appointments/reception/delivery are missing', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: { appointments: [{}] } } });
+      const result = await getJobCardDetails('token', '79');
+      expect(result.jobCardDetail.appointments).toEqual([{}]);
+    });
+
+    test('does not fail when jobCardDetail is missing', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
     });
   });
 
