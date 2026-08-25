@@ -1,10 +1,11 @@
 'use strict';
 
 /**
- * PkConfigRepository.js — Query SQL sulla tabella HQ_PKCONFIG (Aurora PostgreSQL, db "wiadvisor").
+ * PkConfigRepository.js — Query SQL sulla tabella HQ_PKCONFIG (Aurora PostgreSQL, db "wiadvisor",
+ * schema "woc").
  *
  * Schema:
- *   HQ_PKCONFIG(CODMARKET VARCHAR(20), CODBRAND VARCHAR(20) NOT NULL, APPLICATION VARCHAR(20) NOT NULL)
+ *   woc.HQ_PKCONFIG(CODMARKET VARCHAR(20), CODBRAND VARCHAR(20) NOT NULL, APPLICATION VARCHAR(20) NOT NULL)
  *
  * getPkwstouse cerca prima una riga specifica per (CODMARKET, CODBRAND); se non
  * trova nessun risultato, ripete la ricerca con CODMARKET IS NULL (riga di
@@ -22,7 +23,7 @@ async function getPkwstouse(pool, { codmarket, codbrand }) {
   if (codmarket) {
     const { rows } = await pool.query(
       `SELECT application
-         FROM hq_pkconfig
+         FROM woc.hq_pkconfig
         WHERE codmarket = $1
           AND codbrand = $2
         LIMIT 1`,
@@ -35,7 +36,7 @@ async function getPkwstouse(pool, { codmarket, codbrand }) {
 
   const { rows } = await pool.query(
     `SELECT application
-       FROM hq_pkconfig
+       FROM woc.hq_pkconfig
       WHERE codmarket IS NULL
         AND codbrand = $1
       LIMIT 1`,
