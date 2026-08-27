@@ -3935,7 +3935,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_STAGE }}
           aws-region:     eu-west-1
 
       - name: Install AWS SAM CLI
@@ -3968,7 +3968,7 @@ jobs:
         run: |
           sam deploy \
             --stack-name stla-woc-backend-stage \
-            --s3-bucket s3-np-bsn0027990-dev-ops \
+            --s3-bucket s3-np-bsn0027990-stage-ops \
             --s3-prefix stla-woc-backend \
             --region eu-west-1 \
             --capabilities CAPABILITY_IAM \
@@ -3976,8 +3976,8 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=stage \
-              VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
-              VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
+              VpcSubnetIds="${{ secrets.STAGE_VPC_SUBNET_IDS }}" \
+              VpcSecurityGroupIds="${{ secrets.STAGE_VPC_SECURITY_GROUP_IDS }}" \
               DmsPingClientId="${{ secrets.PING_CLIENT_ID }}" \
               DmsPingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
               AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
@@ -4021,10 +4021,10 @@ jobs:
               MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
               MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
               MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
-              PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
-              PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
-              DocsoaDbHost="${{ vars.DOCSOA_DB_HOST }}" \
-              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}" \
+              PkFavoriteDbHost="${{ vars.STAGE_PKFAVORITE_DB_HOST }}" \
+              PkFavoriteDbSecretId="${{ vars.STAGE_PKFAVORITE_DB_SECRET_ID }}" \
+              DocsoaDbHost="${{ vars.STAGE_DOCSOA_DB_HOST }}" \
+              DocsoaDbSecretId="${{ vars.STAGE_DOCSOA_DB_SECRET_ID }}" \
               MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
               MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
               MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
