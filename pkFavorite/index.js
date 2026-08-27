@@ -4,13 +4,16 @@
  * index.js — Entry point della lambda pkfavorite (Aurora PostgreSQL, tabella PKFAVORITE)
  *
  * Espone due operazioni sulla stessa risorsa (es. /api/pkfavorite):
- *   GET  -> elenca i pacchetti preferiti del dealer per un VIN, arricchiti con i
- *           dati DML (Code/PackageDescription/PartsAvailablity/TotalPriceInclTax/
- *           TotalPriceExclTax): per ciascun codice pacchetto preferito viene
- *           effettuata una chiamata al gateway DML (dms/dmsService::postDmsInquiry,
- *           MessageType LFP, VehicleID=vin, package=codice preferito) e i risultati
+ *   GET  -> elenca TUTTI i pacchetti preferiti del dealer (ricerca solo per
+ *           USERNAME, indipendentemente dal VIN), arricchiti con i dati DML
+ *           (Code/PackageDescription/PartsAvailablity/TotalPriceInclTax/
+ *           TotalPriceExclTax) relativi al VIN passato in query: per ciascun
+ *           codice pacchetto preferito viene effettuata una chiamata al
+ *           gateway DML (dms/dmsService::postDmsInquiry, MessageType LFP,
+ *           VehicleID=vin, package=codice preferito) e i risultati
  *           (UpSelling.Packages) vengono combinati in un unico elenco piatto.
- *   POST -> crea il preferito se non esiste, altrimenti lo elimina ("toggle")
+ *   POST -> crea il preferito se non esiste, altrimenti lo elimina ("toggle"),
+ *           salvando sempre username+vin+package (invariato)
  *
  * L'identita' del dealer (colonna USERNAME) arriva SEMPRE da
  * event.requestContext.authorizer.sub (Lambda Authorizer), MAI da un valore
@@ -153,7 +156,7 @@ exports.handler = async (event = {}) => {
       if (!vin) {
         return response(400, { success: false, message: '"vin" è obbligatorio' });
       }
-      const favoriteRows = await listFavorites(pool, { username, vin });
+      const favoriteRows = await listFavorites(pool, { username });
       const favorites = await enrichFavoritesWithDms(vin, favoriteRows.map((row) => row.packageCode));
       return response(200, { success: true, username, vin, favorites });
     }
@@ -183,7 +186,7 @@ exports.handler = async (event = {}) => {
 async function runList(username, vin) {
   console.log('\n=== PkFavorite List ===');
   const pool = await getPool();
-  const favoriteRows = await listFavorites(pool, { username, vin });
+  const favoriteRows = await listFavorites(pool, { username });
   const favorites = await enrichFavoritesWithDms(vin, favoriteRows.map((row) => row.packageCode));
   console.log(JSON.stringify({ success: true, username, vin, favorites }, null, 2));
   return favorites;

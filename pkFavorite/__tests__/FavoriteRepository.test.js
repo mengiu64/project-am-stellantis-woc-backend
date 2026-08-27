@@ -15,14 +15,7 @@ describe('FavoriteRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('throws when vin is missing', async () => {
-      const pool = makePool();
-      await expect(listFavorites(pool, { username: '0062230.d001' }))
-        .rejects.toThrow('"vin" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
-    it('queries pkfavorite filtered by username/vin and maps rows', async () => {
+    it('queries pkfavorite filtered only by username and maps rows', async () => {
       const createdAt = new Date('2026-01-01T09:00:00Z');
       const pool = makePool(async () => ({
         rows: [
@@ -31,12 +24,14 @@ describe('FavoriteRepository', () => {
         ],
       }));
 
-      const result = await listFavorites(pool, { username: '0062230.d001', vin: 'VF3CABHW6GT204366' });
+      const result = await listFavorites(pool, { username: '0062230.d001' });
 
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('SELECT package_code, created_at'),
-        ['0062230.d001', 'VF3CABHW6GT204366'],
+        ['0062230.d001'],
       );
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).not.toMatch(/vin/i);
       expect(result).toEqual([
         { packageCode: 'FORFAIT-A', createdAt },
         { packageCode: 'FORFAIT-B', createdAt },
@@ -45,7 +40,7 @@ describe('FavoriteRepository', () => {
 
     it('returns an empty array when no favorites exist', async () => {
       const pool = makePool(async () => ({ rows: [] }));
-      const result = await listFavorites(pool, { username: '0062230.d001', vin: 'VF3CABHW6GT204366' });
+      const result = await listFavorites(pool, { username: '0062230.d001' });
       expect(result).toEqual([]);
     });
   });
