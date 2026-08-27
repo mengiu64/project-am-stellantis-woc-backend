@@ -14,6 +14,15 @@ Parameters:
     AllowedValues: [dev, stage, prod]
     Description: Deployment environment (dev | stage | prod)
 
+  TranslationsBucketNameOverride:
+    Type: String
+    Default: ''
+    Description: >-
+      Nome esplicito del bucket S3 Translations. Se vuoto (default), usa
+      "s3-np-bsn0027990-${Environment}-translations". Da valorizzare solo
+      quando il nome auto-generato collide con un bucket già esistente in
+      un altro account AWS (i nomi bucket S3 sono univoci globalmente).
+
   VpcSubnetIds:
     Type: CommaDelimitedList
     Description: Comma-separated list of private Subnet IDs
@@ -250,6 +259,7 @@ Parameters:
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
+  HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -586,7 +596,10 @@ Resources:
   TranslationsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub "s3-np-bsn0027990-${Environment}-translations"
+      BucketName: !If
+        - HasTranslationsBucketNameOverride
+        - !Ref TranslationsBucketNameOverride
+        - !Sub "s3-np-bsn0027990-${Environment}-translations"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
