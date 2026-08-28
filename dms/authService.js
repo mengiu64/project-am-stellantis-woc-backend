@@ -9,7 +9,13 @@ const config = require('./config');
 // In AWS Lambda il filesystem del pacchetto (__dirname, /var/task) è read-only:
 // solo /tmp è scrivibile. In locale (CLI) continuiamo a usare __dirname.
 const CACHE_DIR = process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : __dirname;
-const TOKEN_CACHE_FILE = path.join(CACHE_DIR, '.token.cache.json');
+// Nome file dedicato (non il generico ".token.cache.json" usato da altri authService.js
+// del repo, es. jobcard/djc/moparDoc/v360): dms/ viene impacchettata in-process (vedi
+// Makefile/template.yaml) insieme a funzioni che hanno un proprio authService.js con
+// scope diverso (es. JobCardFunction, scope prd:dgt) e condividono lo stesso /tmp del
+// container Lambda. Un nome generico condiviso causava la lettura del token PingFederate
+// sbagliato (scope errato) da parte di uno dei due moduli.
+const TOKEN_CACHE_FILE = path.join(CACHE_DIR, '.dms.token.cache.json');
 const EXPIRY_BUFFER_SECONDS = 30;
 
 function readCachedToken() {
