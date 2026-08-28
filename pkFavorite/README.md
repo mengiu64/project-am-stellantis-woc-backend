@@ -22,7 +22,9 @@ identiche per lo stesso dealer/veicolo/pacchetto.
 
 ### GET — elenco preferiti
 
-Elenca i codici pacchetto preferiti del dealer autenticato per un VIN.
+Elenca **tutti** i codici pacchetto preferiti del dealer autenticato (ricerca
+per solo `USERNAME`, indipendentemente dal VIN); il `vin` passato in query
+viene usato solo per arricchire ciascun preferito con i dati DML.
 
 ```
 GET /api/pkfavorite?vin=VF3CABHW6GT204366

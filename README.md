@@ -777,14 +777,14 @@ Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per sing
 |---|---|---|
 | `db` | `fetchSecretJson(secretId)` | Recupera e fa il parse JSON di un secret da Secrets Manager tramite l'extension Lambda |
 | `db` | `getPool()` | Costruisce (e cachea) un `pg.Pool`: usa le credenziali da env se presenti, altrimenti le recupera da Secrets Manager |
-| `FavoriteRepository` | `listFavorites(pool, { username, vin })` | Elenca i pacchetti preferiti di un dealer per un VIN, ordinati per `created_at` |
+| `FavoriteRepository` | `listFavorites(pool, { username })` | Elenca tutti i pacchetti preferiti di un dealer (ricerca solo per `username`, indipendentemente dal VIN), ordinati per `created_at` |
 | `FavoriteRepository` | `toggleFavorite(pool, { username, vin, packageCode })` | Elimina il preferito se già presente, altrimenti lo crea (toggle) |
 
 #### Contratto API
 
 | Metodo | Parametri | Descrizione |
 |---|---|---|
-| `GET` | `vin` (query, obbligatorio) | Elenca i pacchetti preferiti dell'utente autenticato per il VIN indicato |
+| `GET` | `vin` (query, obbligatorio) | Elenca tutti i pacchetti preferiti dell'utente autenticato (ricerca solo per username); i dati vengono poi arricchiti via DML usando il `vin` indicato |
 | `POST` | `vin`, `package` (body, obbligatori) | Aggiunge/rimuove (toggle) il pacchetto preferito |
 
 > **Sicurezza:** lo `username` **non** viene mai letto dal body quando è presente un contesto di autenticazione (`event.requestContext.authorizer.sub`): in quel caso è l'unica fonte accettata (401 se assente). Il fallback su `body.username` è consentito solo in assenza totale di `authorizer` (comodo per test CLI/invocazione diretta), stesso identico criterio già adottato in `session`.

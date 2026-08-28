@@ -8,27 +8,26 @@
  *   UNIQUE(USERNAME, VIN, PACKAGE_CODE)
  *
  * Regole:
- *  - listFavorites: elenca i codici pacchetto preferiti di un dealer (username) per un VIN.
+ *  - listFavorites: elenca tutti i codici pacchetto preferiti di un dealer
+ *    (username), indipendentemente dal VIN.
  *  - toggleFavorite: se la riga (username, vin, packageCode) esiste la elimina
  *    ("rimuove dai preferiti"), altrimenti la crea ("aggiunge ai preferiti").
  */
 
 /**
  * @param {import('pg').Pool} pool
- * @param {{ username: string, vin: string }} params
+ * @param {{ username: string }} params
  * @returns {Promise<Array<{ packageCode: string, createdAt: Date }>>}
  */
-async function listFavorites(pool, { username, vin }) {
+async function listFavorites(pool, { username }) {
   if (!username) throw new Error('"username" is required');
-  if (!vin) throw new Error('"vin" is required');
 
   const { rows } = await pool.query(
     `SELECT package_code, created_at
        FROM pkfavorite
       WHERE username = $1
-        AND vin = $2
       ORDER BY created_at ASC`,
-    [username, vin],
+    [username],
   );
 
   return rows.map((row) => ({

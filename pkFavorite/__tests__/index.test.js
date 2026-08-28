@@ -48,7 +48,7 @@ describe('pkfavorite index.handler', () => {
     expect(JSON.parse(res.body).message).toMatch(/vin/);
   });
 
-  it('GET: lists favorites for username (from authorizer) + vin (from query), enriched via DML (LFP)', async () => {
+  it('GET: lists favorites for username only (from authorizer), enriched via DML (LFP) using vin from query', async () => {
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
     getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({
@@ -76,7 +76,6 @@ describe('pkfavorite index.handler', () => {
 
     expect(listFavorites).toHaveBeenCalledWith(FAKE_POOL, {
       username: '0062230.d001',
-      vin: 'VF3CABHW6GT204366',
     });
     expect(getBearerToken).toHaveBeenCalledTimes(1);
     expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', {
@@ -249,7 +248,7 @@ describe('pkfavorite index.handler', () => {
 
     const res = await handler(event);
 
-    expect(listFavorites).toHaveBeenCalledWith(FAKE_POOL, { username: 'cli-user', vin: 'VF3CABHW6GT204366' });
+    expect(listFavorites).toHaveBeenCalledWith(FAKE_POOL, { username: 'cli-user' });
     expect(res.statusCode).toBe(200);
   });
 
