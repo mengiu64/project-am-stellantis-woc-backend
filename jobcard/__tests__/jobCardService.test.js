@@ -17,16 +17,22 @@ jest.mock('../config', () => ({
 }));
 jest.mock('../httpClient');
 jest.mock('fs');
+jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
+jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
 
 const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard } = require('../jobCardService');
+const { getBearerToken } = require('../../dms/authService');
+const { postDmsInquiry } = require('../../dms/dmsService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
+    getBearerToken.mockResolvedValue('DML-TOKEN');
+    postDmsInquiry.mockResolvedValue({ success: true });
   });
 
   afterEach(() => {
@@ -605,66 +611,6 @@ describe('jobCardService', () => {
     });
   });
 
-  // ── date-time fields normalization (strip milliseconds/"Z") ─────────────────
-
-  describe('date-time fields sanitization', () => {
-    test('strips milliseconds and "Z" from appointments[].reception/delivery date-time fields', async () => {
-      const body = {
-        jobCardDetail: {
-          roInfo: { creationDateTime: '2026-08-24T16:45:00.000Z' },
-          appointments: [
-            {
-              reception: { estimatedReceptionDateTime: '2026-08-20T09:30:00.123Z', receptionDateTime: '2026-08-20T09:45:00Z' },
-              delivery: { estimatedDeliveryDateTime: '2026-08-20T17:00:00.000Z', deliveryDateTime: null },
-            },
-          ],
-        },
-      };
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
-
-      const result = await getJobCardDetails('token', '79');
-
-      const [{ reception, delivery }] = result.jobCardDetail.appointments;
-      expect(reception.estimatedReceptionDateTime).toBe('2026-08-20T09:30:00');
-      expect(reception.receptionDateTime).toBe('2026-08-20T09:45:00');
-      expect(delivery.estimatedDeliveryDateTime).toBe('2026-08-20T17:00:00');
-      expect(delivery.deliveryDateTime).toBeNull();
-      // roInfo.creationDateTime is out of scope: left untouched
-      expect(result.jobCardDetail.roInfo.creationDateTime).toBe('2026-08-24T16:45:00.000Z');
-    });
-
-    test('normalizes date-time fields independently across multiple appointments', async () => {
-      const body = {
-        jobCardDetail: {
-          appointments: [
-            { reception: { estimatedReceptionDateTime: '2026-08-20T09:30:00.000Z' } },
-            { delivery: { deliveryDateTime: '2026-08-21T17:00:00.000Z' } },
-          ],
-        },
-      };
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
-
-      const result = await getJobCardDetails('token', '79');
-
-      expect(result.jobCardDetail.appointments[0].reception.estimatedReceptionDateTime).toBe('2026-08-20T09:30:00');
-      expect(result.jobCardDetail.appointments[1].delivery.deliveryDateTime).toBe('2026-08-21T17:00:00');
-    });
-
-    test('does not fail when appointments/reception/delivery are missing', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
-
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: { appointments: [{}] } } });
-      const result = await getJobCardDetails('token', '79');
-      expect(result.jobCardDetail.appointments).toEqual([{}]);
-    });
-
-    test('does not fail when jobCardDetail is missing', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
-    });
-  });
-
   // ── /tmp persistence (readable later by djc lambda) ─────────────────────────
 
   test('saves the sanitized response body to /tmp/<jobCardId>.json', async () => {
@@ -852,6 +798,288 @@ describe('jobCardService', () => {
 
       await expect(saveJobCard('token', { roInfo: {} }))
         .rejects.toThrow('[jobCard] jobCard failed: HTTP 500');
+    });
+  });
+
+  // ── getCartPriceAndAvailability ────────────────────────────────────────────
+
+  describe('getCartPriceAndAvailability', () => {
+    test('builds a single WorkLine aggregating partNumbers/laborOperationCodes from all jobs and posts the DML inquiry', async () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-84226', jobCardLegacyId: '93827988' },
+        vehicleInfo: { identification: { vin: 'ZFACF1BJ8PJH92758' } },
+        jobs: [
+          {
+            partInfo: [{ partNumber: '735712563' }],
+            laborInfo: [{ laborOperationCode: '4110A10' }],
+          },
+          {
+            partInfo: [{ partNumber: '00001444EQ' }],
+            laborInfo: [{ laborOperationCode: '95R04A' }],
+          },
+        ],
+      };
+
+      const result = await getCartPriceAndAvailability(jobCardDetail);
+
+      expect(getBearerToken).toHaveBeenCalled();
+      expect(result).toEqual({ success: true });
+      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', {
+        PartsInquiryHeader: {
+          DocumentID: 'JCID-84226',
+          CustomerIdDms: null,
+          MessageType: 'WL',
+          VehicleID: 'ZFACF1BJ8PJH92758',
+        },
+        WorkLines: [
+          {
+            CustomerAccountDMSID: null,
+            WorkLineReference: '001',
+            TransactionType: 1,
+            PartsItem: [
+              { PartNumber: '735712563', PartType: 'O', PartStatus: 'L' },
+              { PartNumber: '00001444EQ', PartType: 'O', PartStatus: 'L' },
+            ],
+            LaborItem: [
+              { LaborOperationID: '4110A10', LaborType: 'L' },
+              { LaborOperationID: '95R04A', LaborType: 'L' },
+            ],
+          },
+        ],
+      });
+    });
+
+    test('handles missing roInfo/vehicleInfo/jobs by sending null/empty values', async () => {
+      await getCartPriceAndAvailability({});
+
+      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', {
+        PartsInquiryHeader: {
+          DocumentID: null,
+          CustomerIdDms: null,
+          MessageType: 'WL',
+          VehicleID: null,
+        },
+        WorkLines: [
+          {
+            CustomerAccountDMSID: null,
+            WorkLineReference: '001',
+            TransactionType: 1,
+            PartsItem: [],
+            LaborItem: [],
+          },
+        ],
+      });
+    });
+
+    test('is invoked by getJobCardDetails with the sanitized jobCardDetail', async () => {
+      const body = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-1' },
+          vehicleInfo: { identification: { vin: 'VIN1' } },
+          jobs: [],
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+
+      await getJobCardDetails('token', '79');
+
+      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+        PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
+      }));
+    });
+  });
+
+  // ── applyDataFromDml ─────────────────────────────────────────────────────
+
+  describe('applyDataFromDml', () => {
+    test('overwrites originalPriceExclVat/appDiscountPercentage/QuantityAvailable on matching partInfo by PartNumber', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: '735712563', originalPriceExclVat: 1 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [
+          {
+            PartsItem: [
+              { PartNumber: '735712563', OriginalPriceExclVAT: 493.71, DiscountPercentage: 5, QuantityAvailable: 3 },
+            ],
+            LaborItems: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        partNumber: '735712563',
+        originalPriceExclVat: 493.71,
+        appDiscountPercentage: 5,
+        QuantityAvailable: 3,
+      }));
+    });
+
+    test('falls back to BinLocation[0].QuantityAvailable when QuantityAvailable is not top-level', () => {
+      const jobCardDetail = {
+        jobs: [{ partInfo: [{ partNumber: 'P1' }], laborInfo: [] }],
+      };
+      const dmlResponse = {
+        WorkLines: [
+          {
+            PartsItem: [
+              {
+                PartNumber: 'P1',
+                OriginalPriceExclVAT: 10,
+                DiscountPercentage: 0,
+                BinLocation: [{ QuantityAvailable: 7 }],
+              },
+            ],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].QuantityAvailable).toBe(7);
+    });
+
+    test('uses ReplacementItem data (including partNumber/partDescription) when the PartsItem has a replacement', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: '1610489680', partDescription: 'original desc' }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [
+          {
+            PartsItem: [
+              {
+                PartNumber: '1610489680',
+                PartNumberDescription: 'JEU DE 4 PLAQUETTES FREIN AV',
+                OriginalPriceExclVAT: 100,
+                DiscountPercentage: 10,
+                ReplacementItem: [
+                  {
+                    PartNumber: '12347411',
+                    PartReferenceID: '1610489680',
+                    PartNumberDescription: 'PR de remplacement',
+                    OriginalPriceExclVAT: 80,
+                    DiscountPercentage: 0,
+                    BinLocation: [{ QuantityAvailable: 0 }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        partNumber: '12347411',
+        partDescription: 'PR de remplacement',
+        originalPriceExclVat: 80,
+        appDiscountPercentage: 0,
+        QuantityAvailable: 0,
+      }));
+    });
+
+    test('overwrites laborDuration/appDiscountPercentage/laborRateAmount on matching laborInfo by laborOperationCode', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [],
+            laborInfo: [{ laborOperationCode: '4110A10', laborDuration: 0.1 }],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [
+          {
+            PartsItem: [],
+            LaborItems: [
+              { LaborOperationID: '4110A10', TimeUnit: 0.25, DiscountPercentage: 0, UnitaryTimeAmount: 60 },
+            ],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
+        laborOperationCode: '4110A10',
+        laborDuration: 0.25,
+        appDiscountPercentage: 0,
+        laborRateAmount: 60,
+      }));
+    });
+
+    test('leaves partInfo/laborInfo untouched when no matching PartNumber/LaborOperationID is found', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'UNMATCHED', originalPriceExclVat: 1 }],
+            laborInfo: [{ laborOperationCode: 'UNMATCHED', laborDuration: 1 }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, { WorkLines: [] });
+
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual({ partNumber: 'UNMATCHED', originalPriceExclVat: 1 });
+      expect(jobCardDetail.jobs[0].laborInfo[0]).toEqual({ laborOperationCode: 'UNMATCHED', laborDuration: 1 });
+    });
+
+    test('is a no-op (returns jobCardDetail unchanged) when jobs is not an array', () => {
+      const jobCardDetail = { roInfo: {} };
+
+      const result = applyDataFromDml(jobCardDetail, { WorkLines: [] });
+
+      expect(result).toBe(jobCardDetail);
+    });
+
+    test('is invoked by getJobCardDetails, enriching jobs with the DML response', async () => {
+      const body = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-1' },
+          vehicleInfo: { identification: { vin: 'VIN1' } },
+          jobs: [
+            {
+              partInfo: [{ partNumber: 'P1' }],
+              laborInfo: [{ laborOperationCode: 'OP1' }],
+            },
+          ],
+        },
+      };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+      postDmsInquiry.mockResolvedValue({
+        WorkLines: [
+          {
+            PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 42, DiscountPercentage: 1, QuantityAvailable: 2 }],
+            LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 0.5, DiscountPercentage: 1, UnitaryTimeAmount: 70 }],
+          },
+        ],
+      });
+
+      const result = await getJobCardDetails('token', '79');
+
+      expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        originalPriceExclVat: 42,
+        appDiscountPercentage: 1,
+        QuantityAvailable: 2,
+      }));
+      expect(result.jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
+        laborDuration: 0.5,
+        appDiscountPercentage: 1,
+        laborRateAmount: 70,
+      }));
     });
   });
 });

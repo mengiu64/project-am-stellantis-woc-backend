@@ -442,52 +442,6 @@ function sanitizeWorkshopReturn(body) {
   return body;
 }
 
-// Matches an ISO 8601 UTC date-time with optional milliseconds (e.g.
-// "2026-08-24T16:45:00.000Z" or "2026-08-24T16:45:00Z"); capture group 1 is
-// the same date-time without milliseconds/"Z".
-const ISO_DATETIME_UTC_REGEX = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?Z$/;
-
-/**
- * Strips milliseconds and the trailing "Z" from an ISO 8601 UTC date-time
- * string (e.g. "2026-08-24T16:45:00.000Z" -> "2026-08-24T16:45:00"). Values
- * that don't match this pattern (including non-strings) are returned as-is.
- * @param {*} value - raw value to normalize
- * @returns {*} normalized date-time string, or the original value
- */
-function stripIsoMillisAndZ(value) {
-  if (typeof value !== 'string') return value;
-  const match = ISO_DATETIME_UTC_REGEX.exec(value);
-  return match ? match[1] : value;
-}
-
-/**
- * Normalizes the date-time fields of every jobCardDetail.appointments[] entry
- * (reception.estimatedReceptionDateTime, reception.receptionDateTime,
- * delivery.estimatedDeliveryDateTime, delivery.deliveryDateTime), stripping
- * milliseconds/"Z" (e.g. "2026-08-24T16:45:00.000Z" -> "2026-08-24T16:45:00"),
- * in place.
- * @param {object} body - jobCardDetails response body
- * @returns {object} the same body, with appointment date-time fields normalized
- */
-function sanitizeAppointmentDateTimes(body) {
-  const appointments = body?.jobCardDetail?.appointments;
-  if (!Array.isArray(appointments)) return body;
-
-  for (const appointment of appointments) {
-    const reception = appointment?.reception;
-    if (reception) {
-      reception.estimatedReceptionDateTime = stripIsoMillisAndZ(reception.estimatedReceptionDateTime);
-      reception.receptionDateTime = stripIsoMillisAndZ(reception.receptionDateTime);
-    }
-    const delivery = appointment?.delivery;
-    if (delivery) {
-      delivery.estimatedDeliveryDateTime = stripIsoMillisAndZ(delivery.estimatedDeliveryDateTime);
-      delivery.deliveryDateTime = stripIsoMillisAndZ(delivery.deliveryDateTime);
-    }
-  }
-  return body;
-}
-
 /**
  * Sanitizes the address field of every customerInfo.contactInfo entry in a
  * jobCardDetails response body, in place.
@@ -506,7 +460,6 @@ function sanitizeJobCardDetails(body) {
   enrichJobsWithPackageInfo(body);
   addRoSource(body);
   sanitizeWorkshopReturn(body);
-  sanitizeAppointmentDateTimes(body);
   return body;
 }
 
@@ -529,8 +482,162 @@ function saveJobCardDetailsToTmp(jobCardId, body) {
 }
 
 /**
+ * Interroga il gateway DML (dms/dmsService.js::postDmsInquiry, MessageType=WL)
+ * per prezzo/disponibilita di ricambi e manodopera del jobCardDetail appena
+ * recuperato/sanificato, sullo stesso modello di
+ * pkManager/PkManager.js::getPriceAndAvailability(). A differenza di
+ * quest'ultimo, che passa a postDmsInquiry le workLines "semplificate"
+ * (workLineReference/partNumbers/laborOperationIds, con PartType/PartStatus/
+ * LaborType fissi decisi dalla lambda dms), qui costruiamo direttamente la
+ * struttura WorkLines completa (una sola riga, WorkLineReference '001'), cosi
+ * da poter fissare noi stessi PartType/PartStatus/LaborType secondo le
+ * specifiche richieste, indipendentemente dai default di dms/dmsService.js.
+ *
+ * @param {object} jobCardDetail - jobCardDetail (da jobCardDetails GET, dopo
+ *                                 sanitizeJobCardDetails): roInfo, vehicleInfo,
+ *                                 jobs[].partInfo[]/laborInfo[]
+ * @returns {Promise<object>} risposta di postDmsInquiry (InquiryResponse)
+ */
+async function getCartPriceAndAvailability(jobCardDetail) {
+  const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
+  const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
+
+  const documentId = jobCardDetail?.roInfo?.jobCardSrpId ?? null;
+  const vehicleId = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
+
+  // Aggrego partNumber/laborOperationCode di tutti i jobs in un'unica WorkLine
+  // (WorkLineReference '001'), come da specifica.
+  const partNumbers = [];
+  const laborOperationIds = [];
+  for (const job of jobCardDetail?.jobs ?? []) {
+    for (const part of job?.partInfo ?? []) {
+      if (part?.partNumber) partNumbers.push(part.partNumber);
+    }
+    for (const labor of job?.laborInfo ?? []) {
+      if (labor?.laborOperationCode) laborOperationIds.push(labor.laborOperationCode);
+    }
+  }
+
+  const body = {
+    PartsInquiryHeader: {
+      DocumentID: documentId,
+      CustomerIdDms: null,
+      MessageType: 'WL',
+      VehicleID: vehicleId,
+    },
+    WorkLines: [
+      {
+        CustomerAccountDMSID: null,
+        WorkLineReference: '001',
+        TransactionType: 1,
+        PartsItem: partNumbers.map((partNumber) => ({
+          PartNumber: partNumber,
+          PartType: 'O',
+          PartStatus: 'L',
+        })),
+        LaborItem: laborOperationIds.map((laborOperationId) => ({
+          LaborOperationID: laborOperationId,
+          LaborType: 'L',
+        })),
+      },
+    ],
+  };
+
+  const token = await getBearerToken();
+  return postDmsInquiry(token, body);
+}
+
+/**
+ * Estrae, da un WorkLine della risposta DML (getCartPriceAndAvailability),
+ * l'elemento "effettivo" da cui leggere prezzo/sconto/disponibilita per un
+ * dato PartsItem: se il ricambio richiesto e stato sostituito dal DMS (fuori
+ * produzione, ecc.) il PartsItem porta un array ReplacementItem con i dati
+ * del ricambio sostitutivo, che ha priorita sui dati del PartsItem originale
+ * (stesso schema/campi, piu PartNumber/PartNumberDescription del ricambio
+ * sostitutivo).
+ * @param {object} partsItem - elemento di WorkLines[].PartsItem[]
+ * @returns {{ source: object, isReplacement: boolean }} il record dati da
+ *          usare (partsItem stesso o il primo ReplacementItem) e un flag che
+ *          indica se e un ricambio sostitutivo (per sapere se sovrascrivere
+ *          anche partNumber/partDescription)
+ */
+function resolveDmlPartSource(partsItem) {
+  const replacement = Array.isArray(partsItem?.ReplacementItem) ? partsItem.ReplacementItem[0] : undefined;
+  return replacement ? { source: replacement, isReplacement: true } : { source: partsItem, isReplacement: false };
+}
+
+/**
+ * Applica alla jobCardDetail (gia sanitizzata) i dati di prezzo/sconto/
+ * disponibilita ottenuti da getCartPriceAndAvailability (risposta DML,
+ * MessageType=WL), sovrascrivendo/aggiungendo in place i campi di ciascun
+ * jobs[].partInfo[]/laborInfo[] che trovano corrispondenza per PartNumber/
+ * laborOperationCode nelle WorkLines della risposta.
+ *
+ * Match:
+ *  - partInfo[].partNumber       <-> WorkLines[].PartsItem[].PartNumber
+ *  - laborInfo[].laborOperationCode <-> WorkLines[].LaborItems[].LaborOperationID
+ *
+ * Per i ricambi (partInfo), se il PartsItem corrispondente porta un
+ * ReplacementItem (ricambio sostitutivo proposto dal DMS), i dati vengono
+ * letti da li invece che dal PartsItem originale (v. resolveDmlPartSource),
+ * e in quel caso vengono sovrascritti anche partNumber/partDescription con
+ * quelli del ricambio sostitutivo.
+ *
+ * @param {object} jobCardDetail - jobCardDetail (jobs[].partInfo[]/laborInfo[]),
+ *                                 modificato in place
+ * @param {object} dmlResponse   - risposta di getCartPriceAndAvailability (con WorkLines[])
+ * @returns {object} lo stesso jobCardDetail, con i campi sovrascritti/aggiunti
+ */
+function applyDataFromDml(jobCardDetail, dmlResponse) {
+  const jobs = jobCardDetail?.jobs;
+  if (!Array.isArray(jobs)) return jobCardDetail;
+
+  // Indicizzo per PartNumber/LaborOperationID tutti i PartsItem/LaborItems di
+  // tutte le WorkLines della risposta (nel nostro caso e una sola WorkLine,
+  // ma il match resta valido anche con piu righe).
+  const partsItemsByPartNumber = new Map();
+  const laborItemsByOperationId = new Map();
+  for (const workLine of dmlResponse?.WorkLines ?? []) {
+    for (const partsItem of workLine?.PartsItem ?? []) {
+      if (partsItem?.PartNumber) partsItemsByPartNumber.set(partsItem.PartNumber, partsItem);
+    }
+    for (const laborItem of workLine?.LaborItems ?? []) {
+      if (laborItem?.LaborOperationID) laborItemsByOperationId.set(laborItem.LaborOperationID, laborItem);
+    }
+  }
+
+  for (const job of jobs) {
+    for (const part of job?.partInfo ?? []) {
+      const partsItem = partsItemsByPartNumber.get(part?.partNumber);
+      if (!partsItem) continue;
+
+      const { source, isReplacement } = resolveDmlPartSource(partsItem);
+      part.originalPriceExclVat = source.OriginalPriceExclVAT;
+      part.appDiscountPercentage = source.DiscountPercentage;
+      part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
+
+      if (isReplacement) {
+        part.partNumber = source.PartNumber;
+        part.partDescription = source.PartNumberDescription;
+      }
+    }
+
+    for (const labor of job?.laborInfo ?? []) {
+      const laborItem = laborItemsByOperationId.get(labor?.laborOperationCode);
+      if (!laborItem) continue;
+
+      labor.laborDuration = laborItem.TimeUnit;
+      labor.appDiscountPercentage = laborItem.DiscountPercentage;
+      labor.laborRateAmount = laborItem.UnitaryTimeAmount;
+    }
+  }
+
+  return jobCardDetail;
+}
+
+/**
  * Calls jobCardDetails endpoint.
- * @param {string} bearerToken      - Bearer token from PingFederate
+ * @param {string} bearerToken      - ****** from PingFederate
  * @param {string|number} jobCardId - JobCard identifier (input parameter)
  * @returns {Promise<object>} parsed response body
  */
@@ -552,6 +659,9 @@ async function getJobCardDetails(bearerToken, jobCardId) {
 
   const sanitized = sanitizeJobCardDetails(response.body);
   saveJobCardDetailsToTmp(jobCardId, sanitized);
+
+  const dataFromDml = await getCartPriceAndAvailability(sanitized.jobCardDetail);
+  applyDataFromDml(sanitized.jobCardDetail, dataFromDml);
 
   return sanitized;
 }
@@ -616,4 +726,4 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard };
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml };
