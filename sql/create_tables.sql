@@ -3,6 +3,16 @@
 -- Conversione da sintassi Oracle (VARCHAR2 -> VARCHAR, NUMBER -> NUMERIC,
 -- CLOB -> TEXT) con correzione di alcune imprecisioni presenti negli appunti
 -- originali (tipi mancanti, virgole/caratteri errati).
+--
+-- IMPORTANTE: eseguire questo script connessi come utente "wiadvisor_operator"
+-- (NON "wiadvisor_admin"): i default privileges dello schema public sono
+-- configurati sul ruolo creatore wiadvisor_operator, che concede
+-- automaticamente i grant ad app_rw/app_ro sulle nuove tabelle. Se lo script
+-- viene eseguito come wiadvisor_admin le tabelle vengono comunque create ma
+-- wiadvisor_app (usato a runtime dalle Lambda) non avrà alcun privilegio su
+-- di esse ("permission denied for table ..."). I GRANT espliciti sotto sono
+-- una rete di sicurezza per coprire comunque il caso in cui lo script venga
+-- eseguito con l'utente sbagliato.
 -- ============================================================================
 
 BEGIN;
@@ -329,5 +339,18 @@ COMMENT ON COLUMN PKFAVORITE.PACKAGE_CODE IS
 
 COMMENT ON COLUMN PKFAVORITE.CREATED_AT IS
     'Data/ora di creazione del preferito';
+
+-- ============================================================================
+-- Grant espliciti verso l'utente applicativo (rete di sicurezza — vedi nota
+-- in testa al file: normalmente questi privilegi sono già concessi
+-- automaticamente dai default privileges di wiadvisor_operator)
+-- ============================================================================
+GRANT SELECT ON TABLE ANAG_BRAND TO wiadvisor_app;
+GRANT SELECT, INSERT, UPDATE ON TABLE HQ_DEALERDEFAULTVALUES TO wiadvisor_app;
+GRANT SELECT, INSERT, UPDATE ON TABLE DJCREQUEST TO wiadvisor_app;
+GRANT SELECT ON TABLE ANAG_SNOWFLAKE TO wiadvisor_app;
+GRANT SELECT ON TABLE HQ_PKCONFIG TO wiadvisor_app;
+GRANT SELECT, INSERT, DELETE ON TABLE PKFAVORITE TO wiadvisor_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO wiadvisor_app;
 
 COMMIT;
