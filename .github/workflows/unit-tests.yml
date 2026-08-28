@@ -4028,7 +4028,8 @@ jobs:
               MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
               MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
               MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
-              MoparDocIbmClientSecret="${{ secrets.MOPARDOC_IBM_CLIENT_SECRET }}"
+              MoparDocIbmClientSecret="${{ secrets.MOPARDOC_IBM_CLIENT_SECRET }}" \
+              TranslationsBucketNameOverride=""
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
