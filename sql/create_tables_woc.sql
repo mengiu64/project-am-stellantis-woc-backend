@@ -7,6 +7,7 @@
 --   1) anag_brand        — anagrafica brand (PK: ar_codbrand)
 --   2) anag_brand_genome — mapping Genome Code (PK: genome_code, FK: reftech_code → anag_brand)
 --   3) dealer_sign       — firme dei dealer (PK: dealer_sign_id)
+--   4) hq_pkconfig       — configurazione applicazione da utilizzare per mercato/brand
 -- ============================================================================
 
 BEGIN;
@@ -174,6 +175,43 @@ COMMENT ON COLUMN woc.dealer_sign.updated_at IS 'Timestamp ultimo aggiornamento'
 
 
 -- ============================================================================
+-- 4) HQ_PKCONFIG
+--    Configurazione applicazione da utilizzare per mercato/brand.
+--    NOTA: la tabella deve vivere nello schema woc perché il codice
+--    applicativo (dbManager/PkConfigRepository.js) interroga esplicitamente
+--    woc.hq_pkconfig.
+-- ============================================================================
+DROP TABLE IF EXISTS woc.hq_pkconfig;
+
+CREATE TABLE woc.hq_pkconfig
+(
+    codmarket   VARCHAR(20),
+    codbrand    VARCHAR(20) NOT NULL,
+    application VARCHAR(20) NOT NULL
+);
+
+COMMENT ON TABLE woc.hq_pkconfig IS 'Configurazione applicazione da utilizzare per mercato/brand';
+COMMENT ON COLUMN woc.hq_pkconfig.codmarket   IS 'Codice mercato';
+COMMENT ON COLUMN woc.hq_pkconfig.codbrand    IS 'Codice brand';
+COMMENT ON COLUMN woc.hq_pkconfig.application IS 'Nome applicazione associata';
+
+INSERT INTO woc.hq_pkconfig (codmarket, codbrand, application) VALUES
+    (NULL, 'AC', 'DocSoa'),
+    (NULL, 'AP', 'DocSoa'),
+    (NULL, 'DS', 'DocSoa'),
+    (NULL, 'AR', 'ePer'),
+    (NULL, 'FT', 'ePer'),
+    (NULL, 'LA', 'ePer'),
+    (NULL, '77', 'ePer'),
+    (NULL, '66', 'ePer'),
+    (NULL, 'DG', 'ePer'),
+    (NULL, 'JE', 'ePer'),
+    (NULL, 'RM', 'ePer'),
+    (NULL, 'OX', 'ePer'),
+    (NULL, 'OV', 'MenuPricing');
+
+
+-- ============================================================================
 -- Trigger: aggiornamento automatico updated_at
 -- ============================================================================
 
@@ -208,5 +246,6 @@ GRANT USAGE ON SCHEMA woc TO wiadvisor_app;
 GRANT SELECT ON TABLE woc.anag_brand TO wiadvisor_app;
 GRANT SELECT ON TABLE woc.anag_brand_genome TO wiadvisor_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE woc.dealer_sign TO wiadvisor_app;
+GRANT SELECT ON TABLE woc.hq_pkconfig TO wiadvisor_app;
 
 COMMIT;

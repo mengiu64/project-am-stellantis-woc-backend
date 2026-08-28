@@ -271,35 +271,12 @@ COMMENT ON COLUMN ANAG_SNOWFLAKE.SNR             IS 'SNR Specific field         
 
 
 -- ============================================================================
--- 5) HQ_PKCONFIG
+-- NOTA: HQ_PKCONFIG è stata spostata nello schema woc (vedi
+-- create_tables_woc.sql) perché il codice applicativo
+-- (dbManager/PkConfigRepository.js) interroga esplicitamente woc.hq_pkconfig.
+-- Crearla qui, senza schema, la posizionava in "public" e la rendeva
+-- irraggiungibile dall'applicazione.
 -- ============================================================================
-DROP TABLE IF EXISTS HQ_PKCONFIG;
-
-CREATE TABLE HQ_PKCONFIG
-(
-    CODMARKET   VARCHAR(20),
-    CODBRAND    VARCHAR(20) NOT NULL,
-    APPLICATION VARCHAR(20) NOT NULL
-);
-
-COMMENT ON TABLE HQ_PKCONFIG IS 'Configurazione applicazione da utilizzare per mercato/brand';
-COMMENT ON COLUMN HQ_PKCONFIG.CODMARKET   IS 'Codice mercato';
-COMMENT ON COLUMN HQ_PKCONFIG.CODBRAND    IS 'Codice brand';
-COMMENT ON COLUMN HQ_PKCONFIG.APPLICATION IS 'Nome applicazione associata';
-
-INSERT INTO HQ_PKCONFIG (CODMARKET, CODBRAND, APPLICATION) VALUES
-    ('', '30', 'DocSoa'),
-    ('', '31', 'DocSoa'),
-    ('', '33', 'DocSoa'),
-    ('', '43', 'MenuPricing'),
-    ('', '97', 'ePer'),
-    ('', '83', 'ePer'),
-    ('', '00', 'ePer'),
-    ('', '70', 'ePer'),
-    ('', '77', 'ePer'),
-    ('', '66', 'ePer'),
-    ('', '56', 'ePer'),
-    ('', '57', 'ePer');
 
 
 -- ============================================================================
@@ -349,7 +326,6 @@ GRANT SELECT ON TABLE ANAG_BRAND TO wiadvisor_app;
 GRANT SELECT, INSERT, UPDATE ON TABLE HQ_DEALERDEFAULTVALUES TO wiadvisor_app;
 GRANT SELECT, INSERT, UPDATE ON TABLE DJCREQUEST TO wiadvisor_app;
 GRANT SELECT ON TABLE ANAG_SNOWFLAKE TO wiadvisor_app;
-GRANT SELECT ON TABLE HQ_PKCONFIG TO wiadvisor_app;
 GRANT SELECT, INSERT, DELETE ON TABLE PKFAVORITE TO wiadvisor_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO wiadvisor_app;
 
