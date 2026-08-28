@@ -1,0 +1,164 @@
+{
+    "roInfo": {
+        "jobCardSrpId": "JCID-84226",
+        "jobCardLegacyId": "93827988",
+        "sourceApplication": "WIADVISOR",
+        "dealerId": "IT_00007584",
+        "brand": "0I",
+        "stellantisBrand": "FT",
+        "updateDateTime": "2026-08-27T09:08:34.336Z",
+        "waitOnSite": false,
+        "interiorCarWash": false,
+        "exteriorCarWash": false,
+        "partPreferences": [
+            {
+                "old": false,
+                "returned": false,
+                "original": false,
+                "circularEconomy": false
+            }
+        ],
+        "obfcm": true,
+        "loanerFlag": false
+    },
+    "customerInfo": [
+        {
+            "customerId": "91175029",
+            "contactInfo": {
+                "phone": "78978979898",
+                "mobile": "+335434534",
+                "email": "abc@abc.com",
+                "address": "Rue Souris"
+            }
+        }
+    ],
+    "appointments": [
+        {
+            "appointmentInternalId": "93827988",
+            "options": [
+            ],
+            "reception": {
+                "estimatedReceptionDateTime": "2026-08-24T16:45:00",
+                "receptionDateTime": "2026-08-24T12:45:00.000Z",
+                "receptionServiceAdvisorId": "0073741.D235",
+                "receptionServiceAdvisorName": "GUIDO FANTINI"
+            },
+            "delivery": {
+                "estimatedDeliveryDateTime": "2026-08-25T09:45:00",
+                "deliveryDateTime": "2026-08-25T05:45:00.000Z",
+                "deliveryServiceAdvisorId": "0073741.D235",
+                "deliveryServiceAdvisorName": "GUIDO FANTINI"
+            }
+        }
+    ],
+    "vehicleInfo": {
+        "identification": {
+            "vin": "VF3CABHW6GT204366",
+            "licensePlate": "GR838CE",
+            "brand": "FIAT",
+            "brandCode": "0I",
+            "brandCode2": "FT",
+            "modelDescription": "500 Hatchback MY23",
+            "modelCode": "312"
+        },
+        "state": {
+            "odometerIn": 100,
+            "odometerOut": 100,
+            "mileageUnits": "KM"
+        },
+        "dates": {
+        }
+    },
+    "consents": [
+        {
+            "repairer": [
+                {
+                    "channelCode": "1",
+                    "privacyIndicator": false
+                },
+                {
+                    "channelCode": "2",
+                    "privacyIndicator": false
+                },
+                {
+                    "channelCode": "3",
+                    "privacyIndicator": false
+                }
+            ],
+            "stellantis": [
+                {
+                    "channelCode": "4",
+                    "privacyIndicator": true
+                },
+                {
+                    "channelCode": "5",
+                    "privacyIndicator": false
+                },
+                {
+                    "channelCode": "6",
+                    "privacyIndicator": true
+                }
+            ]
+        }
+    ],
+    "jobs": [
+        {
+            "jobInternalId": "135085344",
+            "jobDescription": "Steering wheel",
+            "customerAgreeToRepair": false,
+            "paymentType": "CUSTOMER",
+            "priceExclVatAfterDiscount": 508.71,
+            "priceWithVatAfterDiscount": 620.63,
+            "originalPriceExclVat": 508.71,
+            "originalPriceWithVat": 620.63,
+            "discountInAmountOnPriceWithVat": 0,
+            "jobPayer": [
+                {
+                    "invoiceType": "CUSTOMER",
+                    "priceExclVat": 508.71,
+                    "priceInclVat": 620.63,
+                    "percentagePayer": 0
+                }
+            ],
+            "packageType": "GC",
+            "packageCharge": "CUSTOMER",
+            "partInfo": [
+                {
+                    "partId": "4418064",
+                    "partNumber": "1610725580",
+                    "partDescription": "4110A101 - VITE",
+                    "itemQuantity": 1,
+                    "unitaryPriceExclVat": 493.71,
+                    "originalPriceExclVat": 493.71,
+                    "originalPriceWithVat": 602.33,
+                    "priceExclVatAfterDiscount": 493.71,
+                    "priceWithVatAfterDiscount": 602.33,
+                    "discountInAmountOnPriceWithVat": 0,
+                    "warrantyData": {
+                        "isCasualPart": false
+                    },
+                    "removalAction": false
+                }
+            ],
+            "laborInfo": [
+                {
+                    "laborOperationId": "1",
+                    "laborOperationCode": "4110A10",
+                    "laborOperationDescription": "4110A101 - steering wheel rr",
+                    "laborDuration": 0.25,
+                    "laborRateAmount": 60,
+                    "priceExclVatAfterDiscount": 15,
+                    "priceWithVatAfterDiscount": 18.3,
+                    "originalPriceExclVat": 15,
+                    "originalPriceWithVat": 18.3,
+                    "discountInAmountOnPriceWithVat": 0,
+                    "warrantyData": {
+                        "isCasualLabor": false
+                    },
+                    "removalAction": false
+                }
+            ],
+            "removalAction": false
+        }
+    ]
+}
