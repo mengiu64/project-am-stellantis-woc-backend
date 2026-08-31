@@ -12,8 +12,8 @@ jest.mock('../config', () => ({
     baseUrl: 'https://api.dml.test',
     settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
     inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
-    companyTypesPath: '/ps-stage/extra/dml/configurations/v1/company-types',
-    customerTitlesPath: '/ps-stage/extra/dml/configurations/v1/customer-titles',
+    companyTypesPath: '/ps-dev/extra/dml/configurations/v1/company-types',
+    customerTitlesPath: '/ps-dev/extra/dml/configurations/v1/customer-titles',
     ibmClientId: 'ibm-id',
     ibmClientSecret: 'ibm-secret',
     xTargetEnv: 'stage',
@@ -168,8 +168,8 @@ describe('dmsService', () => {
 });
 
 describe.each([
-  ['getCompanyTypes', () => getCompanyTypes, '/ps-stage/extra/dml/configurations/v1/company-types', 'company-types'],
-  ['getCustomerTitles', () => getCustomerTitles, '/ps-stage/extra/dml/configurations/v1/customer-titles', 'customer-titles'],
+  ['getCompanyTypes', () => getCompanyTypes, '/ps-dev/extra/dml/configurations/v1/company-types', 'company-types'],
+  ['getCustomerTitles', () => getCustomerTitles, '/ps-dev/extra/dml/configurations/v1/customer-titles', 'customer-titles'],
 ])('%s', (_name, getFn, expectedPath, label) => {
   beforeEach(() => {
     jest.clearAllMocks();
