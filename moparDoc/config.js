@@ -39,6 +39,16 @@ const config = {
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
+
+  // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, etc.
+  // Endpoint: POST /services/<action> su mopardocs.stellantis.com:4443
+  // Fonte: MoparDocs JobCard Associate v 3.0.15.1 documentation
+  moparDocsServices: {
+    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://mopardocs.stellantis.com:4443',
+    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/services',
+    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
+    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
+  },
 };
 
 module.exports = config;

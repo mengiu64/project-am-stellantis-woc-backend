@@ -3,12 +3,13 @@
 /**
  * moparDocService.js — Chiamate downstream verso i tre gateway MoparDoc:
  *  - job-docs connector (api-oidc-preprod.groupe-psa.com): CreateJobCard, CreateAccessToken
- *  - MoparDocs Services API (lab-mopardocs.stellantis.com): getJobCardList, associateJobCard, getJobCardAndDocumentList, getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard
- *  - MoparDocs Browser API (lab-examaftersales.fiat.com): getUploadDocURL, UploadedDoc, getDocumentsDownloadUrl
+ *  - MoparDocs Browser API (lab-examaftersales.fiat.com): getUploadDocURL, UploadedDoc
+ *  - MoparDocs Services API (stellantis.com): getJobCardList, associateJobCard, getJobCardAndDocumentList, 
+ *    getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard, getDocumentsDownloadUrl
  *
- * Tutte le chiamate condividono lo stesso token PingFederate
- * (authService.getBearerToken) e le stesse credenziali IBM API Connect
- * (X-IBM-Client-Id / X-IBM-Client-Secret), ma usano host diversi.
+ * Tutte le chiamate condividono lo stesso PingFederate (authService.getBearerToken) 
+ * e le stesse credenziali IBM API Connect (X-IBM-Client-Id / X-IBM-Client-Secret), 
+ * ma usano host diversi a seconda del servizio.
  */
 
 const { URL } = require('url');
@@ -196,6 +197,10 @@ async function associateJobCard(params) {
     TicketId: params.TicketId,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[associateJobCard] Inizio associazione JobCard ${params.JobCardId} a ticket ${params.TicketId}`);
+
+  // Esecuzione
   // Log: informa che verrà associato il JobCard al Ticket specificato
   console.log(`[associateJobCard] Associazione JobCard=${params.JobCardId} a Ticket=${params.TicketId}`);
   
@@ -222,6 +227,10 @@ async function getJobCardAndDocumentList(params) {
     JobCardId: params.JobCardId,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[getJobCardAndDocumentList] Inizio recupero job card e documenti per JobCardId: ${params.JobCardId}`);
+
+  // Esecuzione
   // Log: informa che verrà recuperata sia la JobCard che i documenti associati
   console.log(`[getJobCardAndDocumentList] Recupero JobCard e Documenti per JobCardId=${params.JobCardId}`);
   
@@ -243,11 +252,21 @@ async function getDocumentsInfo(params) {
     throw new Error(`[getDocumentsInfo] Missing required field(s): ${missing.join(', ')}`);
   }
 
+  // Convalida che DocumentIds sia un array non vuoto
+  if (!Array.isArray(params.DocumentIds) || params.DocumentIds.length === 0) {
+    throw new Error(`[getDocumentsInfo] DocumentIds deve essere un array non vuoto`);
+  }
+
+  // Costruisce il payload
   // Costruisce il payload della richiesta con il parametro obbligatorio
   const payload = {
     DocumentIds: params.DocumentIds,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[getDocumentsInfo] Inizio recupero info per ${params.DocumentIds.length} documento(i)`);
+
+  // Esecuzione
   // Log: informa che verranno recuperate le informazioni dei documenti specificati
   console.log(`[getDocumentsInfo] Recupero info per Documenti: ${JSON.stringify(params.DocumentIds)}`);
   
@@ -275,6 +294,10 @@ async function associateDocument(params) {
     TicketId: params.TicketId,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[associateDocument] Inizio associazione documento ${params.DocumentId} a ticket ${params.TicketId}`);
+
+  // Esecuzione
   // Log: informa che verrà associato il documento al Ticket specificato
   console.log(`[associateDocument] Associazione Documento=${params.DocumentId} a Ticket=${params.TicketId}`);
   
@@ -301,6 +324,10 @@ async function getDocuments(params) {
     JobCardId: params.JobCardId,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[getDocuments] Inizio recupero documenti per JobCardId: ${params.JobCardId}`);
+
+  // Esecuzione
   // Log: informa che verranno recuperati i documenti associati alla JobCard
   console.log(`[getDocuments] Recupero Documenti per JobCardId=${params.JobCardId}`);
   
@@ -322,11 +349,21 @@ async function DeleteDocuments(params) {
     throw new Error(`[DeleteDocuments] Missing required field(s): ${missing.join(', ')}`);
   }
 
+  // Convalida che DocumentIds sia un array non vuoto
+  if (!Array.isArray(params.DocumentIds) || params.DocumentIds.length === 0) {
+    throw new Error(`[DeleteDocuments] DocumentIds deve essere un array non vuoto`);
+  }
+
+  // Costruisce il payload
   // Costruisce il payload della richiesta con il parametro obbligatorio
   const payload = {
     DocumentIds: params.DocumentIds,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[DeleteDocuments] Inizio eliminazione ${params.DocumentIds.length} documento(i)`);
+
+  // Esecuzione
   // Log: informa che verranno cancellati i documenti specificati
   console.log(`[DeleteDocuments] Cancellazione Documenti: ${JSON.stringify(params.DocumentIds)}`);
   
@@ -353,6 +390,10 @@ async function DeleteJobcard(params) {
     JobCardId: params.JobCardId,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[DeleteJobcard] Inizio eliminazione JobCard: ${params.JobCardId}`);
+
+  // Esecuzione
   // Log: informa che verrà cancellata la JobCard specificata
   console.log(`[DeleteJobcard] Cancellazione JobCard=${params.JobCardId}`);
   
@@ -380,6 +421,11 @@ async function getDocumentsDownloadUrl(params) {
     AccessToken: params.AccessToken,
   };
 
+  // Log di inizio esecuzione
+  console.log(`[getDocumentsDownloadUrl] Inizio recupero URL download per documento: ${params.DocumentId}`);
+
+  // Esecuzione
+  return postJson(config.moparDocsServices, '/getDocumentsDownloadUrl', payload);
   // Log: informa che verrà generata la URL di download per il documento
   console.log(`[getDocumentsDownloadUrl] Generazione URL di download per Documento ${params.DocumentId}`);
   
