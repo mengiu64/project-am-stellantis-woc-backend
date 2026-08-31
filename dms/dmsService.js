@@ -57,6 +57,81 @@ async function getDmsSettings(bearerToken, params = {}) {
   return response.body;
 }
 
+/**
+ * Helper interno condiviso da getCompanyTypes/getCustomerTitles: entrambe le API
+ * "configurations" del gateway DML condividono lo stesso contratto (query string
+ * country+language, stessi header di autenticazione/credenziali di getDmsSettings)
+ * e differiscono solo per il path.
+ *
+ * @param {string} bearerToken  - ****** from PingFederate
+ * @param {object} params
+ * @param {string}   params.country  - (Mandatory) Country code (e.g. "FR")
+ * @param {string}   params.language - (Mandatory) Language code (e.g. "fr")
+ * @param {string} path  - config.dml.companyTypesPath / config.dml.customerTitlesPath
+ * @param {string} label - usato solo nel messaggio di errore (es. "company-types")
+ * @returns {Promise<object>} parsed response body
+ */
+async function getDmlConfiguration(bearerToken, params = {}, path, label) {
+  const { country, language } = params;
+
+  if (!country)  throw new Error('[dms] country is required');
+  if (!language) throw new Error('[dms] language is required');
+
+  const base = new URL(config.dml.baseUrl);
+  const qs = new URLSearchParams({ country, language }).toString();
+  const fullPath = `${path}?${qs}`;
+
+  const options = {
+    hostname: base.hostname,
+    port: base.port || 443,
+    path: fullPath,
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${bearerToken}`,
+      'X-IBM-Client-Id': config.dml.ibmClientId,
+      'X-IBM-Client-Secret': config.dml.ibmClientSecret,
+      'X-Target-Env': config.dml.xTargetEnv,
+    },
+  };
+
+  console.log(`[dms] GET https://${base.hostname}${fullPath}`);
+  const response = await httpsRequest(options);
+
+  if (response.statusCode !== 200) {
+    throw new Error(
+      `[dms] ${label} failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}`
+    );
+  }
+
+  return response.body;
+}
+
+/**
+ * Calls GET /configurations/company-types endpoint.
+ *
+ * @param {string} bearerToken  - ****** from PingFederate
+ * @param {object} params
+ * @param {string}   params.country  - (Mandatory) Country code (e.g. "FR")
+ * @param {string}   params.language - (Mandatory) Language code (e.g. "fr")
+ * @returns {Promise<object>} parsed response body
+ */
+async function getCompanyTypes(bearerToken, params = {}) {
+  return getDmlConfiguration(bearerToken, params, config.dml.companyTypesPath, 'company-types');
+}
+
+/**
+ * Calls GET /configurations/customer-titles endpoint.
+ *
+ * @param {string} bearerToken  - ****** from PingFederate
+ * @param {object} params
+ * @param {string}   params.country  - (Mandatory) Country code (e.g. "fr")
+ * @param {string}   params.language - (Mandatory) Language code (e.g. "fr")
+ * @returns {Promise<object>} parsed response body
+ */
+async function getCustomerTitles(bearerToken, params = {}) {
+  return getDmlConfiguration(bearerToken, params, config.dml.customerTitlesPath, 'customer-titles');
+}
+
 const VALID_INQUIRY_TYPES = ['LFP', 'WL', 'MP'];
 
 // Sezione tipo-specifica attesa nel body per ciascun MessageType — usata per
@@ -323,6 +398,8 @@ async function postDmsInquiry(bearerToken, body = {}) {
 
 module.exports = {
   getDmsSettings,
+  getCompanyTypes,
+  getCustomerTitles,
   postDmsInquiry,
   buildTypeSection,
   buildApplicationArea,

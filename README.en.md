@@ -143,6 +143,8 @@ Lambda for **DMS settings** and **inquiry requests** (parts/upgrades/work lines)
 | `event.action` | Service function | Description |
 |---|---|---|
 | `settings` | `getDmsSettings(token, params)` | Retrieves dealer DMS configuration |
+| `company-types` | `getCompanyTypes(token, params)` | Retrieves DML company types configuration list |
+| `customer-titles` | `getCustomerTitles(token, params)` | Retrieves DML customer titles configuration list |
 | `inquiry` | `postDmsInquiry(token, body)` | Submits a DML inquiry request (LFP / WL / MP) |
 
 #### Main functions
@@ -151,9 +153,20 @@ Lambda for **DMS settings** and **inquiry requests** (parts/upgrades/work lines)
 |---|---|---|
 | `authService` | `getBearerToken()` | Gets/renews the PingFederate bearer token (file cache) |
 | `dmsService` | `getDmsSettings(token, params)` | GET `/dms/settings?country=&brand=&dealer=` |
+| `dmsService` | `getCompanyTypes(token, params)` | GET `/configurations/company-types?country=&language=` |
+| `dmsService` | `getCustomerTitles(token, params)` | GET `/configurations/customer-titles?country=&language=` |
 | `dmsService` | `postDmsInquiry(token, body)` | POST `/inquiry/DML/1.0/inquiry` – types: `LFP` \| `WL` \| `MP` |
 | `dmsService` | `buildTypeSection(type)` | Helper: generates the type-specific payload section (LFP/WL/MP) |
 | `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
+
+#### `getCompanyTypes` / `getCustomerTitles` parameters
+
+Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM-Client-Id`/`X-IBM-Client-Secret`, `X-Target-Env`) — only the path and query contract differ.
+
+| Field | Required | Description |
+|---|---|---|
+| `country` | ✅ | Country code (e.g. `FR`) |
+| `language` | ✅ | Language code (e.g. `fr`) |
 
 #### `postDmsInquiry` parameters
 
@@ -174,6 +187,14 @@ Lambda for **DMS settings** and **inquiry requests** (parts/upgrades/work lines)
 # DMS settings
 node index.js settings <country> <brand> <dealer>
 # e.g.: node index.js settings fr FT 0062230
+
+# Company types
+node index.js company-types <country> <language>
+# e.g.: node index.js company-types FR fr
+
+# Customer titles
+node index.js customer-titles <country> <language>
+# e.g.: node index.js customer-titles fr fr
 
 # Inquiry — positional arguments
 node index.js inquiry <type> <documentId> <customerId> <vehicleId>

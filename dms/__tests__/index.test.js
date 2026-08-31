@@ -5,12 +5,14 @@ jest.mock('../authService', () => ({
 }));
 jest.mock('../dmsService', () => ({
   getDmsSettings: jest.fn(),
+  getCompanyTypes: jest.fn(),
+  getCustomerTitles: jest.fn(),
   postDmsInquiry: jest.fn(),
   buildTypeSection: jest.fn(),
 }));
 
 const { getBearerToken } = require('../authService');
-const { getDmsSettings, postDmsInquiry } = require('../dmsService');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry } = require('../dmsService');
 const { handler } = require('../index');
 
 describe('dms lambda handler — routing (per swagger-woc.yaml)', () => {
@@ -33,8 +35,55 @@ describe('dms lambda handler — routing (per swagger-woc.yaml)', () => {
     expect(postDmsInquiry).not.toHaveBeenCalled();
   });
 
+  test('GET /api/configurations/dml/company-types -> action "company-types"', async () => {
+    getCompanyTypes.mockResolvedValue({ success: true, data: [] });
+
+    const event = {
+      rawPath: '/api/configurations/dml/company-types',
+      queryStringParameters: { country: 'FR', language: 'fr' },
+    };
+    const res = await handler(event);
+
+    expect(res.statusCode).toBe(200);
+    expect(getCompanyTypes).toHaveBeenCalledWith('TOKEN', { country: 'FR', language: 'fr' });
+  });
+
+  test('GET /api/configurations/dml/customer-titles -> action "customer-titles"', async () => {
+    getCustomerTitles.mockResolvedValue({ success: true, data: [] });
+
+    const event = {
+      rawPath: '/api/configurations/dml/customer-titles',
+      queryStringParameters: { country: 'fr', language: 'fr' },
+    };
+    const res = await handler(event);
+
+    expect(res.statusCode).toBe(200);
+    expect(getCustomerTitles).toHaveBeenCalledWith('TOKEN', { country: 'fr', language: 'fr' });
+  });
+
+  test('direct invocation with { action: "company-types", body }', async () => {
+    getCompanyTypes.mockResolvedValue({ success: true });
+
+    const event = { action: 'company-types', body: { country: 'FR', language: 'fr' } };
+    const res = await handler(event);
+
+    expect(res.statusCode).toBe(200);
+    expect(getCompanyTypes).toHaveBeenCalledWith('TOKEN', { country: 'FR', language: 'fr' });
+  });
+
+  test('direct invocation with { action: "customer-titles", body }', async () => {
+    getCustomerTitles.mockResolvedValue({ success: true });
+
+    const event = { action: 'customer-titles', body: { country: 'fr', language: 'fr' } };
+    const res = await handler(event);
+
+    expect(res.statusCode).toBe(200);
+    expect(getCustomerTitles).toHaveBeenCalledWith('TOKEN', { country: 'fr', language: 'fr' });
+  });
+
   test('POST /api/repairorder/inquiry/LFP -> action "inquiry" with MessageType=LFP merged from path', async () => {
     postDmsInquiry.mockResolvedValue({ success: true });
+
 
     const event = {
       rawPath: '/api/repairorder/inquiry/LFP',
