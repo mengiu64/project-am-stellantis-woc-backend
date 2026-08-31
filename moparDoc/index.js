@@ -63,22 +63,6 @@ const {
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = [
-  'createJobCard',
-  'createAccessToken',
-  'getUploadDocURL',
-  'uploadedDoc',
-  'getJobCardList',
-  'associateJobCard',
-  'getJobCardAndDocumentList',
-  'getDocumentsInfo',
-  'associateDocument',
-  'getDocuments',
-  'DeleteDocuments',
-  'DeleteJobcard',
-  'getDocumentsDownloadUrl',
-];
-
 function resolveActionAndBody(event) {
   // Priorità 1: event.action (direct invoke)
   let action = event.action;
