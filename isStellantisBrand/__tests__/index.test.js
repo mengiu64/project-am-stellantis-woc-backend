@@ -242,6 +242,77 @@ describe('isStellantisBrand handler', () => {
     });
   });
 
+  // ── Test inMandate / oicsBrands ──────────────────────────────────────────
+
+  describe('Verifica inMandate rispetto a oicsBrands', () => {
+    // Helper per creare un evento con ar_codbrand e oicsBrands opzionale
+    function makeEventWithOicsBrands(arCodbrand, oicsBrands) {
+      return { action: 'isStellantisBrand', body: { ar_codbrand: arCodbrand, oicsBrands } };
+    }
+
+    test('codbrand presente in oicsBrands (CSV) → inMandate: true', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'logo.png', codbrand: 'FI' }] }));
+
+      const res = await handler(makeEventWithOicsBrands('FT', 'AR,FI,JE'), mockContext);
+
+      const body = JSON.parse(res.body);
+      expect(body.isStellantisBrand).toBe(true);
+      expect(body.inMandate).toBe(true);
+    });
+
+    test('codbrand assente da oicsBrands (CSV) → inMandate: false', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'logo.png', codbrand: 'ZZ' }] }));
+
+      const res = await handler(makeEventWithOicsBrands('FT', 'AR,FI,JE'), mockContext);
+
+      const body = JSON.parse(res.body);
+      expect(body.isStellantisBrand).toBe(true);
+      expect(body.inMandate).toBe(false);
+    });
+
+    test('oicsBrands con spazi attorno ai valori → confronto effettuato dopo trim', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'logo.png', codbrand: 'FI' }] }));
+
+      const res = await handler(makeEventWithOicsBrands('FT', ' AR , FI , JE '), mockContext);
+
+      const body = JSON.parse(res.body);
+      expect(body.inMandate).toBe(true);
+    });
+
+    test('oicsBrands assente → inMandate: false', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'logo.png', codbrand: 'FI' }] }));
+
+      const res = await handler(makeEvent('FT'), mockContext);
+
+      const body = JSON.parse(res.body);
+      expect(body.isStellantisBrand).toBe(true);
+      expect(body.inMandate).toBe(false);
+    });
+
+    test('query include ora anche la colonna codbrand', async () => {
+      const mockQuery = jest.fn().mockResolvedValue({ rows: [{ logo_s3_key: 'logo.png', codbrand: 'FI' }] });
+      setupPoolMock(mockQuery);
+
+      await handler(makeEventWithOicsBrands('FT', 'FI'), mockContext);
+
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('SELECT logo_s3_key,codbrand'),
+        })
+      );
+    });
+
+    test('brand non trovato → inMandate non presente nella response', async () => {
+      setupPoolMock(jest.fn().mockResolvedValue({ rows: [] }));
+
+      const res = await handler(makeEventWithOicsBrands('ZZ', 'AR,FI,JE'), mockContext);
+
+      const body = JSON.parse(res.body);
+      expect(body.isStellantisBrand).toBe(false);
+      expect(body).not.toHaveProperty('inMandate');
+    });
+  });
+
   // ── Test di gestione errori ──────────────────────────────────────────────
 
   describe('Gestione errori', () => {

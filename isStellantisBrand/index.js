@@ -137,6 +137,9 @@ exports.handler = async (event, context) => {
         // Estrazione del parametro ar_codbrand dal body (query string o body parsato)
         const arCodbrand = body ? body.ar_codbrand : undefined;
 
+        // Estrazione del parametro oicsBrands: stringa di codbrand OICS separati da virgola
+        const oicsBrands = body ? body.oicsBrands : undefined;
+
         // Log della richiesta brand-check
         log('info', awsRequestId, {
           operation: 'isStellantisBrand',
@@ -195,7 +198,7 @@ exports.handler = async (event, context) => {
         // ── Query al database ──
         const pool = await getPool();
 
-        const queryText = 'SELECT logo_s3_key FROM woc.anag_brand WHERE ar_codbrand = $1 LIMIT 1';
+        const queryText = 'SELECT logo_s3_key,codbrand FROM woc.anag_brand WHERE ar_codbrand = $1 LIMIT 1';
         const result = await pool.query({
           text: queryText,
           values: [arCodbrandUpper],
@@ -208,6 +211,16 @@ exports.handler = async (event, context) => {
             ? row.logo_s3_key
             : null;
 
+          // Valorizzazione del codbrand ottenuto dalla query
+          const codbrand = row.codbrand;
+
+          // ── Verifica se il codbrand è presente tra i valori di oicsBrands (CSV) ──
+          const oicsBrandsList = typeof oicsBrands === 'string'
+            ? oicsBrands.split(',').map((value) => value.trim())
+            : [];
+          const inMandate = codbrand !== undefined && codbrand !== null
+            && oicsBrandsList.includes(String(codbrand).trim());
+
           // Log strutturato della query riuscita con logoS3Key
           log('info', awsRequestId, {
             operation: 'query',
@@ -215,12 +228,15 @@ exports.handler = async (event, context) => {
             queryText,
             rowCount: result.rows.length,
             logoS3Key,
+            codbrand,
+            inMandate,
           });
 
           return buildResponse(200, {
             success: true,
             isStellantisBrand: true,
             logoS3Key,
+            inMandate,
           });
         } else {
           // Log strutturato della query riuscita — brand non trovato
