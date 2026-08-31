@@ -3,17 +3,38 @@
 /**
  * index.js — Entry point (moparDoc)
  *
- * Espone 4 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
+ * Espone 13 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
+ *  ── 4 metodi originali (job-docs PSA + MoparDocs FCA):
  *  - createJobCard     (POST /job-docs/connector/v1/CreateJobCard)
  *  - createAccessToken (POST /job-docs/connector/v1/CreateAccessToken)
  *  - getUploadDocURL   (POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL)
  *  - uploadedDoc       (POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc)
+ *
+ *  ── 9 metodi nuovi (MoparDocs Services Stellantis):
+ *  - getJobCardList               [NUOVO]
+ *  - associateJobCard             [NUOVO]
+ *  - getJobCardAndDocumentList    [NUOVO]
+ *  - getDocumentsInfo             [NUOVO]
+ *  - associateDocument            [NUOVO]
+ *  - getDocuments                 [NUOVO]
+ *  - DeleteDocuments              [NUOVO]
+ *  - DeleteJobcard                [NUOVO]
+ *  - getDocumentsDownloadUrl      [NUOVO]
  *
  * Usage:
  *   node index.js createJobCard     <payloadJsonFile>
  *   node index.js createAccessToken <payloadJsonFile>
  *   node index.js getUploadDocURL   <payloadJsonFile>
  *   node index.js uploadedDoc       <payloadJsonFile>
+ *   node index.js getJobCardList               <payloadJsonFile> [NUOVO]
+ *   node index.js associateJobCard             <payloadJsonFile> [NUOVO]
+ *   node index.js getJobCardAndDocumentList    <payloadJsonFile> [NUOVO]
+ *   node index.js getDocumentsInfo             <payloadJsonFile> [NUOVO]
+ *   node index.js associateDocument            <payloadJsonFile> [NUOVO]
+ *   node index.js getDocuments                 <payloadJsonFile> [NUOVO]
+ *   node index.js DeleteDocuments              <payloadJsonFile> [NUOVO]
+ *   node index.js DeleteJobcard                <payloadJsonFile> [NUOVO]
+ *   node index.js getDocumentsDownloadUrl      <payloadJsonFile> [NUOVO]
  *
  * Esempio payload createJobCard:
  *   { "vin": "...", "market": "IT", "source": "WOC", "UserName": "...",
@@ -25,11 +46,39 @@
  */
 
 const fs = require('fs');
-const { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc } = require('./moparDocService');
+const {
+  createJobCard,
+  createAccessToken,
+  getUploadDocURL,
+  uploadedDoc,
+  getJobCardList,
+  associateJobCard,
+  getJobCardAndDocumentList,
+  getDocumentsInfo,
+  associateDocument,
+  getDocuments,
+  DeleteDocuments,
+  DeleteJobcard,
+  getDocumentsDownloadUrl,
+} = require('./moparDocService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['createJobCard', 'createAccessToken', 'getUploadDocURL', 'uploadedDoc'];
+const VALID_ACTIONS = [
+  'createJobCard',
+  'createAccessToken',
+  'getUploadDocURL',
+  'uploadedDoc',
+  'getJobCardList',
+  'associateJobCard',
+  'getJobCardAndDocumentList',
+  'getDocumentsInfo',
+  'associateDocument',
+  'getDocuments',
+  'DeleteDocuments',
+  'DeleteJobcard',
+  'getDocumentsDownloadUrl',
+];
 
 /**
  * Resolves { action, body } from either:
@@ -68,6 +117,15 @@ const ACTIONS = {
   createAccessToken,
   getUploadDocURL,
   uploadedDoc,
+  getJobCardList,
+  associateJobCard,
+  getJobCardAndDocumentList,
+  getDocumentsInfo,
+  associateDocument,
+  getDocuments,
+  DeleteDocuments,
+  DeleteJobcard,
+  getDocumentsDownloadUrl,
 };
 
 exports.handler = async (event) => {

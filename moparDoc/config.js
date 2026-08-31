@@ -58,4 +58,13 @@ module.exports = {
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
+
+  // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, etc.
+  // Questi 9 metodi richiedono endpoint separato con credenziali diverse.
+  moparDocsServices: {
+    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://api.stellantis.com',
+    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/moparDocs/services',
+    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
+    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
+  },
 };
