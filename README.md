@@ -176,6 +176,8 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 | `country` | ✅ | Codice paese (es. `FR`) |
 | `language` | ✅ | Codice lingua (es. `fr`) |
 
+> **Nota:** come `getDmsSettings`, un `404` ("nessun dato per questi parametri", es. `{"success":false,"message":"No company types found for the given parameters"}`) **non** viene propagato come errore: la funzione restituisce `{ success: false, data: [] }`, cosi' i consumer (es. `session`/`MyPeopleDmsSessionRepository`) ricevono sempre un array (anche vuoto) invece di un'eccezione.
+
 #### Parametri `postDmsInquiry`
 
 | Campo | Obbligatorio | Descrizione |

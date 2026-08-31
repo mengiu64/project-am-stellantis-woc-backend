@@ -226,6 +226,17 @@ describe.each([
       .rejects.toThrow(`[dms] ${label} failed: HTTP 403`);
   });
 
+  test('returns { success: false, data: [] } on HTTP 404 (no data for the given params), does not throw', async () => {
+    httpsRequest.mockResolvedValue({
+      statusCode: 404,
+      headers: {},
+      body: { success: false, message: `No ${label} found for the given parameters` },
+    });
+
+    const result = await getFn()('token', { country: 'fr', language: 'fr' });
+    expect(result).toEqual({ success: false, data: [] });
+  });
+
   test('calls endpoint on correct hostname and path', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 

@@ -63,6 +63,12 @@ async function getDmsSettings(bearerToken, params = {}) {
  * country+language, stessi header di autenticazione/credenziali di getDmsSettings)
  * e differiscono solo per il path.
  *
+ * Come getDmsSettings, un 404 ("nessun dato per questi parametri", es.
+ * `{"success":false,"message":"No company types found for the given parameters"}`)
+ * NON viene trattato come errore bloccante: si restituisce `{ success: false, data: [] }`
+ * cosi' il chiamante (es. session/MyPeopleDmsSessionRepository) riceve sempre un array,
+ * anche vuoto, invece di un'eccezione che romperebbe l'intera risposta.
+ *
  * @param {string} bearerToken  - ****** from PingFederate
  * @param {object} params
  * @param {string}   params.country  - (Mandatory) Country code (e.g. "FR")
@@ -96,6 +102,13 @@ async function getDmlConfiguration(bearerToken, params = {}, path, label) {
 
   console.log(`[dms] GET https://${base.hostname}${fullPath}`);
   const response = await httpsRequest(options);
+
+  // Come getDmsSettings: un 404 significa "nessun dato per questi parametri"
+  // (non un errore bloccante) — si restituisce un array vuoto invece di lanciare.
+  if (response.statusCode === 404) {
+    console.log(`[dms] ${label} not available (404) for ${qs} — restituito data: []`);
+    return { success: false, data: [] };
+  }
 
   if (response.statusCode !== 200) {
     throw new Error(
