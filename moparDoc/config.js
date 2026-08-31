@@ -1,57 +1,38 @@
 'use strict';
 
-// Load .env file for local development (no external dependencies)
-const fs = require('fs');
-const path = require('path');
-const envFile = path.join(__dirname, '.env');
-if (fs.existsSync(envFile)) {
-  fs.readFileSync(envFile, 'utf8')
-    .split('\n')
-    .forEach((line) => {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) return;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx === -1) return;
-      const key = trimmed.slice(0, eqIdx).trim();
-      const val = trimmed.slice(eqIdx + 1).trim();
-      if (key && !(key in process.env)) {
-        process.env[key] = val;
-      }
-    });
-}
-
-// Validate required environment variables
-const REQUIRED_ENV = [
-  'MOPARDOC_PING_CLIENT_ID',
-  'MOPARDOC_PING_CLIENT_SECRET',
-  'MOPARDOC_IBM_CLIENT_ID',
-  'MOPARDOC_IBM_CLIENT_SECRET',
-];
-const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
-  throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
-}
-
-module.exports = {
-  // PingFederate token endpoint — stesso host di jobcard/djc, ma con scope
-  // (prd:mdo) e client dedicati a MoparDoc (client_id/secret diversi).
+const config = {
   auth: {
-    url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
-    grantType: 'client_credentials',
+    // PingFederate OAuth2 (client_credentials flow)
+    baseUrl: 'https://api-oidc-preprod.groupe-psa.com',
+    basePath: '/as/token.oauth2',
+    clientId: process.env.MOPARDOC_CLIENT_ID,
+    clientSecret: process.env.MOPARDOC_CLIENT_SECRET,
     scope: 'prd:mdo',
-    clientId: process.env.MOPARDOC_PING_CLIENT_ID,
-    clientSecret: process.env.MOPARDOC_PING_CLIENT_SECRET,
+    // Token cache duration (ms) — ricarica se scaduto + buffer di 30s
+    cacheBufferMs: 30000,
   },
 
-  // job-docs connector (PSA/groupe-psa.com) — CreateJobCard
+  // Job Docs API (PSA job-docs connector) — crea JobCard e token di accesso
   jobDocs: {
     baseUrl: 'https://api-oidc-preprod.groupe-psa.com',
-    basePath: '/job-docs/connector/v1',
+    basePath: '/mopardocs/mopardocs-it/v1',
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 
-  // MoparDocs Browser API (FCA/Fiat) — getUploadDocURL, UploadedDoc
+  // MoparDocs Services API (Stellantis) — Gestione JobCard e Documenti
+  // Endpoint per i metodi: getJobCardList, associateJobCard,
+  // getJobCardAndDocumentList, getDocumentsInfo, associateDocument, getDocuments,
+  // DeleteDocuments, DeleteJobcard
+  // NUOVO: Aggiunto target per i servizi MoparDocs Stellantis (non presente prima)
+  moparDocsServices: {
+    baseUrl: 'https://lab-mopardocs.stellantis.com:4443', // Host del servizio Stellantis
+    basePath: '/services', // Path base comune a tutti i metodi Services
+    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID, // Credenziale IBM API Connect (condivisa)
+    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET, // Credenziale IBM API Connect (condivisa)
+  },
+
+  // MoparDocs Browser API (Fiat) — upload e download documenti
   moparDocsApi: {
     baseUrl: 'https://lab-examaftersales.fiat.com',
     basePath: '/Mopardocs/MoparDocsApi/Browser',
@@ -69,3 +50,5 @@ module.exports = {
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 };
+
+module.exports = config;

@@ -16,6 +16,8 @@ const { SessionNotFoundError } = require('../errors');
 let _readUserProfiles;
 let _getBearerToken;
 let _getDmsSettings;
+let _getCompanyTypes;
+let _getCustomerTitles;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -36,6 +38,20 @@ function loadGetDmsSettings() {
     ({ getDmsSettings: _getDmsSettings } = require(path.resolve(__dirname, '../../../dms/dmsService')));
   }
   return _getDmsSettings;
+}
+
+function loadGetCompanyTypes() {
+  if (!_getCompanyTypes) {
+    ({ getCompanyTypes: _getCompanyTypes } = require(path.resolve(__dirname, '../../../dms/dmsService')));
+  }
+  return _getCompanyTypes;
+}
+
+function loadGetCustomerTitles() {
+  if (!_getCustomerTitles) {
+    ({ getCustomerTitles: _getCustomerTitles } = require(path.resolve(__dirname, '../../../dms/dmsService')));
+  }
+  return _getCustomerTitles;
 }
 
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
@@ -76,13 +92,25 @@ const BRAND_CODE_TO_REFTECH = {
  *      convenzione usata per tutte le altre chiavi di questo oggetto). Espone inoltre
  *      `firstname`/`lastname` (da User.Attributes.FIRSTNAME/LASTNAME) e `profile`
  *      (da User.Applications, campo PROFILE dell'item con APPLICATION="wiADV.DL").
+ *      Espone infine `companytypes`/`customertitles`: gli array `data` restituiti
+ *      rispettivamente da `dms/getCompanyTypes` e `dms/getCustomerTitles` (stesso
+ *      bearer token/credenziali di `dms/settings`, `country`/`language` derivati
+ *      da `Attributes.NATIONiso2`), o `[]` se la risposta non contiene un array `data`.
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
-  constructor({ readUserProfilesFn, getBearerTokenFn, getDmsSettingsFn } = {}) {
+  constructor({
+    readUserProfilesFn,
+    getBearerTokenFn,
+    getDmsSettingsFn,
+    getCompanyTypesFn,
+    getCustomerTitlesFn,
+  } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
     this._getBearerTokenFn = getBearerTokenFn;
     this._getDmsSettingsFn = getDmsSettingsFn;
+    this._getCompanyTypesFn = getCompanyTypesFn;
+    this._getCustomerTitlesFn = getCustomerTitlesFn;
   }
 
   /**
@@ -122,14 +150,29 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
     const getBearerToken = this._getBearerTokenFn || loadGetBearerToken();
     const getDmsSettings = this._getDmsSettingsFn || loadGetDmsSettings();
+    const getCompanyTypes = this._getCompanyTypesFn || loadGetCompanyTypes();
+    const getCustomerTitles = this._getCustomerTitlesFn || loadGetCustomerTitles();
 
-    let dmsSettings;
+    let token;
     try {
-      const token = await getBearerToken();
-      dmsSettings = await getDmsSettings(token, { country, brand: brandReftech, dealer });
+      token = await getBearerToken();
     } catch (err) {
       throw new Error(`[session] dms/settings failed: ${err.message}`);
     }
+
+    // Le tre chiamate condividono lo stesso bearer token/credenziali IBM e vengono
+    // eseguite in parallelo (nessuna dipende dall'esito delle altre).
+    const [dmsSettings, companyTypesResponse, customerTitlesResponse] = await Promise.all([
+      getDmsSettings(token, { country, brand: brandReftech, dealer }).catch((err) => {
+        throw new Error(`[session] dms/settings failed: ${err.message}`);
+      }),
+      getCompanyTypes(token, { country, language: country }).catch((err) => {
+        throw new Error(`[session] dml/company-types failed: ${err.message}`);
+      }),
+      getCustomerTitles(token, { country, language: country }).catch((err) => {
+        throw new Error(`[session] dml/customer-titles failed: ${err.message}`);
+      }),
+    ]);
 
     const dmsMap = buildDmsSettingsMap(dmsSettings);
 
@@ -171,6 +214,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       maxdiscountval: null,
       oics: oics.map(lowercaseKeys),
       applications: applications.map(lowercaseKeys),
+      companytypes: Array.isArray(companyTypesResponse && companyTypesResponse.data)
+        ? companyTypesResponse.data
+        : [],
+      customertitles: Array.isArray(customerTitlesResponse && customerTitlesResponse.data)
+        ? customerTitlesResponse.data
+        : [],
     };
   }
 }

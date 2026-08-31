@@ -12,6 +12,8 @@ jest.mock('../config', () => ({
     baseUrl: 'https://api.dml.test',
     settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
     inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
+    companyTypesPath: '/ps-dev/extra/dml/configurations/v1/company-types',
+    customerTitlesPath: '/ps-dev/extra/dml/configurations/v1/customer-titles',
     ibmClientId: 'ibm-id',
     ibmClientSecret: 'ibm-secret',
     xTargetEnv: 'stage',
@@ -31,7 +33,7 @@ jest.mock('../config', () => ({
 jest.mock('../httpClient');
 
 const { httpsRequest } = require('../httpClient');
-const { getDmsSettings, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines } = require('../dmsService');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines } = require('../dmsService');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -162,6 +164,76 @@ describe('dmsService', () => {
     const [options] = httpsRequest.mock.calls[0];
     expect(options.hostname).toBe('api.dml.test');
     expect(options.path).toContain('/ps-dev/extra/dml/dms-settings/v1/settings');
+  });
+});
+
+describe.each([
+  ['getCompanyTypes', () => getCompanyTypes, '/ps-dev/extra/dml/configurations/v1/company-types', 'company-types'],
+  ['getCustomerTitles', () => getCustomerTitles, '/ps-dev/extra/dml/configurations/v1/customer-titles', 'customer-titles'],
+])('%s', (_name, getFn, expectedPath, label) => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.log.mockRestore());
+
+  test('throws if country is missing', async () => {
+    await expect(getFn()('token', { language: 'fr' }))
+      .rejects.toThrow('[dms] country is required');
+  });
+
+  test('throws if language is missing', async () => {
+    await expect(getFn()('token', { country: 'fr' }))
+      .rejects.toThrow('[dms] language is required');
+  });
+
+  test('calls httpsRequest with correct method GET and Authorization header', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { data: true } });
+
+    await getFn()('my-token', { country: 'fr', language: 'fr' });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.method).toBe('GET');
+    expect(options.headers.Authorization).toBe('Bearer my-token');
+    expect(options.headers['X-IBM-Client-Id']).toBe('ibm-id');
+    expect(options.headers['X-IBM-Client-Secret']).toBe('ibm-secret');
+    expect(options.headers['X-Target-Env']).toBe('stage');
+  });
+
+  test('includes country and language in query string', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await getFn()('token', { country: 'FR', language: 'fr' });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.path).toContain('country=FR');
+    expect(options.path).toContain('language=fr');
+  });
+
+  test('returns response body on success', async () => {
+    const expectedBody = { value: 'value1' };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getFn()('token', { country: 'fr', language: 'fr' });
+    expect(result).toEqual(expectedBody);
+  });
+
+  test('throws on HTTP error', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 403, headers: {}, body: { error: 'forbidden' } });
+
+    await expect(getFn()('token', { country: 'fr', language: 'fr' }))
+      .rejects.toThrow(`[dms] ${label} failed: HTTP 403`);
+  });
+
+  test('calls endpoint on correct hostname and path', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await getFn()('token', { country: 'fr', language: 'fr' });
+
+    const [options] = httpsRequest.mock.calls[0];
+    expect(options.hostname).toBe('api.dml.test');
+    expect(options.path).toContain(expectedPath);
   });
 });
 

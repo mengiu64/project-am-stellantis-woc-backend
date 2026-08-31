@@ -47,6 +47,10 @@ module.exports = {
     baseUrl: 'https://emea-aws.dev.np-api.stellantis.com',
     settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
     inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
+    // "configurations" API: stesso catalogo IBM API Connect ("ps-dev") di
+    // settings/inquiry.
+    companyTypesPath: '/ps-dev/extra/dml/configurations/v1/company-types',
+    customerTitlesPath: '/ps-dev/extra/dml/configurations/v1/customer-titles',
     ibmClientId: process.env.DML_IBM_CLIENT_ID,
     ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
     xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',

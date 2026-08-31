@@ -5,6 +5,8 @@
  *
  * Usage:
  *   node index.js settings <country> <brand> <dealer>
+ *   node index.js company-types <country> <language>
+ *   node index.js customer-titles <country> <language>
  *   node index.js inquiry <type> <documentId> <customerId> <vehicleId>
  *   node index.js inquiry --file <path/to/body.json>
  *
@@ -12,6 +14,10 @@
  *   country  - Country code (e.g. fr)
  *   brand    - Brand code   (e.g. FT)
  *   dealer   - Dealer ID    (e.g. 0062230)
+ *
+ * Parameters (company-types / customer-titles):
+ *   country  - Country code  (e.g. FR)
+ *   language - Language code (e.g. fr)
  *
  * Parameters (inquiry — positional):
  *   type       - MessageType: LFP | WL | MP
@@ -24,17 +30,19 @@
  *
  * Examples:
  *   node index.js settings fr FT 0062230
+ *   node index.js company-types FR fr
+ *   node index.js customer-titles fr fr
  *   node index.js inquiry LFP 84564621 854265 3C4NJCBH7KT831816
  *   node index.js inquiry --file ./LFP_1_Request.json
  */
 
 const fs            = require('fs');
 const { getBearerToken } = require('./authService');
-const { getDmsSettings, postDmsInquiry, buildTypeSection } = require('./dmsService');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection } = require('./dmsService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['settings', 'inquiry'];
+const VALID_ACTIONS = ['settings', 'company-types', 'customer-titles', 'inquiry'];
 
 // MessageType values accepted by the DML inquiry endpoint (per swagger-woc.yaml
 // path parameter `/api/repairorder/inquiry/{type}`). Kept in sync with
@@ -46,7 +54,9 @@ const VALID_INQUIRY_TYPES = ['LFP', 'WL', 'MP'];
  *  1) A direct Lambda invocation payload: { "action": "settings", "body": {...} }
  *  2) A real API Gateway (REST API or HTTP API) proxy integration event. The
  *     real routes configured in swagger-woc.yaml are:
- *       - GET  /api/settings/dml/current          -> action "settings"
+ *       - GET  /api/settings/dml/current                    -> action "settings"
+ *       - GET  /api/configurations/dml/company-types        -> action "company-types"
+ *       - GET  /api/configurations/dml/customer-titles      -> action "customer-titles"
  *       - POST /api/repairorder/inquiry/{type}    -> action "inquiry", where
  *         {type} (LFP | WL | MP) is the *last* path segment and is used as a
  *         MessageType shortcut merged into the body (unless the body already
@@ -90,6 +100,16 @@ function resolveActionAndBody(event) {
     return { action: 'inquiry', body };
   }
 
+  // /api/configurations/dml/company-types -> action "company-types".
+  if (segments.includes('company-types')) {
+    return { action: 'company-types', body };
+  }
+
+  // /api/configurations/dml/customer-titles -> action "customer-titles".
+  if (segments.includes('customer-titles')) {
+    return { action: 'customer-titles', body };
+  }
+
   // /api/settings/dml/current -> action "settings".
   if (segments.includes('settings')) {
     return { action: 'settings', body };
@@ -99,6 +119,16 @@ function resolveActionAndBody(event) {
   const action = segments.length ? segments[segments.length - 1] : undefined;
   return { action, body };
 }
+
+// Dispatch table: ciascuna azione GET/POST mappata alla propria funzione di
+// dmsService.js. "inquiry" resta l'unica POST, tutte le altre sono GET con
+// stesse credenziali/bearer token (vedi dmsService.js::getDmlConfiguration).
+const ACTION_HANDLERS = {
+  settings: getDmsSettings,
+  'company-types': getCompanyTypes,
+  'customer-titles': getCustomerTitles,
+  inquiry: postDmsInquiry,
+};
 
 exports.handler = async (event) => {
   const { action, body } = resolveActionAndBody(event);
@@ -116,9 +146,7 @@ exports.handler = async (event) => {
 
   try {
     const token = await getBearerToken();
-    const result = action === 'settings'
-      ? await getDmsSettings(token, body)
-      : await postDmsInquiry(token, body);
+    const result = await ACTION_HANDLERS[action](token, body);
 
     return {
       statusCode: 200,
@@ -141,6 +169,22 @@ async function runSettings(country, brand, dealer) {
   console.log('\n=== DMS Settings ===');
   const token = await getBearerToken();
   const result = await getDmsSettings(token, { country, brand, dealer });
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function runCompanyTypes(country, language) {
+  console.log('\n=== DMS Company Types ===');
+  const token = await getBearerToken();
+  const result = await getCompanyTypes(token, { country, language });
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function runCustomerTitles(country, language) {
+  console.log('\n=== DMS Customer Titles ===');
+  const token = await getBearerToken();
+  const result = await getCustomerTitles(token, { country, language });
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -206,11 +250,19 @@ async function main() {
     if (command === 'settings') {
       const [country = 'fr', brand = 'FT', dealer = '0062230'] = args;
       await runSettings(country, brand, dealer);
+    } else if (command === 'company-types') {
+      const [country = 'FR', language = 'fr'] = args;
+      await runCompanyTypes(country, language);
+    } else if (command === 'customer-titles') {
+      const [country = 'fr', language = 'fr'] = args;
+      await runCustomerTitles(country, language);
     } else if (command === 'inquiry') {
       await runInquiry(args);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js settings <country> <brand> <dealer>');
+      console.error('  node index.js company-types <country> <language>');
+      console.error('  node index.js customer-titles <country> <language>');
       console.error('  node index.js inquiry <type> <documentId> <customerId> <vehicleId>');
       console.error('  node index.js inquiry --file <path/to/body.json>');
       process.exit(1);

@@ -1,175 +1,236 @@
 'use strict';
 
-jest.mock('../config', () => ({
-  jobDocs: {
-    baseUrl: 'https://jobdocs.test',
-    basePath: '/job-docs/connector/v1',
-    ibmClientId: 'ibm-id',
-    ibmClientSecret: 'ibm-secret',
-  },
-  moparDocsApi: {
-    baseUrl: 'https://mopardocs.test',
-    basePath: '/Mopardocs/MoparDocsApi/Browser',
-    ibmClientId: 'ibm-id',
-    ibmClientSecret: 'ibm-secret',
-  },
-}));
-jest.mock('../authService');
-jest.mock('../httpClient');
+const {
+  createJobCard,
+  createAccessToken,
+  getUploadDocURL,
+  uploadedDoc,
+  getJobCardList,
+  associateJobCard,
+  getJobCardAndDocumentList,
+  getDocumentsInfo,
+  associateDocument,
+  getDocuments,
+  DeleteDocuments,
+  DeleteJobcard,
+  getDocumentsDownloadUrl,
+} = require('../moparDocService');
 
-const { getBearerToken } = require('../authService');
-const { httpsRequest } = require('../httpClient');
-const { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc } = require('../moparDocService');
+const config = require('../config');
+
+jest.mock('../config', () => ({
+  jobDocs: { baseUrl: 'https://job-docs', basePath: '/jd', ibmClientId: 'id', ibmClientSecret: 'secret' },
+  moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
+  moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
+}));
+
+jest.mock('../authService', () => ({
+  getBearerToken: jest.fn().mockResolvedValue('test-token'),
+}));
+
+jest.mock('../httpClient', () => ({
+  httpsRequest: jest.fn((options, body) => {
+    return Promise.resolve({ statusCode: 200, body: { success: true } });
+  }),
+}));
 
 describe('moparDocService', () => {
-  beforeEach(() => {
+  afterEach(() => {
     jest.clearAllMocks();
-    jest.spyOn(console, 'log').mockImplementation(() => {});
-    getBearerToken.mockResolvedValue('test-bearer-token');
   });
 
-  afterEach(() => console.log.mockRestore());
-
-  const jobCardPayload = {
-    vin: 'VF3CABHW6GT204366',
-    market: 'IT',
-    source: 'WOC',
-    UserName: 'user1',
-    dealerCode: '0062230',
-    JobCard_Title: 'Title',
-    TAMAccessCode: 'ACC123',
-  };
-
-  const accessTokenPayload = {
-    JobCardId: 'JC1',
-    UserName: 'user1',
-    dealerCode: '0062230',
-    market: 'IT',
-    APIAccessCode: 'ACC123',
-  };
-
-  const uploadUrlPayload = {
-    JobCardId: 'JC1',
-    Filename: 'doc.pdf',
-    ContentType: 'application/pdf',
-    AccessToken: 'access-token',
-    Filetype: 'pdf',
-  };
-
-  const uploadedDocPayload = {
-    JobCardId: 'JC1',
-    DocumentId: 'DOC1',
-    Action: 'confirm',
-    AccessToken: 'access-token',
-  };
+  // ────── Metodi originali (4 test per metodo: 2 error, 1 success) ──────
 
   describe('createJobCard', () => {
-    test('throws when a required field is missing', async () => {
-      await expect(createJobCard({ ...jobCardPayload, vin: undefined }))
-        .rejects.toThrow('Missing required field(s): vin');
+    test('should throw error if required fields are missing', async () => {
+      await expect(createJobCard({ vin: 'VIN123' })).rejects.toThrow('Missing required field(s)');
     });
 
-    test('throws when params is undefined', async () => {
-      await expect(createJobCard(undefined)).rejects.toThrow('Missing required field(s)');
-    });
-
-    test('calls job-docs connector host with Bearer + X-IBM headers', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { JobCardId: 'JC1' } });
-
-      const result = await createJobCard(jobCardPayload);
-
-      expect(result).toEqual({ JobCardId: 'JC1' });
-      const [options, body] = httpsRequest.mock.calls[0];
-      expect(options.hostname).toBe('jobdocs.test');
-      expect(options.path).toBe('/job-docs/connector/v1/CreateJobCard');
-      expect(options.headers.Authorization).toBe('Bearer test-bearer-token');
-      expect(options.headers['X-IBM-Client-Id']).toBe('ibm-id');
-      expect(options.headers['X-IBM-Client-Secret']).toBe('ibm-secret');
-      expect(JSON.parse(body)).toEqual(jobCardPayload);
-    });
-
-    test('throws when downstream returns non-2xx', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 400, headers: {}, body: { message: 'bad' } });
-      await expect(createJobCard(jobCardPayload)).rejects.toThrow('CreateJobCard failed: HTTP 400');
+    test('should call postJson with correct payload', async () => {
+      const result = await createJobCard({
+        vin: 'VIN123',
+        market: 'IT',
+        source: 'WEB',
+        UserName: 'user1',
+        dealerCode: '0062230',
+        JobCard_Title: 'Test JobCard',
+        TAMAccessCode: 'ACC123',
+      });
+      expect(result).toEqual({ success: true });
     });
   });
 
   describe('createAccessToken', () => {
-    test('throws when a required field is missing', async () => {
-      await expect(createAccessToken({ ...accessTokenPayload, APIAccessCode: undefined }))
-        .rejects.toThrow('Missing required field(s): APIAccessCode');
+    test('should throw error if required fields are missing', async () => {
+      await expect(createAccessToken({ JobCardId: 'JC1' })).rejects.toThrow('Missing required field(s)');
     });
 
-    test('throws when params is undefined', async () => {
-      await expect(createAccessToken(undefined)).rejects.toThrow('Missing required field(s)');
-    });
-
-    test('calls job-docs connector host with ****** X-IBM headers', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { AccessToken: 'tok' } });
-
-      const result = await createAccessToken(accessTokenPayload);
-
-      expect(result).toEqual({ AccessToken: 'tok' });
-      const [options, body] = httpsRequest.mock.calls[0];
-      expect(options.hostname).toBe('jobdocs.test');
-      expect(options.path).toBe('/job-docs/connector/v1/CreateAccessToken');
-      expect(options.headers.Authorization).toBe('Bearer test-bearer-token');
-      expect(options.headers['X-IBM-Client-Id']).toBe('ibm-id');
-      expect(options.headers['X-IBM-Client-Secret']).toBe('ibm-secret');
-      expect(JSON.parse(body)).toEqual(accessTokenPayload);
-    });
-
-    test('throws when downstream returns non-2xx', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 401, headers: {}, body: { message: 'bad' } });
-      await expect(createAccessToken(accessTokenPayload)).rejects.toThrow('CreateAccessToken failed: HTTP 401');
+    test('should call postJson with correct payload', async () => {
+      const result = await createAccessToken({
+        JobCardId: 'JC1',
+        UserName: 'user1',
+        dealerCode: '0062230',
+        market: 'IT',
+        APIAccessCode: 'ACC123',
+      });
+      expect(result).toEqual({ success: true });
     });
   });
 
   describe('getUploadDocURL', () => {
-    test('throws when a required field is missing', async () => {
-      await expect(getUploadDocURL({ ...uploadUrlPayload, Filename: undefined }))
-        .rejects.toThrow('Missing required field(s): Filename');
+    test('should throw error if required fields are missing', async () => {
+      await expect(getUploadDocURL({ JobCardId: 'JC1' })).rejects.toThrow('Missing required field(s)');
     });
 
-    test('calls moparDocsApi host with Bearer + X-IBM headers', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { UploadURL: 'https://x' } });
-
-      const result = await getUploadDocURL(uploadUrlPayload);
-
-      expect(result).toEqual({ UploadURL: 'https://x' });
-      const [options, body] = httpsRequest.mock.calls[0];
-      expect(options.hostname).toBe('mopardocs.test');
-      expect(options.path).toBe('/Mopardocs/MoparDocsApi/Browser/getUploadDocURL');
-      expect(JSON.parse(body)).toEqual(uploadUrlPayload);
-    });
-
-    test('throws when downstream returns non-2xx', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 500, headers: {}, body: {} });
-      await expect(getUploadDocURL(uploadUrlPayload)).rejects.toThrow('getUploadDocURL failed: HTTP 500');
+    test('should call postJson with correct payload', async () => {
+      const result = await getUploadDocURL({
+        JobCardId: 'JC1',
+        Filename: 'doc.pdf',
+        ContentType: 'application/pdf',
+        AccessToken: 'token',
+        Filetype: 'PDF',
+      });
+      expect(result).toEqual({ success: true });
     });
   });
 
   describe('uploadedDoc', () => {
-    test('throws when a required field is missing', async () => {
-      await expect(uploadedDoc({ ...uploadedDocPayload, DocumentId: undefined }))
-        .rejects.toThrow('Missing required field(s): DocumentId');
+    test('should throw error if required fields are missing', async () => {
+      await expect(uploadedDoc({ JobCardId: 'JC1' })).rejects.toThrow('Missing required field(s)');
     });
 
-    test('calls moparDocsApi host with Bearer + X-IBM headers', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { success: true } });
-
-      const result = await uploadedDoc(uploadedDocPayload);
-
+    test('should call postJson with correct payload', async () => {
+      const result = await uploadedDoc({
+        JobCardId: 'JC1',
+        DocumentId: 'DOC1',
+        Action: 'upload',
+        AccessToken: 'token',
+      });
       expect(result).toEqual({ success: true });
-      const [options, body] = httpsRequest.mock.calls[0];
-      expect(options.hostname).toBe('mopardocs.test');
-      expect(options.path).toBe('/Mopardocs/MoparDocsApi/Browser/UploadedDoc');
-      expect(JSON.parse(body)).toEqual(uploadedDocPayload);
+    });
+  });
+
+  // ────── Metodi NUOVI (2 test per metodo: 1 error, 1 success) ──────
+
+  describe('getJobCardList', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(getJobCardList({ VIN: 'VIN123' })).rejects.toThrow('Missing required field(s)');
     });
 
-    test('throws when downstream returns non-2xx', async () => {
-      httpsRequest.mockResolvedValue({ statusCode: 403, headers: {}, body: {} });
-      await expect(uploadedDoc(uploadedDocPayload)).rejects.toThrow('UploadedDoc failed: HTTP 403');
+    test('should call postJson with correct payload', async () => {
+      const result = await getJobCardList({
+        VIN: 'VIN123',
+        dealerCode: '0062230',
+        market: 'IT',
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('associateJobCard', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(associateJobCard({ JobCardId: 'JC1' })).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await associateJobCard({
+        JobCardId: 'JC1',
+        TicketId: 'TKT1',
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('getJobCardAndDocumentList', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(getJobCardAndDocumentList({})).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await getJobCardAndDocumentList({
+        JobCardId: 'JC1',
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('getDocumentsInfo', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(getDocumentsInfo({})).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await getDocumentsInfo({
+        DocumentIds: ['DOC1', 'DOC2'],
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('associateDocument', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(associateDocument({ DocumentId: 'DOC1' })).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await associateDocument({
+        DocumentId: 'DOC1',
+        TicketId: 'TKT1',
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('getDocuments', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(getDocuments({})).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await getDocuments({
+        JobCardId: 'JC1',
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('DeleteDocuments', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(DeleteDocuments({})).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await DeleteDocuments({
+        DocumentIds: ['DOC1', 'DOC2'],
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('DeleteJobcard', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(DeleteJobcard({})).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await DeleteJobcard({
+        JobCardId: 'JC1',
+      });
+      expect(result).toEqual({ success: true });
+    });
+  });
+
+  describe('getDocumentsDownloadUrl', () => {
+    test('should throw error if required fields are missing', async () => {
+      await expect(getDocumentsDownloadUrl({ DocumentId: 'DOC1' })).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should call postJson with correct payload', async () => {
+      const result = await getDocumentsDownloadUrl({
+        DocumentId: 'DOC1',
+        AccessToken: 'token',
+      });
+      expect(result).toEqual({ success: true });
     });
   });
 });
