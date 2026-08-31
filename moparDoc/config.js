@@ -24,6 +24,14 @@ const config = {
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 
+  // MoparDocs Browser API (Fiat) — upload e download documenti
+  moparDocsApi: {
+    baseUrl: 'https://lab-examaftersales.fiat.com',
+    basePath: '/Mopardocs/MoparDocsApi/Browser',
+    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
+    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
+  },
+
   // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, getJobCardAndDocumentList,
   // getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard
   // Endpoint: POST /services/<action> su mopardocs.stellantis.com:4443
@@ -34,14 +42,6 @@ const config = {
     basePath: process.env.MOPARDOCS_SERVICES_PATH || '/services', // Path base comune a tutti i metodi Services
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID, // Credenziale IBM API Connect (condivisa)
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET, // Credenziale IBM API Connect (condivisa)
-  },
-
-  // MoparDocs Browser API (Fiat) — upload e download documenti
-  moparDocsApi: {
-    baseUrl: 'https://lab-examaftersales.fiat.com',
-    basePath: '/Mopardocs/MoparDocsApi/Browser',
-    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
-    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 };
 
