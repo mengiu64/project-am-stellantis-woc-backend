@@ -1,11 +1,12 @@
 'use strict';
 
 /**
- * moparDocService.js — Chiamate downstream verso i due gateway MoparDoc:
+ * moparDocService.js — Chiamate downstream verso i tre gateway MoparDoc:
  *  - job-docs connector (api-oidc-preprod.groupe-psa.com): CreateJobCard, CreateAccessToken
- *  - MoparDocs Browser API (lab-examaftersales.fiat.com): getUploadDocURL, UploadedDoc
+ *  - MoparDocs Services API (lab-mopardocs.stellantis.com): getJobCardList, associateJobCard, getJobCardAndDocumentList, getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard
+ *  - MoparDocs Browser API (lab-examaftersales.fiat.com): getUploadDocURL, UploadedDoc, getDocumentsDownloadUrl
  *
- * Tutte e quattro le chiamate condividono lo stesso ****** PingFederate
+ * Tutte le chiamate condividono lo stesso token PingFederate
  * (authService.getBearerToken) e le stesse credenziali IBM API Connect
  * (X-IBM-Client-Id / X-IBM-Client-Secret), ma usano host diversi.
  */
@@ -16,7 +17,7 @@ const { getBearerToken } = require('./authService');
 const config = require('./config');
 
 /**
- * Costruisce le options per una richiesta POST JSON verso uno dei due gateway.
+ * Costruisce le options per una richiesta POST JSON verso uno dei tre gateway.
  * @param {{baseUrl: string, basePath: string, ibmClientId: string, ibmClientSecret: string}} target
  * @param {string} resourcePath - es. "/CreateJobCard"
  * @param {string} bearerToken
@@ -147,4 +148,257 @@ async function uploadedDoc(params) {
   return postJson(config.moparDocsApi, '/UploadedDoc', payload);
 }
 
-module.exports = { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc };
+/**
+ * getJobCardList — Recupera lista JobCard per VIN, dealer, market.
+ * @param {{VIN: string, dealerCode: string, market: string}} params
+ */
+async function getJobCardList(params) {
+  // Valida i campi obbligatori: VIN, dealerCode, market
+  const required = ['VIN', 'dealerCode', 'market'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[getJobCardList] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con tutti i parametri obbligatori
+  const payload = {
+    VIN: params.VIN,
+    dealerCode: params.dealerCode,
+    market: params.market,
+  };
+
+  // Log: informa che verrà recuperata la lista JobCard per il VIN specificato
+  console.log(`[getJobCardList] Recupero lista JobCard per VIN=${params.VIN}, dealer=${params.dealerCode}, market=${params.market}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/getJobCardList', payload);
+}
+
+/**
+ * associateJobCard — Associa JobCard a Ticket.
+ * @param {{JobCardId: string, TicketId: string}} params
+ */
+async function associateJobCard(params) {
+  // Valida i campi obbligatori: JobCardId, TicketId
+  const required = ['JobCardId', 'TicketId'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[associateJobCard] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con tutti i parametri obbligatori
+  const payload = {
+    JobCardId: params.JobCardId,
+    TicketId: params.TicketId,
+  };
+
+  // Log: informa che verrà associato il JobCard al Ticket specificato
+  console.log(`[associateJobCard] Associazione JobCard=${params.JobCardId} a Ticket=${params.TicketId}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/associateJobCard', payload);
+}
+
+/**
+ * getJobCardAndDocumentList — Recupera sia JobCard che lista Documenti.
+ * @param {{JobCardId: string}} params
+ */
+async function getJobCardAndDocumentList(params) {
+  // Valida il campo obbligatorio: JobCardId
+  const required = ['JobCardId'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[getJobCardAndDocumentList] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con il parametro obbligatorio
+  const payload = {
+    JobCardId: params.JobCardId,
+  };
+
+  // Log: informa che verrà recuperata sia la JobCard che i documenti associati
+  console.log(`[getJobCardAndDocumentList] Recupero JobCard e Documenti per JobCardId=${params.JobCardId}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/getJobCardAndDocumentList', payload);
+}
+
+/**
+ * getDocumentsInfo — Ottiene informazioni dettagliate su documenti specifici.
+ * @param {{DocumentIds: string[]}} params
+ */
+async function getDocumentsInfo(params) {
+  // Valida il campo obbligatorio: DocumentIds
+  const required = ['DocumentIds'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[getDocumentsInfo] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con il parametro obbligatorio
+  const payload = {
+    DocumentIds: params.DocumentIds,
+  };
+
+  // Log: informa che verranno recuperate le informazioni dei documenti specificati
+  console.log(`[getDocumentsInfo] Recupero info per Documenti: ${JSON.stringify(params.DocumentIds)}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/getDocumentsInfo', payload);
+}
+
+/**
+ * associateDocument — Associa documento a Ticket.
+ * @param {{DocumentId: string, TicketId: string}} params
+ */
+async function associateDocument(params) {
+  // Valida i campi obbligatori: DocumentId, TicketId
+  const required = ['DocumentId', 'TicketId'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[associateDocument] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con tutti i parametri obbligatori
+  const payload = {
+    DocumentId: params.DocumentId,
+    TicketId: params.TicketId,
+  };
+
+  // Log: informa che verrà associato il documento al Ticket specificato
+  console.log(`[associateDocument] Associazione Documento=${params.DocumentId} a Ticket=${params.TicketId}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/associateDocument', payload);
+}
+
+/**
+ * getDocuments — Recupera lista documenti associati a JobCard.
+ * @param {{JobCardId: string}} params
+ */
+async function getDocuments(params) {
+  // Valida il campo obbligatorio: JobCardId
+  const required = ['JobCardId'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[getDocuments] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con il parametro obbligatorio
+  const payload = {
+    JobCardId: params.JobCardId,
+  };
+
+  // Log: informa che verranno recuperati i documenti associati alla JobCard
+  console.log(`[getDocuments] Recupero Documenti per JobCardId=${params.JobCardId}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/getDocuments', payload);
+}
+
+/**
+ * DeleteDocuments — Cancella documenti specifici.
+ * @param {{DocumentIds: string[]}} params
+ */
+async function DeleteDocuments(params) {
+  // Valida il campo obbligatorio: DocumentIds
+  const required = ['DocumentIds'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[DeleteDocuments] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con il parametro obbligatorio
+  const payload = {
+    DocumentIds: params.DocumentIds,
+  };
+
+  // Log: informa che verranno cancellati i documenti specificati
+  console.log(`[DeleteDocuments] Cancellazione Documenti: ${JSON.stringify(params.DocumentIds)}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/DeleteDocuments', payload);
+}
+
+/**
+ * DeleteJobcard — Cancella una JobCard.
+ * @param {{JobCardId: string}} params
+ */
+async function DeleteJobcard(params) {
+  // Valida il campo obbligatorio: JobCardId
+  const required = ['JobCardId'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[DeleteJobcard] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con il parametro obbligatorio
+  const payload = {
+    JobCardId: params.JobCardId,
+  };
+
+  // Log: informa che verrà cancellata la JobCard specificata
+  console.log(`[DeleteJobcard] Cancellazione JobCard=${params.JobCardId}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  return postJson(config.moparDocsServices, '/DeleteJobcard', payload);
+}
+
+/**
+ * getDocumentsDownloadUrl — Ottiene la URL pre-firmata per il download di documenti.
+ * @param {{DocumentId: string, AccessToken: string}} params
+ */
+async function getDocumentsDownloadUrl(params) {
+  // Valida i campi obbligatori: DocumentId, AccessToken
+  const required = ['DocumentId', 'AccessToken'];
+  // Filtra i campi mancanti dall'array required
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
+  if (missing.length > 0) {
+    throw new Error(`[getDocumentsDownloadUrl] Missing required field(s): ${missing.join(', ')}`);
+  }
+
+  // Costruisce il payload della richiesta con tutti i parametri obbligatori
+  const payload = {
+    DocumentId: params.DocumentId,
+    AccessToken: params.AccessToken,
+  };
+
+  // Log: informa che verrà generata la URL di download per il documento
+  console.log(`[getDocumentsDownloadUrl] Generazione URL di download per Documento ${params.DocumentId}`);
+  
+  // Effettua la richiesta POST al servizio MoparDocs Browser API e ritorna il risultato
+  return postJson(config.moparDocsApi, '/getDocumentsDownloadUrl', payload);
+}
+
+module.exports = {
+  createJobCard,
+  createAccessToken,
+  getUploadDocURL,
+  uploadedDoc,
+  getJobCardList,
+  associateJobCard,
+  getJobCardAndDocumentList,
+  getDocumentsInfo,
+  associateDocument,
+  getDocuments,
+  DeleteDocuments,
+  DeleteJobcard,
+  getDocumentsDownloadUrl,
+};

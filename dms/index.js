@@ -1,72 +1,45 @@
-'use strict';
-
 /**
- * index.js — Entry point
+ * index.js — Entry point (moparDoc)
  *
- * Usage:
- *   node index.js settings <country> <brand> <dealer>
- *   node index.js inquiry <type> <documentId> <customerId> <vehicleId>
- *   node index.js inquiry --file <path/to/body.json>
- *
- * Parameters (settings):
- *   country  - Country code (e.g. fr)
- *   brand    - Brand code   (e.g. FT)
- *   dealer   - Dealer ID    (e.g. 0062230)
- *
- * Parameters (inquiry — positional):
- *   type       - MessageType: LFP | WL | MP
- *   documentId - Unique Repair Order number (e.g. 84564621)
- *   customerId - Customer ID in DMS (e.g. 854265)
- *   vehicleId  - VIN (e.g. 3C4NJCBH7KT831816)
- *
- * Parameters (inquiry — file):
- *   --file <path> - Path to a JSON file with the full InquiryRequest body
- *
- * Examples:
- *   node index.js settings fr FT 0062230
- *   node index.js inquiry LFP 84564621 854265 3C4NJCBH7KT831816
- *   node index.js inquiry --file ./LFP_1_Request.json
+ * Espone 13 azioni verso i gateway MoparDoc:
+ *  - createJobCard     (POST /job-docs/connector/v1/CreateJobCard)
+ *  - createAccessToken (POST /job-docs/connector/v1/CreateAccessToken)
+ *  - getUploadDocURL   (POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL)
+ *  - uploadedDoc       (POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc)
+ *  - getJobCardList    (POST /services/getJobCardList) [NUOVO]
+ *  - associateJobCard  (POST /services/associateJobCard) [NUOVO]
+ *  - getJobCardAndDocumentList (POST /services/getJobCardAndDocumentList) [NUOVO]
+ *  - getDocumentsInfo  (POST /services/getDocumentsInfo) [NUOVO]
+ *  - associateDocument (POST /services/associateDocument) [NUOVO]
+ *  - getDocuments      (POST /services/getDocuments) [NUOVO]
+ *  - DeleteDocuments   (POST /services/DeleteDocuments) [NUOVO]
+ *  - DeleteJobcard     (POST /services/DeleteJobcard) [NUOVO]
+ *  - getDocumentsDownloadUrl (POST /Mopardocs/MoparDocsApi/Browser/getDocumentsDownloadUrl) [NUOVO]
  */
 
-const fs            = require('fs');
-const { getBearerToken } = require('./authService');
-const { getDmsSettings, postDmsInquiry, buildTypeSection } = require('./dmsService');
+const fs = require('fs');
+// NUOVO: Importa 9 nuovi metodi dal servizio moparDocService (in aggiunta ai 4 pre-esistenti)
+const {
+  createJobCard,
+  createAccessToken,
+  getUploadDocURL,
+  uploadedDoc,
+  // ────── Metodi NUOVI ──────
+  getJobCardList, // Recupera lista JobCard per VIN, dealer, market
+  associateJobCard, // Associa JobCard a Ticket
+  getJobCardAndDocumentList, // Recupera sia JobCard che Documenti
+  getDocumentsInfo, // Ottiene info su documenti specifici
+  associateDocument, // Associa documento a Ticket
+  getDocuments, // Recupera documenti per JobCard
+  DeleteDocuments, // Cancella documenti
+  DeleteJobcard, // Cancella JobCard
+  getDocumentsDownloadUrl, // Genera URL download documento
+} = require('./moparDocService');
 
-// ── Lambda handler ────────────────────────────────────────────────────────────
-
-const VALID_ACTIONS = ['settings', 'inquiry'];
-
-// MessageType values accepted by the DML inquiry endpoint (per swagger-woc.yaml
-// path parameter `/api/repairorder/inquiry/{type}`). Kept in sync with
-// dmsService.js's own VALID_INQUIRY_TYPES.
-const VALID_INQUIRY_TYPES = ['LFP', 'WL', 'MP'];
-
-/**
- * Resolves { action, body } from either:
- *  1) A direct Lambda invocation payload: { "action": "settings", "body": {...} }
- *  2) A real API Gateway (REST API or HTTP API) proxy integration event. The
- *     real routes configured in swagger-woc.yaml are:
- *       - GET  /api/settings/dml/current          -> action "settings"
- *       - POST /api/repairorder/inquiry/{type}    -> action "inquiry", where
- *         {type} (LFP | WL | MP) is the *last* path segment and is used as a
- *         MessageType shortcut merged into the body (unless the body already
- *         declares MessageType, either flat or nested in PartsInquiryHeader).
- *     Falls back to treating the last path segment itself as the action (e.g.
- *     .../dms/settings -> "settings", .../dms/inquiry -> "inquiry") for direct
- *     invocations that don't go through the routes above.
- *     The body is built by merging query string parameters with a JSON body,
- *     if any.
- */
 function resolveActionAndBody(event) {
-  if (event && event.action) {
-    const body = typeof event.body === 'string'
-      ? JSON.parse(event.body)
-      : (event.body || {});
-    return { action: event.action, body };
-  }
-
   const rawPath  = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy) || '';
-  const segments = String(rawPath).split('/').filter(Boolean).map(decodeURIComponent);
+  const segments = String(rawPath).split('/').filter(Boolean);
+  const action   = segments.length ? decodeURIComponent(segments[segments.length - 1]) : undefined;
 
   let parsedBody = {};
   if (event.body) {
@@ -78,32 +51,62 @@ function resolveActionAndBody(event) {
   }
 
   const body = { ...(event.queryStringParameters || {}), ...parsedBody };
-
-  // /api/repairorder/inquiry/{type} -> action "inquiry", {type} feeds MessageType.
-  const inquiryIdx = segments.indexOf('inquiry');
-  if (inquiryIdx !== -1) {
-    const type = segments[inquiryIdx + 1];
-    const hasMessageType = body.MessageType || (body.PartsInquiryHeader && body.PartsInquiryHeader.MessageType);
-    if (type && VALID_INQUIRY_TYPES.includes(type) && !hasMessageType) {
-      body.MessageType = type;
-    }
-    return { action: 'inquiry', body };
-  }
-
-  // /api/settings/dml/current -> action "settings".
-  if (segments.includes('settings')) {
-    return { action: 'settings', body };
-  }
-
-  // Fallback: last path segment as action (direct invocations, e.g. .../dms/settings).
-  const action = segments.length ? segments[segments.length - 1] : undefined;
   return { action, body };
 }
 
-exports.handler = async (event) => {
-  const { action, body } = resolveActionAndBody(event);
+// NUOVO: Array esteso con 9 nuove azioni oltre alle 4 pre-esistenti (13 totali)
+const VALID_ACTIONS = [
+  // ────── Metodi originali (4) ──────
+  'createJobCard', // Crea JobCard
+  'createAccessToken', // Crea token di accesso
+  'getUploadDocURL', // Ottiene URL upload documento
+  'uploadedDoc', // Notifica upload documento completato
+  // ────── Metodi NUOVI (9) ──────
+  'getJobCardList', // Recupera lista JobCard
+  'associateJobCard', // Associa JobCard a Ticket
+  'getJobCardAndDocumentList', // Recupera JobCard e Documenti
+  'getDocumentsInfo', // Ottiene informazioni documenti
+  'associateDocument', // Associa documento a Ticket
+  'getDocuments', // Recupera documenti
+  'DeleteDocuments', // Cancella documenti
+  'DeleteJobcard', // Cancella JobCard
+  'getDocumentsDownloadUrl', // Genera URL download
+];
 
+// NUOVO: Dispatcher esteso che mappa le azioni ai metodi del servizio
+// Ogni azione chiama il corrispondente metodo async da moparDocService
+const ACTIONS = {
+  // ────── Dispatcher originale (4 metodi) ──────
+  createJobCard, // Crea JobCard presso il gateway job-docs
+  createAccessToken, // Ottiene token accesso dall'endpoint job-docs
+  getUploadDocURL, // Recupera URL upload presso il gateway MoparDocs Browser
+  uploadedDoc, // Notifica al gateway che l'upload è completato
+  // ────── Dispatcher NUOVO (9 metodi) ──────
+  getJobCardList, // Recupera lista JobCard per VIN, dealer, market presso MoparDocs Services
+  associateJobCard, // Associa un JobCard a un Ticket presso MoparDocs Services
+  getJobCardAndDocumentList, // Recupera sia JobCard che relativa lista Documenti presso MoparDocs Services
+  getDocumentsInfo, // Ottiene informazioni dettagliate su documenti specifici presso MoparDocs Services
+  associateDocument, // Associa un documento a un Ticket presso MoparDocs Services
+  getDocuments, // Recupera lista documenti associati a JobCard presso MoparDocs Services
+  DeleteDocuments, // Cancella documenti specifici presso MoparDocs Services
+  DeleteJobcard, // Cancella una JobCard presso MoparDocs Services
+  getDocumentsDownloadUrl, // Genera URL pre-firmata per il download di un documento presso MoparDocs Browser
+};
+
+exports.handler = async (event) => {
+  // Log: Riceve l'evento API Gateway e inizia a elaborare la richiesta
+  console.log('[handler] Richiesta ricevuta. Event:', JSON.stringify(event, null, 2));
+  
+  // Risolve l'azione e il body dai parametri dell'evento
+  const { action, body } = resolveActionAndBody(event);
+  
+  // Log: Informa quale azione è stata risolta dalla richiesta
+  console.log(`[handler] Azione risolta: "${action}", Body ricevuto:`, JSON.stringify(body, null, 2));
+
+  // Valida che l'azione sia tra quelle supportate dal dispatcher ACTIONS
   if (!action || !VALID_ACTIONS.includes(action)) {
+    // Log di errore: azione non riconosciuta
+    console.error(`[handler] ERRORE: Azione sconosciuta "${action}". Azioni valide: ${VALID_ACTIONS.join(', ')}`);
     return {
       statusCode: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -115,18 +118,25 @@ exports.handler = async (event) => {
   }
 
   try {
-    const token = await getBearerToken();
-    const result = action === 'settings'
-      ? await getDmsSettings(token, body)
-      : await postDmsInquiry(token, body);
-
+    // Log: Informa che l'azione sta per essere eseguita
+    console.log(`[handler] Esecuzione azione: ${action} con payload:`, JSON.stringify(body.payload ?? body, null, 2));
+    
+    // Esegue il metodo corrispondente dall'oggetto ACTIONS
+    const result = await ACTIONS[action](body.payload ?? body);
+    
+    // Log di successo: informa che l'azione è stata completata con successo
+    console.log(`[handler] Azione "${action}" completata con successo. Risultato:`, JSON.stringify(result, null, 2));
+    
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(result),
     };
   } catch (err) {
-    const statusCode = err.message.includes('is required') ? 400 : 502;
+    // Determina il codice di errore: 400 se campo obbligatorio mancante, 502 se errore generico
+    const statusCode = err.message.includes('Missing required field') ? 400 : 502;
+    // Log di errore: informa dell'eccezione durante l'esecuzione dell'azione
+    console.error(`[handler] ERRORE durante esecuzione "${action}": [${statusCode}] ${err.message}`);
     return {
       statusCode,
       headers: { 'Content-Type': 'application/json' },
@@ -136,91 +146,17 @@ exports.handler = async (event) => {
 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
+// NUOVO: Funzione CLI per eseguire le azioni direttamente da riga di comando
+// Usata per testing e debug durante lo sviluppo
 
-async function runSettings(country, brand, dealer) {
-  console.log('\n=== DMS Settings ===');
-  const token = await getBearerToken();
-  const result = await getDmsSettings(token, { country, brand, dealer });
-  console.log(JSON.stringify(result, null, 2));
-  return result;
-}
-
-/**
- * Builds the type-specific section of the InquiryRequest body.
- *   LFP → UpSelling.Packages  (empty array — populate before production use)
- *   WL  → WorkLines            (empty array — populate before production use)
- *   MP  → SpareParts.PartsItem (empty array — populate before production use)
- */async function runInquiry(args) {
-  const fileIdx = args.indexOf('--file');
-
-  let body;
-
-  if (fileIdx !== -1) {
-    // ── mode: full JSON file ──────────────────────────────────────────────
-    const filePath = args[fileIdx + 1];
-    if (!filePath) {
-      console.error('[ERROR] --file richiede un percorso file');
-      process.exit(1);
-    }
-    if (!fs.existsSync(filePath)) {
-      console.error(`[ERROR] File non trovato: ${filePath}`);
-      process.exit(1);
-    }
-    body = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-
-  } else {
-    // ── mode: positional args ─────────────────────────────────────────────
-    const [type, documentId, customerId, vehicleId] = args;
-    if (!type || !documentId || !customerId || !vehicleId) {
-      console.error('[ERROR] Uso: node index.js inquiry <type> <documentId> <customerId> <vehicleId>');
-      console.error('  type: LFP | WL | MP');
-      console.error('  Oppure: node index.js inquiry --file <path/to/body.json>');
-      process.exit(1);
-    }
-
-    // ApplicationArea (Sender/BODID/CreationDateTime) non viene più costruito
-    // qui: lo genera internamente postDmsInquiry() quando manca dal body.
-    body = {
-      PartsInquiryHeader: {
-        DocumentID:    documentId,
-        CustomerIdDms: customerId,
-        MessageType:   type,
-        VehicleID:     vehicleId,
-      },
-      ...buildTypeSection(type),
-    };
-  }
-
-  const type = body?.PartsInquiryHeader?.MessageType;
-  console.log(`\n=== DMS Inquiry (${type}) ===`);
-  const token = await getBearerToken();
-  const result = await postDmsInquiry(token, body);
-  console.log(JSON.stringify(result, null, 2));
-  return result;
-}
-
-async function main() {
-  const [, , command, ...args] = process.argv;
-
-  try {
-    if (command === 'settings') {
-      const [country = 'fr', brand = 'FT', dealer = '0062230'] = args;
-      await runSettings(country, brand, dealer);
-    } else if (command === 'inquiry') {
-      await runInquiry(args);
-    } else {
-      console.error('[ERROR] Comando non valido. Usa:');
-      console.error('  node index.js settings <country> <brand> <dealer>');
-      console.error('  node index.js inquiry <type> <documentId> <customerId> <vehicleId>');
-      console.error('  node index.js inquiry --file <path/to/body.json>');
-      process.exit(1);
-    }
-  } catch (err) {
-    console.error('\n[ERROR]', err.message);
-    process.exit(1);
-  }
-}
-
-if (require.main === module) {
-  main();
-}
+// NUOVO: Carica il payload dal file JSON e esegue l'azione specifificata
+async function runAction(action, payloadJsonFile) {
+  // Log: informa quale azione sta per essere eseguita
+  console.log(`\n=== MoparDoc: ${action} ===`);
+  
+  // Log: carica il file JSON con il payload
+  console.log(`[CLI] Caricamento payload da: ${payloadJsonFile}`);
+  const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
+  
+  // Log: informa i parametri caricati
+  console.log(`
