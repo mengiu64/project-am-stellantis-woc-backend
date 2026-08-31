@@ -24,11 +24,26 @@ const config = require('./config');
  * @param {string} bodyStr
  */
 function buildOptions(target, resourcePath, bearerToken, bodyStr) {
-  const endpoint = new URL(target.baseUrl);
+  // Protegge la costruzione dell'URL: se baseUrl è mancante o malformato,
+  // lancia un errore descrittivo invece di un opaco "Invalid URL"
+  let endpoint;
+  try {
+    endpoint = new URL(target.baseUrl);
+  } catch (err) {
+    throw new Error(`baseUrl non valido: "${target.baseUrl}" (basePath: "${target.basePath}", resource: "${resourcePath}")`);
+  }
+
+  // Compone hostname, porta e path definitivi della richiesta
+  const port = endpoint.port || 443;
+  const path = `${target.basePath}${resourcePath}`;
+
+  // Log: URL completo effettivamente chiamato (schema, host, porta, path)
+  console.log(`[buildOptions] URL chiamata: ${endpoint.protocol}//${endpoint.hostname}:${port}${path}`);
+
   return {
     hostname: endpoint.hostname,
-    port: endpoint.port || 443,
-    path: `${target.basePath}${resourcePath}`,
+    port,
+    path,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

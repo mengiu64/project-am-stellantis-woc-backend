@@ -5,8 +5,12 @@ const config = {
     // PingFederate OAuth2 (client_credentials flow)
     baseUrl: 'https://api-oidc-preprod.groupe-psa.com',
     basePath: '/as/token.oauth2',
-    clientId: process.env.MOPARDOC_CLIENT_ID,
-    clientSecret: process.env.MOPARDOC_CLIENT_SECRET,
+    // Endpoint completo PingFederate (baseUrl + basePath) — usato da authService.js per ottenere il token
+    url: 'https://api-oidc-preprod.groupe-psa.com/as/token.oauth2',
+    // Tipo di grant OAuth2 — client_credentials flow verso PingFederate
+    grantType: 'client_credentials',
+    clientId: process.env.MOPARDOC_PING_CLIENT_ID, // Client ID PingFederate dedicato (env reale della Lambda)
+    clientSecret: process.env.MOPARDOC_PING_CLIENT_SECRET, // Client secret PingFederate dedicato (env reale della Lambda)
     scope: 'prd:mdo',
     // Token cache duration (ms) — ricarica se scaduto + buffer di 30s
     cacheBufferMs: 30000,
@@ -20,14 +24,14 @@ const config = {
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 
-  // MoparDocs Services API (Stellantis) — Gestione JobCard e Documenti
-  // Endpoint per i metodi: getJobCardList, associateJobCard,
-  // getJobCardAndDocumentList, getDocumentsInfo, associateDocument, getDocuments,
-  // DeleteDocuments, DeleteJobcard
-  // NUOVO: Aggiunto target per i servizi MoparDocs Stellantis (non presente prima)
+  // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, getJobCardAndDocumentList,
+  // getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard
+  // Endpoint: POST /services/<action> su mopardocs.stellantis.com:4443
+  // Fonte: MoparDocs JobCard Associate v 3.0.15.1 documentation
+  // Valori di default allineati alla documentazione; override possibile via variabili d'ambiente
   moparDocsServices: {
-    baseUrl: 'https://lab-mopardocs.stellantis.com:4443', // Host del servizio Stellantis
-    basePath: '/services', // Path base comune a tutti i metodi Services
+    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://mopardocs.stellantis.com:4443', // Host servizio Stellantis (default da documentazione)
+    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/services', // Path base comune a tutti i metodi Services
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID, // Credenziale IBM API Connect (condivisa)
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET, // Credenziale IBM API Connect (condivisa)
   },
