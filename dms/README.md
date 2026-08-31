@@ -11,7 +11,7 @@ dms/
 ├── config.js          # Credenziali e URL di tutti i servizi
 ├── httpClient.js       # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js      # Autenticazione PingFederate → ******
-├── dmsService.js       # getDmsSettings / postDmsInquiry / buildTypeSection
+├── dmsService.js       # getDmsSettings / getCompanyTypes / getCustomerTitles / postDmsInquiry / buildTypeSection
 ├── index.js            # Entry point Lambda + CLI
 ├── WL_Request.json     # Esempio di payload completo per inquiry --file
 └── package.json
@@ -38,8 +38,10 @@ index.js
    ├─► authService.js  ──POST──► PingFederate  →  ******
    │
    └─► dmsService.js
-           ├─► getDmsSettings(token, params)  ──GET──►  /dms/settings
-           └─► postDmsInquiry(token, body)     ──POST──► /inquiry/DML/1.0/inquiry
+           ├─► getDmsSettings(token, params)      ──GET──►  /dms/settings
+           ├─► getCompanyTypes(token, params)      ──GET──►  /configurations/company-types
+           ├─► getCustomerTitles(token, params)     ──GET──►  /configurations/customer-titles
+           └─► postDmsInquiry(token, body)          ──POST──► /inquiry/DML/1.0/inquiry
 ```
 
 ---
@@ -57,6 +59,32 @@ node index.js settings <country> <brand> <dealer>
 **Esempio (esegui da console):**
 ```bash
 node index.js settings fr FT 0062230
+```
+
+### Company Types
+
+Recupera l'elenco di configurazione DML dei tipi società. Stesse credenziali (client_id/client_secret) e stesso bearer token di `settings` — cambiano solo path e query string (`country`+`language` invece di `country`+`brand`+`dealer`).
+
+```bash
+node index.js company-types <country> <language>
+```
+
+**Esempio (esegui da console):**
+```bash
+node index.js company-types FR fr
+```
+
+### Customer Titles
+
+Recupera l'elenco di configurazione DML dei titoli cliente. Stesse credenziali e stesso bearer token di `settings`/`company-types`.
+
+```bash
+node index.js customer-titles <country> <language>
+```
+
+**Esempio (esegui da console):**
+```bash
+node index.js customer-titles fr fr
 ```
 
 ### DMS Inquiry — argomenti posizionali
@@ -108,7 +136,7 @@ Utile quando serve popolare `UpSelling.Packages` / `WorkLines` / `SpareParts.Par
 node index.js inquiry --file ./WL_Request.json
 ```
 
-**Header inviati (entrambi i comandi):**
+**Header inviati (tutti i comandi — settings/company-types/customer-titles/inquiry):**
 | Header | Valore |
 |---|---|
 | `X-IBM-Client-Id` | configurato in `config.js` |

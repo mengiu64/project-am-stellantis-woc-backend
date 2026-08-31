@@ -74,3 +74,20 @@ build-PkFavoriteFunction:
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/pkFavorite)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+
+# JobCardFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché,
+# per il flusso di arricchimento prezzo/disponibilità del carrello
+# (jobCardService.js::getCartPriceAndAvailability), jobcard/jobCardService.js
+# richiede il codice sorgente di dms tramite path relativi (../dms/authService,
+# ../dms/dmsService): stesso identico motivo/pattern di
+# PkManagerFunction/SessionFunction/PkFavoriteFunction sopra.
+build-JobCardFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/jobcard" "$(ARTIFACTS_DIR)/dms"
+	cp -r jobcard/. "$(ARTIFACTS_DIR)/jobcard/"
+	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/jobcard/__tests__ "$(ARTIFACTS_DIR)"/jobcard/coverage "$(ARTIFACTS_DIR)"/jobcard/.env* \
+		"$(ARTIFACTS_DIR)"/jobcard/testCart.js "$(ARTIFACTS_DIR)"/jobcard/jobCardDetail-sample.json \
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/jobcard)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)

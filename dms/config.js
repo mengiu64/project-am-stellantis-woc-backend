@@ -47,6 +47,11 @@ module.exports = {
     baseUrl: 'https://emea-aws.dev.np-api.stellantis.com',
     settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
     inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
+    // "configurations" API: catalogo IBM API Connect diverso ("ps-stage") da
+    // quello di settings/inquiry ("ps-dev") — stessa peculiarità già presente
+    // per djc/jobcard (basePath '/ps-stage/...'), non collegata a DmlXTargetEnv.
+    companyTypesPath: '/ps-stage/extra/dml/configurations/v1/company-types',
+    customerTitlesPath: '/ps-stage/extra/dml/configurations/v1/customer-titles',
     ibmClientId: process.env.DML_IBM_CLIENT_ID,
     ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
     xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',

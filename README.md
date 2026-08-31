@@ -151,6 +151,8 @@ Lambda per le **impostazioni DMS** e le **richieste di inquiry** (parti/upgrade/
 | `event.action` | Funzione service | Descrizione |
 |---|---|---|
 | `settings` | `getDmsSettings(token, params)` | Recupera la configurazione DMS del dealer |
+| `company-types` | `getCompanyTypes(token, params)` | Recupera l'elenco configurazione DML dei tipi società |
+| `customer-titles` | `getCustomerTitles(token, params)` | Recupera l'elenco configurazione DML dei titoli cliente |
 | `inquiry` | `postDmsInquiry(token, body)` | Invia una richiesta DML inquiry (LFP / WL / MP) |
 
 #### Funzioni principali
@@ -159,9 +161,20 @@ Lambda per le **impostazioni DMS** e le **richieste di inquiry** (parti/upgrade/
 |---|---|---|
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) |
 | `dmsService` | `getDmsSettings(token, params)` | GET `/dms/settings?country=&brand=&dealer=` |
+| `dmsService` | `getCompanyTypes(token, params)` | GET `/configurations/company-types?country=&language=` |
+| `dmsService` | `getCustomerTitles(token, params)` | GET `/configurations/customer-titles?country=&language=` |
 | `dmsService` | `postDmsInquiry(token, body)` | POST `/inquiry/DML/1.0/inquiry` – tipi: `LFP` \| `WL` \| `MP` |
 | `dmsService` | `buildTypeSection(type)` | Helper: genera la sezione payload specifica per tipo (LFP/WL/MP) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
+
+#### Parametri `getCompanyTypes` / `getCustomerTitles`
+
+Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-IBM-Client-Id`/`X-IBM-Client-Secret`, `X-Target-Env`) — cambiano solo path e query string.
+
+| Campo | Obbligatorio | Descrizione |
+|---|---|---|
+| `country` | ✅ | Codice paese (es. `FR`) |
+| `language` | ✅ | Codice lingua (es. `fr`) |
 
 #### Parametri `postDmsInquiry`
 
@@ -182,6 +195,14 @@ Lambda per le **impostazioni DMS** e le **richieste di inquiry** (parti/upgrade/
 # Impostazioni DMS
 node index.js settings <country> <brand> <dealer>
 # es: node index.js settings fr FT 0062230
+
+# Tipi società
+node index.js company-types <country> <language>
+# es: node index.js company-types FR fr
+
+# Titoli cliente
+node index.js customer-titles <country> <language>
+# es: node index.js customer-titles fr fr
 
 # Inquiry — argomenti posizionali
 node index.js inquiry <type> <documentId> <customerId> <vehicleId>

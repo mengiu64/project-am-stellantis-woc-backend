@@ -365,11 +365,18 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${DmsFunction}"
       RetentionInDays: 30
 
+  # CodeUri: ./ + BuildMethod: makefile perché jobCardService.js::getCartPriceAndAvailability
+  # richiede in-process dms/authService + dms/dmsService (stesso pattern di
+  # PkManagerFunction/SessionFunction/PkFavoriteFunction, vedi Makefile) per la
+  # chiamata al gateway DML (prezzo/disponibilità ricambi e manodopera).
   JobCardFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-jobcard"
-      CodeUri: jobcard/
+      CodeUri: ./
+      Handler: jobcard/index.handler
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
@@ -379,6 +386,13 @@ Resources:
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+          # dms/config.js (in-process, vedi Makefile) — gateway DML usato da
+          # getCartPriceAndAvailability, stessi valori usati da PkManagerFunction/PkFavoriteFunction.
+          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
+          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
+          DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
+          DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
