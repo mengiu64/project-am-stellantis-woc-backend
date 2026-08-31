@@ -26,6 +26,8 @@ jest.mock('../../../dms/authService', () => ({
 
 jest.mock('../../../dms/dmsService', () => ({
   getDmsSettings: jest.fn().mockResolvedValue({ success: true, data: [] }),
+  getCompanyTypes: jest.fn().mockResolvedValue({ success: true, data: [] }),
+  getCustomerTitles: jest.fn().mockResolvedValue({ success: true, data: [] }),
 }));
 
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
@@ -47,9 +49,13 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
       brand: 'FT',
       dealer: '0073741',
     });
+    expect(dmsService.getCompanyTypes).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
+    expect(dmsService.getCustomerTitles).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
     expect(data.codmarket).toBe('1000');
     expect(data.sincom).toBe('0073741');
     expect(data.brandvehic_reftech).toBe('FT');
+    expect(data.companytypes).toEqual([]);
+    expect(data.customertitles).toEqual([]);
   });
 
   test('riusa i moduli già caricati (cache) su una seconda chiamata', async () => {
