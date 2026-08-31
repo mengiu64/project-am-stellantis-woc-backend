@@ -37,9 +37,15 @@ const {
 } = require('./moparDocService');
 
 function resolveActionAndBody(event) {
-  const rawPath  = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy) || '';
-  const segments = String(rawPath).split('/').filter(Boolean);
-  const action   = segments.length ? decodeURIComponent(segments[segments.length - 1]) : undefined;
+  // Priorità 1: event.action (direct invoke)
+  let action = event.action;
+  
+  // Priorità 2: estrai dal path (API Gateway proxy)
+  if (!action) {
+    const rawPath  = event.rawPath || event.path || (event.pathParameters && event.pathParameters.proxy) || '';
+    const segments = String(rawPath).split('/').filter(Boolean);
+    action = segments.length ? decodeURIComponent(segments[segments.length - 1]) : undefined;
+  }
 
   let parsedBody = {};
   if (event.body) {
