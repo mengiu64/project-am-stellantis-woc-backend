@@ -20,18 +20,6 @@ const config = {
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 
-  // MoparDocs Services API (Stellantis) — Gestione JobCard e Documenti
-  // Endpoint per i metodi: getJobCardList, associateJobCard,
-  // getJobCardAndDocumentList, getDocumentsInfo, associateDocument, getDocuments,
-  // DeleteDocuments, DeleteJobcard
-  // NUOVO: Aggiunto target per i servizi MoparDocs Stellantis (non presente prima)
-  moparDocsServices: {
-    baseUrl: 'https://lab-mopardocs.stellantis.com:4443', // Host del servizio Stellantis
-    basePath: '/services', // Path base comune a tutti i metodi Services
-    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID, // Credenziale IBM API Connect (condivisa)
-    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET, // Credenziale IBM API Connect (condivisa)
-  },
-
   // MoparDocs Browser API (Fiat) — upload e download documenti
   moparDocsApi: {
     baseUrl: 'https://lab-examaftersales.fiat.com',
@@ -40,14 +28,16 @@ const config = {
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 
-  // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, etc.
+  // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, getJobCardAndDocumentList,
+  // getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard
   // Endpoint: POST /services/<action> su mopardocs.stellantis.com:4443
   // Fonte: MoparDocs JobCard Associate v 3.0.15.1 documentation
+  // Valori di default allineati alla documentazione; override possibile via variabili d'ambiente
   moparDocsServices: {
-    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://mopardocs.stellantis.com:4443',
-    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/services',
-    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
-    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
+    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://mopardocs.stellantis.com:4443', // Host servizio Stellantis (default da documentazione)
+    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/services', // Path base comune a tutti i metodi Services
+    ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID, // Credenziale IBM API Connect (condivisa)
+    ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET, // Credenziale IBM API Connect (condivisa)
   },
 };
 
