@@ -1,40 +1,61 @@
   /**
  * index.js — Entry point (moparDoc)
  *
- * Espone 13 azioni verso i gateway MoparDoc:
+ * Espone 11 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
+ *  ── 4 metodi originali (job-docs PSA + MoparDocs FCA):
+ * Espone 11 azioni verso i gateway MoparDoc:
  *  - createJobCard     (POST /job-docs/connector/v1/CreateJobCard)
  *  - createAccessToken (POST /job-docs/connector/v1/CreateAccessToken)
  *  - getUploadDocURL   (POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL)
  *  - uploadedDoc       (POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc)
- *  - getJobCardList    (POST /services/getJobCardList) [NUOVO]
- *  - associateJobCard  (POST /services/associateJobCard) [NUOVO]
- *  - getJobCardAndDocumentList (POST /services/getJobCardAndDocumentList) [NUOVO]
- *  - getDocumentsInfo  (POST /services/getDocumentsInfo) [NUOVO]
- *  - associateDocument (POST /services/associateDocument) [NUOVO]
- *  - getDocuments      (POST /services/getDocuments) [NUOVO]
- *  - DeleteDocuments   (POST /services/DeleteDocuments) [NUOVO]
- *  - DeleteJobcard     (POST /services/DeleteJobcard) [NUOVO]
- *  - getDocumentsDownloadUrl (POST /Mopardocs/MoparDocsApi/Browser/getDocumentsDownloadUrl) [NUOVO]
+ *
+ *  ── 7 metodi nuovi (MoparDocs Services Stellantis):
+ *  - getJobCardList               [NUOVO]
+ *  - getJobCardAndDocumentList    [NUOVO]
+ *  - getDocumentsInfo             [NUOVO]
+ *  - getDocuments                 [NUOVO]
+ *  - DeleteDocuments              [NUOVO]
+ *  - DeleteJobcard                [NUOVO]
+ *  - getDocumentsDownloadUrl      [NUOVO]
+ *
+ * Usage:
+ *   node index.js createJobCard     <payloadJsonFile>
+ *   node index.js createAccessToken <payloadJsonFile>
+ *   node index.js getUploadDocURL   <payloadJsonFile>
+ *   node index.js uploadedDoc       <payloadJsonFile>
+ *   node index.js getJobCardList               <payloadJsonFile> [NUOVO]
+ *   node index.js getJobCardAndDocumentList    <payloadJsonFile> [NUOVO]
+ *   node index.js getDocumentsInfo             <payloadJsonFile> [NUOVO]
+ *   node index.js getDocuments                 <payloadJsonFile> [NUOVO]
+ *   node index.js DeleteDocuments              <payloadJsonFile> [NUOVO]
+ *   node index.js DeleteJobcard                <payloadJsonFile> [NUOVO]
+ *   node index.js getDocumentsDownloadUrl      <payloadJsonFile> [NUOVO]
+ *
+ * Esempio payload createJobCard:
+ *   { "vin": "...", "market": "IT", "source": "WOC", "UserName": "...",
+ *     "dealerCode": "0062230", "JobCard_Title": "...", "TAMAccessCode": "..." }
+ *
+ * Esempio payload createAccessToken:
+ *   { "JobCardId": "...", "UserName": "...", "dealerCode": "0062230",
+ *     "market": "IT", "APIAccessCode": "..." }
  */
 
 const fs = require('fs');
-// NUOVO: Importa 9 nuovi metodi dal servizio moparDocService (in aggiunta ai 4 pre-esistenti)
 const {
   createJobCard,
   createAccessToken,
   getUploadDocURL,
   uploadedDoc,
-  // ────── Metodi NUOVI ──────
-  getJobCardList, // Recupera lista JobCard per VIN, dealer, market
-  associateJobCard, // Associa JobCard a Ticket
-  getJobCardAndDocumentList, // Recupera sia JobCard che Documenti
-  getDocumentsInfo, // Ottiene info su documenti specifici
-  associateDocument, // Associa documento a Ticket
-  getDocuments, // Recupera documenti per JobCard
-  DeleteDocuments, // Cancella documenti
-  DeleteJobcard, // Cancella JobCard
-  getDocumentsDownloadUrl, // Genera URL download documento
+  getJobCardList,
+  getJobCardAndDocumentList,
+  getDocumentsInfo,
+  getDocuments,
+  DeleteDocuments,
+  DeleteJobcard,
+  getDocumentsDownloadUrl,
 } = require('./moparDocService');
+
+// ── Lambda handler ────────────────────────────────────────────────────────────
 
 function resolveActionAndBody(event) {
   // Priorità 1: event.action (direct invoke)
@@ -60,19 +81,17 @@ function resolveActionAndBody(event) {
   return { action, body };
 }
 
-// NUOVO: Array esteso con 9 nuove azioni oltre alle 4 pre-esistenti (13 totali)
+// NUOVO: Array esteso con 7 nuove azioni oltre alle 4 pre-esistenti (11 totali)
 const VALID_ACTIONS = [
   // ────── Metodi originali (4) ──────
   'createJobCard', // Crea JobCard
   'createAccessToken', // Crea token di accesso
   'getUploadDocURL', // Ottiene URL upload documento
   'uploadedDoc', // Notifica upload documento completato
-  // ────── Metodi NUOVI (9) ──────
+  // ────── Metodi NUOVI (7) ──────
   'getJobCardList', // Recupera lista JobCard
-  'associateJobCard', // Associa JobCard a Ticket
   'getJobCardAndDocumentList', // Recupera JobCard e Documenti
   'getDocumentsInfo', // Ottiene informazioni documenti
-  'associateDocument', // Associa documento a Ticket
   'getDocuments', // Recupera documenti
   'DeleteDocuments', // Cancella documenti
   'DeleteJobcard', // Cancella JobCard
@@ -87,12 +106,10 @@ const ACTIONS = {
   createAccessToken, // Ottiene token accesso dall'endpoint job-docs
   getUploadDocURL, // Recupera URL upload presso il gateway MoparDocs Browser
   uploadedDoc, // Notifica al gateway che l'upload è completato
-  // ────── Dispatcher NUOVO (9 metodi) ──────
+  // ────── Dispatcher NUOVO (7 metodi) ──────
   getJobCardList, // Recupera lista JobCard per VIN, dealer, market presso MoparDocs Services
-  associateJobCard, // Associa un JobCard a un Ticket presso MoparDocs Services
   getJobCardAndDocumentList, // Recupera sia JobCard che relativa lista Documenti presso MoparDocs Services
   getDocumentsInfo, // Ottiene informazioni dettagliate su documenti specifici presso MoparDocs Services
-  associateDocument, // Associa un documento a un Ticket presso MoparDocs Services
   getDocuments, // Recupera lista documenti associati a JobCard presso MoparDocs Services
   DeleteDocuments, // Cancella documenti specifici presso MoparDocs Services
   DeleteJobcard, // Cancella una JobCard presso MoparDocs Services
@@ -201,10 +218,8 @@ async function main() {
       console.error('  node index.js getUploadDocURL   <payloadJsonFile>');
       console.error('  node index.js uploadedDoc       <payloadJsonFile>');
       console.error('  node index.js getJobCardList    <payloadJsonFile>');
-      console.error('  node index.js associateJobCard  <payloadJsonFile>');
       console.error('  node index.js getJobCardAndDocumentList <payloadJsonFile>');
       console.error('  node index.js getDocumentsInfo  <payloadJsonFile>');
-      console.error('  node index.js associateDocument <payloadJsonFile>');
       console.error('  node index.js getDocuments      <payloadJsonFile>');
       console.error('  node index.js DeleteDocuments   <payloadJsonFile>');
       console.error('  node index.js DeleteJobcard     <payloadJsonFile>');

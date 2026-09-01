@@ -5,9 +5,28 @@ jest.mock('../moparDocService', () => ({
   createAccessToken: jest.fn(),
   getUploadDocURL: jest.fn(),
   uploadedDoc: jest.fn(),
+  getJobCardList: jest.fn(),
+  getJobCardAndDocumentList: jest.fn(),
+  getDocumentsInfo: jest.fn(),
+  getDocuments: jest.fn(),
+  DeleteDocuments: jest.fn(),
+  DeleteJobcard: jest.fn(),
+  getDocumentsDownloadUrl: jest.fn(),
 }));
 
-const { createJobCard, createAccessToken, getUploadDocURL, uploadedDoc } = require('../moparDocService');
+const {
+  createJobCard,
+  createAccessToken,
+  getUploadDocURL,
+  uploadedDoc,
+  getJobCardList,
+  getJobCardAndDocumentList,
+  getDocumentsInfo,
+  getDocuments,
+  DeleteDocuments,
+  DeleteJobcard,
+  getDocumentsDownloadUrl,
+} = require('../moparDocService');
 const { handler } = require('../index');
 
 describe('moparDoc index.handler', () => {

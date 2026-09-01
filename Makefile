@@ -46,19 +46,24 @@ build-PkManagerFunction:
 # flusso evolutivo "username -> myPeople -> dms/settings", session/src/repositories/
 # myPeopleDmsSessionRepository.js richiede il codice sorgente di myPeople/dms tramite
 # path relativi (../../../myPeople/..., ../../../dms/...): stesso identico motivo/pattern
-# di PkManagerFunction sopra.
+# di PkManagerFunction sopra. Include anche dmlConfigSync/ (db.js + DmlConfigRepository.js)
+# perché la stessa repository legge la cache company-types/customer-titles (tabella
+# woc.dml_configurations) tramite require(path.resolve(__dirname, '../../../dmlConfigSync/...')).
 build-SessionFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/dms"
+	mkdir -p "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dmlConfigSync"
 	cp -r session/. "$(ARTIFACTS_DIR)/session/"
 	cp -r myPeople/. "$(ARTIFACTS_DIR)/myPeople/"
 	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
 		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
-		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
+		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/myPeople)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
 
 # PkFavoriteFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché,
 # per l'arricchimento dei preferiti in GET (una chiamata al gateway DML per ciascun
@@ -90,4 +95,19 @@ build-JobCardFunction:
 		"$(ARTIFACTS_DIR)"/jobcard/testCart.js "$(ARTIFACTS_DIR)"/jobcard/jobCardDetail-sample.json \
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/jobcard)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+
+# DmlConfigSyncFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
+# dmlConfigSync/index.js richiede il codice sorgente di dms tramite path relativi
+# (../dms/authService, ../dms/dmsService) per chiamare company-types/customer-titles
+# per ciascun mercato abilitato: stesso identico motivo/pattern di
+# PkManagerFunction/SessionFunction/PkFavoriteFunction/JobCardFunction sopra.
+build-DmlConfigSyncFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/dmlConfigSync" "$(ARTIFACTS_DIR)/dms"
+	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
+	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md \
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)

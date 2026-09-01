@@ -63,7 +63,7 @@ node index.js settings fr FT 0062230
 
 ### Company Types
 
-Recupera l'elenco di configurazione DML dei tipi società. Stesse credenziali (client_id/client_secret) e stesso bearer token di `settings` — cambiano solo path e query string (`country`+`language` invece di `country`+`brand`+`dealer`).
+Recupera l'elenco di configurazione DML dei tipi società. Stesse credenziali (client_id/client_secret) e stesso bearer token di `settings` — cambiano solo path e query string (`country`+`language` invece di `country`+`brand`+`dealer`). Come `settings`, un `404` ("nessun dato per questi parametri") non è un errore: viene restituito `{ success: false, data: [] }`.
 
 ```bash
 node index.js company-types <country> <language>
@@ -76,7 +76,7 @@ node index.js company-types FR fr
 
 ### Customer Titles
 
-Recupera l'elenco di configurazione DML dei titoli cliente. Stesse credenziali e stesso bearer token di `settings`/`company-types`.
+Recupera l'elenco di configurazione DML dei titoli cliente. Stesse credenziali e stesso bearer token di `settings`/`company-types`. Stesso comportamento su `404` (`{ success: false, data: [] }`, nessun errore).
 
 ```bash
 node index.js customer-titles <country> <language>

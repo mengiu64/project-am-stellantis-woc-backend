@@ -16,6 +16,7 @@ const { SessionNotFoundError } = require('../errors');
 let _readUserProfiles;
 let _getBearerToken;
 let _getDmsSettings;
+let _getDmlConfiguration;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -36,6 +37,25 @@ function loadGetDmsSettings() {
     ({ getDmsSettings: _getDmsSettings } = require(path.resolve(__dirname, '../../../dms/dmsService')));
   }
   return _getDmsSettings;
+}
+
+// company-types/customer-titles NON vengono più chiamati live (dms/getCompanyTypes,
+// dms/getCustomerTitles): sono invece letti dalla cache popolata una volta al giorno
+// dalla lambda "dmlConfigSync" (tabella woc.dml_configurations su Aurora PostgreSQL,
+// vedi sql/create_table_dml_configurations.sql), cosi' session non deve più chiamare
+// i due servizi DML ad ogni richiesta. CodeUri/BuildMethod: makefile di SessionFunction
+// impacchetta dmlConfigSync/ come cartella sorella di session/ (vedi Makefile), stesso
+// pattern già usato per myPeople/ e dms/.
+function loadGetDmlConfiguration() {
+  if (!_getDmlConfiguration) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
+    const { getDmlConfiguration } = require(path.resolve(__dirname, '../../../dmlConfigSync/DmlConfigRepository'));
+    _getDmlConfiguration = async ({ country, language }) => {
+      const pool = await getPool();
+      return getDmlConfiguration(pool, { country, language });
+    };
+  }
+  return _getDmlConfiguration;
 }
 
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
@@ -76,13 +96,27 @@ const BRAND_CODE_TO_REFTECH = {
  *      convenzione usata per tutte le altre chiavi di questo oggetto). Espone inoltre
  *      `firstname`/`lastname` (da User.Attributes.FIRSTNAME/LASTNAME) e `profile`
  *      (da User.Applications, campo PROFILE dell'item con APPLICATION="wiADV.DL").
+ *      Espone infine `companytypes`/`customertitles`: gli array cache letti dalla
+ *      tabella woc.dml_configurations (popolata una volta al giorno dalla lambda
+ *      "dmlConfigSync" chiamando dms/getCompanyTypes/dms/getCustomerTitles per i
+ *      mercati abilitati), indicizzati per `country`/`language` (da
+ *      `Attributes.NATIONiso2`). Mai `null`/eccezione: `[]` se non esiste ancora
+ *      una riga cache per il mercato, o se la lettura dal DB fallisce per
+ *      qualunque motivo (la disponibilità di questi due campi non deve mai
+ *      condizionare il resto della risposta di sessione).
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
-  constructor({ readUserProfilesFn, getBearerTokenFn, getDmsSettingsFn } = {}) {
+  constructor({
+    readUserProfilesFn,
+    getBearerTokenFn,
+    getDmsSettingsFn,
+    getDmlConfigurationFn,
+  } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
     this._getBearerTokenFn = getBearerTokenFn;
     this._getDmsSettingsFn = getDmsSettingsFn;
+    this._getDmlConfigurationFn = getDmlConfigurationFn;
   }
 
   /**
@@ -122,14 +156,31 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
     const getBearerToken = this._getBearerTokenFn || loadGetBearerToken();
     const getDmsSettings = this._getDmsSettingsFn || loadGetDmsSettings();
+    const getDmlConfiguration = this._getDmlConfigurationFn || loadGetDmlConfiguration();
 
-    let dmsSettings;
+    let token;
     try {
-      const token = await getBearerToken();
-      dmsSettings = await getDmsSettings(token, { country, brand: brandReftech, dealer });
+      token = await getBearerToken();
     } catch (err) {
       throw new Error(`[session] dms/settings failed: ${err.message}`);
     }
+
+    // dms/settings resta una chiamata live (stesso bearer token/credenziali IBM).
+    // La lettura della cache company-types/customer-titles (woc.dml_configurations)
+    // è invece indipendente dal bearer token DML e non deve mai far fallire la
+    // sessione: un problema di connettività al DB (o l'assenza di una riga cache
+    // per il mercato) si traduce semplicemente in `[]`, non in un'eccezione.
+    const [dmsSettings, dmlConfiguration] = await Promise.all([
+      getDmsSettings(token, { country, brand: brandReftech, dealer }).catch((err) => {
+        throw new Error(`[session] dms/settings failed: ${err.message}`);
+      }),
+      country
+        ? getDmlConfiguration({ country, language: country }).catch((err) => {
+          console.error(`[session] lettura cache dml/configurations fallita per country="${country}": ${err.message}`);
+          return { companyTypes: [], customerTitles: [] };
+        })
+        : Promise.resolve({ companyTypes: [], customerTitles: [] }),
+    ]);
 
     const dmsMap = buildDmsSettingsMap(dmsSettings);
 
@@ -171,6 +222,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       maxdiscountval: null,
       oics: oics.map(lowercaseKeys),
       applications: applications.map(lowercaseKeys),
+      companytypes: Array.isArray(dmlConfiguration && dmlConfiguration.companyTypes)
+        ? dmlConfiguration.companyTypes
+        : [],
+      customertitles: Array.isArray(dmlConfiguration && dmlConfiguration.customerTitles)
+        ? dmlConfiguration.customerTitles
+        : [],
     };
   }
 }

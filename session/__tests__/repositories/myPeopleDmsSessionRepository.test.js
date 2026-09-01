@@ -42,11 +42,32 @@ const DMS_SETTINGS_RESPONSE = {
   ],
 };
 
+// Esempio di risultato reale di dmlConfigSync/DmlConfigRepository::getDmlConfiguration
+// (cache popolata una volta al giorno dalla lambda dmlConfigSync a partire dalle
+// risposte di dms/getCompanyTypes / dms/getCustomerTitles).
+const DML_CONFIGURATION_RESPONSE = {
+  companyTypes: [
+    { code: 'FR001', country: 'FR', language_code: 'fr', description: 'Particulier' },
+    { code: 'FR002', country: 'FR', language_code: 'fr', description: 'Société' },
+  ],
+  customerTitles: [
+    { code: 'FR001', country: 'FR', language_code: 'fr', description: 'Mme' },
+    { code: 'FR002', country: 'FR', language_code: 'fr', description: 'Mlle' },
+    { code: 'FR003', country: 'FR', language_code: 'fr', description: 'Mr et Mme' },
+    { code: 'FR004', country: 'FR', language_code: 'fr', description: 'Mr' },
+    { code: 'FR005', country: 'FR', language_code: 'fr', description: 'Mr et Mme' },
+    { code: 'FR006', country: 'FR', language_code: 'fr', description: 'Lady' },
+    { code: 'FR007', country: 'FR', language_code: 'fr', description: 'Miss' },
+    { code: 'FR008', country: 'FR', language_code: 'fr', description: 'Ing' },
+  ],
+};
+
 function buildRepository(overrides = {}) {
   return new MyPeopleDmsSessionRepository({
     readUserProfilesFn: jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE),
     getBearerTokenFn: jest.fn().mockResolvedValue('***TOKEN***'),
     getDmsSettingsFn: jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE),
+    getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
     ...overrides,
   });
 }
@@ -56,7 +77,13 @@ describe('MyPeopleDmsSessionRepository', () => {
     const readUserProfilesFn = jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE);
     const getBearerTokenFn = jest.fn().mockResolvedValue('***TOKEN***');
     const getDmsSettingsFn = jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE);
-    const repository = buildRepository({ readUserProfilesFn, getBearerTokenFn, getDmsSettingsFn });
+    const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
+    const repository = buildRepository({
+      readUserProfilesFn,
+      getBearerTokenFn,
+      getDmsSettingsFn,
+      getDmlConfigurationFn,
+    });
 
     const data = await repository.getSessionData('0073741.d235');
 
@@ -67,6 +94,7 @@ describe('MyPeopleDmsSessionRepository', () => {
       brand: 'FT',
       dealer: '0073741',
     });
+    expect(getDmlConfigurationFn).toHaveBeenCalledWith({ country: 'it', language: 'it' });
 
     expect(data).toEqual({
       codmarket: '1000',
@@ -109,6 +137,8 @@ describe('MyPeopleDmsSessionRepository', () => {
         { market: '1000', code: '00007584', state: 'ACTIVE', brands: '00,77,66,57,70,83', main: 'Y' },
       ],
       applications: [],
+      companytypes: DML_CONFIGURATION_RESPONSE.companyTypes,
+      customertitles: DML_CONFIGURATION_RESPONSE.customerTitles,
     });
   });
 
@@ -200,6 +230,15 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(data.brandvehic_reftech).toBeNull();
   });
 
+  test('propaga un errore avvolto quando getBearerToken fallisce', async () => {
+    const repository = buildRepository({
+      getBearerTokenFn: jest.fn().mockRejectedValue(new Error('token expired')),
+    });
+
+    await expect(repository.getSessionData('0073741.d235'))
+      .rejects.toThrow('[session] dms/settings failed: token expired');
+  });
+
   test('propaga un errore avvolto quando dms/settings fallisce', async () => {
     const repository = buildRepository({
       getDmsSettingsFn: jest.fn().mockRejectedValue(new Error('HTTP 502')),
@@ -207,6 +246,63 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     await expect(repository.getSessionData('0073741.d235'))
       .rejects.toThrow('[session] dms/settings failed: HTTP 502');
+  });
+
+  test('non propaga (mai) errori di lettura della cache dml/configurations: companytypes/customertitles diventano []', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const repository = buildRepository({
+      getDmlConfigurationFn: jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.companytypes).toEqual([]);
+    expect(data.customertitles).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
+  });
+
+  test('companytypes/customertitles chiamano con country/language derivati da NATIONiso2', async () => {
+    const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
+    const repository = buildRepository({ getDmlConfigurationFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(getDmlConfigurationFn).toHaveBeenCalledWith({ country: 'it', language: 'it' });
+    expect(data.companytypes).toEqual(DML_CONFIGURATION_RESPONSE.companyTypes);
+    expect(data.customertitles).toEqual(DML_CONFIGURATION_RESPONSE.customerTitles);
+  });
+
+  test('companytypes/customertitles sono array vuoti quando la cache non contiene ancora un array valido', async () => {
+    const repository = buildRepository({
+      getDmlConfigurationFn: jest.fn().mockResolvedValue({ companyTypes: null, customerTitles: undefined }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.companytypes).toEqual([]);
+    expect(data.customertitles).toEqual([]);
+  });
+
+  test('companytypes/customertitles sono [] e la cache non viene interrogata quando NATIONiso2 è assente', async () => {
+    const getDmlConfigurationFn = jest.fn();
+    const repository = buildRepository({
+      getDmlConfigurationFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', USERTYPE: 'DEALER' },
+            OICs: [{ CODE: '00010925', BRANDS: '00', MAIN: 'Y' }],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(getDmlConfigurationFn).not.toHaveBeenCalled();
+    expect(data.companytypes).toEqual([]);
+    expect(data.customertitles).toEqual([]);
   });
 
   test('dmlcustomerupdate ricade su accountCustomerUpdate quando knownCustomerUpdate è assente', async () => {
