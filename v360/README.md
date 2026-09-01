@@ -85,6 +85,8 @@ npm run getdetails -- VF3VEAHHWFZ062040
 
 > ℹ️ La risposta di `getdetails` include il campo `data.externalHexColor` (attualmente `null`), inserito subito prima di `data.externalColor` in previsione di una futura valorizzazione da DB.
 
+> ℹ️ La risposta di `getdetails` viene arricchita deducendo l'`owner` da `data.brandCode` tramite l'anagrafica `brandowner.json` (letta da S3). Se `owner === "XP"`, viene analizzato `data.salesCode` per trovare il primo codice presente nell'anagrafica `energytype.json` (letta da S3) e valorizzare `data.energyTypeDesignation` con la relativa descrizione.
+
 ---
 
 ## Parametri
@@ -129,6 +131,8 @@ V360_PING_CLIENT_SECRET=your_ping_client_secret_here
 ASV_CLIENT_ID=your_asv_client_id_here
 ASV_CLIENT_SECRET=your_asv_client_secret_here
 ASV_GETDETAILS_CLIENT_ID=your_asv_getdetails_client_id_here
+CONFIG_BUCKET_NAME=your_config_bucket_name_here
+CONFIG_KEY_PREFIX=config
 ```
 
 `config.js` carica automaticamente il file `.env` se presente, senza dipendenze npm.
@@ -144,6 +148,8 @@ Configura le variabili d'ambiente direttamente sull'ambiente di esecuzione (es. 
 | `ASV_CLIENT_ID` | Client ID Stellantis ASV360 API |
 | `ASV_CLIENT_SECRET` | Client Secret Stellantis ASV360 API |
 | `ASV_GETDETAILS_CLIENT_ID` | Client identifier usato di default nel body di `getdetails` (specifico per ambiente) |
+| `CONFIG_BUCKET_NAME` | Nome del bucket S3 con le anagrafiche statiche (`brandowner.json`, `energytype.json`) |
+| `CONFIG_KEY_PREFIX` | Prefisso della key S3 (`{prefix}/brandowner.json`, `{prefix}/energytype.json`), default `config` |
 
 ---
 

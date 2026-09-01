@@ -26,6 +26,12 @@ jest.mock('../config', () => ({
   },
 }));
 jest.mock('../httpClient');
+jest.mock('../s3ConfigRepository', () => ({
+  S3ConfigRepository: jest.fn().mockImplementation(() => ({
+    getBrandOwners: jest.fn().mockResolvedValue(require('../../config/brandowner.json')),
+    getEnergyTypes: jest.fn().mockResolvedValue(require('../../config/energytype.json')),
+  })),
+}));
 
 const { httpsRequest } = require('../httpClient');
 const { otaCompatibility, getDetails } = require('../v360Service');

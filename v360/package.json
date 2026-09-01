@@ -20,6 +20,9 @@
     "jest": "^29.7.0",
     "jest-html-reporters": "^3.1.7"
   },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1083.0"
+  },
   "jest": {
     "testEnvironment": "node",
     "testMatch": [
@@ -28,7 +31,8 @@
     "collectCoverageFrom": [
       "authService.js",
       "httpClient.js",
-      "v360Service.js"
+      "v360Service.js",
+      "s3ConfigRepository.js"
     ],
     "coverageReporters": [
       "html",

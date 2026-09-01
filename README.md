@@ -556,7 +556,7 @@ pkMenupricing/
 
 ### pkManager
 
-Lambda orchestratore che gestisce la **configurazione e la validazione dei pacchetti** su più web service (ePer, DocSOA, MenuPricing), determinando quali pacchetti configurati sono effettivamente disponibili per un VIN e recuperandone il dettaglio. Richiede il codice sorgente dei tre moduli fratelli (`pkEper`, `pkDocsoa`, `pkMenupricing`) tramite path relativi: in AWS viene per questo buildato con un `Makefile` custom (`Metadata: BuildMethod: makefile` in `template.yaml`) che ricrea la stessa struttura di cartelle sibling dentro il pacchetto Lambda.
+Lambda orchestratore che gestisce la **configurazione e la validazione dei pacchetti** su più web service (ePer, DocSOA, MenuPricing), determinando quali pacchetti configurati sono effettivamente disponibili per un VIN e recuperandone il dettaglio. Richiede il codice sorgente dei tre moduli fratelli (`pkEper`, `pkDocsoa`, `pkMenupricing`) tramite path relativi, oltre a `dbManager` (usato da `getPkList` per risolvere `pkwstouse` da `HQ_PKCONFIG`, dato `codbrand` + `market`/`codmarket`): in AWS viene per questo buildato con un `Makefile` custom (`Metadata: BuildMethod: makefile` in `template.yaml`) che ricrea la stessa struttura di cartelle sibling dentro il pacchetto Lambda.
 
 #### Handlers disponibili
 
@@ -566,7 +566,7 @@ Lambda orchestratore che gestisce la **configurazione e la validazione dei pacch
 | `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersezione tra config e pacchetti live dal WS |
 | `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + dettaglio di ogni pacchetto in parallelo |
 | `getPriceAndAvailability` | `manager.getPriceAndAvailability(market, pkwstouse, VIN)` | `getValidPackagesDetail` + arricchimento `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga di `listaOperazioni`/`listaRicambi` |
-| `getPkList` | `manager.getPkList(market, pkwstouse, VIN)` | Orchestratore end-to-end: come `getPriceAndAvailability`, ma **normalizza** ogni pacchetto allo stesso set di chiavi (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), a prescindere dal `pkwstouse` di origine |
+| `getPkList` | `manager.getPkList(codbrand, documentId, customerId, VIN, market, dealerIdentificationCode)` | Orchestratore end-to-end: risolve `pkwstouse` da `HQ_PKCONFIG` tramite `dbManager.getPkwstouse(pool, { codmarket: market, codbrand })`, poi come `getPriceAndAvailability`, ma **normalizza** ogni pacchetto allo stesso set di chiavi (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), a prescindere dal `pkwstouse` risolto |
 
 `pkwstouse` accetta i valori: `eper`, `docsoa`, `menupricing`.
 

@@ -464,6 +464,8 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
       Environment:
         Variables:
           V360_PING_CLIENT_ID:     !Ref V360PingClientId
@@ -471,6 +473,7 @@ Resources:
           ASV_CLIENT_ID:      !Ref AsvClientId
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          CONFIG_BUCKET_NAME: !Ref TranslationsBucket
 
   V360FunctionLogGroup:
     Type: AWS::Logs::LogGroup

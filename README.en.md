@@ -405,7 +405,7 @@ pkMenupricing/
 
 ### pkManager
 
-Orchestrator Lambda that manages **package configuration and validation** across multiple web services (ePer, DocSOA, MenuPricing), determining which configured packages are actually available for a VIN and fetching their details. It requires the source code of the three sibling modules (`pkEper`, `pkDocsoa`, `pkMenupricing`) via relative paths: in AWS it is therefore built with a custom `Makefile` (`Metadata: BuildMethod: makefile` in `template.yaml`) that recreates the same sibling folder structure inside the Lambda package.
+Orchestrator Lambda that manages **package configuration and validation** across multiple web services (ePer, DocSOA, MenuPricing), determining which configured packages are actually available for a VIN and fetching their details. It requires the source code of the three sibling modules (`pkEper`, `pkDocsoa`, `pkMenupricing`) via relative paths, plus `dbManager` (used by `getPkList` to resolve `pkwstouse` from `HQ_PKCONFIG`, given `codbrand` + `market`/`codmarket`): in AWS it is therefore built with a custom `Makefile` (`Metadata: BuildMethod: makefile` in `template.yaml`) that recreates the same sibling folder structure inside the Lambda package.
 
 #### Available handlers
 
@@ -415,7 +415,7 @@ Orchestrator Lambda that manages **package configuration and validation** across
 | `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersection between config and live packages from the WS |
 | `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + detail of each package in parallel |
 | `getPriceAndAvailability` | `manager.getPriceAndAvailability(market, pkwstouse, VIN)` | `getValidPackagesDetail` + `AV_LOCAL`/`PRICE`/`SCONTO` enrichment for each `listaOperazioni`/`listaRicambi` row |
-| `getPkList` | `manager.getPkList(market, pkwstouse, VIN)` | End-to-end orchestrator: like `getPriceAndAvailability`, but **normalizes** every package to the same set of keys (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), regardless of the source `pkwstouse` |
+| `getPkList` | `manager.getPkList(codbrand, documentId, customerId, VIN, market, dealerIdentificationCode)` | End-to-end orchestrator: resolves `pkwstouse` from `HQ_PKCONFIG` via `dbManager.getPkwstouse(pool, { codmarket: market, codbrand })`, then behaves like `getPriceAndAvailability`, but **normalizes** every package to the same set of keys (`result, codice, descrizione, pkPrice, isFixedPrice, packageType, niveau, listaOperazioni, listaRicambi, category`), regardless of the resolved `pkwstouse` |
 
 `pkwstouse` accepts the values: `eper`, `docsoa`, `menupricing`.
 

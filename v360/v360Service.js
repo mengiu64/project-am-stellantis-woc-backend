@@ -4,8 +4,9 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
-const brandOwners = require('../config/brandowner.json');
-const energyTypes = require('../config/energytype.json');
+const { S3ConfigRepository } = require('./s3ConfigRepository');
+
+const configRepository = new S3ConfigRepository();
 
 /**
  * Builds common HTTPS request options for ASV360 API POST calls.
@@ -104,14 +105,16 @@ function insertKeyBefore(obj, beforeKey, newKey, newValue) {
 }
 
 /**
- * Deduces the owner from data.brandCode using the static brandowner.json registry,
- * and, when owner is "XP", determines data.energyTypeDesignation by matching the first
- * energytype.json code found in data.salesCode.
+ * Deduces the owner from data.brandCode using the static brandowner.json registry
+ * (letto da S3 tramite S3ConfigRepository), e, quando owner è "XP", determina
+ * data.energyTypeDesignation individuando il primo codice di energytype.json
+ * presente in data.salesCode.
  *
  * @param {object} data - the "data" property of the getdetails response body
- * @returns {void} mutates data in place
+ * @returns {Promise<void>} mutates data in place
  */
-function enrichWithBrandOwnerAndEnergyType(data) {
+async function enrichWithBrandOwnerAndEnergyType(data) {
+  const brandOwners = await configRepository.getBrandOwners();
   const brandOwner = brandOwners.find((entry) => entry.codbrand === data.brandCode);
   const owner = brandOwner ? brandOwner.owner : undefined;
 
@@ -123,6 +126,7 @@ function enrichWithBrandOwnerAndEnergyType(data) {
     .split(',')
     .map((code) => code.trim());
 
+  const energyTypes = await configRepository.getEnergyTypes();
   const energyType = energyTypes.find((entry) => salesCodes.includes(entry.cod));
 
   if (energyType) {
@@ -178,7 +182,7 @@ async function getDetails(bearerToken, params = {}) {
   // populated with a value retrieved from the DB.
   if (result && result.data && typeof result.data === 'object') {
     result.data = insertKeyBefore(result.data, 'externalColor', 'externalHexColor', null);
-    enrichWithBrandOwnerAndEnergyType(result.data);
+    await enrichWithBrandOwnerAndEnergyType(result.data);
   }
 
   return result;
