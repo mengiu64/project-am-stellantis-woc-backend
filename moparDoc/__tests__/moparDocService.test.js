@@ -119,7 +119,8 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await getJobCardList({
-        VIN: 'VIN123',
+        source: 'WOC',
+        vin: 'VIN123',
         dealerCode: '0062230',
         market: 'IT',
       });
@@ -134,8 +135,10 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await associateJobCard({
+        source: 'WOC',
         JobCardId: 'JC1',
-        TicketId: 'TKT1',
+        Ticket: 'TKT1',
+        Type: 'woc',
       });
       expect(result).toEqual({ success: true });
     });
@@ -148,7 +151,12 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await getJobCardAndDocumentList({
-        JobCardId: 'JC1',
+        source: 'WOC',
+        vin: 'VIN123',
+        dealerCode: '0062230',
+        market: 'IT',
+        Language: 'en',
+        StartDate: '2022-10-31',
       });
       expect(result).toEqual({ success: true });
     });
@@ -161,7 +169,9 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await getDocumentsInfo({
-        DocumentIds: ['DOC1', 'DOC2'],
+        source: 'WOC',
+        Language: 'en',
+        DocumentIDList: [227856, 227857],
       });
       expect(result).toEqual({ success: true });
     });
@@ -174,8 +184,9 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await associateDocument({
-        DocumentId: 'DOC1',
-        TicketId: 'TKT1',
+        source: 'WOC',
+        Ticket: 'TKT1',
+        Documents: [{ DocumentId: 227856, AssociateOperation: true }],
       });
       expect(result).toEqual({ success: true });
     });
@@ -188,7 +199,7 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await getDocuments({
-        JobCardId: 'JC1',
+        vin: 'VIN123',
       });
       expect(result).toEqual({ success: true });
     });
@@ -201,7 +212,9 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await DeleteDocuments({
-        DocumentIds: ['DOC1', 'DOC2'],
+        source: 'WOC',
+        JobCardId: 12345,
+        Documents: [2083, 2084],
       });
       expect(result).toEqual({ success: true });
     });
@@ -214,7 +227,8 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await DeleteJobcard({
-        JobCardId: 'JC1',
+        Source: 'WOC',
+        JobCardId: 12345,
       });
       expect(result).toEqual({ success: true });
     });
@@ -227,8 +241,7 @@ describe('moparDocService', () => {
 
     test('should call postJson with correct payload', async () => {
       const result = await getDocumentsDownloadUrl({
-        DocumentId: 'DOC1',
-        AccessToken: 'token',
+        DocumentIDList: [227856, 227857],
       });
       expect(result).toEqual({ success: true });
     });
