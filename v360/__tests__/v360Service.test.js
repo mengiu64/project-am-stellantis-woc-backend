@@ -18,7 +18,7 @@ jest.mock('../config', () => ({
     countryCode: 'FR',
     languageCode: 'fr',
     clientId: 'a8bf933a532cc85570a68d9bec7f44c4',
-    offering: 'Vehicle Description,campaign',
+    offering: 'Vehicle Description, campaign, warranty',
   },
   otaCompatibilityDefaults: {
     includeOtaHistoryData: 'true',
@@ -175,7 +175,7 @@ describe('v360Service', () => {
       vin: 'VIN456',
       countryCode: 'FR',
       clientId: 'client1',
-      offering: 'Vehicle Description,campaign',
+      offering: 'Vehicle Description, campaign, warranty',
       languageCode: 'fr',
     });
 
@@ -183,7 +183,7 @@ describe('v360Service', () => {
     const body = JSON.parse(bodyStr);
     expect(body.countryCode).toBe('FR');
     expect(body.clientId).toBe('client1');
-    expect(body.offering).toBe('Vehicle Description,campaign');
+    expect(body.offering).toBe('Vehicle Description, campaign, warranty');
     expect(body.languageCode).toBe('fr');
   });
 
@@ -196,7 +196,7 @@ describe('v360Service', () => {
     const body = JSON.parse(bodyStr);
     expect(body.countryCode).toBe('FR');
     expect(body.clientId).toBe('a8bf933a532cc85570a68d9bec7f44c4');
-    expect(body.offering).toBe('Vehicle Description,campaign');
+    expect(body.offering).toBe('Vehicle Description, campaign, warranty');
     expect(body.languageCode).toBe('fr');
   });
 

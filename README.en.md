@@ -287,7 +287,7 @@ Lambda for **ASV360** APIs (Vehicle 360): OTA compatibility and vehicle details,
 | `searchType` | ❌ | Default `"vin"` |
 | `countryCode` | ❌ | E.g. `"FR"` |
 | `clientId` | ❌ | Client identifier |
-| `offering` | ❌ | E.g. `"Vehicle Description,campaign"` |
+| `offering` | ❌ | E.g. `"Vehicle Description, campaign, warranty"` |
 | `languageCode` | ❌ | E.g. `"fr"` |
 
 #### CLI usage

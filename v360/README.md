@@ -75,7 +75,7 @@ node index.js getdetails <vin> [key=value ...]
 **Esempi (esegui da console):**
 ```bash
 node index.js getdetails VF3VEAHHWFZ062040
-node index.js getdetails VF3VEAHHWFZ062040 countryCode=FR offering="Vehicle Description,campaign" languageCode=fr
+node index.js getdetails VF3VEAHHWFZ062040 countryCode=FR offering="Vehicle Description, campaign, warranty" languageCode=fr
 ```
 
 npm script equivalente:
@@ -107,7 +107,7 @@ npm run getdetails -- VF3VEAHHWFZ062040
 | `searchType` | ❌ | Tipo di ricerca | `"vin"` |
 | `countryCode` | ❌ | Es. `"FR"` | `config.getDetailsDefaults.countryCode` |
 | `clientId` | ❌ | Client identifier | `config.getDetailsDefaults.clientId` (da env `ASV_GETDETAILS_CLIENT_ID`) |
-| `offering` | ❌ | Es. `"Vehicle Description,campaign"` | `config.getDetailsDefaults.offering` |
+| `offering` | ❌ | Es. `"Vehicle Description, campaign, warranty"` | `config.getDetailsDefaults.offering` |
 | `languageCode` | ❌ | Es. `"fr"` | `config.getDetailsDefaults.languageCode` |
 
 ---

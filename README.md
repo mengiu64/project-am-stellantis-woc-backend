@@ -438,7 +438,7 @@ Lambda per le API **ASV360** (Vehicle 360): compatibilità OTA e dettagli veicol
 | `searchType` | ❌ | Default `"vin"` |
 | `countryCode` | ❌ | Es. `"FR"` |
 | `clientId` | ❌ | Client identifier |
-| `offering` | ❌ | Es. `"Vehicle Description,campaign"` |
+| `offering` | ❌ | Es. `"Vehicle Description, campaign, warranty"` |
 | `languageCode` | ❌ | Es. `"fr"` |
 
 #### Utilizzo CLI

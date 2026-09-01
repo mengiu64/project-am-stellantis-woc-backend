@@ -143,7 +143,7 @@ async function enrichWithBrandOwnerAndEnergyType(data) {
  * @param {string}  [params.searchType]        - Search type (default: "vin")
  * @param {string}  [params.countryCode]       - Country code (default: config.getDetailsDefaults.countryCode, e.g. "FR")
  * @param {string}  [params.clientId]          - Client identifier (default: config.getDetailsDefaults.clientId)
- * @param {string}  [params.offering]          - Comma-separated list of offerings (default: config.getDetailsDefaults.offering, e.g. "Vehicle Description,campaign")
+ * @param {string}  [params.offering]          - Comma-separated list of offerings (default: config.getDetailsDefaults.offering, e.g. "Vehicle Description, campaign, warranty")
  * @param {string}  [params.languageCode]      - Language code (default: config.getDetailsDefaults.languageCode, e.g. "fr")
  * @returns {Promise<object>} parsed response body
  */
