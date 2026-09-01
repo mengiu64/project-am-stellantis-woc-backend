@@ -1,0 +1,46 @@
+[
+  {
+    "descr": "petrol",
+    "cod": "DCD07CD"
+  },
+  {
+    "descr": "petrol",
+    "cod": "DDI01CD"
+  },
+  {
+    "descr": "diesel",
+    "cod": "DCD06CD"
+  },
+  {
+    "descr": "diesel",
+    "cod": "DDI02CD"
+  },
+  {
+    "descr": "ALTERNO-DEMARREUR",
+    "cod": "DXD01CD"
+  },
+  {
+    "descr": "HYBRID CHAINE",
+    "cod": "DXD02CD"
+  },
+  {
+    "descr": "HYBRID",
+    "cod": "DXD02CD"
+  },
+  {
+    "descr": "PHEV",
+    "cod": "DXD03CD"
+  },
+  {
+    "descr": "ELECTRIC",
+    "cod": "DXD04CD"
+  },
+  {
+    "descr": "MHEV",
+    "cod": "DXD05CD"
+  },
+  {
+    "descr": "HYDROGEN",
+    "cod": "DXD06CD"
+  }
+]

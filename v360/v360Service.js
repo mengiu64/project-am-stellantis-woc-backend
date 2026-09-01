@@ -4,6 +4,8 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
+const brandOwners = require('../config/brandowner.json');
+const energyTypes = require('../config/energytype.json');
 
 /**
  * Builds common HTTPS request options for ASV360 API POST calls.
@@ -102,6 +104,37 @@ function insertKeyBefore(obj, beforeKey, newKey, newValue) {
 }
 
 /**
+ * Deduces the owner from data.brandCode using the static brandowner.json registry,
+ * and, when owner is "XP", determines data.energyTypeDesignation by matching the first
+ * energytype.json code found in data.salesCode.
+ *
+ * @param {object} data - the "data" property of the getdetails response body
+ * @returns {void} mutates data in place
+ */
+function enrichWithBrandOwnerAndEnergyType(data) {
+  if (!data || typeof data !== 'object') {
+    return;
+  }
+
+  const brandOwner = brandOwners.find((entry) => entry.codbrand === data.brandCode);
+  const owner = brandOwner ? brandOwner.owner : undefined;
+
+  if (owner !== 'XP' || !data.salesCode) {
+    return;
+  }
+
+  const salesCodes = String(data.salesCode)
+    .split(',')
+    .map((code) => code.trim());
+
+  const energyType = energyTypes.find((entry) => salesCodes.includes(entry.cod));
+
+  if (energyType) {
+    data.energyTypeDesignation = energyType.descr;
+  }
+}
+
+/**
  * Calls getdetails endpoint.
  *
  * @param {string} bearerToken                 - Bearer token from PingFederate
@@ -149,6 +182,7 @@ async function getDetails(bearerToken, params = {}) {
   // populated with a value retrieved from the DB.
   if (result && result.data && typeof result.data === 'object') {
     result.data = insertKeyBefore(result.data, 'externalColor', 'externalHexColor', null);
+    enrichWithBrandOwnerAndEnergyType(result.data);
   }
 
   return result;
