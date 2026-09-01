@@ -51,7 +51,7 @@ const config = {
   // Job Docs API (PSA job-docs connector) — crea JobCard e token di accesso
   jobDocs: {
     baseUrl: 'https://api-oidc-preprod.groupe-psa.com',
-    basePath: '/mopardocs/mopardocs-it/v1',
+    basePath: '/job-docs/connector/v1', // Path corretto per l'API Gateway IBM (da collection Postman)
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID,
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
@@ -64,14 +64,14 @@ const config = {
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET,
   },
 
-  // MoparDocs Services API (Stellantis) — getJobCardList, associateJobCard, getJobCardAndDocumentList,
+  // MoparDocs Services API — getJobCardList, associateJobCard, getJobCardAndDocumentList,
   // getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard
-  // Endpoint: POST /services/<action> su mopardocs.stellantis.com:4443
-  // Fonte: MoparDocs JobCard Associate v 3.0.15.1 documentation
-  // Valori di default allineati alla documentazione; override possibile via variabili d'ambiente
+  // Endpoint: tramite API Gateway IBM (api-oidc-preprod.groupe-psa.com) — stessa infrastruttura di jobDocs
+  // Il server diretto (mopardocs.stellantis.com:4443) richiede mutual TLS non supportato da Lambda
+  // Override possibile via variabili d'ambiente
   moparDocsServices: {
-    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://mopardocs.stellantis.com:4443', // Host servizio Stellantis (default da documentazione)
-    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/services', // Path base comune a tutti i metodi Services
+    baseUrl: process.env.MOPARDOCS_SERVICES_BASE_URL || 'https://api-oidc-preprod.groupe-psa.com', // API Gateway IBM preprod
+    basePath: process.env.MOPARDOCS_SERVICES_PATH || '/job-docs/connector/v1', // Path base comune (da collection Postman)
     ibmClientId: process.env.MOPARDOC_IBM_CLIENT_ID, // Credenziale IBM API Connect (condivisa)
     ibmClientSecret: process.env.MOPARDOC_IBM_CLIENT_SECRET, // Credenziale IBM API Connect (condivisa)
   },
