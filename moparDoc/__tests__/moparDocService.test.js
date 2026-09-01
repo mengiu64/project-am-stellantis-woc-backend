@@ -84,6 +84,7 @@ describe('moparDocService', () => {
       const result = await getUploadDocURL({
         JobCardId: 'JC1',
         Filename: 'doc.pdf',
+        Size: '182379',
         ContentType: 'application/pdf',
         AccessToken: 'token',
         Filetype: 'PDF',
@@ -280,6 +281,25 @@ describe('moparDocService', () => {
           dealerCode: '0062230', JobCard_Title: 'Test', TAMAccessCode: 'true',
         })
       ).rejects.toThrow('failed: HTTP 500');
+    });
+
+    test('should throw when response body has errorCode !== 0 (application error)', async () => {
+      httpsRequest.mockResolvedValueOnce({
+        statusCode: 200,
+        body: { errorCode: 1, errorMessage: 'Source Not compliant or Generic error in DeleteJobcard' },
+      });
+      await expect(
+        DeleteJobcard({ Source: 'WOC', JobCardId: 82379 })
+      ).rejects.toThrow('errorCode 1 - Source Not compliant or Generic error in DeleteJobcard');
+    });
+
+    test('should succeed when response body has errorCode === 0', async () => {
+      httpsRequest.mockResolvedValueOnce({
+        statusCode: 200,
+        body: { errorCode: 0, errorMessage: '' },
+      });
+      const result = await DeleteJobcard({ Source: 'WOC', JobCardId: 82379 });
+      expect(result).toEqual({ errorCode: 0, errorMessage: '' });
     });
 
   });
