@@ -105,9 +105,12 @@ async function runSync({
     return { success: true, results: [] };
   }
 
+  // Nota: i loader lazy (dms/authService, dms/dmsService) vengono risolti solo
+  // qui sotto, uno alla volta e solo se effettivamente necessari — se getBearerToken
+  // fallisce, loadGetCompanyTypes/loadGetCustomerTitles non vengono mai chiamati
+  // (evita require cross-folder inutili, es. nei test che sostituiscono solo
+  // getBearerTokenFn).
   const getBearerToken = getBearerTokenFn || loadGetBearerToken();
-  const getCompanyTypes = getCompanyTypesFn || loadGetCompanyTypes();
-  const getCustomerTitles = getCustomerTitlesFn || loadGetCustomerTitles();
 
   let token;
   try {
@@ -115,6 +118,9 @@ async function runSync({
   } catch (err) {
     throw new Error(`[dmlConfigSync] getBearerToken failed: ${err.message}`);
   }
+
+  const getCompanyTypes = getCompanyTypesFn || loadGetCompanyTypes();
+  const getCustomerTitles = getCustomerTitlesFn || loadGetCustomerTitles();
 
   const outcomes = await Promise.allSettled(
     markets.map((market) => syncMarket(pool, token, market, {
