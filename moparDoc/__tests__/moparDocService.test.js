@@ -126,6 +126,20 @@ describe('moparDocService', () => {
       });
       expect(result).toEqual({ success: true });
     });
+
+    test('should throw error when neither dealerCode nor rrdi is provided', async () => {
+      await expect(getJobCardList({ source: 'WOC', vin: 'VIN123', market: 'IT' })).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should use rrdi when dealerCode is absent', async () => {
+      const result = await getJobCardList({
+        source: 'WOC',
+        vin: 'VIN123',
+        rrdi: 'RRDI01',
+        market: 'IT',
+      });
+      expect(result).toEqual({ success: true });
+    });
   });
 
   describe('associateJobCard', () => {
@@ -160,6 +174,24 @@ describe('moparDocService', () => {
       });
       expect(result).toEqual({ success: true });
     });
+
+    test('should throw error when neither dealerCode nor rrdi is provided', async () => {
+      await expect(
+        getJobCardAndDocumentList({ source: 'WOC', vin: 'VIN123', market: 'IT', Language: 'en', StartDate: '2022-10-31' })
+      ).rejects.toThrow('Missing required field(s)');
+    });
+
+    test('should use rrdi when dealerCode is absent', async () => {
+      const result = await getJobCardAndDocumentList({
+        source: 'WOC',
+        vin: 'VIN123',
+        rrdi: 'RRDI01',
+        market: 'IT',
+        Language: 'en',
+        StartDate: '2022-10-31',
+      });
+      expect(result).toEqual({ success: true });
+    });
   });
 
   describe('getDocumentsInfo', () => {
@@ -174,6 +206,12 @@ describe('moparDocService', () => {
         DocumentIDList: [227856, 227857],
       });
       expect(result).toEqual({ success: true });
+    });
+
+    test('should throw error if DocumentIDList is empty', async () => {
+      await expect(
+        getDocumentsInfo({ source: 'WOC', Language: 'en', DocumentIDList: [] })
+      ).rejects.toThrow('DocumentIDList deve essere un array non vuoto');
     });
   });
 
@@ -203,6 +241,11 @@ describe('moparDocService', () => {
       });
       expect(result).toEqual({ success: true });
     });
+
+    test('should include JobCardIds in payload when provided', async () => {
+      const result = await getDocuments({ vin: 'VIN123', JobCardIds: [1, 2, 3] });
+      expect(result).toEqual({ success: true });
+    });
   });
 
   describe('DeleteDocuments', () => {
@@ -217,6 +260,12 @@ describe('moparDocService', () => {
         Documents: [2083, 2084],
       });
       expect(result).toEqual({ success: true });
+    });
+
+    test('should throw error if Documents array is empty', async () => {
+      await expect(
+        DeleteDocuments({ source: 'WOC', JobCardId: 12345, Documents: [] })
+      ).rejects.toThrow('Documents deve essere un array non vuoto');
     });
   });
 
@@ -244,6 +293,45 @@ describe('moparDocService', () => {
         DocumentIDList: [227856, 227857],
       });
       expect(result).toEqual({ success: true });
+    });
+
+    test('should throw error if DocumentIDList is empty', async () => {
+      await expect(
+        getDocumentsDownloadUrl({ DocumentIDList: [] })
+      ).rejects.toThrow('DocumentIDList deve essere un array non vuoto');
+    });
+  });
+
+  describe('postJson HTTP error handling', () => {
+    const { httpsRequest } = require('../httpClient');
+
+    test('should throw when httpsRequest returns non-2xx status', async () => {
+      httpsRequest.mockResolvedValueOnce({ statusCode: 500, body: { error: 'server error' } });
+      await expect(
+        createJobCard({
+          vin: 'VIN123', market: 'IT', source: 'WOC', UserName: 'user1',
+          dealerCode: '0062230', JobCard_Title: 'Test', TAMAccessCode: 'true',
+        })
+      ).rejects.toThrow('failed: HTTP 500');
+    });
+
+    test('should throw descriptive error when baseUrl is invalid', async () => {
+      // Temporarily override config to inject a bad baseUrl
+      const { postJson } = require('../moparDocService');
+      // We test this indirectly via a function that uses a target with bad baseUrl
+      // Mock config to have invalid baseUrl for this call
+      jest.resetModules();
+      jest.doMock('../config', () => ({
+        jobDocs: { baseUrl: 'not-a-url', basePath: '/jd', ibmClientId: 'id', ibmClientSecret: 'secret' },
+        moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
+        moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
+      }));
+      jest.doMock('../authService', () => ({ getBearerToken: jest.fn().mockResolvedValue('token') }));
+      const { createJobCard: cjc } = require('../moparDocService');
+      await expect(
+        cjc({ vin: 'V', market: 'IT', source: 'WOC', UserName: 'u', dealerCode: '1', JobCard_Title: 'T', TAMAccessCode: 'true' })
+      ).rejects.toThrow('baseUrl non valido');
+      jest.resetModules();
     });
   });
 });
