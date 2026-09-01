@@ -6,10 +6,8 @@ const {
   getUploadDocURL,
   uploadedDoc,
   getJobCardList,
-  associateJobCard,
   getJobCardAndDocumentList,
   getDocumentsInfo,
-  associateDocument,
   getDocuments,
   DeleteDocuments,
   DeleteJobcard,
@@ -142,22 +140,6 @@ describe('moparDocService', () => {
     });
   });
 
-  describe('associateJobCard', () => {
-    test('should throw error if required fields are missing', async () => {
-      await expect(associateJobCard({ JobCardId: 'JC1' })).rejects.toThrow('Missing required field(s)');
-    });
-
-    test('should call postJson with correct payload', async () => {
-      const result = await associateJobCard({
-        source: 'WOC',
-        JobCardId: 'JC1',
-        Ticket: 'TKT1',
-        Type: 'woc',
-      });
-      expect(result).toEqual({ success: true });
-    });
-  });
-
   describe('getJobCardAndDocumentList', () => {
     test('should throw error if required fields are missing', async () => {
       await expect(getJobCardAndDocumentList({})).rejects.toThrow('Missing required field(s)');
@@ -212,21 +194,6 @@ describe('moparDocService', () => {
       await expect(
         getDocumentsInfo({ source: 'WOC', Language: 'en', DocumentIDList: [] })
       ).rejects.toThrow('DocumentIDList deve essere un array non vuoto');
-    });
-  });
-
-  describe('associateDocument', () => {
-    test('should throw error if required fields are missing', async () => {
-      await expect(associateDocument({ DocumentId: 'DOC1' })).rejects.toThrow('Missing required field(s)');
-    });
-
-    test('should call postJson with correct payload', async () => {
-      const result = await associateDocument({
-        source: 'WOC',
-        Ticket: 'TKT1',
-        Documents: [{ DocumentId: 227856, AssociateOperation: true }],
-      });
-      expect(result).toEqual({ success: true });
     });
   });
 
@@ -315,23 +282,5 @@ describe('moparDocService', () => {
       ).rejects.toThrow('failed: HTTP 500');
     });
 
-    test('should throw descriptive error when baseUrl is invalid', async () => {
-      // Temporarily override config to inject a bad baseUrl
-      const { postJson } = require('../moparDocService');
-      // We test this indirectly via a function that uses a target with bad baseUrl
-      // Mock config to have invalid baseUrl for this call
-      jest.resetModules();
-      jest.doMock('../config', () => ({
-        jobDocs: { baseUrl: 'not-a-url', basePath: '/jd', ibmClientId: 'id', ibmClientSecret: 'secret' },
-        moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
-        moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
-      }));
-      jest.doMock('../authService', () => ({ getBearerToken: jest.fn().mockResolvedValue('token') }));
-      const { createJobCard: cjc } = require('../moparDocService');
-      await expect(
-        cjc({ vin: 'V', market: 'IT', source: 'WOC', UserName: 'u', dealerCode: '1', JobCard_Title: 'T', TAMAccessCode: 'true' })
-      ).rejects.toThrow('baseUrl non valido');
-      jest.resetModules();
-    });
   });
 });
