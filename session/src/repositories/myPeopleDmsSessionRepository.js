@@ -17,6 +17,7 @@ let _readUserProfiles;
 let _getBearerToken;
 let _getDmsSettings;
 let _getDmlConfiguration;
+let _getBrandLogos;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -56,6 +57,34 @@ function loadGetDmlConfiguration() {
     };
   }
   return _getDmlConfiguration;
+}
+
+// Loghi brand (campo OICs[].BRANDS di myPeople, CSV di codbrand numerici es. "30,31,33,43")
+// letti dalla stessa tabella woc.anag_brand (colonne codbrand/logo_s3_key) già usata dalla
+// lambda isStellantisBrand — stesso cluster Aurora "wiadvisor", stesso pool/utente
+// applicativo least-privilege di dmlConfigSync/db (già impacchettato come cartella sorella
+// di session/, vedi Makefile), quindi nessuna nuova variabile d'ambiente/permesso necessario.
+function loadGetBrandLogos() {
+  if (!_getBrandLogos) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
+    _getBrandLogos = async ({ codes }) => {
+      if (!Array.isArray(codes) || codes.length === 0) return {};
+      const pool = await getPool();
+      const { rows } = await pool.query({
+        text: 'SELECT codbrand, logo_s3_key FROM woc.anag_brand WHERE codbrand = ANY($1::varchar[])',
+        values: [codes],
+        statement_timeout: 5000,
+      });
+      const logosByCode = {};
+      for (const row of rows) {
+        if (row.logo_s3_key && String(row.logo_s3_key).trim() !== '') {
+          logosByCode[row.codbrand] = row.logo_s3_key;
+        }
+      }
+      return logosByCode;
+    };
+  }
+  return _getBrandLogos;
 }
 
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
@@ -104,6 +133,12 @@ const BRAND_CODE_TO_REFTECH = {
  *      una riga cache per il mercato, o se la lettura dal DB fallisce per
  *      qualunque motivo (la disponibilità di questi due campi non deve mai
  *      condizionare il resto della risposta di sessione).
+ *      Ogni elemento di `oics` espone inoltre `brandLogos`: array di logo_s3_key
+ *      (tabella woc.anag_brand, stessa usata dalla lambda isStellantisBrand)
+ *      risolti a partire dai codici brand CSV del campo `brands` (es. "30,31,33,43"
+ *      → ["assets/images/logo/brand-stla/CITROEN.png", ...]). Stesso principio
+ *      fault-tolerant delle altre letture DB di questa classe: `[]` se `brands`
+ *      è assente/vuoto, se un codice non ha un logo associato, o se la query fallisce.
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({
@@ -111,12 +146,14 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     getBearerTokenFn,
     getDmsSettingsFn,
     getDmlConfigurationFn,
+    getBrandLogosFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
     this._getBearerTokenFn = getBearerTokenFn;
     this._getDmsSettingsFn = getDmsSettingsFn;
     this._getDmlConfigurationFn = getDmlConfigurationFn;
+    this._getBrandLogosFn = getBrandLogosFn;
   }
 
   /**
@@ -157,6 +194,16 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const getBearerToken = this._getBearerTokenFn || loadGetBearerToken();
     const getDmsSettings = this._getDmsSettingsFn || loadGetDmsSettings();
     const getDmlConfiguration = this._getDmlConfigurationFn || loadGetDmlConfiguration();
+    const getBrandLogos = this._getBrandLogosFn || loadGetBrandLogos();
+
+    // Tutti i codici brand (CSV) usati nell'array oics, deduplicati, per un'unica
+    // query batch invece di una query per ogni oic.
+    const brandCodes = Array.from(new Set(
+      oics
+        .flatMap((oic) => (oic && oic.BRANDS ? String(oic.BRANDS).split(',') : []))
+        .map((code) => code.trim())
+        .filter((code) => code !== ''),
+    ));
 
     let token;
     try {
@@ -170,7 +217,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // è invece indipendente dal bearer token DML e non deve mai far fallire la
     // sessione: un problema di connettività al DB (o l'assenza di una riga cache
     // per il mercato) si traduce semplicemente in `[]`, non in un'eccezione.
-    const [dmsSettings, dmlConfiguration] = await Promise.all([
+    const [dmsSettings, dmlConfiguration, brandLogosByCode] = await Promise.all([
       getDmsSettings(token, { country, brand: brandReftech, dealer }).catch((err) => {
         throw new Error(`[session] dms/settings failed: ${err.message}`);
       }),
@@ -180,6 +227,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return { companyTypes: [], customerTitles: [] };
         })
         : Promise.resolve({ companyTypes: [], customerTitles: [] }),
+      brandCodes.length > 0
+        ? getBrandLogos({ codes: brandCodes }).catch((err) => {
+          console.error(`[session] lettura loghi brand (woc.anag_brand) fallita: ${err.message}`);
+          return {};
+        })
+        : Promise.resolve({}),
     ]);
 
     const dmsMap = buildDmsSettingsMap(dmsSettings);
@@ -220,7 +273,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       pcystellantis3: null,
       maxdiscountperc: null,
       maxdiscountval: null,
-      oics: oics.map(lowercaseKeys),
+      oics: oics.map((oic) => buildOicWithBrandLogos(oic, brandLogosByCode)),
       applications: applications.map(lowercaseKeys),
       companytypes: Array.isArray(dmlConfiguration && dmlConfiguration.companyTypes)
         ? dmlConfiguration.companyTypes
@@ -239,6 +292,40 @@ function lowercaseKeys(obj) {
     result[key.toLowerCase()] = value;
   }
   return result;
+}
+
+/**
+ * Come lowercaseKeys, ma inserisce anche `brandLogos` subito dopo la chiave
+ * `brands`: array di logo_s3_key risolti a partire dal CSV di codici brand
+ * (`brandLogosByCode`: mappa codbrand -> logo_s3_key già letta da woc.anag_brand).
+ */
+function buildOicWithBrandLogos(oic, brandLogosByCode) {
+  const lowered = lowercaseKeys(oic);
+  const result = {};
+  let brandLogosInserted = false;
+  for (const [key, value] of Object.entries(lowered)) {
+    result[key] = value;
+    if (key === 'brands') {
+      result.brandLogos = resolveBrandLogos(value, brandLogosByCode);
+      brandLogosInserted = true;
+    }
+  }
+  if (!brandLogosInserted) {
+    result.brandLogos = [];
+  }
+  return result;
+}
+
+/** Risolve il CSV di codici brand (es. "30,31,33,43") in un array di logo_s3_key, scartando i codici senza logo noto. */
+function resolveBrandLogos(brandsCsv, brandLogosByCode) {
+  if (typeof brandsCsv !== 'string' || brandsCsv.trim() === '') return [];
+  const map = brandLogosByCode || {};
+  return brandsCsv
+    .split(',')
+    .map((code) => code.trim())
+    .filter((code) => code !== '')
+    .map((code) => map[code])
+    .filter((logo) => typeof logo === 'string' && logo.trim() !== '');
 }
 
 /** Costruisce una Map(key minuscolo -> valore coerentemente tipizzato) dall'array data di dms/settings. */

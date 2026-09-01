@@ -62,12 +62,23 @@ const DML_CONFIGURATION_RESPONSE = {
   ],
 };
 
+// Esempio di risultato reale della query woc.anag_brand (codbrand -> logo_s3_key),
+// usata per arricchire ogni oic con l'array brandLogos.
+const BRAND_LOGOS_BY_CODE = {
+  30: 'assets/images/logo/brand-stla/CITROEN.png',
+  31: 'assets/images/logo/brand-stla/PEUGEOT.png',
+  33: 'assets/images/logo/brand-stla/OPEL.png',
+  '00': 'assets/images/logo/brand-stla/FIAT.png',
+  83: 'assets/images/logo/brand-stla/ALFAROMEO.png',
+};
+
 function buildRepository(overrides = {}) {
   return new MyPeopleDmsSessionRepository({
     readUserProfilesFn: jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE),
     getBearerTokenFn: jest.fn().mockResolvedValue('***TOKEN***'),
     getDmsSettingsFn: jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE),
     getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
+    getBrandLogosFn: jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE),
     ...overrides,
   });
 }
@@ -78,11 +89,13 @@ describe('MyPeopleDmsSessionRepository', () => {
     const getBearerTokenFn = jest.fn().mockResolvedValue('***TOKEN***');
     const getDmsSettingsFn = jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE);
     const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
+    const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
     const repository = buildRepository({
       readUserProfilesFn,
       getBearerTokenFn,
       getDmsSettingsFn,
       getDmlConfigurationFn,
+      getBrandLogosFn,
     });
 
     const data = await repository.getSessionData('0073741.d235');
@@ -95,6 +108,9 @@ describe('MyPeopleDmsSessionRepository', () => {
       dealer: '0073741',
     });
     expect(getDmlConfigurationFn).toHaveBeenCalledWith({ country: 'it', language: 'it' });
+    expect(getBrandLogosFn).toHaveBeenCalledWith({
+      codes: ['30', '31', '33', '43', '00', '77', '66', '57', '70', '83'],
+    });
 
     expect(data).toEqual({
       codmarket: '1000',
@@ -133,8 +149,29 @@ describe('MyPeopleDmsSessionRepository', () => {
       maxdiscountperc: null,
       maxdiscountval: null,
       oics: [
-        { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,31,33,43', main: 'N' },
-        { market: '1000', code: '00007584', state: 'ACTIVE', brands: '00,77,66,57,70,83', main: 'Y' },
+        {
+          market: '1000',
+          code: '00010925',
+          state: 'ACTIVE',
+          brands: '30,31,33,43',
+          brandLogos: [
+            'assets/images/logo/brand-stla/CITROEN.png',
+            'assets/images/logo/brand-stla/PEUGEOT.png',
+            'assets/images/logo/brand-stla/OPEL.png',
+          ],
+          main: 'N',
+        },
+        {
+          market: '1000',
+          code: '00007584',
+          state: 'ACTIVE',
+          brands: '00,77,66,57,70,83',
+          brandLogos: [
+            'assets/images/logo/brand-stla/FIAT.png',
+            'assets/images/logo/brand-stla/ALFAROMEO.png',
+          ],
+          main: 'Y',
+        },
       ],
       applications: [],
       companytypes: DML_CONFIGURATION_RESPONSE.companyTypes,
@@ -411,6 +448,11 @@ describe('MyPeopleDmsSessionRepository', () => {
         address: "VIA LUNGO L'EMA, 19/21/23",
         zipcode: '50012',
         brands: '30,31,33,43',
+        brandLogos: [
+          'assets/images/logo/brand-stla/CITROEN.png',
+          'assets/images/logo/brand-stla/PEUGEOT.png',
+          'assets/images/logo/brand-stla/OPEL.png',
+        ],
         type: 'AFTERSALES',
         main: 'N',
       },
@@ -423,10 +465,18 @@ describe('MyPeopleDmsSessionRepository', () => {
         address: 'VIA AMBRA 41-45',
         zipcode: '58100',
         brands: '00,77,66,57,70,83',
+        brandLogos: [
+          'assets/images/logo/brand-stla/FIAT.png',
+          'assets/images/logo/brand-stla/ALFAROMEO.png',
+        ],
         type: 'AFTERSALES',
         main: 'Y',
       },
     ]);
+    // brandLogos deve comparire subito dopo brands, non in coda all'oggetto.
+    expect(Object.keys(data.oics[0]).indexOf('brandLogos')).toBe(
+      Object.keys(data.oics[0]).indexOf('brands') + 1,
+    );
   });
 
   test('oics è un array vuoto quando myPeople non restituisce alcun OIC', async () => {
@@ -445,6 +495,53 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([]);
+  });
+
+  test('oic senza campo brands riceve comunque brandLogos come array vuoto', async () => {
+    const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
+    const repository = buildRepository({
+      getBrandLogosFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [{ MARKET: '1000', CODE: '00010925', STATE: 'ACTIVE', MAIN: 'N' }],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.oics).toEqual([
+      { market: '1000', code: '00010925', state: 'ACTIVE', brandLogos: [], main: 'N' },
+    ]);
+    // Nessun codice brand da risolvere: non deve nemmeno interrogare il DB.
+    expect(getBrandLogosFn).not.toHaveBeenCalled();
+  });
+
+  test('brandLogos scarta i codici brand senza logo noto e non fallisce se la query DB fallisce', async () => {
+    const getBrandLogosFn = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const repository = buildRepository({
+      getBrandLogosFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [{ MARKET: '1000', CODE: '00010925', STATE: 'ACTIVE', BRANDS: '30,99', MAIN: 'N' }],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.oics).toEqual([
+      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N' },
+    ]);
+    expect(getBrandLogosFn).toHaveBeenCalledWith({ codes: ['30', '99'] });
   });
 
   test('applications riporta l\'intero blocco Applications di myPeople con tutte le chiavi in minuscolo', async () => {
