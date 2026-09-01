@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, moparDoc, isStellantisBrand).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, moparDoc, isStellantisBrand, dmlConfigSync).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -28,6 +28,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [pkFavorite](#pkfavorite)
    - [moparDoc](#mopardoc)
    - [isStellantisBrand](#isstellantisbrand)   
+   - [dmlConfigSync](#dmlconfigsync)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -55,7 +56,8 @@ project-am-stellantis-woc-backend/
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
-└── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
+├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
+└── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles DML per mercato -> cache Aurora, letta da session
 
 ```
 
@@ -621,13 +623,15 @@ L'Handler HTTP (dietro API Gateway, proxy REST) **non si fida di alcun parametro
 - `roles` — stringa CSV (es. `"dealer,advisor"`), esposta come array da `getAuthContext(event)`; l'autorizzazione applicativa (chi può fare cosa) resta a carico di chi consuma questi dati.
 - `profile` — JSON string col profilo canonico (stessa forma di `GET /auth/user-info`: `sub`, `given_name`, `family_name`, `name`, `email`, `locale`, `country`, `roles[]`, `dealer_code`, `dealer_name`, `brand`, `region_code`, ...), parsato da `getAuthContext(event)` se presente (`null` se assente o JSON non valido). Non usato oggi per calcolare la sessione (si usa sempre `myPeople` via `sub`), disponibile per usi futuri.
 
-Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente), poi ottiene un bearer token PingFederate e chiama **in parallelo** `dms/settings`, `dms/getCompanyTypes` e `dms/getCustomerTitles` (stesse credenziali/bearer token; `country`/`language` per le ultime due derivati dallo stesso `NATIONiso2` di myPeople), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository`. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente), poi ottiene un bearer token PingFederate e chiama **in parallelo** `dms/settings` (chiamata live) e la cache DB `woc.dml_configurations` (per `companytypes`/`customertitles`, `country`/`language` derivati dallo stesso `NATIONiso2` di myPeople), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository`. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+
+> **Nota (companytypes/customertitles):** questi due campi **non** chiamano più live `dms/getCompanyTypes`/`dms/getCustomerTitles` ad ogni richiesta di sessione: vengono letti dalla tabella `woc.dml_configurations`, popolata una volta al giorno dal nuovo modulo `dmlConfigSync` (vedi sezione dedicata sotto). La lettura dalla cache **non blocca mai** la sessione: in caso di errore DB, riga assente per il mercato richiesto, o `country` non derivabile da myPeople, i due campi tornano semplicemente `[]` (nessun errore/502 propagato all'utente).
 
 > **CLI (uso interno/debug, non esposto via API Gateway):** `node session/src/index.js [codmarket]` (flusso storico S3, default mercato `"1000"`) oppure `node session/src/index.js --username <username>` (flusso myPeople/dms) — invocazioni dirette da riga di comando, prive di contesto authorizer, mantenute solo per test/debug locale; **non** riflettono il comportamento dell'handler HTTP.
 
 L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository` (flusso `codmarket`, usato solo dalla CLI) e da `MyPeopleDmsSessionRepository` (flusso `username`, usato dall'handler HTTP tramite `sub` e dalla CLI tramite `--username`), per permettere di aggiungere/sostituire sorgenti dati senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
 
-> **Nota tecnica:** per poter richiamare in-process il codice di `myPeople` e `dms` (senza invocazioni Lambda-to-Lambda separate), `SessionFunction` in `template.yaml` usa `CodeUri: ./` (root del repo) + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `session/`, `myPeople/` e `dms/` nel pacchetto di build (stesso pattern già usato da `pkManager` per `pkEper`/`pkDocsoa`/`pkMenupricing`/`dms`).
+> **Nota tecnica:** per poter richiamare in-process il codice di `myPeople`, `dms` e la cache DB di `dmlConfigSync` (senza invocazioni Lambda-to-Lambda separate), `SessionFunction` in `template.yaml` usa `CodeUri: ./` (root del repo) + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `session/`, `myPeople/`, `dms/` e `dmlConfigSync/` nel pacchetto di build (stesso pattern già usato da `pkManager` per `pkEper`/`pkDocsoa`/`pkMenupricing`/`dms`).
 
 #### Mappatura myPeople/dms → campi di sessione
 
@@ -647,8 +651,8 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `dmldiscount` | valore della prima chiave di `dms/settings` contenente `discount`, altrimenti `null` |
 | `oics` | intero array `Response.User.OICs` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `MARKET`→`market`, `CODE`→`code`, `BRANDS`→`brands`, ...) |
 | `applications` | intero array `Response.User.Applications` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `APPLICATION`→`application`, `PROFILE`→`profile`, `STATUS`→`status`, `MARKET`→`market`) |
-| `companytypes` | array `data` restituito da `dms.getCompanyTypes(token, { country, language })` (`country`/`language` = ISO2 minuscolo da `NATIONiso2`), `[]` se assente/non un array |
-| `customertitles` | array `data` restituito da `dms.getCustomerTitles(token, { country, language })` (stessi `country`/`language` di `companytypes`), `[]` se assente/non un array |
+| `companytypes` | array `company_types` letto dalla cache `woc.dml_configurations` per `(country, language)` (ISO2 minuscolo da `NATIONiso2`), popolata giornalmente da `dmlConfigSync`; `[]` se riga assente/errore DB/`country` non derivabile |
+| `customertitles` | array `customer_titles` letto dalla stessa riga cache di `companytypes`; `[]` se riga assente/errore DB/`country` non derivabile |
 | tutti gli altri campi | `null` (non derivabili da myPeople/dms) |
 
 #### Funzioni principali
@@ -819,6 +823,35 @@ Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per sing
 ```bash
 node index.js list <username> <vin>
 node index.js toggle <username> <vin> <packageCode>
+```
+
+---
+
+### dmlConfigSync
+
+Lambda **schedulata** (EventBridge Schedule, `cron(0 3 * * ? *)` — 03:00 UTC ogni giorno, vedi `template.yaml`) che sincronizza una volta al giorno le configurazioni DML `company-types`/`customer-titles` per i mercati abilitati, così che `session` possa leggerle da una cache DB invece di chiamare i due servizi live ad ogni richiesta di sessione.
+
+Ad ogni esecuzione:
+1. legge l'elenco dei mercati abilitati dalla tabella `woc.dml_enabled_markets` (`country`, `language`, `active`) — gestibile via SQL senza bisogno di un redeploy per abilitare/disabilitare un mercato;
+2. per ciascun mercato ottiene un bearer token PingFederate (stesse credenziali di `dms/settings`) e chiama **in parallelo** `dms.getCompanyTypes`/`dms.getCustomerTitles`;
+3. upserta il risultato (`company_types`, `customer_titles` come JSONB, `[]` se il servizio risponde 404/senza dati) nella tabella `woc.dml_configurations` (PK `country`+`language`).
+
+Ogni mercato viene processato in isolamento (`Promise.allSettled`): un mercato che fallisce (rete, credenziali, DB) non blocca la sync degli altri mercati abilitati; il risultato per-mercato (`success`/`error`) viene loggato e restituito nel summary.
+
+> **Nota tecnica:** stesso pattern di `pkManager`/`session`: `DmlConfigSyncFunction` in `template.yaml` usa `CodeUri: ./` + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `dmlConfigSync/` e `dms/` nel pacchetto di build. La connessione DB riusa lo stesso cluster Aurora/RDS Proxy e lo stesso secret di `pkFavorite` (`PkFavoriteDbHost`/`PkFavoriteDbSecretId`), nessun nuovo parametro CloudFormation.
+
+#### Funzioni principali
+
+| Funzione | Descrizione |
+|---|---|
+| `handler()` | Entry-point Lambda (trigger `Schedule`): esegue `runSync()` e logga il summary |
+| `runSync(overrides)` | Orchestratore: legge i mercati abilitati, ottiene un bearer token, sincronizza tutti i mercati in parallelo isolando gli errori per singolo mercato; dipendenze iniettabili via `overrides` per i test |
+| `syncMarket(pool, token, market, deps)` | Sincronizza un singolo mercato (company-types + customer-titles in parallelo) e upserta il risultato |
+
+#### Utilizzo CLI
+
+```bash
+node index.js sync
 ```
 
 ---
@@ -1029,6 +1062,20 @@ PKFAVORITE_DB_SSL=true                     # (opzionale) default true
 ```
 
 > **Nota:** user/password del DB **non** vanno messi nel `.env` in produzione: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension, stesso layer riusato da `myPeople`. La connessione avviene sempre tramite **RDS Proxy**, non direttamente sul cluster Aurora.
+
+### dmlConfigSync
+
+```env
+DMLCONFIGSYNC_DB_HOST=rdsproxy-np-bsn0027990-dev.proxy-xxxx.eu-west-1.rds.amazonaws.com  # Host RDS Proxy (obbligatoria)
+DMLCONFIGSYNC_DB_PORT=5432                    # (opzionale) default 5432
+DMLCONFIGSYNC_DB_NAME=wiadvisor               # (opzionale) default wiadvisor
+DMLCONFIGSYNC_DB_USER=...                     # (opzionale) se assente, letto da Secrets Manager
+DMLCONFIGSYNC_DB_PASSWORD=...                 # (opzionale) se assente, letto da Secrets Manager
+DMLCONFIGSYNC_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (opzionale) id secret con user/password/dbname/port
+DMLCONFIGSYNC_DB_SSL=true                     # (opzionale) default true
+```
+
+> **Nota:** stesso cluster Aurora/RDS Proxy e stesso secret Secrets Manager di `pkFavorite` (in `template.yaml` riusa infatti i parametri `PkFavoriteDbHost`/`PkFavoriteDbSecretId`, nessun nuovo parametro CloudFormation). Richiede inoltre **tutte** le variabili d'ambiente della sezione `dms` qui sopra (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), necessarie per chiamare `dms.getCompanyTypes`/`dms.getCustomerTitles`.
 
 ---
 

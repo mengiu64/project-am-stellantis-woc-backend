@@ -42,19 +42,15 @@ const DMS_SETTINGS_RESPONSE = {
   ],
 };
 
-// Esempio di risposta reale di dms/getCompanyTypes / dms/getCustomerTitles
-// (stessa forma per entrambe le API "configurations").
-const COMPANY_TYPES_RESPONSE = {
-  success: true,
-  data: [
+// Esempio di risultato reale di dmlConfigSync/DmlConfigRepository::getDmlConfiguration
+// (cache popolata una volta al giorno dalla lambda dmlConfigSync a partire dalle
+// risposte di dms/getCompanyTypes / dms/getCustomerTitles).
+const DML_CONFIGURATION_RESPONSE = {
+  companyTypes: [
     { code: 'FR001', country: 'FR', language_code: 'fr', description: 'Particulier' },
     { code: 'FR002', country: 'FR', language_code: 'fr', description: 'Société' },
   ],
-};
-
-const CUSTOMER_TITLES_RESPONSE = {
-  success: true,
-  data: [
+  customerTitles: [
     { code: 'FR001', country: 'FR', language_code: 'fr', description: 'Mme' },
     { code: 'FR002', country: 'FR', language_code: 'fr', description: 'Mlle' },
     { code: 'FR003', country: 'FR', language_code: 'fr', description: 'Mr et Mme' },
@@ -71,8 +67,7 @@ function buildRepository(overrides = {}) {
     readUserProfilesFn: jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE),
     getBearerTokenFn: jest.fn().mockResolvedValue('***TOKEN***'),
     getDmsSettingsFn: jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE),
-    getCompanyTypesFn: jest.fn().mockResolvedValue(COMPANY_TYPES_RESPONSE),
-    getCustomerTitlesFn: jest.fn().mockResolvedValue(CUSTOMER_TITLES_RESPONSE),
+    getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
     ...overrides,
   });
 }
@@ -82,14 +77,12 @@ describe('MyPeopleDmsSessionRepository', () => {
     const readUserProfilesFn = jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE);
     const getBearerTokenFn = jest.fn().mockResolvedValue('***TOKEN***');
     const getDmsSettingsFn = jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE);
-    const getCompanyTypesFn = jest.fn().mockResolvedValue(COMPANY_TYPES_RESPONSE);
-    const getCustomerTitlesFn = jest.fn().mockResolvedValue(CUSTOMER_TITLES_RESPONSE);
+    const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
     const repository = buildRepository({
       readUserProfilesFn,
       getBearerTokenFn,
       getDmsSettingsFn,
-      getCompanyTypesFn,
-      getCustomerTitlesFn,
+      getDmlConfigurationFn,
     });
 
     const data = await repository.getSessionData('0073741.d235');
@@ -101,8 +94,7 @@ describe('MyPeopleDmsSessionRepository', () => {
       brand: 'FT',
       dealer: '0073741',
     });
-    expect(getCompanyTypesFn).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
-    expect(getCustomerTitlesFn).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
+    expect(getDmlConfigurationFn).toHaveBeenCalledWith({ country: 'it', language: 'it' });
 
     expect(data).toEqual({
       codmarket: '1000',
@@ -145,8 +137,8 @@ describe('MyPeopleDmsSessionRepository', () => {
         { market: '1000', code: '00007584', state: 'ACTIVE', brands: '00,77,66,57,70,83', main: 'Y' },
       ],
       applications: [],
-      companytypes: COMPANY_TYPES_RESPONSE.data,
-      customertitles: CUSTOMER_TITLES_RESPONSE.data,
+      companytypes: DML_CONFIGURATION_RESPONSE.companyTypes,
+      customertitles: DML_CONFIGURATION_RESPONSE.customerTitles,
     });
   });
 
@@ -256,44 +248,59 @@ describe('MyPeopleDmsSessionRepository', () => {
       .rejects.toThrow('[session] dms/settings failed: HTTP 502');
   });
 
-  test('propaga un errore avvolto quando dms/getCompanyTypes fallisce', async () => {
+  test('non propaga (mai) errori di lettura della cache dml/configurations: companytypes/customertitles diventano []', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const repository = buildRepository({
-      getCompanyTypesFn: jest.fn().mockRejectedValue(new Error('HTTP 502')),
+      getDmlConfigurationFn: jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
     });
 
-    await expect(repository.getSessionData('0073741.d235'))
-      .rejects.toThrow('[session] dml/company-types failed: HTTP 502');
-  });
+    const data = await repository.getSessionData('0073741.d235');
 
-  test('propaga un errore avvolto quando dms/getCustomerTitles fallisce', async () => {
-    const repository = buildRepository({
-      getCustomerTitlesFn: jest.fn().mockRejectedValue(new Error('HTTP 502')),
-    });
-
-    await expect(repository.getSessionData('0073741.d235'))
-      .rejects.toThrow('[session] dml/customer-titles failed: HTTP 502');
+    expect(data.companytypes).toEqual([]);
+    expect(data.customertitles).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
   });
 
   test('companytypes/customertitles chiamano con country/language derivati da NATIONiso2', async () => {
-    const getCompanyTypesFn = jest.fn().mockResolvedValue(COMPANY_TYPES_RESPONSE);
-    const getCustomerTitlesFn = jest.fn().mockResolvedValue(CUSTOMER_TITLES_RESPONSE);
-    const repository = buildRepository({ getCompanyTypesFn, getCustomerTitlesFn });
+    const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
+    const repository = buildRepository({ getDmlConfigurationFn });
 
     const data = await repository.getSessionData('0073741.d235');
 
-    expect(getCompanyTypesFn).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
-    expect(getCustomerTitlesFn).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
-    expect(data.companytypes).toEqual(COMPANY_TYPES_RESPONSE.data);
-    expect(data.customertitles).toEqual(CUSTOMER_TITLES_RESPONSE.data);
+    expect(getDmlConfigurationFn).toHaveBeenCalledWith({ country: 'it', language: 'it' });
+    expect(data.companytypes).toEqual(DML_CONFIGURATION_RESPONSE.companyTypes);
+    expect(data.customertitles).toEqual(DML_CONFIGURATION_RESPONSE.customerTitles);
   });
 
-  test('companytypes/customertitles sono array vuoti quando la risposta non contiene un array data', async () => {
+  test('companytypes/customertitles sono array vuoti quando la cache non contiene ancora un array valido', async () => {
     const repository = buildRepository({
-      getCompanyTypesFn: jest.fn().mockResolvedValue({ success: false }),
-      getCustomerTitlesFn: jest.fn().mockResolvedValue({ success: true, data: null }),
+      getDmlConfigurationFn: jest.fn().mockResolvedValue({ companyTypes: null, customerTitles: undefined }),
     });
 
     const data = await repository.getSessionData('0073741.d235');
+    expect(data.companytypes).toEqual([]);
+    expect(data.customertitles).toEqual([]);
+  });
+
+  test('companytypes/customertitles sono [] e la cache non viene interrogata quando NATIONiso2 è assente', async () => {
+    const getDmlConfigurationFn = jest.fn();
+    const repository = buildRepository({
+      getDmlConfigurationFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', USERTYPE: 'DEALER' },
+            OICs: [{ CODE: '00010925', BRANDS: '00', MAIN: 'Y' }],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(getDmlConfigurationFn).not.toHaveBeenCalled();
     expect(data.companytypes).toEqual([]);
     expect(data.customertitles).toEqual([]);
   });

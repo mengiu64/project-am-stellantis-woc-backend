@@ -2,7 +2,7 @@
 
 > 🇮🇹 [Leggi in italiano](README.md) &nbsp;|&nbsp; 🇬🇧 English
 
-Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, isStellantisBrand).
+Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, isStellantisBrand, dmlConfigSync).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -24,6 +24,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [translations](#translations)
    - [session](#session)
    - [isStellantisBrand](#isstellantisbrand)
+   - [dmlConfigSync](#dmlconfigsync)
 3. [Installation](#installation)
 4. [Environment variables](#environment-variables)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -47,7 +48,8 @@ project-am-stellantis-woc-backend/
 ├── pkManager/          # Lambda – multi-WS package orchestrator (ePer/DocSOA/MenuPricing)
 ├── translations/       # Lambda – translation retrieval from S3
 ├── session/            # Lambda – session data (codmarket, oic, sincom, ...)
-└── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
+├── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
+└── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles per market -> Aurora cache, read by session
 
 ```
 
@@ -464,6 +466,8 @@ node index.js translations lang=en
 
 Lambda that returns **session data** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, part preferences, max discounts, etc.) for a given market, read from a single JSON file on S3 (`session/session_data.json`, same bucket used by `translations`). The file contains an object keyed by 4-character market code (e.g. `"1000"`); the only accepted input parameter is the **market code** (`codmarket`, 4 characters): if not provided, the default `1000` is used. If the requested market is not present in the file, the Lambda responds with `404`. Data access is isolated behind a `SessionRepository` interface, implemented by `S3SessionRepository`, to allow replacing S3 in the future without impacting the HTTP handler (same architecture as the `translations` module).
 
+> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) plus `dms/settings` (live) to build the session response; `companytypes`/`customertitles` are **not** fetched live anymore — they're read from the `woc.dml_configurations` cache table, refreshed once a day by the new `dmlConfigSync` module (see below). The cache read never throws: on any error or missing row it simply returns `[]`, so the session response is never broken for this reason. See the Italian `README.md` for the full field mapping table.
+
 #### Main functions
 
 | Function | Description |
@@ -554,6 +558,20 @@ isStellantisBrand/
 - `pg` pool with TLS to **RDS Proxy** (`RDS_PROXY_ENDPOINT`)
 - Pool reused across invocations (warm start), invalidated on error
 - Connection timeout: 5 seconds
+
+---
+
+### dmlConfigSync
+
+**Scheduled** Lambda (EventBridge Schedule, `cron(0 3 * * ? *)` — daily at 03:00 UTC, see `template.yaml`) that syncs, once a day, the DML `company-types`/`customer-titles` configurations for enabled markets, so `session` can read them from a DB cache instead of calling the two live services on every session request.
+
+On each run: reads the enabled markets from `woc.dml_enabled_markets` (`country`, `language`, `active`), gets a PingFederate bearer token (same credentials as `dms/settings`) and calls `dms.getCompanyTypes`/`dms.getCustomerTitles` in parallel for each market, then upserts the result (`company_types`/`customer_titles` as JSONB, `[]` if the service returns 404/no data) into `woc.dml_configurations` (PK `country`+`language`). Each market is processed in isolation (`Promise.allSettled`): a failing market does not block the sync of the others.
+
+#### CLI usage
+
+```bash
+node index.js sync
+```
 
 ---
 
@@ -706,6 +724,18 @@ RDS_PROXY_ENDPOINT=...                     # RDS Proxy endpoint for Aurora Postg
 ```
 
 > **Note:** the Secrets Manager secret contains a JSON payload with keys `dbname` ("wiadvisor"), `engine` ("postgres"), `password`, `port` (5432), `username` ("wiadvisor_app"). Connection uses TLS via RDS Proxy. The Lambda runs inside the VPC.
+
+### dmlConfigSync
+
+```env
+DMLCONFIGSYNC_DB_HOST=rdsproxy-np-bsn0027990-dev.proxy-xxxx.eu-west-1.rds.amazonaws.com  # RDS Proxy host (required)
+DMLCONFIGSYNC_DB_PORT=5432                    # (optional) default 5432
+DMLCONFIGSYNC_DB_NAME=wiadvisor               # (optional) default wiadvisor
+DMLCONFIGSYNC_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (optional) secret id with user/password/dbname/port
+DMLCONFIGSYNC_DB_SSL=true                     # (optional) default true
+```
+
+> **Note:** same Aurora cluster/RDS Proxy and same Secrets Manager secret as `pkFavorite` (in `template.yaml` it reuses the `PkFavoriteDbHost`/`PkFavoriteDbSecretId` parameters, no new CloudFormation parameter). Also requires **all** the `dms` environment variables above (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), needed to call `dms.getCompanyTypes`/`dms.getCustomerTitles`.
 
 ---
 
