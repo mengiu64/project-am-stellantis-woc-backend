@@ -404,8 +404,10 @@ async function getDocumentsDownloadUrl(params) {
   // Log: informa che verrà generata la URL di download per i documenti
   console.log(`[getDocumentsDownloadUrl] Generazione URL download per ${params.DocumentIDList.length} documento(i)`);
 
-  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/getDocumentsDownloadUrl', payload);
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato.
+  // NOTA: la risorsa reale sul gateway è "getDocumentsInfoByJobCardId" (vedi documentazione),
+  // non "getDocumentsDownloadUrl": il nome logico dell'azione differisce dal path effettivo.
+  return postJson(config.moparDocsServices, '/getDocumentsInfoByJobCardId', payload);
 }
 
 module.exports = {
