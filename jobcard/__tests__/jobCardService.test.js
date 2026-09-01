@@ -892,11 +892,11 @@ describe('jobCardService', () => {
   // ── applyDataFromDml ─────────────────────────────────────────────────────
 
   describe('applyDataFromDml', () => {
-    test('overwrites originalPriceExclVat/appDiscountPercentage/QuantityAvailable on matching partInfo by PartNumber', () => {
+    test('overwrites originalPriceExclVat/dmsDiscountPercentage/QuantityAvailable/availability on matching partInfo by PartNumber', () => {
       const jobCardDetail = {
         jobs: [
           {
-            partInfo: [{ partNumber: '735712563', originalPriceExclVat: 1 }],
+            partInfo: [{ partNumber: '735712563', originalPriceExclVat: 1, itemQuantity: 2 }],
             laborInfo: [],
           },
         ],
@@ -917,8 +917,9 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
         partNumber: '735712563',
         originalPriceExclVat: 493.71,
-        appDiscountPercentage: 5,
+        dmsDiscountPercentage: 5,
         QuantityAvailable: 3,
+        availability: 'green',
       }));
     });
 
@@ -946,11 +947,53 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].partInfo[0].QuantityAvailable).toBe(7);
     });
 
+    test.each([
+      [5, 3, 'red'],
+      [3, 3, 'orange'],
+      [1, 3, 'green'],
+    ])('sets availability to %s when itemQuantity=%i vs QuantityAvailable=%i', (itemQuantity, quantityAvailable, expected) => {
+      const jobCardDetail = {
+        jobs: [{ partInfo: [{ partNumber: 'P1', itemQuantity }], laborInfo: [] }],
+      };
+      const dmlResponse = {
+        WorkLines: [
+          {
+            PartsItem: [
+              { PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0, QuantityAvailable: quantityAvailable },
+            ],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].availability).toBe(expected);
+    });
+
+    test('leaves availability undefined when itemQuantity is missing', () => {
+      const jobCardDetail = {
+        jobs: [{ partInfo: [{ partNumber: 'P1' }], laborInfo: [] }],
+      };
+      const dmlResponse = {
+        WorkLines: [
+          {
+            PartsItem: [
+              { PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0, QuantityAvailable: 3 },
+            ],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].availability).toBeUndefined();
+    });
+
     test('uses ReplacementItem data (including partNumber/partDescription) when the PartsItem has a replacement', () => {
       const jobCardDetail = {
         jobs: [
           {
-            partInfo: [{ partNumber: '1610489680', partDescription: 'original desc' }],
+            partInfo: [{ partNumber: '1610489680', partDescription: 'original desc', itemQuantity: 1 }],
             laborInfo: [],
           },
         ],
@@ -986,12 +1029,13 @@ describe('jobCardService', () => {
         partNumber: '12347411',
         partDescription: 'PR de remplacement',
         originalPriceExclVat: 80,
-        appDiscountPercentage: 0,
+        dmsDiscountPercentage: 0,
         QuantityAvailable: 0,
+        availability: 'red',
       }));
     });
 
-    test('overwrites laborDuration/appDiscountPercentage/laborRateAmount on matching laborInfo by laborOperationCode', () => {
+    test('overwrites laborDuration/dmsDiscountPercentage/laborRateAmount on matching laborInfo by laborOperationCode', () => {
       const jobCardDetail = {
         jobs: [
           {
@@ -1016,7 +1060,7 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
         laborOperationCode: '4110A10',
         laborDuration: 0.25,
-        appDiscountPercentage: 0,
+        dmsDiscountPercentage: 0,
         laborRateAmount: 60,
       }));
     });
@@ -1052,7 +1096,7 @@ describe('jobCardService', () => {
           vehicleInfo: { identification: { vin: 'VIN1' } },
           jobs: [
             {
-              partInfo: [{ partNumber: 'P1' }],
+              partInfo: [{ partNumber: 'P1', itemQuantity: 2 }],
               laborInfo: [{ laborOperationCode: 'OP1' }],
             },
           ],
@@ -1072,12 +1116,13 @@ describe('jobCardService', () => {
 
       expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
         originalPriceExclVat: 42,
-        appDiscountPercentage: 1,
+        dmsDiscountPercentage: 1,
         QuantityAvailable: 2,
+        availability: 'orange',
       }));
       expect(result.jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
         laborDuration: 0.5,
-        appDiscountPercentage: 1,
+        dmsDiscountPercentage: 1,
         laborRateAmount: 70,
       }));
     });

@@ -127,7 +127,7 @@
                     "partId": "4418064",
                     "partNumber": "1610725580",
                     "partDescription": "4110A101 - VITE",
-                    "itemQuantity": 1,
+                    "itemQuantity": 8,
                     "unitaryPriceExclVat": 493.71,
                     "originalPriceExclVat": 493.71,
                     "originalPriceWithVat": 602.33,
@@ -143,7 +143,7 @@
             "laborInfo": [
                 {
                     "laborOperationId": "1",
-                    "laborOperationCode": "4110A10",
+                    "laborOperationCode": "44E19A",
                     "laborOperationDescription": "4110A101 - steering wheel rr",
                     "laborDuration": 0.25,
                     "laborRateAmount": 60,

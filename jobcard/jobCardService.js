@@ -588,6 +588,29 @@ function resolveDmlPartSource(partsItem) {
  * @param {object} dmlResponse   - risposta di getCartPriceAndAvailability (con WorkLines[])
  * @returns {object} lo stesso jobCardDetail, con i campi sovrascritti/aggiunti
  */
+/**
+ * Deduce il livello di disponibilita di un ricambio confrontando la quantita
+ * richiesta (itemQuantity, dal jobCardDetail originale) con la quantita
+ * disponibile a magazzino (QuantityAvailable, dalla risposta DML):
+ *  - itemQuantity > QuantityAvailable => 'red'    (quantita richiesta non coperta)
+ *  - itemQuantity = QuantityAvailable => 'orange' (quantita richiesta al limite)
+ *  - itemQuantity < QuantityAvailable => 'green'  (quantita richiesta coperta)
+ *
+ * @param {number} itemQuantity      - quantita richiesta (part.itemQuantity)
+ * @param {number} quantityAvailable - quantita disponibile (part.QuantityAvailable)
+ * @returns {'red'|'orange'|'green'|undefined} il livello di disponibilita, o
+ *          undefined se uno dei due valori non e disponibile
+ */
+function computeAvailability(itemQuantity, quantityAvailable) {
+  if (itemQuantity === undefined || itemQuantity === null
+    || quantityAvailable === undefined || quantityAvailable === null) {
+    return undefined;
+  }
+  if (itemQuantity > quantityAvailable) return 'red';
+  if (itemQuantity === quantityAvailable) return 'orange';
+  return 'green';
+}
+
 function applyDataFromDml(jobCardDetail, dmlResponse) {
   const jobs = jobCardDetail?.jobs;
   if (!Array.isArray(jobs)) return jobCardDetail;
@@ -613,8 +636,9 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
 
       const { source, isReplacement } = resolveDmlPartSource(partsItem);
       part.originalPriceExclVat = source.OriginalPriceExclVAT;
-      part.appDiscountPercentage = source.DiscountPercentage;
+      part.dmsDiscountPercentage = source.DiscountPercentage;
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
+      part.availability = computeAvailability(part.itemQuantity, part.QuantityAvailable);
 
       if (isReplacement) {
         part.partNumber = source.PartNumber;
@@ -627,7 +651,7 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       if (!laborItem) continue;
 
       labor.laborDuration = laborItem.TimeUnit;
-      labor.appDiscountPercentage = laborItem.DiscountPercentage;
+      labor.dmsDiscountPercentage = laborItem.DiscountPercentage;
       labor.laborRateAmount = laborItem.UnitaryTimeAmount;
     }
   }
