@@ -1,12 +1,44 @@
 'use strict';
 
+// Carica il file .env per lo sviluppo locale (nessuna dipendenza esterna)
+const fs = require('fs');
+const path = require('path');
+const envFile = path.join(__dirname, '.env');
+if (fs.existsSync(envFile)) {
+  fs.readFileSync(envFile, 'utf8')
+    .split('\n')
+    .forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) return;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const val = trimmed.slice(eqIdx + 1).trim();
+      if (key && !(key in process.env)) {
+        process.env[key] = val;
+      }
+    });
+}
+
+// Valida le variabili d'ambiente obbligatorie all'avvio
+const REQUIRED_ENV = [
+  'MOPARDOC_PING_CLIENT_ID',
+  'MOPARDOC_PING_CLIENT_SECRET',
+  'MOPARDOC_IBM_CLIENT_ID',
+  'MOPARDOC_IBM_CLIENT_SECRET',
+];
+const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
+if (missing.length > 0) {
+  throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
+}
+
 const config = {
   auth: {
     // PingFederate OAuth2 (client_credentials flow)
-    baseUrl: 'https://api-oidc-preprod.groupe-psa.com',
+    baseUrl: 'https://idfed-preprod.mpsa.com:443',
     basePath: '/as/token.oauth2',
     // Endpoint completo PingFederate (baseUrl + basePath) — usato da authService.js per ottenere il token
-    url: 'https://api-oidc-preprod.groupe-psa.com/as/token.oauth2',
+    url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     // Tipo di grant OAuth2 — client_credentials flow verso PingFederate
     grantType: 'client_credentials',
     clientId: process.env.MOPARDOC_PING_CLIENT_ID, // Client ID PingFederate dedicato (env reale della Lambda)
