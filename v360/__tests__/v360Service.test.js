@@ -249,4 +249,78 @@ describe('v360Service', () => {
 
     expect(result).toEqual(expectedBody);
   });
+
+  test('sets energyTypeDesignation when brand owner is XP and salesCode matches an energy type code', async () => {
+    const expectedBody = {
+      statusCode: 200,
+      data: {
+        brandCode: 'AC',
+        salesCode: 'D4E01CD, DA301CD, DCD06CD, DAF01CD',
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(result.data.energyTypeDesignation).toBe('diesel');
+  });
+
+  test('does not set energyTypeDesignation when brandCode is not found in brandowner registry', async () => {
+    const expectedBody = {
+      statusCode: 200,
+      data: {
+        brandCode: 'ZZ',
+        salesCode: 'DCD06CD',
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(result.data.energyTypeDesignation).toBeUndefined();
+  });
+
+  test('does not set energyTypeDesignation when owner is not XP', async () => {
+    const expectedBody = {
+      statusCode: 200,
+      data: {
+        brandCode: 'AR',
+        salesCode: 'DCD06CD',
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(result.data.energyTypeDesignation).toBeUndefined();
+  });
+
+  test('does not set energyTypeDesignation when owner is XP but salesCode is missing', async () => {
+    const expectedBody = {
+      statusCode: 200,
+      data: {
+        brandCode: 'AC',
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(result.data.energyTypeDesignation).toBeUndefined();
+  });
+
+  test('does not set energyTypeDesignation when owner is XP but salesCode has no matching energy type code', async () => {
+    const expectedBody = {
+      statusCode: 200,
+      data: {
+        brandCode: 'AC',
+        salesCode: 'ZZZ00CD, YYY00CD',
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+
+    const result = await getDetails('token', { vin: 'VIN456' });
+
+    expect(result.data.energyTypeDesignation).toBeUndefined();
+  });
 });

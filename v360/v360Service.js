@@ -112,10 +112,6 @@ function insertKeyBefore(obj, beforeKey, newKey, newValue) {
  * @returns {void} mutates data in place
  */
 function enrichWithBrandOwnerAndEnergyType(data) {
-  if (!data || typeof data !== 'object') {
-    return;
-  }
-
   const brandOwner = brandOwners.find((entry) => entry.codbrand === data.brandCode);
   const owner = brandOwner ? brandOwner.owner : undefined;
 
