@@ -26,19 +26,27 @@ jest.mock('../../../dms/authService', () => ({
 
 jest.mock('../../../dms/dmsService', () => ({
   getDmsSettings: jest.fn().mockResolvedValue({ success: true, data: [] }),
-  getCompanyTypes: jest.fn().mockResolvedValue({ success: true, data: [] }),
-  getCustomerTitles: jest.fn().mockResolvedValue({ success: true, data: [] }),
+}));
+
+jest.mock('../../../dmlConfigSync/db', () => ({
+  getPool: jest.fn().mockResolvedValue({ __fakePool: true }),
+}));
+
+jest.mock('../../../dmlConfigSync/DmlConfigRepository', () => ({
+  getDmlConfiguration: jest.fn().mockResolvedValue({ companyTypes: [], customerTitles: [] }),
 }));
 
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
 const myPeopleService = require('../../../myPeople/myPeopleService');
 const dmsAuthService = require('../../../dms/authService');
 const dmsService = require('../../../dms/dmsService');
+const dmlConfigSyncDb = require('../../../dmlConfigSync/db');
+const dmlConfigRepository = require('../../../dmlConfigSync/DmlConfigRepository');
 
-describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dms)', () => {
+describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dms/dmlConfigSync)', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('usa i moduli reali (myPeople/myPeopleService, dms/authService, dms/dmsService) quando non vengono iniettati override', async () => {
+  test('usa i moduli reali (myPeople/myPeopleService, dms/authService, dms/dmsService, dmlConfigSync/db+DmlConfigRepository) quando non vengono iniettati override', async () => {
     const repository = new MyPeopleDmsSessionRepository();
     const data = await repository.getSessionData('0073741.d235');
 
@@ -49,8 +57,11 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
       brand: 'FT',
       dealer: '0073741',
     });
-    expect(dmsService.getCompanyTypes).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
-    expect(dmsService.getCustomerTitles).toHaveBeenCalledWith('***TOKEN***', { country: 'it', language: 'it' });
+    expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(1);
+    expect(dmlConfigRepository.getDmlConfiguration).toHaveBeenCalledWith(
+      { __fakePool: true },
+      { country: 'it', language: 'it' },
+    );
     expect(data.codmarket).toBe('1000');
     expect(data.sincom).toBe('0073741');
     expect(data.brandvehic_reftech).toBe('FT');

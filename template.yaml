@@ -759,6 +759,19 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # PkFavoriteFunction/isStellantisBrand).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           SESSION_BUCKET_NAME: !Ref TranslationsBucket
@@ -777,6 +790,14 @@ Resources:
           DML_IBM_CLIENT_ID:        !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:    !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
+          # dmlConfigSync/db.js (in-process, vedi Makefile) — lettura della cache
+          # company-types/customer-titles (woc.dml_configurations), popolata dal job
+          # giornaliero DmlConfigSyncFunction. Riusa lo stesso Aurora/secret di
+          # pkFavorite/dbManager (nessun nuovo parametro CFN necessario).
+          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
 
   SessionFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -939,6 +960,81 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${DbManagerFunction}"
+      RetentionInDays: 30
+
+  # ── dmlConfigSync (sync giornaliera company-types/customer-titles DML) ───
+  #
+  # Triggerata 1 volta al giorno da EventBridge Schedule (Events.DailySync sotto):
+  # per ciascun mercato abilitato (tabella woc.dml_enabled_markets) chiama
+  # dms/getCompanyTypes + dms/getCustomerTitles (stesso bearer token/credenziali IBM
+  # di dms/settings/PkManagerFunction/PkFavoriteFunction/JobCardFunction) e upserta il
+  # risultato nella tabella woc.dml_configurations sullo STESSO cluster Aurora
+  # PostgreSQL "wiadvisor" già usato da pkFavorite/dbManager (riusa i parametri
+  # PkFavorite* invece di dichiararne di nuovi, per non richiedere modifiche alla
+  # pipeline di deploy esterna). SessionFunction legge questa tabella al posto di
+  # chiamare live i due servizi DML (vedi session/src/repositories/
+  # myPeopleDmsSessionRepository.js). CodeUri: ./ + BuildMethod: makefile perché
+  # index.js richiede in-process dms/authService + dms/dmsService (stesso pattern di
+  # PkManagerFunction/SessionFunction/PkFavoriteFunction/JobCardFunction, vedi Makefile).
+  # Timeout più alto del default (30s): il job itera N mercati abilitati, ciascuno con
+  # 2 chiamate HTTP sequenziali al gateway DML più l'upsert su Aurora.
+  DmlConfigSyncFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dmlconfigsync"
+      CodeUri: ./
+      Handler: dmlConfigSync/index.handler
+      Timeout: 120
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # PkFavoriteFunction/isStellantisBrand/DbManagerFunction).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+      Environment:
+        Variables:
+          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+          # dms/config.js (in-process, vedi Makefile) — gateway DML per company-types/
+          # customer-titles, stessi valori usati da PkManagerFunction/PkFavoriteFunction/SessionFunction.
+          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
+          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
+          DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
+          DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
+      Events:
+        DailySync:
+          Type: Schedule
+          Properties:
+            # 03:00 UTC ogni giorno (orario a basso traffico, fuori dagli orari
+            # d'ufficio EMEA). Regolabile senza toccare il codice.
+            Schedule: cron(0 3 * * ? *)
+            Name: !Sub "sch-np-bsn0027990-${Environment}-dmlconfigsync-daily"
+            Description: Sync giornaliera company-types/customer-titles DML per i mercati abilitati
+            Enabled: true
+
+  DmlConfigSyncFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DmlConfigSyncFunction}"
       RetentionInDays: 30
 
   # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
