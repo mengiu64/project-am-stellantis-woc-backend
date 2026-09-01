@@ -15,14 +15,14 @@
  *   searchType=<value>     (default: vin)
  *   countryCode=<value>    (e.g. FR)
  *   clientId=<value>
- *   offering=<value>       (e.g. "Vehicle Description,campaign")
+ *   offering=<value>       (e.g. "Vehicle Description, campaign, warranty")
  *   languageCode=<value>   (e.g. fr)
  *
  * Examples:
  *   node index.js otaCompatibility VR7EMZKU7RJ963237
  *   node index.js otaCompatibility VR7EMZKU7RJ963237 includeOtaHistoryData=true locale=fr_FR
  *   node index.js getdetails VF3VEAHHWFZ062040
- *   node index.js getdetails VF3VEAHHWFZ062040 countryCode=FR offering="Vehicle Description,campaign" languageCode=fr
+ *   node index.js getdetails VF3VEAHHWFZ062040 countryCode=FR offering="Vehicle Description, campaign, warranty" languageCode=fr
  */
 
 const { getBearerToken } = require('./authService');

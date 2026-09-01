@@ -29,7 +29,16 @@ jest.mock('../../../dms/dmsService', () => ({
 }));
 
 jest.mock('../../../dmlConfigSync/db', () => ({
-  getPool: jest.fn().mockResolvedValue({ __fakePool: true }),
+  getPool: jest.fn().mockResolvedValue({
+    __fakePool: true,
+    query: jest.fn().mockResolvedValue({
+      rows: [
+        { codbrand: '00', logo_s3_key: 'assets/images/logo/brand-stla/FIAT.png' },
+        { codbrand: '83', logo_s3_key: 'assets/images/logo/brand-stla/ALFAROMEO.png' },
+        { codbrand: '77', logo_s3_key: null }, // riga presente ma senza logo: deve essere scartata
+      ],
+    }),
+  }),
 }));
 
 jest.mock('../../../dmlConfigSync/DmlConfigRepository', () => ({
@@ -57,9 +66,9 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
       brand: 'FT',
       dealer: '0073741',
     });
-    expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(1);
+    expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(2); // loadGetDmlConfiguration + loadGetBrandLogos
     expect(dmlConfigRepository.getDmlConfiguration).toHaveBeenCalledWith(
-      { __fakePool: true },
+      { __fakePool: true, query: expect.any(Function) },
       { country: 'it', language: 'it' },
     );
     expect(data.codmarket).toBe('1000');
@@ -67,6 +76,25 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
     expect(data.brandvehic_reftech).toBe('FT');
     expect(data.companytypes).toEqual([]);
     expect(data.customertitles).toEqual([]);
+
+    // loadGetBrandLogos: usa lo stesso pool (getPool) per interrogare woc.anag_brand
+    // con i codici brand dedotti da OICs[].BRANDS ("00,77,66,57,70,83").
+    const pool = await dmlConfigSyncDb.getPool.mock.results[0].value;
+    expect(pool.query).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining('woc.anag_brand'),
+      values: [['00', '77', '66', '57', '70', '83']],
+    }));
+    expect(data.oics).toEqual([
+      {
+        code: '00007584',
+        brands: '00,77,66,57,70,83',
+        brandLogos: [
+          'assets/images/logo/brand-stla/FIAT.png',
+          'assets/images/logo/brand-stla/ALFAROMEO.png',
+        ],
+        main: 'Y',
+      },
+    ]);
   });
 
   test('riusa i moduli già caricati (cache) su una seconda chiamata', async () => {

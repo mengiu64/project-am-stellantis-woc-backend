@@ -57,7 +57,7 @@ module.exports = {
     countryCode: 'FR',
     languageCode: 'fr',
     clientId: process.env.ASV_GETDETAILS_CLIENT_ID,
-    offering: 'Vehicle Description,campaign',
+    offering: 'Vehicle Description, campaign, warranty',
   },
 
   // Default values used by otaCompatibility when not provided in the input (vin is always mandatory and never defaulted).

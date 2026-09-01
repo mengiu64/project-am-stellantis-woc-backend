@@ -18,13 +18,14 @@ const { getBearerToken } = require('./authService');
 const config = require('./config');
 
 /**
- * Costruisce le options per una richiesta POST JSON verso uno dei tre gateway.
+ * Costruisce le options per una richiesta POST JSON verso uno dei gateway.
  * @param {{baseUrl: string, basePath: string, ibmClientId: string, ibmClientSecret: string}} target
  * @param {string} resourcePath - es. "/CreateJobCard"
- * @param {string} bearerToken
+ * @param {string} bearerToken - token Bearer (ignorato se noAuth = true)
  * @param {string} bodyStr
+ * @param {{noAuth?: boolean}} [opts] - se noAuth = true, non aggiunge Authorization né header IBM
  */
-function buildOptions(target, resourcePath, bearerToken, bodyStr) {
+function buildOptions(target, resourcePath, bearerToken, bodyStr, opts = {}) {
   // Protegge la costruzione dell'URL: se baseUrl è mancante o malformato,
   // lancia un errore descrittivo invece di un opaco "Invalid URL"
   let endpoint;
@@ -41,36 +42,55 @@ function buildOptions(target, resourcePath, bearerToken, bodyStr) {
   // Log: URL completo effettivamente chiamato (schema, host, porta, path)
   console.log(`[buildOptions] URL chiamata: ${endpoint.protocol}//${endpoint.hostname}:${port}${path}`);
 
+  // Header di base sempre presenti
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(bodyStr),
+  };
+
+  // Aggiunge autenticazione (Bearer + credenziali IBM) solo se richiesto.
+  // Gli endpoint browser (getUploadDocURL/UploadedDoc) sono invocati senza autenticazione.
+  if (!opts.noAuth) {
+    headers.Authorization = `Bearer ${bearerToken}`;
+    headers['X-IBM-Client-Id'] = target.ibmClientId;
+    headers['X-IBM-Client-Secret'] = target.ibmClientSecret;
+  }
+
   return {
     hostname: endpoint.hostname,
     port,
     path,
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(bodyStr),
-      Authorization: `Bearer ${bearerToken}`,
-      'X-IBM-Client-Id': target.ibmClientId,
-      'X-IBM-Client-Secret': target.ibmClientSecret,
-    },
+    headers,
   };
 }
 
-async function postJson(target, resourcePath, payload) {
-  const bearerToken = await getBearerToken();
+async function postJson(target, resourcePath, payload, opts = {}) {
+  // Recupera il token Bearer solo se la chiamata richiede autenticazione
+  const bearerToken = opts.noAuth ? null : await getBearerToken();
   const bodyStr = JSON.stringify(payload);
-  const options = buildOptions(target, resourcePath, bearerToken, bodyStr);
+  const options = buildOptions(target, resourcePath, bearerToken, bodyStr, opts);
 
   console.log(`[moparDocService] POST ${target.baseUrl}${options.path}`);
   const response = await httpsRequest(options, bodyStr);
 
+  // Errore a livello di trasporto HTTP (status non 2xx)
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw new Error(
       `[moparDocService] ${resourcePath} failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}`
     );
   }
 
-  return response.body;
+  // Errore applicativo: il servizio MoparDocs risponde HTTP 200 ma segnala il fallimento
+  // tramite errorCode diverso da 0 (0 = SUCCESS, <>0 = FAILURE come da documentazione)
+  const body = response.body;
+  if (body && typeof body === 'object' && body.errorCode !== undefined && Number(body.errorCode) !== 0) {
+    throw new Error(
+      `[moparDocService] ${resourcePath} failed: errorCode ${body.errorCode} - ${body.errorMessage || 'errore applicativo'}`
+    );
+  }
+
+  return body;
 }
 
 /**
@@ -123,10 +143,11 @@ async function createAccessToken(params) {
 
 /**
  * getUploadDocURL — ottiene la URL pre-firmata per l'upload di un documento.
- * @param {{JobCardId: string, Filename: string, ContentType: string, AccessToken: string, Filetype: string}} params
+ * Endpoint browser (examaftersales.fiat.com) senza autenticazione.
+ * @param {{JobCardId: string, Filename: string, Size: string|number, ContentType: string, AccessToken: string, Filetype: string}} params
  */
 async function getUploadDocURL(params) {
-  const required = ['JobCardId', 'Filename', 'ContentType', 'AccessToken', 'Filetype'];
+  const required = ['JobCardId', 'Filename', 'Size', 'ContentType', 'AccessToken', 'Filetype'];
   const missing = required.filter((k) => !params || !params[k]);
   if (missing.length > 0) {
     throw new Error(`[getUploadDocURL] Missing required field(s): ${missing.join(', ')}`);
@@ -135,16 +156,19 @@ async function getUploadDocURL(params) {
   const payload = {
     JobCardId: params.JobCardId,
     Filename: params.Filename,
+    Size: params.Size,
     ContentType: params.ContentType,
     AccessToken: params.AccessToken,
     Filetype: params.Filetype,
   };
 
-  return postJson(config.moparDocsApi, '/getUploadDocURL', payload);
+  // Chiamata senza autenticazione (endpoint browser MoparDocs)
+  return postJson(config.moparDocsApi, '/getUploadDocURL', payload, { noAuth: true });
 }
 
 /**
  * UploadedDoc — notifica il completamento dell'upload di un documento.
+ * Endpoint browser (examaftersales.fiat.com) senza autenticazione.
  * @param {{JobCardId: string, DocumentId: string, Action: string, AccessToken: string}} params
  */
 async function uploadedDoc(params) {
@@ -161,7 +185,8 @@ async function uploadedDoc(params) {
     AccessToken: params.AccessToken,
   };
 
-  return postJson(config.moparDocsApi, '/UploadedDoc', payload);
+  // Chiamata senza autenticazione (endpoint browser MoparDocs)
+  return postJson(config.moparDocsApi, '/UploadedDoc', payload, { noAuth: true });
 }
 
 /**
@@ -379,7 +404,9 @@ async function getDocumentsDownloadUrl(params) {
   // Log: informa che verrà generata la URL di download per i documenti
   console.log(`[getDocumentsDownloadUrl] Generazione URL download per ${params.DocumentIDList.length} documento(i)`);
 
-  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
+  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato.
+  // NOTA: questo endpoint non risulta esposto sul gateway IBM job-docs/connector/v1 (HTTP 404).
+  // In alternativa usare getDocumentsInfo, che restituisce gli stessi signedUrl/previewUrl.
   return postJson(config.moparDocsServices, '/getDocumentsDownloadUrl', payload);
 }
 

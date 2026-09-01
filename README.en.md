@@ -287,7 +287,7 @@ Lambda for **ASV360** APIs (Vehicle 360): OTA compatibility and vehicle details,
 | `searchType` | ❌ | Default `"vin"` |
 | `countryCode` | ❌ | E.g. `"FR"` |
 | `clientId` | ❌ | Client identifier |
-| `offering` | ❌ | E.g. `"Vehicle Description,campaign"` |
+| `offering` | ❌ | E.g. `"Vehicle Description, campaign, warranty"` |
 | `languageCode` | ❌ | E.g. `"fr"` |
 
 #### CLI usage
@@ -466,7 +466,7 @@ node index.js translations lang=en
 
 Lambda that returns **session data** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, part preferences, max discounts, etc.) for a given market, read from a single JSON file on S3 (`session/session_data.json`, same bucket used by `translations`). The file contains an object keyed by 4-character market code (e.g. `"1000"`); the only accepted input parameter is the **market code** (`codmarket`, 4 characters): if not provided, the default `1000` is used. If the requested market is not present in the file, the Lambda responds with `404`. Data access is isolated behind a `SessionRepository` interface, implemented by `S3SessionRepository`, to allow replacing S3 in the future without impacting the HTTP handler (same architecture as the `translations` module).
 
-> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) plus `dms/settings` (live) to build the session response; `companytypes`/`customertitles` are **not** fetched live anymore — they're read from the `woc.dml_configurations` cache table, refreshed once a day by the new `dmlConfigSync` module (see below). The cache read never throws: on any error or missing row it simply returns `[]`, so the session response is never broken for this reason. See the Italian `README.md` for the full field mapping table.
+> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) plus `dms/settings` (live) to build the session response; `companytypes`/`customertitles` are **not** fetched live anymore — they're read from the `woc.dml_configurations` cache table, refreshed once a day by the new `dmlConfigSync` module (see below). The cache read never throws: on any error or missing row it simply returns `[]`, so the session response is never broken for this reason. Each element of `oics` also includes a `brandLogos` array right after `brands`, resolving the CSV brand codes to their `logo_s3_key` paths via the `woc.anag_brand` table (same table already used by `isStellantisBrand`), resolved in a single batched query; same fault-tolerant behaviour — `[]` if `brands` is missing/empty or the DB query fails. See the Italian `README.md` for the full field mapping table.
 
 #### Main functions
 
