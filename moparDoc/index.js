@@ -1,20 +1,18 @@
   /**
  * index.js — Entry point (moparDoc)
  *
- * Espone 13 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
+ * Espone 11 azioni verso i gateway MoparDoc (documenti Mopar/Jobcard):
  *  ── 4 metodi originali (job-docs PSA + MoparDocs FCA):
- * Espone 13 azioni verso i gateway MoparDoc:
+ * Espone 11 azioni verso i gateway MoparDoc:
  *  - createJobCard     (POST /job-docs/connector/v1/CreateJobCard)
  *  - createAccessToken (POST /job-docs/connector/v1/CreateAccessToken)
  *  - getUploadDocURL   (POST /Mopardocs/MoparDocsApi/Browser/getUploadDocURL)
  *  - uploadedDoc       (POST /Mopardocs/MoparDocsApi/Browser/UploadedDoc)
  *
- *  ── 9 metodi nuovi (MoparDocs Services Stellantis):
+ *  ── 7 metodi nuovi (MoparDocs Services Stellantis):
  *  - getJobCardList               [NUOVO]
- *  - associateJobCard             [NUOVO]
  *  - getJobCardAndDocumentList    [NUOVO]
  *  - getDocumentsInfo             [NUOVO]
- *  - associateDocument            [NUOVO]
  *  - getDocuments                 [NUOVO]
  *  - DeleteDocuments              [NUOVO]
  *  - DeleteJobcard                [NUOVO]
@@ -26,10 +24,8 @@
  *   node index.js getUploadDocURL   <payloadJsonFile>
  *   node index.js uploadedDoc       <payloadJsonFile>
  *   node index.js getJobCardList               <payloadJsonFile> [NUOVO]
- *   node index.js associateJobCard             <payloadJsonFile> [NUOVO]
  *   node index.js getJobCardAndDocumentList    <payloadJsonFile> [NUOVO]
  *   node index.js getDocumentsInfo             <payloadJsonFile> [NUOVO]
- *   node index.js associateDocument            <payloadJsonFile> [NUOVO]
  *   node index.js getDocuments                 <payloadJsonFile> [NUOVO]
  *   node index.js DeleteDocuments              <payloadJsonFile> [NUOVO]
  *   node index.js DeleteJobcard                <payloadJsonFile> [NUOVO]
@@ -51,10 +47,8 @@ const {
   getUploadDocURL,
   uploadedDoc,
   getJobCardList,
-  associateJobCard,
   getJobCardAndDocumentList,
   getDocumentsInfo,
-  associateDocument,
   getDocuments,
   DeleteDocuments,
   DeleteJobcard,
@@ -87,19 +81,17 @@ function resolveActionAndBody(event) {
   return { action, body };
 }
 
-// NUOVO: Array esteso con 9 nuove azioni oltre alle 4 pre-esistenti (13 totali)
+// NUOVO: Array esteso con 7 nuove azioni oltre alle 4 pre-esistenti (11 totali)
 const VALID_ACTIONS = [
   // ────── Metodi originali (4) ──────
   'createJobCard', // Crea JobCard
   'createAccessToken', // Crea token di accesso
   'getUploadDocURL', // Ottiene URL upload documento
   'uploadedDoc', // Notifica upload documento completato
-  // ────── Metodi NUOVI (9) ──────
+  // ────── Metodi NUOVI (7) ──────
   'getJobCardList', // Recupera lista JobCard
-  'associateJobCard', // Associa JobCard a Ticket
   'getJobCardAndDocumentList', // Recupera JobCard e Documenti
   'getDocumentsInfo', // Ottiene informazioni documenti
-  'associateDocument', // Associa documento a Ticket
   'getDocuments', // Recupera documenti
   'DeleteDocuments', // Cancella documenti
   'DeleteJobcard', // Cancella JobCard
@@ -114,12 +106,10 @@ const ACTIONS = {
   createAccessToken, // Ottiene token accesso dall'endpoint job-docs
   getUploadDocURL, // Recupera URL upload presso il gateway MoparDocs Browser
   uploadedDoc, // Notifica al gateway che l'upload è completato
-  // ────── Dispatcher NUOVO (9 metodi) ──────
+  // ────── Dispatcher NUOVO (7 metodi) ──────
   getJobCardList, // Recupera lista JobCard per VIN, dealer, market presso MoparDocs Services
-  associateJobCard, // Associa un JobCard a un Ticket presso MoparDocs Services
   getJobCardAndDocumentList, // Recupera sia JobCard che relativa lista Documenti presso MoparDocs Services
   getDocumentsInfo, // Ottiene informazioni dettagliate su documenti specifici presso MoparDocs Services
-  associateDocument, // Associa un documento a un Ticket presso MoparDocs Services
   getDocuments, // Recupera lista documenti associati a JobCard presso MoparDocs Services
   DeleteDocuments, // Cancella documenti specifici presso MoparDocs Services
   DeleteJobcard, // Cancella una JobCard presso MoparDocs Services
@@ -228,10 +218,8 @@ async function main() {
       console.error('  node index.js getUploadDocURL   <payloadJsonFile>');
       console.error('  node index.js uploadedDoc       <payloadJsonFile>');
       console.error('  node index.js getJobCardList    <payloadJsonFile>');
-      console.error('  node index.js associateJobCard  <payloadJsonFile>');
       console.error('  node index.js getJobCardAndDocumentList <payloadJsonFile>');
       console.error('  node index.js getDocumentsInfo  <payloadJsonFile>');
-      console.error('  node index.js associateDocument <payloadJsonFile>');
       console.error('  node index.js getDocuments      <payloadJsonFile>');
       console.error('  node index.js DeleteDocuments   <payloadJsonFile>');
       console.error('  node index.js DeleteJobcard     <payloadJsonFile>');

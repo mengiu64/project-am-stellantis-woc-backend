@@ -4,8 +4,8 @@
  * moparDocService.js — Chiamate downstream verso i tre gateway MoparDoc:
  *  - job-docs connector (api-oidc-preprod.groupe-psa.com): CreateJobCard, CreateAccessToken
  *  - MoparDocs Browser API (lab-examaftersales.fiat.com): getUploadDocURL, UploadedDoc
- *  - MoparDocs Services API (stellantis.com): getJobCardList, associateJobCard, getJobCardAndDocumentList, 
- *    getDocumentsInfo, associateDocument, getDocuments, DeleteDocuments, DeleteJobcard, getDocumentsDownloadUrl
+ *  - MoparDocs Services API (stellantis.com): getJobCardList, getJobCardAndDocumentList, 
+ *    getDocumentsInfo, getDocuments, DeleteDocuments, DeleteJobcard, getDocumentsDownloadUrl
  *
  * Tutte le chiamate condividono lo stesso PingFederate (authService.getBearerToken) 
  * e le stesse credenziali IBM API Connect (X-IBM-Client-Id / X-IBM-Client-Secret), 
@@ -200,35 +200,6 @@ async function getJobCardList(params) {
 }
 
 /**
- * associateJobCard — Associa JobCard a Ticket.
- * @param {{source: string, Ticket: string, Type: string, JobCardId: string|number}} params
- */
-async function associateJobCard(params) {
-  // Valida i campi obbligatori: source, Ticket, Type, JobCardId
-  const required = ['source', 'Ticket', 'Type', 'JobCardId'];
-  // Filtra i campi mancanti dall'array required
-  const missing = required.filter((k) => !params || !params[k]);
-  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
-  if (missing.length > 0) {
-    throw new Error(`[associateJobCard] Missing required field(s): ${missing.join(', ')}`);
-  }
-
-  // Costruisce il payload della richiesta con tutti i parametri obbligatori
-  const payload = {
-    source: params.source,
-    JobCardId: params.JobCardId,
-    Ticket: params.Ticket,
-    Type: params.Type,
-  };
-
-  // Log: informa che verrà associato il JobCard al Ticket specificato
-  console.log(`[associateJobCard] Associazione JobCard=${params.JobCardId} a Ticket=${params.Ticket} (Type=${params.Type}, source=${params.source})`);
-
-  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/associateJobCard', payload);
-}
-
-/**
  * getJobCardAndDocumentList — Recupera sia JobCard che lista Documenti.
  * @param {{source: string, vin: string, dealerCode?: string, rrdi?: string, market: string, Language: string, StartDate: string}} params
  */
@@ -295,38 +266,6 @@ async function getDocumentsInfo(params) {
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
   return postJson(config.moparDocsServices, '/getDocumentsInfo', payload);
-}
-
-/**
- * associateDocument — Associa documento a Ticket.
- * @param {{source: string, Ticket: string, Documents: Array<{DocumentId: string|number, AssociateOperation: boolean, DealerVisibility?: boolean}>}} params
- */
-async function associateDocument(params) {
-  // Valida i campi obbligatori: source, Ticket, Documents
-  const required = ['source', 'Ticket', 'Documents'];
-  // Filtra i campi mancanti dall'array required
-  const missing = required.filter((k) => !params || !params[k]);
-  // Se mancano campi obbligatori, lancia un errore con la lista dei campi mancanti
-  if (missing.length > 0) {
-    throw new Error(`[associateDocument] Missing required field(s): ${missing.join(', ')}`);
-  }
-  // Valida che Documents sia un array non vuoto
-  if (!Array.isArray(params.Documents) || params.Documents.length === 0) {
-    throw new Error('[associateDocument] Documents deve essere un array non vuoto');
-  }
-
-  // Costruisce il payload della richiesta con tutti i parametri obbligatori
-  const payload = {
-    source: params.source,
-    Ticket: params.Ticket,
-    Documents: params.Documents,
-  };
-
-  // Log: informa che verrà associato il documento al Ticket specificato
-  console.log(`[associateDocument] Associazione ${params.Documents.length} documento(i) a Ticket=${params.Ticket} (source=${params.source})`);
-
-  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/associateDocument', payload);
 }
 
 /**
@@ -450,10 +389,8 @@ module.exports = {
   getUploadDocURL,
   uploadedDoc,
   getJobCardList,
-  associateJobCard,
   getJobCardAndDocumentList,
   getDocumentsInfo,
-  associateDocument,
   getDocuments,
   DeleteDocuments,
   DeleteJobcard,
