@@ -405,9 +405,9 @@ async function getDocumentsDownloadUrl(params) {
   console.log(`[getDocumentsDownloadUrl] Generazione URL download per ${params.DocumentIDList.length} documento(i)`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato.
-  // NOTA: la risorsa reale sul gateway è "getDocumentsInfoByJobCardId" (vedi documentazione),
-  // non "getDocumentsDownloadUrl": il nome logico dell'azione differisce dal path effettivo.
-  return postJson(config.moparDocsServices, '/getDocumentsInfoByJobCardId', payload);
+  // NOTA: questo endpoint non risulta esposto sul gateway IBM job-docs/connector/v1 (HTTP 404).
+  // In alternativa usare getDocumentsInfo, che restituisce gli stessi signedUrl/previewUrl.
+  return postJson(config.moparDocsServices, '/getDocumentsDownloadUrl', payload);
 }
 
 module.exports = {
