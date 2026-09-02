@@ -14,12 +14,12 @@ const {
   getDocumentsDownloadUrl,
 } = require('../moparDocService');
 
-const config = require('../config');
-
 jest.mock('../config', () => ({
-  jobDocs: { baseUrl: 'https://job-docs', basePath: '/jd', ibmClientId: 'id', ibmClientSecret: 'secret' },
-  moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
-  moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
+  getConfig: jest.fn().mockResolvedValue({
+    jobDocs: { baseUrl: 'https://job-docs', basePath: '/jd', ibmClientId: 'id', ibmClientSecret: 'secret' },
+    moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
+    moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
+  }),
 }));
 
 jest.mock('../authService', () => ({

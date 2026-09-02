@@ -14,6 +14,10 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.800.0",
+    "@aws-sdk/client-ssm": "^3.800.0"
+  },
   "devDependencies": {
     "jest": "^29.7.0",
     "jest-html-reporters": "^3.1.7"
@@ -26,7 +30,9 @@
     "collectCoverageFrom": [
       "authService.js",
       "httpClient.js",
-      "moparDocService.js"
+      "moparDocService.js",
+      "config.js",
+      "secretsLoader.js"
     ],
     "coverageReporters": [
       "html",
