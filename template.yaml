@@ -1025,9 +1025,14 @@ Resources:
         DailySync:
           Type: Schedule
           Properties:
-            # 03:00 UTC ogni giorno (orario a basso traffico, fuori dagli orari
-            # d'ufficio EMEA). Regolabile senza toccare il codice.
-            Schedule: cron(0 3 * * ? *)
+            # 08:00 UTC ogni giorno (era 03:00 UTC: spostato più tardi perché il
+            # gateway DML Stellantis sembra non essere disponibile/stabile di notte —
+            # osservato un HTTP 502 "Internal server error" sulla sync delle 03:00 UTC
+            # del 2026-09-02, risolto poche ore dopo. 08:00 UTC = 10:00 CEST / 09:00 CET,
+            # quindi resta comunque fuori dagli orari di punta EMEA per tutto l'anno
+            # (nota: EventBridge Schedule interpreta sempre l'orario in UTC, non in ora
+            # locale). Regolabile senza toccare il codice.
+            Schedule: cron(0 8 * * ? *)
             Name: !Sub "sch-np-bsn0027990-${Environment}-dmlconfigsync-daily"
             Description: Sync giornaliera company-types/customer-titles DML per i mercati abilitati
             Enabled: true

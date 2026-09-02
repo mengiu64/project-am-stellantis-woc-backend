@@ -563,7 +563,7 @@ isStellantisBrand/
 
 ### dmlConfigSync
 
-**Scheduled** Lambda (EventBridge Schedule, `cron(0 3 * * ? *)` — daily at 03:00 UTC, see `template.yaml`) that syncs, once a day, the DML `company-types`/`customer-titles` configurations for enabled markets, so `session` can read them from a DB cache instead of calling the two live services on every session request.
+**Scheduled** Lambda (EventBridge Schedule, `cron(0 8 * * ? *)` — daily at 08:00 UTC, see `template.yaml`) that syncs, once a day, the DML `company-types`/`customer-titles` configurations for enabled markets, so `session` can read them from a DB cache instead of calling the two live services on every session request.
 
 On each run: reads the enabled markets from `woc.dml_enabled_markets` (`country`, `language`, `active`), gets a PingFederate bearer token (same credentials as `dms/settings`) and calls `dms.getCompanyTypes`/`dms.getCustomerTitles` in parallel for each market, then upserts the result (`company_types`/`customer_titles` as JSONB, `[]` if the service returns 404/no data) into `woc.dml_configurations` (PK `country`+`language`). Each market is processed in isolation (`Promise.allSettled`): a failing market does not block the sync of the others.
 

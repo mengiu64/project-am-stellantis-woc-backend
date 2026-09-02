@@ -831,7 +831,7 @@ node index.js toggle <username> <vin> <packageCode>
 
 ### dmlConfigSync
 
-Lambda **schedulata** (EventBridge Schedule, `cron(0 3 * * ? *)` — 03:00 UTC ogni giorno, vedi `template.yaml`) che sincronizza una volta al giorno le configurazioni DML `company-types`/`customer-titles` per i mercati abilitati, così che `session` possa leggerle da una cache DB invece di chiamare i due servizi live ad ogni richiesta di sessione.
+Lambda **schedulata** (EventBridge Schedule, `cron(0 8 * * ? *)` — 08:00 UTC ogni giorno, vedi `template.yaml`) che sincronizza una volta al giorno le configurazioni DML `company-types`/`customer-titles` per i mercati abilitati, così che `session` possa leggerle da una cache DB invece di chiamare i due servizi live ad ogni richiesta di sessione.
 
 Ad ogni esecuzione:
 1. legge l'elenco dei mercati abilitati dalla tabella `woc.dml_enabled_markets` (`country`, `language`, `active`) — gestibile via SQL senza bisogno di un redeploy per abilitare/disabilitare un mercato;
