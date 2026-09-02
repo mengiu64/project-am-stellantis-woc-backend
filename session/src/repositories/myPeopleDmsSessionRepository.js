@@ -5,17 +5,22 @@ const { SessionRepository } = require('./sessionRepository');
 const { SessionNotFoundError } = require('../errors');
 
 // Cross-lambda-folder require, stesso pattern già usato da pkManager/PkManager.js
-// per dms/pkEper/pkDocsoa/pkMenupricing (require(path.resolve(__dirname, '../dms/...'))):
-// il build di SessionFunction (Metadata: BuildMethod: makefile, vedi Makefile) impacchetta
-// myPeople/ e dms/ come cartelle sorelle di session/ dentro l'artifact di deploy, cosi'
-// questi require relativi continuano a risolvere correttamente anche a runtime in Lambda.
-// Caricati "on demand" (lazy) invece che in cima al file: myPeople/config.js e dms/config.js
-// validano le proprie variabili d'ambiente non appena richiesti, e nei test unitari questa
-// repository viene istanziata con le funzioni già iniettate (vedi costruttore), senza mai
-// toccare i moduli reali.
+// (require(path.resolve(__dirname, '../dms/...'))): il build di SessionFunction
+// (Metadata: BuildMethod: makefile, vedi Makefile) impacchetta myPeople/ e
+// dmlConfigSync/ come cartelle sorelle di session/ dentro l'artifact di deploy, cosi'
+// questi require relativi continuano a risolvere correttamente anche a runtime in
+// Lambda. Caricati "on demand" (lazy) invece che in cima al file: myPeople/config.js
+// valida le proprie variabili d'ambiente non appena richiesto, e nei test unitari
+// questa repository viene istanziata con le funzioni già iniettate (vedi
+// costruttore), senza mai toccare i moduli reali. NOTA: session non richiede più
+// dms/ direttamente (dms/authService/dms/dmsService sono usati solo dalla lambda
+// "dmlConfigSync", che chiama i servizi DML live una volta al giorno) — il Makefile
+// continua comunque a impacchettare dms/ come cartella sorella perché è una
+// dipendenza transitiva di dmlConfigSync/index.js (non invocato da session, ma
+// comunque parte della stessa cartella sorella).
 let _readUserProfiles;
-let _getBearerToken;
-let _getDmsSettings;
+let _getDmsSettingsCache;
+let _registerDmsSettingsDealer;
 let _getDmlConfiguration;
 let _getBrandLogos;
 
@@ -26,18 +31,41 @@ function loadReadUserProfiles() {
   return _readUserProfiles;
 }
 
-function loadGetBearerToken() {
-  if (!_getBearerToken) {
-    ({ getBearerToken: _getBearerToken } = require(path.resolve(__dirname, '../../../dms/authService')));
+// dms/settings NON viene più chiamato live (dms/authService.getBearerToken +
+// dms/dmsService.getDmsSettings): è invece letto dalla cache popolata una volta
+// al giorno dalla lambda "dmlConfigSync" (tabella woc.dms_settings su Aurora
+// PostgreSQL, vedi sql/create_table_dms_settings.sql), stesso principio già
+// applicato a company-types/customer-titles (woc.dml_configurations). Session
+// non richiede quindi più dms/authService/dms/dmsService: solo dmlConfigSync/
+// (già cartella sorella impacchettata via Makefile per la cache DML) serve.
+function loadGetDmsSettingsCache() {
+  if (!_getDmsSettingsCache) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
+    const { getDmsSettings } = require(path.resolve(__dirname, '../../../dmlConfigSync/DmsSettingsRepository'));
+    _getDmsSettingsCache = async ({ country, brand, dealer }) => {
+      const pool = await getPool();
+      return getDmsSettings(pool, { country, brand, dealer });
+    };
   }
-  return _getBearerToken;
+  return _getDmsSettingsCache;
 }
 
-function loadGetDmsSettings() {
-  if (!_getDmsSettings) {
-    ({ getDmsSettings: _getDmsSettings } = require(path.resolve(__dirname, '../../../dms/dmsService')));
+// Registra (best-effort) una combinazione country+brand+dealer mai vista prima
+// (cache-miss su woc.dms_settings) nel registro woc.dms_settings_enabled_dealers,
+// cosi' che la prossima esecuzione schedulata di dmlConfigSync la sincronizzi.
+// Il chiamante (getSessionData) attende (await) questa chiamata prima di
+// ritornare la risposta (per evitare che resti "in volo" dopo il return della
+// Lambda), ma ne ignora sempre un eventuale errore (mai propagato/bloccante).
+function loadRegisterDmsSettingsDealer() {
+  if (!_registerDmsSettingsDealer) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
+    const { registerDealer } = require(path.resolve(__dirname, '../../../dmlConfigSync/DmsSettingsRepository'));
+    _registerDmsSettingsDealer = async ({ country, brand, dealer }) => {
+      const pool = await getPool();
+      return registerDealer(pool, { country, brand, dealer });
+    };
   }
-  return _getDmsSettings;
+  return _registerDmsSettingsDealer;
 }
 
 // company-types/customer-titles NON vengono più chiamati live (dms/getCompanyTypes,
@@ -113,8 +141,8 @@ const BRAND_CODE_TO_REFTECH = {
  * IURSMA:
  *   1) chiama myPeople readUserProfiles({ username }) per risalire a mercato/dealer/brand
  *      dell'utente;
- *   2) con questi dati chiama dms/settings (getBearerToken + getDmsSettings) per le
- *      impostazioni DMS del dealer;
+ *   2) legge le impostazioni DMS del dealer dalla cache woc.dms_settings (NON più una
+ *      chiamata live a dms/settings, vedi sotto);
  *   3) restituisce un oggetto con la STESSA forma del JSON storico di S3SessionRepository
  *      (stesse chiavi), valorizzando solo i campi ricavabili da myPeople/dms — gli altri
  *      (es. physicalsite, pdvId, preferenze pezzi, sconti massimi, ...) provengono da
@@ -139,19 +167,37 @@ const BRAND_CODE_TO_REFTECH = {
  *      → ["assets/images/logo/brand-stla/CITROEN.png", ...]). Stesso principio
  *      fault-tolerant delle altre letture DB di questa classe: `[]` se `brands`
  *      è assente/vuoto, se un codice non ha un logo associato, o se la query fallisce.
+ *
+ *      `isdml`/`dmlcustomerupdate`/`dmldiscount` (derivati da dms/settings) NON
+ *      vengono più ricavati da una chiamata live (dms/authService.getBearerToken +
+ *      dms/dmsService.getDmsSettings): sono letti dalla cache woc.dms_settings
+ *      (popolata una volta al giorno dalla lambda "dmlConfigSync" chiamando
+ *      dms/getDmsSettings per le combinazioni country+brand+dealer abilitate,
+ *      tabella woc.dms_settings_enabled_dealers), indicizzata per
+ *      `country`/`brand`/`dealer` (da `Attributes.NATIONiso2`, il brand RefTech
+ *      del primo OIC principale, `Attributes.MAINSINCOM`). Stesso principio
+ *      fault-tolerant di companytypes/customertitles: se la cache non ha ancora
+ *      una riga per la combinazione (mai vista prima) o la lettura fallisce, si
+ *      ritornano i valori di default (isdml:false, dmlcustomerupdate:null,
+ *      dmldiscount:null) SENZA mai bloccare/fallire la sessione — e si registra
+ *      (best-effort: awaited ma con errori sempre ignorati/loggati, mai
+ *      propagati) la combinazione in woc.dms_settings_enabled_dealers cosi' che
+ *      il prossimo giro schedulato di dmlConfigSync la sincronizzi (i dati
+ *      diventano quindi disponibili al più tardi il giorno successivo per un
+ *      dealer mai visto prima).
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({
     readUserProfilesFn,
-    getBearerTokenFn,
-    getDmsSettingsFn,
+    getDmsSettingsCacheFn,
+    registerDmsSettingsDealerFn,
     getDmlConfigurationFn,
     getBrandLogosFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
-    this._getBearerTokenFn = getBearerTokenFn;
-    this._getDmsSettingsFn = getDmsSettingsFn;
+    this._getDmsSettingsCacheFn = getDmsSettingsCacheFn;
+    this._registerDmsSettingsDealerFn = registerDmsSettingsDealerFn;
     this._getDmlConfigurationFn = getDmlConfigurationFn;
     this._getBrandLogosFn = getBrandLogosFn;
   }
@@ -191,8 +237,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
     const wiAdvDlApp = applications.find((app) => app && app.APPLICATION === 'wiADV.DL');
 
-    const getBearerToken = this._getBearerTokenFn || loadGetBearerToken();
-    const getDmsSettings = this._getDmsSettingsFn || loadGetDmsSettings();
+    const getDmsSettingsCache = this._getDmsSettingsCacheFn || loadGetDmsSettingsCache();
+    const registerDmsSettingsDealer = this._registerDmsSettingsDealerFn || loadRegisterDmsSettingsDealer();
     const getDmlConfiguration = this._getDmlConfigurationFn || loadGetDmlConfiguration();
     const getBrandLogos = this._getBrandLogosFn || loadGetBrandLogos();
 
@@ -205,22 +251,32 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
         .filter((code) => code !== ''),
     ));
 
-    let token;
-    try {
-      token = await getBearerToken();
-    } catch (err) {
-      throw new Error(`[session] dms/settings failed: ${err.message}`);
-    }
-
-    // dms/settings resta una chiamata live (stesso bearer token/credenziali IBM).
-    // La lettura della cache company-types/customer-titles (woc.dml_configurations)
-    // è invece indipendente dal bearer token DML e non deve mai far fallire la
-    // sessione: un problema di connettività al DB (o l'assenza di una riga cache
-    // per il mercato) si traduce semplicemente in `[]`, non in un'eccezione.
+    // dms/settings NON è più una chiamata live: si legge la cache woc.dms_settings
+    // (country+brand+dealer). Come companytypes/customertitles, un cache-miss o
+    // un errore di lettura non deve mai far fallire la sessione: si ritornano i
+    // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
+    // registra (best-effort) la combinazione per la prossima sync schedulata.
     const [dmsSettings, dmlConfiguration, brandLogosByCode] = await Promise.all([
-      getDmsSettings(token, { country, brand: brandReftech, dealer }).catch((err) => {
-        throw new Error(`[session] dms/settings failed: ${err.message}`);
-      }),
+      (country && brandReftech && dealer)
+        ? getDmsSettingsCache({ country, brand: brandReftech, dealer })
+          .then(async (cached) => {
+            if (cached) return cached;
+            // Registrazione best-effort (mai bloccante/fallimento propagato): AWAIT
+            // esplicito per evitare che la Promise resti "in volo" dopo il return
+            // della Lambda (rischio concreto in ambiente Lambda: l'execution
+            // environment puo' essere "congelato" subito dopo la risposta, e una
+            // Promise non attesa potrebbe non completarsi mai o eseguire su
+            // un'invocazione futura con uno stato incoerente).
+            await registerDmsSettingsDealer({ country, brand: brandReftech, dealer }).catch((err) => {
+              console.error(`[session] registrazione dealer dms/settings fallita per country="${country}" brand="${brandReftech}" dealer="${dealer}": ${err.message}`);
+            });
+            return { success: false, data: [] };
+          })
+          .catch((err) => {
+            console.error(`[session] lettura cache dms/settings fallita per country="${country}" brand="${brandReftech}" dealer="${dealer}": ${err.message}`);
+            return { success: false, data: [] };
+          })
+        : Promise.resolve({ success: false, data: [] }),
       country
         ? getDmlConfiguration({ country, language: country }).catch((err) => {
           console.error(`[session] lettura cache dml/configurations fallita per country="${country}": ${err.message}`);

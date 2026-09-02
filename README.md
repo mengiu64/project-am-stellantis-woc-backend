@@ -57,7 +57,7 @@ project-am-stellantis-woc-backend/
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
-└── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles DML per mercato -> cache Aurora, letta da session
+└── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
 
 ```
 
@@ -623,9 +623,11 @@ L'Handler HTTP (dietro API Gateway, proxy REST) **non si fida di alcun parametro
 - `roles` — stringa CSV (es. `"dealer,advisor"`), esposta come array da `getAuthContext(event)`; l'autorizzazione applicativa (chi può fare cosa) resta a carico di chi consuma questi dati.
 - `profile` — JSON string col profilo canonico (stessa forma di `GET /auth/user-info`: `sub`, `given_name`, `family_name`, `name`, `email`, `locale`, `country`, `roles[]`, `dealer_code`, `dealer_name`, `brand`, `region_code`, ...), parsato da `getAuthContext(event)` se presente (`null` se assente o JSON non valido). Non usato oggi per calcolare la sessione (si usa sempre `myPeople` via `sub`), disponibile per usi futuri.
 
-Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente), poi ottiene un bearer token PingFederate e chiama **in parallelo** `dms/settings` (chiamata live), la cache DB `woc.dml_configurations` (per `companytypes`/`customertitles`, `country`/`language` derivati dallo stesso `NATIONiso2` di myPeople) e la tabella `woc.anag_brand` (per risolvere i loghi dei brand di ogni OIC, vedi nota `brandLogos` sotto), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository`. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente), poi legge **in parallelo** tre cache Aurora popolate giornalmente dal modulo `dmlConfigSync` (nessuna chiamata live a `dms/*` da parte di `session`): `woc.dms_settings` (per `isdml`/`dmlcustomerupdate`/`dmldiscount`, chiave `country`+`brand`+`dealer`), `woc.dml_configurations` (per `companytypes`/`customertitles`, chiave `country`+`language`, entrambi derivati dallo stesso `NATIONiso2` di myPeople) e la tabella `woc.anag_brand` (per risolvere i loghi dei brand di ogni OIC, vedi nota `brandLogos` sotto), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository`. I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
 
-> **Nota (companytypes/customertitles):** questi due campi **non** chiamano più live `dms/getCompanyTypes`/`dms/getCustomerTitles` ad ogni richiesta di sessione: vengono letti dalla tabella `woc.dml_configurations`, popolata una volta al giorno dal nuovo modulo `dmlConfigSync` (vedi sezione dedicata sotto). La lettura dalla cache **non blocca mai** la sessione: in caso di errore DB, riga assente per il mercato richiesto, o `country` non derivabile da myPeople, i due campi tornano semplicemente `[]` (nessun errore/502 propagato all'utente).
+> **Nota (companytypes/customertitles):** questi due campi **non** chiamano più live `dms/getCompanyTypes`/`dms/getCustomerTitles` ad ogni richiesta di sessione: vengono letti dalla tabella `woc.dml_configurations`, popolata una volta al giorno dal modulo `dmlConfigSync` (vedi sezione dedicata sotto). La lettura dalla cache **non blocca mai** la sessione: in caso di errore DB, riga assente per il mercato richiesto, o `country` non derivabile da myPeople, i due campi tornano semplicemente `[]` (nessun errore/502 propagato all'utente).
+
+> **Nota (`isdml`/`dmlcustomerupdate`/`dmldiscount`):** questi tre campi **non** chiamano più live `dms/settings` ad ogni richiesta di sessione: vengono letti dalla tabella `woc.dms_settings` (chiave `country`+`brand`+`dealer`), popolata una volta al giorno dal modulo `dmlConfigSync` per le combinazioni registrate in `woc.dms_settings_enabled_dealers`. A differenza dei mercati (elenco piccolo, popolabile a mano), le combinazioni dealer non sono pre-enumerabili: al primo cache-miss per una combinazione mai vista, `session` ritorna i valori di default (`isdml: false`, `dmlcustomerupdate: null`, `dmldiscount: null`, mai un errore) **e registra** (best-effort, `INSERT ... ON CONFLICT DO NOTHING`) la combinazione in `woc.dms_settings_enabled_dealers`, cosicché la sincronizzazione schedulata del giorno successivo la popoli. Stesso principio fault-tolerant di companytypes/customertitles: un errore di lettura/registrazione non blocca mai la sessione.
 
 > **Nota (`oics[].brandLogos`):** ogni elemento dell'array `oics` include, subito dopo il campo `brands`, un array `brandLogos` con i percorsi (`logo_s3_key`) dei loghi dei brand elencati in `brands` (CSV di codici numerici, es. `"30,31,33,43"` → `["assets/images/logo/brand-stla/CITROEN.png", "assets/images/logo/brand-stla/PEUGEOT.png", ...]`), risolti tramite un'unica query batch (per tutti gli OIC della sessione) sulla tabella `woc.anag_brand` (stessa tabella/cluster Aurora già usata dalla lambda `isStellantisBrand`). Stesso principio fault-tolerant delle altre letture DB di questa Lambda: `brandLogos` è `[]` se `brands` è assente/vuoto, se un codice non ha un logo associato, o se la query al DB fallisce per qualunque motivo (non blocca mai il resto della risposta di sessione).
 
@@ -633,7 +635,7 @@ Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recu
 
 L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository` (flusso `codmarket`, usato solo dalla CLI) e da `MyPeopleDmsSessionRepository` (flusso `username`, usato dall'handler HTTP tramite `sub` e dalla CLI tramite `--username`), per permettere di aggiungere/sostituire sorgenti dati senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
 
-> **Nota tecnica:** per poter richiamare in-process il codice di `myPeople`, `dms` e la cache DB di `dmlConfigSync` (senza invocazioni Lambda-to-Lambda separate), `SessionFunction` in `template.yaml` usa `CodeUri: ./` (root del repo) + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `session/`, `myPeople/`, `dms/` e `dmlConfigSync/` nel pacchetto di build (stesso pattern già usato da `pkManager` per `pkEper`/`pkDocsoa`/`pkMenupricing`/`dms`).
+> **Nota tecnica:** per poter richiamare in-process il codice di `myPeople` e la cache DB di `dmlConfigSync` (senza invocazioni Lambda-to-Lambda separate), `SessionFunction` in `template.yaml` usa `CodeUri: ./` (root del repo) + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `session/`, `myPeople/`, `dms/` e `dmlConfigSync/` nel pacchetto di build (stesso pattern già usato da `pkManager` per `pkEper`/`pkDocsoa`/`pkMenupricing`/`dms`). `session` stesso **non richiede più `dms/`** (nessuna chiamata live rimasta): la cartella `dms/` resta comunque nel pacchetto perché è una dipendenza transitiva di `dmlConfigSync/index.js` (impacchettato come cartella sorella, non invocato da `session`).
 
 #### Mappatura myPeople/dms → campi di sessione
 
@@ -643,14 +645,14 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `oic` | `CODE` dell'OIC con `MAIN: "Y"` (fallback: primo OIC disponibile) |
 | `sincom` | `Attributes.MAINSINCOM` |
 | `sessionbrand` / `brandvehic_fca` | primo codice del campo `BRANDS` (CSV) dell'OIC selezionato |
-| `brandvehic_reftech` | codice brand transcodificato (tabella interna 83→AR, 00→FT, 70→LA, 57→JE, 55→CY, 77→FO, 66→AH, 56→DG, 58→RM, 30→AC, 31→AP, 33→DS, 43→OV, 97→CT); è anche il valore usato come `brand` nella chiamata a `dms/settings` |
+| `brandvehic_reftech` | codice brand transcodificato (tabella interna 83→AR, 00→FT, 70→LA, 57→JE, 55→CY, 77→FO, 66→AH, 56→DG, 58→RM, 30→AC, 31→AP, 33→DS, 43→OV, 97→CT); è anche il valore usato come `brand` nella lettura cache `woc.dms_settings` |
 | `brandvehic_genome` | sempre `null` (nessuna tabella di mappatura disponibile) |
 | `language` | codice lingua ISO2 minuscolo da `Attributes.NATIONiso2` (es. `it`) |
 | `locale` | `` `${iso2}_${ISO2}` `` da `Attributes.NATIONiso2` (es. `it_IT`) |
 | `usertype` | `Attributes.USERTYPE` |
-| `isdml` | `true` se `dms/settings` risponde `success: true` |
-| `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) in `dms/settings`, altrimenti `null` |
-| `dmldiscount` | valore della prima chiave di `dms/settings` contenente `discount`, altrimenti `null` |
+| `isdml` | `true` se la cache `woc.dms_settings` (chiave `country`+`brand`+`dealer`) ha `success: true`; `false` se non ancora sincronizzata (cache-miss) o in caso di errore |
+| `dmlcustomerupdate` | valore della chiave `knownCustomerUpdate` (fallback `accountCustomerUpdate`) nell'array `data` della cache `woc.dms_settings`, altrimenti `null` |
+| `dmldiscount` | valore della prima chiave contenente `discount` nell'array `data` della cache `woc.dms_settings`, altrimenti `null` |
 | `oics` | intero array `Response.User.OICs` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `MARKET`→`market`, `CODE`→`code`, `BRANDS`→`brands`, ...); ogni elemento include inoltre `brandLogos` subito dopo `brands` (vedi nota sopra) |
 | `applications` | intero array `Response.User.Applications` di myPeople, riportato **as-is** ma con tutte le chiavi di ogni oggetto in minuscolo (es. `APPLICATION`→`application`, `PROFILE`→`profile`, `STATUS`→`status`, `MARKET`→`market`) |
 | `companytypes` | array `company_types` letto dalla cache `woc.dml_configurations` per `(country, language)` (ISO2 minuscolo da `NATIONiso2`), popolata giornalmente da `dmlConfigSync`; `[]` se riga assente/errore DB/`country` non derivabile |
@@ -664,7 +666,7 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 | `handler(event)` | Entry-point Lambda HTTP: legge `sub` da `event.requestContext.authorizer` (via `getAuthContext`) e usa **sempre** `MyPeopleDmsSessionRepository` con `sub` come username; ignora qualunque `username`/`codmarket` fornito da query/path/criteria. Ritorna 401 se `sub` è assente, 200 con i dati, 404 se l'utente non è presente su myPeople, 502 su errori generici |
 | `getAuthContext(event)` | Estrae `{ sub, roles, profile }` da `event.requestContext.authorizer`: `roles` (CSV) convertito in array, `profile` (JSON string) parsato in oggetto (`null` se assente/non valido) |
 | `getSessionData(codmarket)` | `S3SessionRepository`: scarica `session/session_data.json` da S3 ed estrae la sezione relativa al mercato richiesto (usato solo dalla CLI) |
-| `getSessionData(username)` | `MyPeopleDmsSessionRepository`: chiama `myPeople.readUserProfiles` + `dms.getDmsSettings`/`dms.getCompanyTypes`/`dms.getCustomerTitles` (in parallelo) e compone il JSON di sessione |
+| `getSessionData(username)` | `MyPeopleDmsSessionRepository`: chiama `myPeople.readUserProfiles` e legge in parallelo le cache `woc.dms_settings`/`woc.dml_configurations`/`woc.anag_brand` (nessuna chiamata live a `dms/*`), componendo il JSON di sessione |
 | `buildRepository(overrides)` | Factory che costruisce `S3SessionRepository` (bucket/key/client configurabili via env o overrides, utile nei test e nella CLI) |
 | `buildMyPeopleDmsRepository(overrides)` | Factory che costruisce `MyPeopleDmsSessionRepository` (funzioni myPeople/dms iniettabili via overrides, utile nei test) |
 
@@ -679,7 +681,7 @@ session/
 │   └── repositories/
 │       ├── sessionRepository.js              # Interfaccia base
 │       ├── s3SessionRepository.js            # Implementazione S3 (bucket + key JSON) — flusso codmarket
-│       └── myPeopleDmsSessionRepository.js    # Implementazione myPeople + dms/settings — flusso username
+│       └── myPeopleDmsSessionRepository.js    # Implementazione myPeople + cache DB (dms/settings, company-types/customer-titles, brand logos) — flusso username
 └── __tests__/                                # Unit test Jest
 ```
 
@@ -831,14 +833,24 @@ node index.js toggle <username> <vin> <packageCode>
 
 ### dmlConfigSync
 
-Lambda **schedulata** (EventBridge Schedule, `cron(0 8 * * ? *)` — 08:00 UTC ogni giorno, vedi `template.yaml`) che sincronizza una volta al giorno le configurazioni DML `company-types`/`customer-titles` per i mercati abilitati, così che `session` possa leggerle da una cache DB invece di chiamare i due servizi live ad ogni richiesta di sessione.
+Lambda **schedulata** (EventBridge Schedule, `cron(0 8 * * ? *)` — 08:00 UTC ogni giorno, vedi `template.yaml`) che sincronizza una volta al giorno due cache indipendenti su Aurora PostgreSQL, così che `session` possa leggerle dal DB invece di chiamare i servizi DML live ad ogni richiesta di sessione:
 
-Ad ogni esecuzione:
+1. **company-types/customer-titles** per i mercati abilitati;
+2. **dms/settings** per le combinazioni `country`+`brand`+`dealer` abilitate (usato per `isdml`/`dmlcustomerupdate`/`dmldiscount`).
+
+Ad ogni esecuzione (le due sync condividono lo stesso bearer token PingFederate, ottenuto una sola volta):
+
+**Mercati (company-types/customer-titles):**
 1. legge l'elenco dei mercati abilitati dalla tabella `woc.dml_enabled_markets` (`country`, `language`, `active`) — gestibile via SQL senza bisogno di un redeploy per abilitare/disabilitare un mercato;
-2. per ciascun mercato ottiene un bearer token PingFederate (stesse credenziali di `dms/settings`) e chiama **in parallelo** `dms.getCompanyTypes`/`dms.getCustomerTitles`;
+2. per ciascun mercato chiama **in parallelo** `dms.getCompanyTypes`/`dms.getCustomerTitles`;
 3. upserta il risultato (`company_types`, `customer_titles` come JSONB, `[]` se il servizio risponde 404/senza dati) nella tabella `woc.dml_configurations` (PK `country`+`language`).
 
-Ogni mercato viene processato in isolamento (`Promise.allSettled`): un mercato che fallisce (rete, credenziali, DB) non blocca la sync degli altri mercati abilitati; il risultato per-mercato (`success`/`error`) viene loggato e restituito nel summary.
+**Dealer (dms/settings):**
+1. legge l'elenco delle combinazioni abilitate dalla tabella `woc.dms_settings_enabled_dealers` (`country`, `brand`, `dealer`, `active`) — popolata **automaticamente** da `session` al primo cache-miss per una combinazione mai vista (nessun popolamento manuale necessario per i nuovi dealer, a differenza dei mercati);
+2. per ciascuna combinazione chiama `dms.getDmsSettings`;
+3. upserta il risultato (`success` come booleano, `data` come JSONB, `[]` se il servizio risponde 404/senza dati) nella tabella `woc.dms_settings` (PK `country`+`brand`+`dealer`).
+
+Ogni mercato/dealer viene processato in isolamento (`Promise.allSettled`): un elemento che fallisce (rete, credenziali, DB) non blocca la sync degli altri elementi abilitati; il risultato per-elemento (`success`/`error`) viene loggato e restituito nel summary (`results` per i mercati, `dealerResults` per i dealer).
 
 > **Nota tecnica:** stesso pattern di `pkManager`/`session`: `DmlConfigSyncFunction` in `template.yaml` usa `CodeUri: ./` + `Metadata: BuildMethod: makefile`, con un target dedicato in `Makefile` che copia `dmlConfigSync/` e `dms/` nel pacchetto di build. La connessione DB riusa lo stesso cluster Aurora/RDS Proxy e lo stesso secret di `pkFavorite` (`PkFavoriteDbHost`/`PkFavoriteDbSecretId`), nessun nuovo parametro CloudFormation.
 
@@ -847,8 +859,9 @@ Ogni mercato viene processato in isolamento (`Promise.allSettled`): un mercato c
 | Funzione | Descrizione |
 |---|---|
 | `handler()` | Entry-point Lambda (trigger `Schedule`): esegue `runSync()` e logga il summary |
-| `runSync(overrides)` | Orchestratore: legge i mercati abilitati, ottiene un bearer token, sincronizza tutti i mercati in parallelo isolando gli errori per singolo mercato; dipendenze iniettabili via `overrides` per i test |
-| `syncMarket(pool, token, market, deps)` | Sincronizza un singolo mercato (company-types + customer-titles in parallelo) e upserta il risultato |
+| `runSync(overrides)` | Orchestratore: legge mercati e dealer abilitati (in parallelo), ottiene un bearer token condiviso, sincronizza tutti i mercati e tutti i dealer in parallelo isolando gli errori per singolo elemento; ritorna `{success, results, dealerResults}`; dipendenze iniettabili via `overrides` per i test |
+| `syncMarket(pool, token, market, deps)` | Sincronizza un singolo mercato (company-types + customer-titles in parallelo) e upserta il risultato in `woc.dml_configurations` |
+| `syncDealer(pool, token, dealer, deps)` | Sincronizza una singola combinazione country+brand+dealer (dms/settings) e upserta il risultato in `woc.dms_settings` |
 
 #### Utilizzo CLI
 
@@ -1077,7 +1090,7 @@ DMLCONFIGSYNC_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (opzionale) id sec
 DMLCONFIGSYNC_DB_SSL=true                     # (opzionale) default true
 ```
 
-> **Nota:** stesso cluster Aurora/RDS Proxy e stesso secret Secrets Manager di `pkFavorite` (in `template.yaml` riusa infatti i parametri `PkFavoriteDbHost`/`PkFavoriteDbSecretId`, nessun nuovo parametro CloudFormation). Richiede inoltre **tutte** le variabili d'ambiente della sezione `dms` qui sopra (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), necessarie per chiamare `dms.getCompanyTypes`/`dms.getCustomerTitles`.
+> **Nota:** stesso cluster Aurora/RDS Proxy e stesso secret Secrets Manager di `pkFavorite` (in `template.yaml` riusa infatti i parametri `PkFavoriteDbHost`/`PkFavoriteDbSecretId`, nessun nuovo parametro CloudFormation). Richiede inoltre **tutte** le variabili d'ambiente della sezione `dms` qui sopra (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), necessarie per chiamare `dms.getCompanyTypes`/`dms.getCustomerTitles`/`dms.getDmsSettings`.
 
 ---
 
@@ -1116,10 +1129,11 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
-| **session** | 7 | 60 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
+| **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
-| **Totale** | **49** | **594** | |
+| **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
+| **Totale** | **53** | **658** | |
 
 ### Copertura del codice
 
@@ -1137,9 +1151,10 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
-| **session** | 98.69% ✅ | 93.84% ✅ | 100% ✅ | 99.32% ✅ |
+| **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
 | **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
 | **isStellantisBrand** | 100% ✅ | 97.87% ✅ | 100% ✅ | 100% ✅ |
+| **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
@@ -1200,7 +1215,7 @@ cd agendaSoa && npm run test:coverage
 - **errors** – `SessionNotFoundError` con `code=SESSION_NOT_FOUND`, messaggio con il mercato/utente richiesto e `label` opzionale (`"il mercato"` di default, `"l'utente"` per il flusso username)
 - **sessionRepository** – la classe base lancia errore "non implementato"
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
-- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→dms→JSON di sessione (incluso `oics`/`applications`, gli interi blocchi `OICs`/`Applications` di myPeople con chiavi in minuscolo, e `companytypes`/`customertitles`, gli array `data` di `dms.getCompanyTypes`/`dms.getCustomerTitles`), `oics[].brandLogos` (risoluzione batch dei codici brand CSV tramite `woc.anag_brand`, posizionamento subito dopo `brands`, `[]` se `brands` assente/vuoto o se la query fallisce, nessuna query se non ci sono codici brand da risolvere), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, fallimento `getBearerToken`/`dms/settings`/`dms.getCompanyTypes`/`dms.getCustomerTitles` (errore wrappato per ciascuna chiamata), `companytypes`/`customertitles` a `[]` quando la risposta non contiene un array `data`, fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, `isdml: false`, attributi tutti assenti (`|| null`), `oics: []`/`applications: []` quando myPeople non restituisce OIC/Applications, `applications` assente dal blocco `User`; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dms`/`dmlConfigSync` (incluso `woc.anag_brand`) quando non sono iniettate funzioni mock
+- **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→cache DB→JSON di sessione (incluso `oics`/`applications`, gli interi blocchi `OICs`/`Applications` di myPeople con chiavi in minuscolo, e `companytypes`/`customertitles`, gli array `data` letti dalla cache `woc.dml_configurations`), `oics[].brandLogos` (risoluzione batch dei codici brand CSV tramite `woc.anag_brand`, posizionamento subito dopo `brands`, `[]` se `brands` assente/vuoto o se la query fallisce, nessuna query se non ci sono codici brand da risolvere), `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, cache-miss su `woc.dms_settings` → default (`isdml:false`/`null`/`null`) + registrazione (`await`) best-effort in `woc.dms_settings_enabled_dealers`, errore di lettura cache dms/settings o di registrazione dealer mai propagato (fallback ai default, mai un errore/502), nessuna interrogazione/registrazione dms/settings se manca `country`/`brand`/`dealer`, `companytypes`/`customertitles` a `[]` quando la cache `woc.dml_configurations` fallisce o non contiene un array `data`, fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, attributi tutti assenti (`|| null`), `oics: []`/`applications: []` quando myPeople non restituisce OIC/Applications, `applications` assente dal blocco `User`; test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dmlConfigSync`/`DmsSettingsRepository`/`DmlConfigRepository` (incluso `woc.anag_brand`) quando non sono iniettate funzioni mock
 - **repositoryFactory** – costruzione dell'istanza di default e con override, sia per `buildRepository` (S3) che per `buildMyPeopleDmsRepository` (myPeople/dms)
 
 #### myPeople
@@ -1213,6 +1228,15 @@ cd agendaSoa && npm run test:coverage
 - **index (handler)** – validazione `ar_codbrand` (mancante/null/vuoto/whitespace, >2 caratteri, caratteri non alfabetici) → 400 con messaggio dedicato per ciascun caso; conversione a uppercase prima della query; 200 con `isStellantisBrand: true|false` in base al risultato della query; 500 su errore di connessione DB/Secrets Manager/query, senza esporre stack trace o dettagli interni nel body; formato risposta (`statusCode`/`headers`/`body` JSON) su tutti i path
 - **shared/dbClient** – modalità remota (default): recupero ARN secret + endpoint RDS Proxy da SSM e credenziali da Secrets Manager, creazione del `pg.Pool` con `ssl: true`, errori su variabili d'ambiente mancanti (`DB_SECRET_ARN_PARAM`/`RDS_PROXY_ENDPOINT_PARAM`) o secret senza `SecretString`, cache del pool tra invocazioni (warm start, SSM/Secrets Manager interrogati una sola volta), `invalidatePool()` per forzare il refresh, gestione di `pool.connect()` fallito (invalida il pool, chiama `pool.end()`, propaga l'errore originale anche se `end()` fallisce a sua volta), invalidazione del pool tramite il listener `error` del pool, porta di default 5432; modalità locale (`DB_LOCAL_MODE=true`, case-insensitive): bypassa SSM/Secrets Manager, usa le credenziali/env locali di default con override via env (`DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_PORT`/`DB_SSL`)
 - **property-based (fast-check)** – invarianti sulla validazione di `ar_codbrand` verificate su input generati casualmente: stringhe alfabetiche di 1-2 caratteri sempre accettate (200, query eseguita con il valore uppercase), qualunque stringa non vuota più lunga di 2 caratteri sempre rifiutata con il messaggio "massimo 2 caratteri", qualunque stringa di 1-2 caratteri con almeno un carattere non alfabetico sempre rifiutata con il messaggio "solo caratteri alfabetici", qualunque stringa vuota/whitespace sempre rifiutata con il messaggio "obbligatorio"
+
+#### dmlConfigSync
+- **index (syncMarket)** – chiamata parallela a `getCompanyTypes`/`getCustomerTitles` con upsert degli array `data` (`[]` se il servizio risponde senza dati, es. 404 normalizzato)
+- **index (syncDealer)** – chiamata a `getDmsSettings` con upsert della risposta completa (`{success, data}`) in `woc.dms_settings`
+- **index (runSync)** – nessun mercato/dealer abilitato → `{success:true, results:[], dealerResults:[]}` senza chiamare `getBearerToken`; errore wrappato quando `getBearerToken` fallisce; sync di tutti i mercati/dealer abilitati in parallelo (bearer token condiviso, un'unica chiamata); isolamento dei fallimenti per singolo mercato/dealer (`Promise.allSettled`, un elemento fallito non blocca gli altri né l'upsert dei mercati/dealer riusciti)
+- **index (handler/main CLI)** – delega a `runSync` e log del summary; comando CLI sconosciuto → `[ERROR]`+exit 1; comando `sync` con esito positivo/negativo (`exitCode` non impostato/`1`); caricamento lazy (`require` dinamico) di `dms/authService`/`dms/dmsService` quando le dipendenze non sono iniettate
+- **db** – creazione/cache del pool `pg` (variabili d'ambiente dirette vs lettura da Secrets Manager), `connectionTimeoutMillis` configurato
+- **DmlConfigRepository** – `listEnabledMarkets` (mercati attivi ordinati), `upsertDmlConfiguration` (validazione `country`/`language`, upsert con `ON CONFLICT`, default `[]` per array non validi), `getDmlConfiguration` (validazione parametri, riga trovata/assente, normalizzazione difensiva di colonne JSONB non-array)
+- **DmsSettingsRepository** – `listEnabledDealers` (combinazioni attive ordinate), `upsertDmsSettings` (validazione `country`/`brand`/`dealer`, scomposizione della risposta in colonne separate `success`/`data`, default `success:false`/`data:[]` per risposte assenti/fallite), `getDmsSettings` (validazione parametri, ricostruzione di `{success, data}` da riga trovata, `null` se combinazione mai vista, normalizzazione difensiva di `data` non-array), `registerDealer` (`INSERT ... ON CONFLICT DO NOTHING`, nessuna query se `country`/`brand`/`dealer` mancante)
 
 ---
 

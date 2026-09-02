@@ -1,7 +1,7 @@
 {
   "name": "dmlconfigsync",
   "version": "1.0.0",
-  "description": "Sync giornaliera (EventBridge Schedule) delle configurazioni DML company-types/customer-titles per i mercati abilitati, in cache su Aurora PostgreSQL (woc.dml_configurations), letta da session",
+  "description": "Sync giornaliera (EventBridge Schedule) delle configurazioni DML company-types/customer-titles per i mercati abilitati e di dms/settings per le combinazioni country+brand+dealer abilitate, in cache su Aurora PostgreSQL (woc.dml_configurations, woc.dms_settings), letta da session",
   "main": "index.js",
   "engines": {
     "node": ">=24.0.0"
@@ -29,6 +29,7 @@
     ],
     "collectCoverageFrom": [
       "DmlConfigRepository.js",
+      "DmsSettingsRepository.js",
       "db.js",
       "index.js"
     ],

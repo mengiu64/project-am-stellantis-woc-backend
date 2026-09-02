@@ -49,7 +49,7 @@ project-am-stellantis-woc-backend/
 ├── translations/       # Lambda – translation retrieval from S3
 ├── session/            # Lambda – session data (codmarket, oic, sincom, ...)
 ├── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
-└── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles per market -> Aurora cache, read by session
+└── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles + dms/settings per market/dealer -> Aurora cache, read by session
 
 ```
 
@@ -466,7 +466,7 @@ node index.js translations lang=en
 
 Lambda that returns **session data** (`codmarket`, `oic`, `sincom`, `physicalsite`, `pdvId`, part preferences, max discounts, etc.) for a given market, read from a single JSON file on S3 (`session/session_data.json`, same bucket used by `translations`). The file contains an object keyed by 4-character market code (e.g. `"1000"`); the only accepted input parameter is the **market code** (`codmarket`, 4 characters): if not provided, the default `1000` is used. If the requested market is not present in the file, the Lambda responds with `404`. Data access is isolated behind a `SessionRepository` interface, implemented by `S3SessionRepository`, to allow replacing S3 in the future without impacting the HTTP handler (same architecture as the `translations` module).
 
-> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) plus `dms/settings` (live) to build the session response; `companytypes`/`customertitles` are **not** fetched live anymore — they're read from the `woc.dml_configurations` cache table, refreshed once a day by the new `dmlConfigSync` module (see below). The cache read never throws: on any error or missing row it simply returns `[]`, so the session response is never broken for this reason. Each element of `oics` also includes a `brandLogos` array right after `brands`, resolving the CSV brand codes to their `logo_s3_key` paths via the `woc.anag_brand` table (same table already used by `isStellantisBrand`), resolved in a single batched query; same fault-tolerant behaviour — `[]` if `brands` is missing/empty or the DB query fails. See the Italian `README.md` for the full field mapping table.
+> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) and then reads, in parallel, three Aurora caches refreshed daily by the `dmlConfigSync` module (no more live calls to `dms/*` from `session`): `woc.dms_settings` (for `isdml`/`dmlcustomerupdate`/`dmldiscount`, keyed by `country`+`brand`+`dealer`) and `woc.dml_configurations` (for `companytypes`/`customertitles`, keyed by `country`+`language`). The cache reads never throw: on any error or missing row they simply return the safe defaults (`isdml:false`/`null`/`null`, or `[]` for companytypes/customertitles), so the session response is never broken for this reason. On a first-ever cache-miss for a country+brand+dealer combination, `session` also registers (best-effort, awaited) that combination into `woc.dms_settings_enabled_dealers`, so the next day's scheduled sync populates it. Each element of `oics` also includes a `brandLogos` array right after `brands`, resolving the CSV brand codes to their `logo_s3_key` paths via the `woc.anag_brand` table (same table already used by `isStellantisBrand`), resolved in a single batched query; same fault-tolerant behaviour — `[]` if `brands` is missing/empty or the DB query fails. See the Italian `README.md` for the full field mapping table.
 
 #### Main functions
 
@@ -563,9 +563,12 @@ isStellantisBrand/
 
 ### dmlConfigSync
 
-**Scheduled** Lambda (EventBridge Schedule, `cron(0 8 * * ? *)` — daily at 08:00 UTC, see `template.yaml`) that syncs, once a day, the DML `company-types`/`customer-titles` configurations for enabled markets, so `session` can read them from a DB cache instead of calling the two live services on every session request.
+**Scheduled** Lambda (EventBridge Schedule, `cron(0 8 * * ? *)` — daily at 08:00 UTC, see `template.yaml`) that syncs, once a day, two independent caches on Aurora PostgreSQL, so `session` can read them from a DB cache instead of calling the DML services live on every session request:
 
-On each run: reads the enabled markets from `woc.dml_enabled_markets` (`country`, `language`, `active`), gets a PingFederate bearer token (same credentials as `dms/settings`) and calls `dms.getCompanyTypes`/`dms.getCustomerTitles` in parallel for each market, then upserts the result (`company_types`/`customer_titles` as JSONB, `[]` if the service returns 404/no data) into `woc.dml_configurations` (PK `country`+`language`). Each market is processed in isolation (`Promise.allSettled`): a failing market does not block the sync of the others.
+1. **company-types/customer-titles** for enabled markets;
+2. **dms/settings** for enabled `country`+`brand`+`dealer` combinations (used for `isdml`/`dmlcustomerupdate`/`dmldiscount`).
+
+Both share the same PingFederate bearer token, fetched once per run. Markets: reads `woc.dml_enabled_markets` (`country`, `language`, `active`) and calls `dms.getCompanyTypes`/`dms.getCustomerTitles` in parallel for each market, then upserts the result (`company_types`/`customer_titles` as JSONB, `[]` if the service returns 404/no data) into `woc.dml_configurations` (PK `country`+`language`). Dealers: reads `woc.dms_settings_enabled_dealers` (`country`, `brand`, `dealer`, `active`) — populated **automatically** by `session` on the first cache-miss for a never-seen combination, no manual seeding needed — and calls `dms.getDmsSettings` for each combination, then upserts the result (`success` as boolean, `data` as JSONB) into `woc.dms_settings` (PK `country`+`brand`+`dealer`). Each market/dealer is processed in isolation (`Promise.allSettled`): a failing element does not block the sync of the others; the summary returned is `{success, results, dealerResults}`.
 
 #### CLI usage
 
@@ -735,7 +738,7 @@ DMLCONFIGSYNC_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (optional) secret 
 DMLCONFIGSYNC_DB_SSL=true                     # (optional) default true
 ```
 
-> **Note:** same Aurora cluster/RDS Proxy and same Secrets Manager secret as `pkFavorite` (in `template.yaml` it reuses the `PkFavoriteDbHost`/`PkFavoriteDbSecretId` parameters, no new CloudFormation parameter). Also requires **all** the `dms` environment variables above (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), needed to call `dms.getCompanyTypes`/`dms.getCustomerTitles`.
+> **Note:** same Aurora cluster/RDS Proxy and same Secrets Manager secret as `pkFavorite` (in `template.yaml` it reuses the `PkFavoriteDbHost`/`PkFavoriteDbSecretId` parameters, no new CloudFormation parameter). Also requires **all** the `dms` environment variables above (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), needed to call `dms.getCompanyTypes`/`dms.getCustomerTitles`/`dms.getDmsSettings`.
 
 ---
 
@@ -772,8 +775,9 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 1 | 14 | `MenuPricingSoapClient` |
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
-| **session** | 5 | 33 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository` |
-| **Total** | **36** | **392** | |
+| **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
+| **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
+| **Total** | **42** | **483** | |
 
 ### Code coverage
 
@@ -789,7 +793,8 @@ cd agendaSoa && npm run test:coverage
 | **pkMenupricing** | 100% ✅ | 98.52% ✅ | 100% ✅ | 100% ✅ |
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
-| **session** | 98.46% ✅ | 92.85% ✅ | 100% ✅ | 98.46% ✅ |
+| **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
+| **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 
@@ -844,7 +849,15 @@ cd agendaSoa && npm run test:coverage
 - **errors** – `SessionNotFoundError` with `code=SESSION_NOT_FOUND` and message including the requested market
 - **sessionRepository** – base class throws a "not implemented" error
 - **s3SessionRepository** – fetches and parses JSON from S3, extracts the section for the requested market (uppercased), `SessionNotFoundError` on missing market, S3 error handling (`NoSuchKey`/404/Code), invalid JSON, missing bucket configuration
-- **repositoryFactory** – builds the default instance and with overrides
+- **myPeopleDmsSessionRepository** – `username` flow: full myPeople→cache DB→session JSON mapping (`oics`/`applications`, `oics[].brandLogos` via `woc.anag_brand`, `companytypes`/`customertitles` from `woc.dml_configurations`), `isdml`/`dmlcustomerupdate`/`dmldiscount` read from the `woc.dms_settings` cache (never a live call), cache-miss auto-registers the `country`+`brand`+`dealer` combination into `woc.dms_settings_enabled_dealers` (best-effort, awaited, never blocks the session response), all DB reads fault-tolerant (safe defaults on error, no 502); see the Italian `README.md` for the full test list
+- **repositoryFactory** – builds the default instance and with overrides, for both `buildRepository` (S3) and `buildMyPeopleDmsRepository` (myPeople/DB cache)
+
+#### dmlConfigSync
+- **index (syncMarket/syncDealer)** – parallel `getCompanyTypes`/`getCustomerTitles` calls with upsert into `woc.dml_configurations`; `getDmsSettings` call with upsert into `woc.dms_settings`
+- **index (runSync)** – no market/dealer enabled → early return without calling `getBearerToken`; wrapped error on `getBearerToken` failure; parallel sync of all enabled markets/dealers (single shared bearer token); per-market/per-dealer failure isolation (`Promise.allSettled`)
+- **index (handler/main CLI)** – delegates to `runSync`, unknown CLI command, `sync` command success/failure exit codes, lazy-loading of `dms/authService`/`dms/dmsService`
+- **db** – `pg` pool creation/caching (direct env vars vs Secrets Manager), `connectionTimeoutMillis`
+- **DmlConfigRepository** / **DmsSettingsRepository** – see the Italian `README.md` for the full test list (market/dealer listing, upsert with validation and safe defaults, cache read with `null` on never-seen combination, best-effort dealer registration)
 
 ---
 

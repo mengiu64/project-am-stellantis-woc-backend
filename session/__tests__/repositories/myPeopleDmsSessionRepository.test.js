@@ -75,8 +75,8 @@ const BRAND_LOGOS_BY_CODE = {
 function buildRepository(overrides = {}) {
   return new MyPeopleDmsSessionRepository({
     readUserProfilesFn: jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE),
-    getBearerTokenFn: jest.fn().mockResolvedValue('***TOKEN***'),
-    getDmsSettingsFn: jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE),
+    getDmsSettingsCacheFn: jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE),
+    registerDmsSettingsDealerFn: jest.fn().mockResolvedValue(undefined),
     getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
     getBrandLogosFn: jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE),
     ...overrides,
@@ -84,16 +84,16 @@ function buildRepository(overrides = {}) {
 }
 
 describe('MyPeopleDmsSessionRepository', () => {
-  test('mappa correttamente myPeople + dms/settings sulla forma storica del session data', async () => {
+  test('mappa correttamente myPeople + cache dms/settings sulla forma storica del session data', async () => {
     const readUserProfilesFn = jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE);
-    const getBearerTokenFn = jest.fn().mockResolvedValue('***TOKEN***');
-    const getDmsSettingsFn = jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE);
+    const getDmsSettingsCacheFn = jest.fn().mockResolvedValue(DMS_SETTINGS_RESPONSE);
+    const registerDmsSettingsDealerFn = jest.fn().mockResolvedValue(undefined);
     const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
     const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
     const repository = buildRepository({
       readUserProfilesFn,
-      getBearerTokenFn,
-      getDmsSettingsFn,
+      getDmsSettingsCacheFn,
+      registerDmsSettingsDealerFn,
       getDmlConfigurationFn,
       getBrandLogosFn,
     });
@@ -101,12 +101,12 @@ describe('MyPeopleDmsSessionRepository', () => {
     const data = await repository.getSessionData('0073741.d235');
 
     expect(readUserProfilesFn).toHaveBeenCalledWith({ username: '0073741.d235' });
-    expect(getBearerTokenFn).toHaveBeenCalledTimes(1);
-    expect(getDmsSettingsFn).toHaveBeenCalledWith('***TOKEN***', {
+    expect(getDmsSettingsCacheFn).toHaveBeenCalledWith({
       country: 'it',
       brand: 'FT',
       dealer: '0073741',
     });
+    expect(registerDmsSettingsDealerFn).not.toHaveBeenCalled(); // cache-hit: nessuna registrazione necessaria
     expect(getDmlConfigurationFn).toHaveBeenCalledWith({ country: 'it', language: 'it' });
     expect(getBrandLogosFn).toHaveBeenCalledWith({
       codes: ['30', '31', '33', '43', '00', '77', '66', '57', '70', '83'],
@@ -267,22 +267,71 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(data.brandvehic_reftech).toBeNull();
   });
 
-  test('propaga un errore avvolto quando getBearerToken fallisce', async () => {
+  test('cache-miss su dms/settings: ritorna i default e registra (await) la combinazione, senza mai fallire la sessione', async () => {
+    const registerDmsSettingsDealerFn = jest.fn().mockResolvedValue(undefined);
     const repository = buildRepository({
-      getBearerTokenFn: jest.fn().mockRejectedValue(new Error('token expired')),
+      getDmsSettingsCacheFn: jest.fn().mockResolvedValue(null),
+      registerDmsSettingsDealerFn,
     });
 
-    await expect(repository.getSessionData('0073741.d235'))
-      .rejects.toThrow('[session] dms/settings failed: token expired');
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.isdml).toBe(false);
+    expect(data.dmlcustomerupdate).toBeNull();
+    expect(data.dmldiscount).toBeNull();
+    expect(registerDmsSettingsDealerFn).toHaveBeenCalledWith({ country: 'it', brand: 'FT', dealer: '0073741' });
   });
 
-  test('propaga un errore avvolto quando dms/settings fallisce', async () => {
+  test('non propaga (mai) errori di lettura della cache dms/settings: isdml diventa false (fallback ai default)', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const repository = buildRepository({
-      getDmsSettingsFn: jest.fn().mockRejectedValue(new Error('HTTP 502')),
+      getDmsSettingsCacheFn: jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
     });
 
-    await expect(repository.getSessionData('0073741.d235'))
-      .rejects.toThrow('[session] dms/settings failed: HTTP 502');
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.isdml).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
+  });
+
+  test('un errore di registrazione del dealer (cache-miss) non fa fallire la sessione', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const repository = buildRepository({
+      getDmsSettingsCacheFn: jest.fn().mockResolvedValue(null),
+      registerDmsSettingsDealerFn: jest.fn().mockRejectedValue(new Error('duplicate key')),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.isdml).toBe(false);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('duplicate key'));
+    errorSpy.mockRestore();
+  });
+
+  test('dms/settings non viene interrogato (né registrato) quando manca country/brand/dealer', async () => {
+    const getDmsSettingsCacheFn = jest.fn();
+    const registerDmsSettingsDealerFn = jest.fn();
+    const repository = buildRepository({
+      getDmsSettingsCacheFn,
+      registerDmsSettingsDealerFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', USERTYPE: 'DEALER' }, // MAINSINCOM/NATIONiso2 assenti
+            OICs: [{ CODE: '00010925', MAIN: 'Y' }], // nessun BRANDS -> brandReftech null
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(getDmsSettingsCacheFn).not.toHaveBeenCalled();
+    expect(registerDmsSettingsDealerFn).not.toHaveBeenCalled();
+    expect(data.isdml).toBe(false);
   });
 
   test('non propaga (mai) errori di lettura della cache dml/configurations: companytypes/customertitles diventano []', async () => {
@@ -344,7 +393,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
   test('dmlcustomerupdate ricade su accountCustomerUpdate quando knownCustomerUpdate è assente', async () => {
     const repository = buildRepository({
-      getDmsSettingsFn: jest.fn().mockResolvedValue({
+      getDmsSettingsCacheFn: jest.fn().mockResolvedValue({
         success: true,
         data: [{ key: 'accountCustomerUpdate', value: 'TRUE', format: 'boolean' }],
       }),
@@ -356,7 +405,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
   test('dmldiscount viene letto da una key contenente "discount" (case-insensitive) quando presente', async () => {
     const repository = buildRepository({
-      getDmsSettingsFn: jest.fn().mockResolvedValue({
+      getDmsSettingsCacheFn: jest.fn().mockResolvedValue({
         success: true,
         data: [{ key: 'discountAuthorization', value: '15', format: 'number' }],
       }),
@@ -368,7 +417,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
   test('isdml è false quando dms/settings risponde success=false', async () => {
     const repository = buildRepository({
-      getDmsSettingsFn: jest.fn().mockResolvedValue({ success: false, data: [] }),
+      getDmsSettingsCacheFn: jest.fn().mockResolvedValue({ success: false, data: [] }),
     });
 
     const data = await repository.getSessionData('0073741.d235');

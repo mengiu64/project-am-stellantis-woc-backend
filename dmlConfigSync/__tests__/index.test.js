@@ -15,10 +15,15 @@ jest.mock('../DmlConfigRepository', () => ({
   listEnabledMarkets: jest.fn(),
   upsertDmlConfiguration: jest.fn(),
 }));
+jest.mock('../DmsSettingsRepository', () => ({
+  listEnabledDealers: jest.fn(),
+  upsertDmsSettings: jest.fn(),
+}));
 
 const { getPool } = require('../db');
 const { listEnabledMarkets, upsertDmlConfiguration } = require('../DmlConfigRepository');
-const { runSync, syncMarket, handler, main } = require('../index');
+const { listEnabledDealers, upsertDmsSettings } = require('../DmsSettingsRepository');
+const { runSync, syncMarket, syncDealer, handler, main } = require('../index');
 
 const FAKE_POOL = { query: jest.fn() };
 
@@ -26,6 +31,9 @@ describe('dmlConfigSync/index.js', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     getPool.mockResolvedValue(FAKE_POOL);
+    // Default: nessun dealer abilitato, cosi' i test che si concentrano solo sui
+    // mercati (pre-esistenti) non devono preoccuparsi del ramo dealer di runSync.
+    listEnabledDealers.mockResolvedValue([]);
   });
 
   describe('syncMarket', () => {
@@ -67,14 +75,34 @@ describe('dmlConfigSync/index.js', () => {
     });
   });
 
+  describe('syncDealer', () => {
+    it('calls getDmsSettings and upserts the raw settings response', async () => {
+      const getDmsSettingsFn = jest.fn().mockResolvedValue({ success: true, data: [{ key: 'isDML', value: 'TRUE', format: 'boolean' }] });
+      const upsertDmsSettingsFn = jest.fn().mockResolvedValue();
+
+      const result = await syncDealer(FAKE_POOL, 'token123', { country: 'it', brand: 'FT', dealer: '0073741' }, {
+        getDmsSettingsFn, upsertDmsSettingsFn,
+      });
+
+      expect(result).toEqual({ country: 'it', brand: 'FT', dealer: '0073741', success: true });
+      expect(getDmsSettingsFn).toHaveBeenCalledWith('token123', { country: 'it', brand: 'FT', dealer: '0073741' });
+      expect(upsertDmsSettingsFn).toHaveBeenCalledWith(FAKE_POOL, {
+        country: 'it',
+        brand: 'FT',
+        dealer: '0073741',
+        settings: { success: true, data: [{ key: 'isDML', value: 'TRUE', format: 'boolean' }] },
+      });
+    });
+  });
+
   describe('runSync', () => {
-    it('returns success with an empty results array when no market is enabled', async () => {
+    it('returns success with empty results/dealerResults when no market/dealer is enabled', async () => {
       listEnabledMarkets.mockResolvedValue([]);
       const getBearerTokenFn = jest.fn();
 
       const result = await runSync({ getBearerTokenFn });
 
-      expect(result).toEqual({ success: true, results: [] });
+      expect(result).toEqual({ success: true, results: [], dealerResults: [] });
       expect(getBearerTokenFn).not.toHaveBeenCalled();
       expect(getPool).toHaveBeenCalledTimes(1);
     });
@@ -103,6 +131,7 @@ describe('dmlConfigSync/index.js', () => {
         { country: 'fr', language: 'fr', success: true },
         { country: 'de', language: 'de', success: true },
       ]);
+      expect(result.dealerResults).toEqual([]);
       expect(upsertDmlConfiguration).toHaveBeenCalledTimes(2);
     });
 
@@ -127,6 +156,54 @@ describe('dmlConfigSync/index.js', () => {
       // Il mercato fallito non impedisce l'upsert del mercato riuscito.
       expect(upsertDmlConfiguration).toHaveBeenCalledTimes(1);
     });
+
+    it('syncs all enabled dealers successfully in parallel (nessun mercato abilitato)', async () => {
+      listEnabledMarkets.mockResolvedValue([]);
+      listEnabledDealers.mockResolvedValue([
+        { country: 'it', brand: 'FT', dealer: '0073741' },
+        { country: 'fr', brand: 'AC', dealer: '0012345' },
+      ]);
+      const getBearerTokenFn = jest.fn().mockResolvedValue('token123');
+      const getDmsSettingsFn = jest.fn().mockResolvedValue({ success: true, data: [] });
+
+      const result = await runSync({ getBearerTokenFn, getDmsSettingsFn });
+
+      expect(result.success).toBe(true);
+      expect(result.results).toEqual([]);
+      expect(result.dealerResults).toEqual([
+        { country: 'it', brand: 'FT', dealer: '0073741', success: true },
+        { country: 'fr', brand: 'AC', dealer: '0012345', success: true },
+      ]);
+      expect(upsertDmsSettings).toHaveBeenCalledTimes(2);
+      // Stesso bearer token condiviso tra mercati e dealer.
+      expect(getBearerTokenFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('isolates per-dealer failures: one failing dealer does not block the others nor the markets', async () => {
+      listEnabledMarkets.mockResolvedValue([{ country: 'fr', language: 'fr' }]);
+      listEnabledDealers.mockResolvedValue([
+        { country: 'it', brand: 'FT', dealer: '0073741' },
+        { country: 'fr', brand: 'AC', dealer: '0012345' },
+      ]);
+      const getBearerTokenFn = jest.fn().mockResolvedValue('token123');
+      const getCompanyTypesFn = jest.fn().mockResolvedValue({ success: true, data: [] });
+      const getCustomerTitlesFn = jest.fn().mockResolvedValue({ success: true, data: [] });
+      const getDmsSettingsFn = jest.fn()
+        .mockResolvedValueOnce({ success: true, data: [] })
+        .mockRejectedValueOnce(new Error('HTTP 502'));
+
+      const result = await runSync({
+        getBearerTokenFn, getCompanyTypesFn, getCustomerTitlesFn, getDmsSettingsFn,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.results).toEqual([{ country: 'fr', language: 'fr', success: true }]);
+      expect(result.dealerResults).toEqual([
+        { country: 'it', brand: 'FT', dealer: '0073741', success: true },
+        { country: 'fr', brand: 'AC', dealer: '0012345', success: false, error: 'HTTP 502' },
+      ]);
+      expect(upsertDmsSettings).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('handler', () => {
@@ -135,7 +212,7 @@ describe('dmlConfigSync/index.js', () => {
 
       const result = await handler();
 
-      expect(result).toEqual({ success: true, results: [] });
+      expect(result).toEqual({ success: true, results: [], dealerResults: [] });
     });
   });
 
@@ -191,6 +268,10 @@ describe('dmlConfigSync/index.js', () => {
         listEnabledMarkets: jest.fn().mockResolvedValue([{ country: 'fr', language: 'fr' }]),
         upsertDmlConfiguration: jest.fn(),
       }));
+      jest.doMock('../DmsSettingsRepository', () => ({
+        listEnabledDealers: jest.fn().mockResolvedValue([]),
+        upsertDmsSettings: jest.fn(),
+      }));
       jest.doMock(path.resolve(__dirname, '../../dms/authService'), () => ({
         getBearerToken: jest.fn().mockResolvedValue('token123'),
       }), { virtual: true });
@@ -213,6 +294,10 @@ describe('dmlConfigSync/index.js', () => {
       jest.doMock('../DmlConfigRepository', () => ({
         listEnabledMarkets: jest.fn().mockResolvedValue([{ country: 'fr', language: 'fr' }]),
         upsertDmlConfiguration: jest.fn(),
+      }));
+      jest.doMock('../DmsSettingsRepository', () => ({
+        listEnabledDealers: jest.fn().mockResolvedValue([]),
+        upsertDmsSettings: jest.fn(),
       }));
       jest.doMock(path.resolve(__dirname, '../../dms/authService'), () => ({
         getBearerToken: jest.fn().mockRejectedValue(new Error('401')),

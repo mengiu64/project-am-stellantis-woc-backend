@@ -1,9 +1,9 @@
 'use strict';
 
 // Verifica che, in assenza di override iniettati nel costruttore, la repository
-// carichi (lazy) i moduli reali di myPeople/dms tramite require(path.resolve(...)),
+// carichi (lazy) i moduli reali di myPeople/dmlConfigSync tramite require(path.resolve(...)),
 // esattamente come farebbe in produzione (Lambda con SessionFunction impacchettata
-// con myPeople/ e dms/ come cartelle sorelle — vedi Makefile). I moduli reali
+// con myPeople/ e dmlConfigSync/ come cartelle sorelle — vedi Makefile). I moduli reali
 // vengono qui sostituiti con dei mock (stesso percorso relativo, stessa profondità
 // di cartelle di src/repositories/myPeopleDmsSessionRepository.js rispetto alla
 // root del repo) per non dipendere da AWS/Secrets Manager/rete in questo test.
@@ -18,14 +18,6 @@ jest.mock('../../../myPeople/myPeopleService', () => ({
       },
     },
   }),
-}));
-
-jest.mock('../../../dms/authService', () => ({
-  getBearerToken: jest.fn().mockResolvedValue('***TOKEN***'),
-}));
-
-jest.mock('../../../dms/dmsService', () => ({
-  getDmsSettings: jest.fn().mockResolvedValue({ success: true, data: [] }),
 }));
 
 jest.mock('../../../dmlConfigSync/db', () => ({
@@ -45,28 +37,31 @@ jest.mock('../../../dmlConfigSync/DmlConfigRepository', () => ({
   getDmlConfiguration: jest.fn().mockResolvedValue({ companyTypes: [], customerTitles: [] }),
 }));
 
+jest.mock('../../../dmlConfigSync/DmsSettingsRepository', () => ({
+  getDmsSettings: jest.fn().mockResolvedValue({ success: true, data: [] }),
+  registerDealer: jest.fn().mockResolvedValue(undefined),
+}));
+
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
 const myPeopleService = require('../../../myPeople/myPeopleService');
-const dmsAuthService = require('../../../dms/authService');
-const dmsService = require('../../../dms/dmsService');
 const dmlConfigSyncDb = require('../../../dmlConfigSync/db');
 const dmlConfigRepository = require('../../../dmlConfigSync/DmlConfigRepository');
+const dmsSettingsRepository = require('../../../dmlConfigSync/DmsSettingsRepository');
 
-describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dms/dmlConfigSync)', () => {
+describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dmlConfigSync)', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('usa i moduli reali (myPeople/myPeopleService, dms/authService, dms/dmsService, dmlConfigSync/db+DmlConfigRepository) quando non vengono iniettati override', async () => {
+  test('usa i moduli reali (myPeople/myPeopleService, dmlConfigSync/db+DmlConfigRepository+DmsSettingsRepository) quando non vengono iniettati override', async () => {
     const repository = new MyPeopleDmsSessionRepository();
     const data = await repository.getSessionData('0073741.d235');
 
     expect(myPeopleService.readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
-    expect(dmsAuthService.getBearerToken).toHaveBeenCalledTimes(1);
-    expect(dmsService.getDmsSettings).toHaveBeenCalledWith('***TOKEN***', {
-      country: 'it',
-      brand: 'FT',
-      dealer: '0073741',
-    });
-    expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(2); // loadGetDmlConfiguration + loadGetBrandLogos
+    expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
+    expect(dmsSettingsRepository.getDmsSettings).toHaveBeenCalledWith(
+      { __fakePool: true, query: expect.any(Function) },
+      { country: 'it', brand: 'FT', dealer: '0073741' },
+    );
+    expect(dmsSettingsRepository.registerDealer).not.toHaveBeenCalled(); // cache-hit: nessuna registrazione necessaria
     expect(dmlConfigRepository.getDmlConfiguration).toHaveBeenCalledWith(
       { __fakePool: true, query: expect.any(Function) },
       { country: 'it', language: 'it' },
@@ -74,6 +69,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
     expect(data.codmarket).toBe('1000');
     expect(data.sincom).toBe('0073741');
     expect(data.brandvehic_reftech).toBe('FT');
+    expect(data.isdml).toBe(true);
     expect(data.companytypes).toEqual([]);
     expect(data.customertitles).toEqual([]);
 
@@ -95,6 +91,19 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
         main: 'Y',
       },
     ]);
+  });
+
+  test('cache-miss su dms/settings: registra (best-effort) la combinazione country/brand/dealer', async () => {
+    dmsSettingsRepository.getDmsSettings.mockResolvedValueOnce(null);
+
+    const repository = new MyPeopleDmsSessionRepository();
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(dmsSettingsRepository.registerDealer).toHaveBeenCalledWith(
+      { __fakePool: true, query: expect.any(Function) },
+      { country: 'it', brand: 'FT', dealer: '0073741' },
+    );
+    expect(data.isdml).toBe(false);
   });
 
   test('riusa i moduli già caricati (cache) su una seconda chiamata', async () => {
