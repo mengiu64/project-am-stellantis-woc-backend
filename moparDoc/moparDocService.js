@@ -15,7 +15,7 @@
 const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
 const { getBearerToken } = require('./authService');
-const config = require('./config');
+const { getConfig } = require('./config');
 
 /**
  * Costruisce le options per una richiesta POST JSON verso uno dei gateway.
@@ -65,7 +65,11 @@ function buildOptions(target, resourcePath, bearerToken, bodyStr, opts = {}) {
   };
 }
 
-async function postJson(target, resourcePath, payload, opts = {}) {
+async function postJson(targetName, resourcePath, payload, opts = {}) {
+  // Risolve la configurazione (credenziali da SSM/Secrets Manager o .env)
+  const config = await getConfig();
+  // Seleziona il target di destinazione per nome (jobDocs | moparDocsApi | moparDocsServices)
+  const target = config[targetName];
   // Recupera il token Bearer solo se la chiamata richiede autenticazione
   const bearerToken = opts.noAuth ? null : await getBearerToken();
   const bodyStr = JSON.stringify(payload);
@@ -114,7 +118,7 @@ async function createJobCard(params) {
     TAMAccessCode: params.TAMAccessCode,
   };
 
-  return postJson(config.jobDocs, '/CreateJobCard', payload);
+  return postJson('jobDocs', '/CreateJobCard', payload);
 }
 
 /**
@@ -138,7 +142,7 @@ async function createAccessToken(params) {
     APIAccessCode: params.APIAccessCode,
   };
 
-  return postJson(config.jobDocs, '/CreateAccessToken', payload);
+  return postJson('jobDocs', '/CreateAccessToken', payload);
 }
 
 /**
@@ -163,7 +167,7 @@ async function getUploadDocURL(params) {
   };
 
   // Chiamata senza autenticazione (endpoint browser MoparDocs)
-  return postJson(config.moparDocsApi, '/getUploadDocURL', payload, { noAuth: true });
+  return postJson('moparDocsApi', '/getUploadDocURL', payload, { noAuth: true });
 }
 
 /**
@@ -186,7 +190,7 @@ async function uploadedDoc(params) {
   };
 
   // Chiamata senza autenticazione (endpoint browser MoparDocs)
-  return postJson(config.moparDocsApi, '/UploadedDoc', payload, { noAuth: true });
+  return postJson('moparDocsApi', '/UploadedDoc', payload, { noAuth: true });
 }
 
 /**
@@ -221,7 +225,7 @@ async function getJobCardList(params) {
   console.log(`[getJobCardList] Recupero lista JobCard per VIN=${params.vin}, dealer=${params.dealerCode || params.rrdi}, market=${params.market}`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/getJobCardList', payload);
+  return postJson('moparDocsServices', '/getJobCardList', payload);
 }
 
 /**
@@ -258,7 +262,7 @@ async function getJobCardAndDocumentList(params) {
   console.log(`[getJobCardAndDocumentList] Recupero JobCard e Documenti per VIN=${params.vin}, dealer=${params.dealerCode || params.rrdi}, market=${params.market}`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/getJobCardAndDocumentList', payload);
+  return postJson('moparDocsServices', '/getJobCardAndDocumentList', payload);
 }
 
 /**
@@ -290,7 +294,7 @@ async function getDocumentsInfo(params) {
   console.log(`[getDocumentsInfo] Recupero info per ${params.DocumentIDList.length} documento(i): ${JSON.stringify(params.DocumentIDList)}`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/getDocumentsInfo', payload);
+  return postJson('moparDocsServices', '/getDocumentsInfo', payload);
 }
 
 /**
@@ -316,7 +320,7 @@ async function getDocuments(params) {
   console.log(`[getDocuments] Recupero Documenti per VIN=${params.vin}${params.JobCardIds ? `, JobCardIds=${JSON.stringify(params.JobCardIds)}` : ''}`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/getDocuments', payload);
+  return postJson('moparDocsServices', '/getDocuments', payload);
 }
 
 /**
@@ -348,7 +352,7 @@ async function DeleteDocuments(params) {
   console.log(`[DeleteDocuments] Cancellazione ${params.Documents.length} documento(i) dalla JobCard=${params.JobCardId} (source=${params.source})`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/DeleteDocuments', payload);
+  return postJson('moparDocsServices', '/DeleteDocuments', payload);
 }
 
 /**
@@ -375,7 +379,7 @@ async function DeleteJobcard(params) {
   console.log(`[DeleteJobcard] Cancellazione JobCard=${params.JobCardId} (Source=${params.Source})`);
 
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson(config.moparDocsServices, '/DeleteJobcard', payload);
+  return postJson('moparDocsServices', '/DeleteJobcard', payload);
 }
 
 /**
@@ -407,7 +411,7 @@ async function getDocumentsDownloadUrl(params) {
   // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato.
   // NOTA: questo endpoint non risulta esposto sul gateway IBM job-docs/connector/v1 (HTTP 404).
   // In alternativa usare getDocumentsInfo, che restituisce gli stessi signedUrl/previewUrl.
-  return postJson(config.moparDocsServices, '/getDocumentsDownloadUrl', payload);
+  return postJson('moparDocsServices', '/getDocumentsDownloadUrl', payload);
 }
 
 module.exports = {

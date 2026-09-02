@@ -89,22 +89,7 @@ Parameters:
     NoEcho: true
     Description: PingFederate client secret dedicated to jobcard (scope prd:dgt)
 
-  # ── MoparDoc (job-docs connector + MoparDocs Browser API) ─────────────────
-  MoparDocPingClientId:
-    Type: String
-    Description: PingFederate client id dedicato a moparDoc (scope prd:mdo)
-  MoparDocPingClientSecret:
-    Type: String
-    NoEcho: true
-    Description: PingFederate client secret dedicato a moparDoc (scope prd:mdo)
-  MoparDocIbmClientId:
-    Type: String
-    NoEcho: true
-    Description: X-IBM-Client-Id per job-docs connector e MoparDocs Browser API
-  MoparDocIbmClientSecret:
-    Type: String
-    NoEcho: true
-    Description: X-IBM-Client-Secret per job-docs connector e MoparDocs Browser API
+  # ── MoparDoc: credenziali lette a runtime da SSM -> Secrets Manager (nessun parametro CFN) ──
 
   # ── V360 (ASV API) ────────────────────────────────────────────────────────
   AsvClientId:
@@ -441,12 +426,29 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub
+                  - "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/mopardoc_ibm", !Sub "/app/np-BSN0027990-${Environment}/mopardoc_ibm"]
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !If
+                  - IsProd
+                  - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-bsn0027990-mopardoc_ibm-*"
+                  - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-mopardoc_ibm-*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
-          MOPARDOC_PING_CLIENT_ID:     !Ref MoparDocPingClientId
-          MOPARDOC_PING_CLIENT_SECRET: !Ref MoparDocPingClientSecret
-          MOPARDOC_IBM_CLIENT_ID:      !Ref MoparDocIbmClientId
-          MOPARDOC_IBM_CLIENT_SECRET:  !Ref MoparDocIbmClientSecret
+          MOPARDOC_PARAM_NAME: !If
+            - IsProd
+            - /app/BSN0027990/mopardoc_ibm
+            - !Sub /app/np-BSN0027990-${Environment}/mopardoc_ibm
 
   MoparDocFunctionLogGroup:
     Type: AWS::Logs::LogGroup
