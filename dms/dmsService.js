@@ -5,6 +5,19 @@ const { randomUUID } = require('crypto');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
 
+// Retry con backoff per getDmlConfiguration (getCompanyTypes/getCustomerTitles):
+// codici HTTP considerati transitori/riprovabili (errori del gateway API, non del
+// client), numero massimo di tentativi (1 iniziale + 2 retry) e delay base tra un
+// tentativo e il successivo (moltiplicato per il numero del tentativo, per un
+// backoff lineare 300ms/600ms).
+const TRANSIENT_STATUS_CODES = new Set([502, 503, 504]);
+const DML_CONFIG_MAX_ATTEMPTS = 3;
+const DML_CONFIG_RETRY_DELAY_MS = 300;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Calls GET /dms/settings endpoint.
  *
@@ -101,7 +114,26 @@ async function getDmlConfiguration(bearerToken, params = {}, path, label) {
   };
 
   console.log(`[dms] GET https://${base.hostname}${fullPath}`);
-  const response = await httpsRequest(options);
+
+  // Retry con backoff sui soli errori transitori (502/503/504): il gateway DML
+  // Stellantis a monte ha occasionalmente restituito 502 "Internal server error"
+  // (osservato durante la sync giornaliera schedulata delle 03:00 UTC), risoltosi
+  // da solo pochi minuti/ore dopo. Un breve retry evita di dover aspettare il
+  // giorno successivo (o un retrigger manuale) per un errore puramente transitorio
+  // lato Stellantis, senza mascherare errori reali (4xx, 500 non transitorio, ecc.).
+  let response;
+  for (let attempt = 1; attempt <= DML_CONFIG_MAX_ATTEMPTS; attempt += 1) {
+    response = await httpsRequest(options);
+
+    if (!TRANSIENT_STATUS_CODES.has(response.statusCode) || attempt === DML_CONFIG_MAX_ATTEMPTS) {
+      break;
+    }
+
+    console.warn(
+      `[dms] ${label} tentativo ${attempt}/${DML_CONFIG_MAX_ATTEMPTS} fallito con HTTP ${response.statusCode}, retry tra ${DML_CONFIG_RETRY_DELAY_MS * attempt}ms...`
+    );
+    await sleep(DML_CONFIG_RETRY_DELAY_MS * attempt);
+  }
 
   // Come getDmsSettings: un 404 significa "nessun dato per questi parametri"
   // (non un errore bloccante) — si restituisce un array vuoto invece di lanciare.

@@ -226,6 +226,32 @@ describe.each([
       .rejects.toThrow(`[dms] ${label} failed: HTTP 403`);
   });
 
+  test('does not retry on non-transient HTTP errors (e.g. 403): only 1 call', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 403, headers: {}, body: { error: 'forbidden' } });
+
+    await expect(getFn()('token', { country: 'fr', language: 'fr' })).rejects.toThrow();
+    expect(httpsRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test('retries on transient HTTP errors (502/503/504) and succeeds once the gateway recovers', async () => {
+    httpsRequest
+      .mockResolvedValueOnce({ statusCode: 502, headers: {}, body: { message: 'Internal server error' } })
+      .mockResolvedValueOnce({ statusCode: 200, headers: {}, body: { success: true, data: [] } });
+
+    const result = await getFn()('token', { country: 'fr', language: 'fr' });
+
+    expect(result).toEqual({ success: true, data: [] });
+    expect(httpsRequest).toHaveBeenCalledTimes(2);
+  });
+
+  test('gives up after exhausting retries on persistent transient errors (502/503/504)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 502, headers: {}, body: { message: 'Internal server error' } });
+
+    await expect(getFn()('token', { country: 'fr', language: 'fr' }))
+      .rejects.toThrow(`[dms] ${label} failed: HTTP 502`);
+    expect(httpsRequest).toHaveBeenCalledTimes(3);
+  });
+
   test('returns { success: false, data: [] } on HTTP 404 (no data for the given params), does not throw', async () => {
     httpsRequest.mockResolvedValue({
       statusCode: 404,
