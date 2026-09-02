@@ -13,12 +13,15 @@
  * @returns {Promise<Array<{country: string, language: string}>>}
  */
 async function listEnabledMarkets(pool) {
-  const { rows } = await pool.query(
-    `SELECT country, language
+  const { rows } = await pool.query({
+    text: `SELECT country, language
        FROM woc.dml_enabled_markets
       WHERE active = TRUE
       ORDER BY country, language`,
-  );
+    // Fallisce velocemente invece di restare in attesa indefinitamente (stesso
+    // principio di getDmlConfiguration/getBrandLogos: vedi commenti li').
+    statement_timeout: 5000,
+  });
   return rows;
 }
 
@@ -39,20 +42,21 @@ async function upsertDmlConfiguration(pool, { country, language, companyTypes, c
   if (!country) throw new Error('"country" is required');
   if (!language) throw new Error('"language" is required');
 
-  await pool.query(
-    `INSERT INTO woc.dml_configurations (country, language, company_types, customer_titles, updated_at)
+  await pool.query({
+    text: `INSERT INTO woc.dml_configurations (country, language, company_types, customer_titles, updated_at)
      VALUES ($1, $2, $3::jsonb, $4::jsonb, now())
      ON CONFLICT (country, language)
      DO UPDATE SET company_types   = EXCLUDED.company_types,
                    customer_titles = EXCLUDED.customer_titles,
                    updated_at      = now()`,
-    [
+    values: [
       country,
       language,
       JSON.stringify(Array.isArray(companyTypes) ? companyTypes : []),
       JSON.stringify(Array.isArray(customerTitles) ? customerTitles : []),
     ],
-  );
+    statement_timeout: 5000,
+  });
 }
 
 /**
@@ -70,14 +74,15 @@ async function getDmlConfiguration(pool, { country, language }) {
   if (!country) throw new Error('"country" is required');
   if (!language) throw new Error('"language" is required');
 
-  const { rows } = await pool.query(
-    `SELECT company_types, customer_titles, updated_at
+  const { rows } = await pool.query({
+    text: `SELECT company_types, customer_titles, updated_at
        FROM woc.dml_configurations
       WHERE UPPER(TRIM(country)) = UPPER(TRIM($1))
         AND UPPER(TRIM(language)) = UPPER(TRIM($2))
       LIMIT 1`,
-    [country, language],
-  );
+    values: [country, language],
+    statement_timeout: 5000,
+  });
 
   if (rows.length === 0) {
     return { companyTypes: [], customerTitles: [], updatedAt: null };

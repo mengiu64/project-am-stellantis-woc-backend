@@ -83,6 +83,13 @@ async function buildPool() {
     // Poche connessioni per istanza Lambda: il pooling "vero" è demandato all'RDS Proxy.
     max: 3,
     idleTimeoutMillis: 30000,
+    // Senza questo timeout, "pg" attende indefinitamente (default 0 = nessun timeout)
+    // l'apertura della connessione: se l'RDS Proxy/rete non risponde (es. ambiente
+    // non ancora provisionato/migrato), l'intera Lambda resta "appesa" fino al proprio
+    // Timeout (30s in template.yaml), causando un 502/timeout lato API Gateway invece
+    // di un errore veloce gestibile dai chiamanti (es. session, che tratta questi dati
+    // come opzionali e fault-tolerant — vedi myPeopleDmsSessionRepository.js).
+    connectionTimeoutMillis: 5000,
     ssl: config.db.ssl ? { rejectUnauthorized: false } : false,
   });
 }

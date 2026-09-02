@@ -15,7 +15,12 @@ describe('DmlConfigRepository', () => {
       const result = await listEnabledMarkets(pool);
 
       expect(result).toEqual(rows);
-      expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('active = TRUE'));
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: expect.stringContaining('active = TRUE'),
+          statement_timeout: 5000,
+        }),
+      );
     });
 
     it('returns an empty array when no market is enabled', async () => {
@@ -50,9 +55,10 @@ describe('DmlConfigRepository', () => {
       await upsertDmlConfiguration(pool, { country: 'fr', language: 'fr', companyTypes, customerTitles });
 
       expect(pool.query).toHaveBeenCalledTimes(1);
-      const [sql, params] = pool.query.mock.calls[0];
+      const [{ text: sql, values: params, statement_timeout: timeout }] = pool.query.mock.calls[0];
       expect(sql).toContain('ON CONFLICT (country, language)');
       expect(params).toEqual(['fr', 'fr', JSON.stringify(companyTypes), JSON.stringify(customerTitles)]);
+      expect(timeout).toBe(5000);
     });
 
     it('defaults non-array companyTypes/customerTitles to empty arrays', async () => {
@@ -60,7 +66,7 @@ describe('DmlConfigRepository', () => {
 
       await upsertDmlConfiguration(pool, { country: 'fr', language: 'fr', companyTypes: null, customerTitles: undefined });
 
-      const [, params] = pool.query.mock.calls[0];
+      const [{ values: params }] = pool.query.mock.calls[0];
       expect(params).toEqual(['fr', 'fr', '[]', '[]']);
     });
   });
@@ -90,8 +96,11 @@ describe('DmlConfigRepository', () => {
 
       expect(result).toEqual({ companyTypes: [{ code: 'A' }], customerTitles: [{ code: 'B' }], updatedAt });
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('UPPER(TRIM(country)) = UPPER(TRIM($1))'),
-        ['fr', 'fr'],
+        expect.objectContaining({
+          text: expect.stringContaining('UPPER(TRIM(country)) = UPPER(TRIM($1))'),
+          values: ['fr', 'fr'],
+          statement_timeout: 5000,
+        }),
       );
     });
 
