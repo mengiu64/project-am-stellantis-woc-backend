@@ -233,6 +233,13 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
     const iso2 = attributes.NATIONiso2 || null;
     const country = iso2 ? iso2.toLowerCase() : null;
+    // woc.dms_settings_enabled_dealers/woc.dms_settings usano country in MAIUSCOLO
+    // (stessa convenzione di brandReftech, gia' uppercase via BRAND_CODE_TO_REFTECH),
+    // a differenza di woc.dml_configurations che resta in minuscolo (vedi "country"
+    // sopra, riusato per companytypes/customertitles e per i campi language/locale
+    // della risposta): NON va quindi sostituito "country", solo le chiamate relative
+    // a dms/settings usano questa variante.
+    const countryDms = iso2 ? iso2.toUpperCase() : null;
     const dealer = attributes.MAINSINCOM || null;
 
     const wiAdvDlApp = applications.find((app) => app && app.APPLICATION === 'wiADV.DL');
@@ -257,8 +264,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
     // registra (best-effort) la combinazione per la prossima sync schedulata.
     const [dmsSettings, dmlConfiguration, brandLogosByCode] = await Promise.all([
-      (country && brandReftech && dealer)
-        ? getDmsSettingsCache({ country, brand: brandReftech, dealer })
+      (countryDms && brandReftech && dealer)
+        ? getDmsSettingsCache({ country: countryDms, brand: brandReftech, dealer })
           .then(async (cached) => {
             if (cached) return cached;
             // Registrazione best-effort (mai bloccante/fallimento propagato): AWAIT
@@ -267,13 +274,13 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
             // environment puo' essere "congelato" subito dopo la risposta, e una
             // Promise non attesa potrebbe non completarsi mai o eseguire su
             // un'invocazione futura con uno stato incoerente).
-            await registerDmsSettingsDealer({ country, brand: brandReftech, dealer }).catch((err) => {
-              console.error(`[session] registrazione dealer dms/settings fallita per country="${country}" brand="${brandReftech}" dealer="${dealer}": ${err.message}`);
+            await registerDmsSettingsDealer({ country: countryDms, brand: brandReftech, dealer }).catch((err) => {
+              console.error(`[session] registrazione dealer dms/settings fallita per country="${countryDms}" brand="${brandReftech}" dealer="${dealer}": ${err.message}`);
             });
             return { success: false, data: [] };
           })
           .catch((err) => {
-            console.error(`[session] lettura cache dms/settings fallita per country="${country}" brand="${brandReftech}" dealer="${dealer}": ${err.message}`);
+            console.error(`[session] lettura cache dms/settings fallita per country="${countryDms}" brand="${brandReftech}" dealer="${dealer}": ${err.message}`);
             return { success: false, data: [] };
           })
         : Promise.resolve({ success: false, data: [] }),

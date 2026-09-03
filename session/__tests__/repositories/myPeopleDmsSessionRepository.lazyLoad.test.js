@@ -59,7 +59,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
     expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
     expect(dmsSettingsRepository.getDmsSettings).toHaveBeenCalledWith(
       { __fakePool: true, query: expect.any(Function) },
-      { country: 'it', brand: 'FT', dealer: '0073741' },
+      { country: 'IT', brand: 'FT', dealer: '0073741' },
     );
     expect(dmsSettingsRepository.registerDealer).not.toHaveBeenCalled(); // cache-hit: nessuna registrazione necessaria
     expect(dmlConfigRepository.getDmlConfiguration).toHaveBeenCalledWith(
@@ -101,7 +101,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
 
     expect(dmsSettingsRepository.registerDealer).toHaveBeenCalledWith(
       { __fakePool: true, query: expect.any(Function) },
-      { country: 'it', brand: 'FT', dealer: '0073741' },
+      { country: 'IT', brand: 'FT', dealer: '0073741' },
     );
     expect(data.isdml).toBe(false);
   });

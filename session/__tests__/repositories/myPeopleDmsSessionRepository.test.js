@@ -102,7 +102,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     expect(readUserProfilesFn).toHaveBeenCalledWith({ username: '0073741.d235' });
     expect(getDmsSettingsCacheFn).toHaveBeenCalledWith({
-      country: 'it',
+      country: 'IT',
       brand: 'FT',
       dealer: '0073741',
     });
@@ -279,7 +279,7 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(data.isdml).toBe(false);
     expect(data.dmlcustomerupdate).toBeNull();
     expect(data.dmldiscount).toBeNull();
-    expect(registerDmsSettingsDealerFn).toHaveBeenCalledWith({ country: 'it', brand: 'FT', dealer: '0073741' });
+    expect(registerDmsSettingsDealerFn).toHaveBeenCalledWith({ country: 'IT', brand: 'FT', dealer: '0073741' });
   });
 
   test('non propaga (mai) errori di lettura della cache dms/settings: isdml diventa false (fallback ai default)', async () => {
