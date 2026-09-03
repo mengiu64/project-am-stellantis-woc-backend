@@ -641,6 +641,7 @@ L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implemen
 
 | Campo output | Origine |
 |---|---|
+| `username` | username IURSMA usato per la chiamata myPeople (`sub` dall'authorizer, oppure valore passato a `--username` in CLI) |
 | `codmarket` | `Response.User.Attributes.MARKETCODE` |
 | `oic` | `CODE` dell'OIC con `MAIN: "Y"` (fallback: primo OIC disponibile) |
 | `sincom` | `Attributes.MAINSINCOM` |

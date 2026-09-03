@@ -301,6 +301,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const dmsMap = buildDmsSettingsMap(dmsSettings);
 
     return {
+      username,
       codmarket: attributes.MARKETCODE || null,
       oic: mainOic.CODE || null,
       sincom: dealer,

@@ -113,6 +113,7 @@ describe('MyPeopleDmsSessionRepository', () => {
     });
 
     expect(data).toEqual({
+      username: '0073741.d235',
       codmarket: '1000',
       oic: '00007584',
       sincom: '0073741',
