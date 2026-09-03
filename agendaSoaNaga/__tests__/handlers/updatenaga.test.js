@@ -71,10 +71,11 @@ describe('updatenaga handler', () => {
     expect(JSON.parse(res.body).message).toBe('update failed');
   });
 
-  test('returns 500 on invalid JSON body', async () => {
+  test('returns 400 on invalid JSON body (malformed input)', async () => {
     const event = { pathParameters: { apptId: 'appt-1' }, body: '{invalid}' };
     const res = await handler(event);
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).success).toBe(false);
   });
 
   test('uses event.params body as fallback when body absent', async () => {

@@ -50,14 +50,14 @@ Parameters:
   AgendaSoaApiKey:
     Type: String
     NoEcho: true
-  AgendaSoaCertKey:
+  AgendaSoaCertSecretId:
     Type: String
-    Default: certs/mwpaga0a.cer
-    Description: S3 object key of the AgendaSOA mTLS client certificate (.cer), inside TranslationsBucket
-  AgendaSoaKeyKey:
+    Default: apicCert
+    Description: Secrets Manager secret id del certificato client mTLS (PEM) per le Lambda AgendaSOA
+  AgendaSoaKeySecretId:
     Type: String
-    Default: certs/mwpaga0a.key
-    Description: S3 object key of the AgendaSOA mTLS client private key (.key), inside TranslationsBucket
+    Default: apicKey
+    Description: Secrets Manager secret id della chiave privata mTLS (PEM) per le Lambda AgendaSOA
 
   # ── DMS (DML API) ─────────────────────────────────────────────────────────
   DmlIbmClientId:
@@ -242,6 +242,16 @@ Parameters:
 
 # ── Conditions ─────────────────────────────────────────────────────────────────
 
+# ── Mappings ──────────────────────────────────────────────────────────────────
+
+Mappings:
+  # Naming per ambiente (Req 8): dev/stage usano il segmento "np-" e un suffisso
+  # di ambiente; prod non ha né segmento "np-" né suffisso.
+  EnvNaming:
+    dev:   { infix: "np-", suffix: "-dev" }
+    stage: { infix: "np-", suffix: "-stage" }
+    prod:  { infix: "",    suffix: "" }
+
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
@@ -273,22 +283,37 @@ Resources:
   AgendaSoaFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoa"
+      # Naming per ambiente (Req 8): composto via !Sub + !FindInMap sulla mappa EnvNaming.
+      FunctionName: !Sub
+        - "lmb-${Infix}bsn0027990-agendasoa${Suffix}"
+        - Infix:  !FindInMap [EnvNaming, !Ref Environment, infix]
+          Suffix: !FindInMap [EnvNaming, !Ref Environment, suffix]
       CodeUri: agendaSoa/
+      # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
+      # localhost:2773 per il recupero dei segreti mTLS.
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
+        # Least-privilege (Req 7.1): sola lettura dei segreti cert/key mTLS.
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
       Environment:
         Variables:
           AGENDA_SOA_HOST:     !Ref AgendaSoaHost
           AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_BUCKET: !Ref TranslationsBucket
-          AGENDA_SOA_CERT:     !Ref AgendaSoaCertKey
-          AGENDA_SOA_KEY:      !Ref AgendaSoaKeyKey
+          # Id dei segreti mTLS su Secrets Manager (Req 7.3).
+          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
+          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          # Porta HTTP della Secrets Extension (localhost:2773).
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   AgendaSoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -301,22 +326,37 @@ Resources:
   AgendaSoaNagaFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoanaga"
+      # Naming per ambiente (Req 8): composto via !Sub + !FindInMap sulla mappa EnvNaming.
+      FunctionName: !Sub
+        - "lmb-${Infix}bsn0027990-agendasoanaga${Suffix}"
+        - Infix:  !FindInMap [EnvNaming, !Ref Environment, infix]
+          Suffix: !FindInMap [EnvNaming, !Ref Environment, suffix]
       CodeUri: agendaSoaNaga/
+      # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
+      # localhost:2773 per il recupero dei segreti mTLS.
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
+        # Least-privilege (Req 7.1): sola lettura dei segreti cert/key mTLS.
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
       Environment:
         Variables:
           AGENDA_SOA_HOST:     !Ref AgendaSoaHost
           AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_BUCKET: !Ref TranslationsBucket
-          AGENDA_SOA_CERT:     !Ref AgendaSoaCertKey
-          AGENDA_SOA_KEY:      !Ref AgendaSoaKeyKey
+          # Id dei segreti mTLS su Secrets Manager (Req 7.3).
+          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
+          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          # Porta HTTP della Secrets Extension (localhost:2773).
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   AgendaSoaNagaFunctionLogGroup:
     Type: AWS::Logs::LogGroup

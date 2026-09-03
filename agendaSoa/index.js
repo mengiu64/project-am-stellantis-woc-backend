@@ -44,8 +44,10 @@ function resolveAction(event) {
 }
 
 exports.handler = async (event, context) => {
+  // Risolve l'azione dalle tre modalità di invocazione (event.action / proxy path / fallback).
   const action = resolveAction(event);
 
+  // Azione assente o sconosciuta -> 400 (input non valido a livello di dispatcher).
   if (!action || !handlers[action]) {
     return {
       statusCode: 400,
@@ -57,6 +59,7 @@ exports.handler = async (event, context) => {
     };
   }
 
+  // Delega all'handler dell'azione risolta; la mappatura 200/400/502/500 è gestita dall'handler.
   return handlers[action].handler(event, context);
 };
 
