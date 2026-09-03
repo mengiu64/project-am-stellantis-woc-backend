@@ -54,10 +54,11 @@ describe('createnaga handler', () => {
     expect(JSON.parse(res.body).message).toBe('NAGA service down');
   });
 
-  test('returns 500 on invalid JSON body', async () => {
+  test('returns 400 on invalid JSON body (malformed input)', async () => {
     const event = { body: 'not-valid-json' };
     const res = await handler(event);
-    expect(res.statusCode).toBe(500);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).success).toBe(false);
   });
 
   test('response has Content-Type: application/json header', async () => {
