@@ -130,4 +130,23 @@ describe('moparDoc index.handler', () => {
     const res = await handler({ action: 'createJobCard', body: {} });
     expect(res.statusCode).toBe(502);
   });
+
+  // Task 5.8 — Con getConfig che rigetta per codice di accesso mancante, l'errore si propaga
+  // dal metodo di servizio fino all'handler, che restituisce una risposta di errore (non-2xx, 502).
+  // Valida Requirement 2.4.
+  test('propagates config load failure (missing access code) as a non-2xx error response', async () => {
+    // Simula il fallimento del caricamento credenziali: getConfig rigetta perché manca un codice di accesso nel Secret
+    createJobCard.mockRejectedValue(
+      new Error('Secret non valido: chiavi mancanti: MOPARDOC_TAM_ACCESS_CODE'),
+    );
+
+    // Invoca l'handler con un'azione valida: l'errore di caricamento deve propagarsi fino a qui
+    const res = await handler({ action: 'createJobCard', body: {} });
+
+    // L'handler deve tradurre l'errore di credenziali in una risposta di errore non-2xx (502 per la tabella di error-handling)
+    expect(res.statusCode).toBe(502);
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    const parsed = JSON.parse(res.body);
+    expect(parsed.success).toBe(false);
+  });
 });

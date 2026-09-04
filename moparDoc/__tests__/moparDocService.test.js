@@ -14,13 +14,26 @@ const {
   getDocumentsDownloadUrl,
 } = require('../moparDocService');
 
-jest.mock('../config', () => ({
-  getConfig: jest.fn().mockResolvedValue({
-    jobDocs: { baseUrl: 'https://job-docs', basePath: '/jd', ibmClientId: 'id', ibmClientSecret: 'secret' },
-    moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
-    moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
-  }),
-}));
+// Fixture condivisa a sei chiavi (Req 5.1): usata dentro la factory del mock di ../config
+jest.mock('../config', () => {
+  // Recupera la fixture condivisa dentro la factory del mock (hoisting-safe)
+  const { VALID_SECRET: SECRET } = require('./fixtures/validSecret');
+  return {
+    getConfig: jest.fn().mockResolvedValue({
+      // jobDocs espone anche apiAccessCode/tamAccessCode derivati dalla fixture a sei chiavi
+      jobDocs: {
+        baseUrl: 'https://job-docs',
+        basePath: '/jd',
+        ibmClientId: 'id',
+        ibmClientSecret: 'secret',
+        apiAccessCode: SECRET.MOPARDOC_API_ACCESS_CODE, // Codice API dalla fixture condivisa
+        tamAccessCode: SECRET.MOPARDOC_TAM_ACCESS_CODE, // Codice TAM dalla fixture condivisa
+      },
+      moparDocsServices: { baseUrl: 'https://services', basePath: '/svc', ibmClientId: 'id', ibmClientSecret: 'secret' },
+      moparDocsApi: { baseUrl: 'https://api', basePath: '/api', ibmClientId: 'id', ibmClientSecret: 'secret' },
+    }),
+  };
+});
 
 jest.mock('../authService', () => ({
   getBearerToken: jest.fn().mockResolvedValue('test-token'),
@@ -302,5 +315,238 @@ describe('moparDocService', () => {
       expect(result).toEqual({ errorCode: 0, errorMessage: '' });
     });
 
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Test di proprietà ed esempio per l'inoltro dei codici di accesso dalla config
+// (Property 4/5/6 + esempio non-esposizione nei log). Riusa i mock di ../config
+// e ../httpClient definiti sopra: config espone jobDocs.tamAccessCode/apiAccessCode
+// derivati dalla fixture condivisa VALID_SECRET.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Riferimenti ai mock e alla fixture condivisa a sei chiavi
+const { VALID_SECRET } = require('./fixtures/validSecret');
+const { httpsRequest } = require('../httpClient');
+
+/**
+ * Generatore pseudo-casuale deterministico (LCG) per i test di proprietà.
+ * fast-check non è tra le dipendenze del modulo moparDoc, quindi si usa un
+ * generatore inline che copre lo spazio degli input in modo intelligente.
+ */
+function makeRng(seed) {
+  // Stato interno del generatore lineare congruenziale
+  let state = seed >>> 0;
+  return function next() {
+    // Costanti classiche dell'LCG (Numerical Recipes)
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+// Genera una stringa arbitraria (inclusi caratteri speciali e stringa vuota rara)
+function genString(rng) {
+  // Alfabeto ampio per esercitare valori di codice diversi
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.';
+  // Lunghezza variabile da 1 a 24 caratteri
+  const len = 1 + Math.floor(rng() * 24);
+  let out = '';
+  for (let i = 0; i < len; i += 1) {
+    out += alphabet[Math.floor(rng() * alphabet.length)];
+  }
+  return out;
+}
+
+// Estrae il payload effettivamente inoltrato a un dato resourcePath dal mock httpsRequest.
+// buildOptions imposta options.path = basePath + resourcePath; il body è il 2° argomento (JSON string).
+function getForwardedPayload(resourcePath) {
+  // Cerca fra le chiamate registrate quella il cui path termina col resourcePath atteso
+  const call = httpsRequest.mock.calls.find(([options]) => options && options.path && options.path.endsWith(resourcePath));
+  // Deserializza il body JSON inoltrato per ispezionare i campi
+  return call ? JSON.parse(call[1]) : undefined;
+}
+
+describe('createJobCard — Property 4: inoltra il codice TAM dalla configurazione', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // Feature: mopardoc-access-codes-to-secret, Property 4
+  // Validates: Requirements 3.1, 3.5, 5.2
+  test('TAMAccessCode inoltrato a /CreateJobCard è sempre quello della config, non del body', async () => {
+    const rng = makeRng(0x4a4b4c4d);
+    const iterations = 120; // >= 100 iterazioni richieste
+    for (let i = 0; i < iterations; i += 1) {
+      // Reset del mock per isolare le chiamate di questa iterazione
+      httpsRequest.mockClear();
+      // Genera un body valido con un TAMAccessCode differente dal valore del secret
+      const bodyTam = genString(rng);
+      const params = {
+        vin: genString(rng),
+        market: genString(rng),
+        source: genString(rng),
+        UserName: genString(rng),
+        dealerCode: genString(rng),
+        JobCard_Title: genString(rng),
+        TAMAccessCode: bodyTam, // valore del body, che DEVE essere ignorato
+      };
+
+      // eslint-disable-next-line no-await-in-loop
+      await createJobCard(params);
+
+      const forwarded = getForwardedPayload('/CreateJobCard');
+      // Il valore inoltrato deve corrispondere al codice del secret, mai a quello del body
+      expect(forwarded.TAMAccessCode).toBe(VALID_SECRET.MOPARDOC_TAM_ACCESS_CODE);
+    }
+  });
+
+  // Caso limite esplicito: anche senza TAMAccessCode nel body il valore proviene dalla config
+  test('TAMAccessCode proviene dalla config anche quando assente dal body', async () => {
+    httpsRequest.mockClear();
+    await createJobCard({
+      vin: 'VIN123', market: 'IT', source: 'WEB', UserName: 'user1',
+      dealerCode: '0062230', JobCard_Title: 'Test',
+    });
+    const forwarded = getForwardedPayload('/CreateJobCard');
+    expect(forwarded.TAMAccessCode).toBe(VALID_SECRET.MOPARDOC_TAM_ACCESS_CODE);
+  });
+});
+
+describe('createAccessToken — Property 5: inoltra il codice API dalla configurazione', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // Feature: mopardoc-access-codes-to-secret, Property 5
+  // Validates: Requirements 3.2, 3.5, 5.3
+  test('APIAccessCode inoltrato a /CreateAccessToken è sempre quello della config, non del body', async () => {
+    const rng = makeRng(0x5e5f6061);
+    const iterations = 120; // >= 100 iterazioni richieste
+    for (let i = 0; i < iterations; i += 1) {
+      // Reset del mock per isolare le chiamate di questa iterazione
+      httpsRequest.mockClear();
+      // Genera un body valido con un APIAccessCode differente dal valore del secret
+      const bodyApi = genString(rng);
+      const params = {
+        JobCardId: genString(rng),
+        UserName: genString(rng),
+        dealerCode: genString(rng),
+        market: genString(rng),
+        APIAccessCode: bodyApi, // valore del body, che DEVE essere ignorato
+      };
+
+      // eslint-disable-next-line no-await-in-loop
+      await createAccessToken(params);
+
+      const forwarded = getForwardedPayload('/CreateAccessToken');
+      // Il valore inoltrato deve corrispondere al codice del secret, mai a quello del body
+      expect(forwarded.APIAccessCode).toBe(VALID_SECRET.MOPARDOC_API_ACCESS_CODE);
+    }
+  });
+
+  // Caso limite esplicito: anche senza APIAccessCode nel body il valore proviene dalla config
+  test('APIAccessCode proviene dalla config anche quando assente dal body', async () => {
+    httpsRequest.mockClear();
+    await createAccessToken({
+      JobCardId: 'JC1', UserName: 'user1', dealerCode: '0062230', market: 'IT',
+    });
+    const forwarded = getForwardedPayload('/CreateAccessToken');
+    expect(forwarded.APIAccessCode).toBe(VALID_SECRET.MOPARDOC_API_ACCESS_CODE);
+  });
+});
+
+describe('Property 6: i codici di accesso non sono più obbligatori nel body', () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  // Feature: mopardoc-access-codes-to-secret, Property 6
+  // Validates: Requirements 3.3, 3.4
+  test('createJobCard non fallisce per TAMAccessCode mancante quando gli altri campi sono presenti', async () => {
+    const rng = makeRng(0x11223344);
+    const iterations = 110; // >= 100 iterazioni richieste
+    for (let i = 0; i < iterations; i += 1) {
+      httpsRequest.mockClear();
+      // Body con tutti i campi obbligatori residui ma SENZA TAMAccessCode
+      const params = {
+        vin: genString(rng),
+        market: genString(rng),
+        source: genString(rng),
+        UserName: genString(rng),
+        dealerCode: genString(rng),
+        JobCard_Title: genString(rng),
+      };
+      // Non deve mai fallire con un errore di campo obbligatorio relativo a TAMAccessCode
+      // eslint-disable-next-line no-await-in-loop
+      await expect(createJobCard(params)).resolves.toEqual({ success: true });
+    }
+  });
+
+  // Feature: mopardoc-access-codes-to-secret, Property 6
+  // Validates: Requirements 3.3, 3.4
+  test('createAccessToken non fallisce per APIAccessCode mancante quando gli altri campi sono presenti', async () => {
+    const rng = makeRng(0x55667788);
+    const iterations = 110; // >= 100 iterazioni richieste
+    for (let i = 0; i < iterations; i += 1) {
+      httpsRequest.mockClear();
+      // Body con tutti i campi obbligatori residui ma SENZA APIAccessCode
+      const params = {
+        JobCardId: genString(rng),
+        UserName: genString(rng),
+        dealerCode: genString(rng),
+        market: genString(rng),
+      };
+      // Non deve mai fallire con un errore di campo obbligatorio relativo a APIAccessCode
+      // eslint-disable-next-line no-await-in-loop
+      await expect(createAccessToken(params)).resolves.toEqual({ success: true });
+    }
+  });
+});
+
+describe('Esempio: i valori dei codici non compaiono nei log dei metodi di servizio', () => {
+  let logSpy;
+  let errorSpy;
+  let warnSpy;
+
+  beforeEach(() => {
+    // Spia su console.log/error/warn per ispezionare tutti gli argomenti loggati
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  // Concatena tutti gli argomenti di tutte le chiamate di una spia in un'unica stringa
+  function allLoggedText(...spies) {
+    return spies
+      .flatMap((spy) => spy.mock.calls)
+      .flat()
+      .map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg)))
+      .join('\n');
+  }
+
+  // Validates: Requirements 4.2
+  test('createJobCard non stampa il valore del codice TAM nei log', async () => {
+    await createJobCard({
+      vin: 'VIN123', market: 'IT', source: 'WEB', UserName: 'user1',
+      dealerCode: '0062230', JobCard_Title: 'Test',
+    });
+    const logged = allLoggedText(logSpy, errorSpy, warnSpy);
+    // Il valore del codice TAM del secret non deve comparire in alcun log
+    expect(logged).not.toContain(VALID_SECRET.MOPARDOC_TAM_ACCESS_CODE);
+  });
+
+  // Validates: Requirements 4.3
+  test('createAccessToken non stampa il valore del codice API nei log', async () => {
+    await createAccessToken({
+      JobCardId: 'JC1', UserName: 'user1', dealerCode: '0062230', market: 'IT',
+    });
+    const logged = allLoggedText(logSpy, errorSpy, warnSpy);
+    // Il valore del codice API del secret non deve comparire in alcun log
+    expect(logged).not.toContain(VALID_SECRET.MOPARDOC_API_ACCESS_CODE);
   });
 });

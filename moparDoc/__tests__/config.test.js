@@ -16,13 +16,11 @@ const AUTH_DEFAULTS = {
   cacheBufferMs: 30000,
 };
 
-// Variabili d'ambiente obbligatorie usate nei test (modalità locale)
-const REQUIRED_ENV = {
-  MOPARDOC_IBM_CLIENT_ID: 'test-ibm-id',
-  MOPARDOC_IBM_CLIENT_SECRET: 'test-ibm-secret',
-  MOPARDOC_PING_CLIENT_ID: 'test-ping-id',
-  MOPARDOC_PING_CLIENT_SECRET: 'test-ping-secret',
-};
+// Fixture condivisa a sei chiavi (Req 5.1) — usata come sorgente delle variabili d'ambiente locali
+const { VALID_SECRET } = require('./fixtures/validSecret');
+
+// Variabili d'ambiente obbligatorie usate nei test (modalità locale) — sei chiavi dalla fixture condivisa
+const REQUIRED_ENV = { ...VALID_SECRET };
 
 describe('config.js – getConfig (moparDoc)', () => {
   const originalEnv = process.env;
@@ -76,6 +74,8 @@ describe('config.js – getConfig (moparDoc)', () => {
         basePath: '/job-docs/connector/v1',
         ibmClientId: REQUIRED_ENV.MOPARDOC_IBM_CLIENT_ID,
         ibmClientSecret: REQUIRED_ENV.MOPARDOC_IBM_CLIENT_SECRET,
+        apiAccessCode: REQUIRED_ENV.MOPARDOC_API_ACCESS_CODE, // Nuovo: codice API mappato dal secret
+        tamAccessCode: REQUIRED_ENV.MOPARDOC_TAM_ACCESS_CODE, // Nuovo: codice TAM mappato dal secret
       });
     });
 
@@ -114,9 +114,9 @@ describe('config.js – getConfig (moparDoc)', () => {
     });
 
     it('lancia errore quando manca una singola variabile obbligatoria', async () => {
-      process.env.MOPARDOC_IBM_CLIENT_SECRET = 's';
-      process.env.MOPARDOC_PING_CLIENT_ID = 'p';
-      process.env.MOPARDOC_PING_CLIENT_SECRET = 'ps';
+      // Imposta tutte le variabili tranne MOPARDOC_IBM_CLIENT_ID per isolare la chiave mancante
+      Object.assign(process.env, REQUIRED_ENV);
+      delete process.env.MOPARDOC_IBM_CLIENT_ID;
       const { getConfig } = require('../config');
       await expect(getConfig()).rejects.toThrow(
         '[config] Variabili d\'ambiente obbligatorie mancanti: MOPARDOC_IBM_CLIENT_ID'
@@ -135,22 +135,18 @@ describe('config.js – getConfig (moparDoc)', () => {
     it('carica le credenziali tramite loadSecrets quando MOPARDOC_PARAM_NAME è presente', async () => {
       process.env.MOPARDOC_PARAM_NAME = '/app/np-BSN0027990-dev/mopardoc_ibm';
 
+      // Il secret restituito da loadSecrets è la fixture condivisa a sei chiavi (Req 5.1)
       jest.mock('../secretsLoader', () => ({
-        loadSecrets: jest.fn().mockResolvedValue({
-          MOPARDOC_IBM_CLIENT_ID: 'ssm-ibm-id',
-          MOPARDOC_IBM_CLIENT_SECRET: 'ssm-ibm-secret',
-          MOPARDOC_PING_CLIENT_ID: 'ssm-ping-id',
-          MOPARDOC_PING_CLIENT_SECRET: 'ssm-ping-secret',
-        }),
+        loadSecrets: jest.fn().mockResolvedValue({ ...require('./fixtures/validSecret').VALID_SECRET }),
       }));
 
       const { getConfig } = require('../config');
       const config = await getConfig();
 
-      expect(config.auth.clientId).toBe('ssm-ping-id');
-      expect(config.auth.clientSecret).toBe('ssm-ping-secret');
-      expect(config.jobDocs.ibmClientId).toBe('ssm-ibm-id');
-      expect(config.jobDocs.ibmClientSecret).toBe('ssm-ibm-secret');
+      expect(config.auth.clientId).toBe(VALID_SECRET.MOPARDOC_PING_CLIENT_ID);
+      expect(config.auth.clientSecret).toBe(VALID_SECRET.MOPARDOC_PING_CLIENT_SECRET);
+      expect(config.jobDocs.ibmClientId).toBe(VALID_SECRET.MOPARDOC_IBM_CLIENT_ID);
+      expect(config.jobDocs.ibmClientSecret).toBe(VALID_SECRET.MOPARDOC_IBM_CLIENT_SECRET);
     });
 
     it('propaga errore se loadSecrets fallisce', async () => {
@@ -182,6 +178,110 @@ describe('config.js – getConfig (moparDoc)', () => {
       const config2 = await getConfig();
       expect(config1).not.toBe(config2);
       expect(config1).toEqual(config2);
+    });
+  });
+
+  // Generatore semplice inline (fast-check non è tra le dipendenze):
+  // produce una stringa pseudo-casuale non vuota adatta a fungere da codice di accesso
+  function randomCode(seed) {
+    // Mescola il seme per ottenere valori variabili tra iterazioni
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    // Lunghezza variabile ma sempre >= 1 per evitare valori falsy
+    const len = 1 + Math.floor(Math.random() * 24);
+    let out = '';
+    for (let i = 0; i < len; i++) {
+      // Combina Math.random con il seme per maggiore varietà
+      const idx = Math.floor((Math.random() * (seed + 1) * 7 + i) % chars.length);
+      out += chars[idx];
+    }
+    return out;
+  }
+
+  // Property 3: buildConfig mappa entrambi i codici nella sezione jobDocs
+  // Tag: Feature: mopardoc-access-codes-to-secret, Property 3
+  // Validates: Requirements 1.2, 1.3
+  describe('Property 3: buildConfig mappa entrambi i codici nella sezione jobDocs', () => {
+    it('per valori random dei due codici, jobDocs.apiAccessCode/tamAccessCode coincidono con il secret (>=100 iterazioni)', async () => {
+      // Esegue almeno 100 iterazioni con coppie di codici generate casualmente
+      for (let i = 0; i < 120; i++) {
+        // Genera due codici distinti e casuali per questa iterazione
+        const apiCode = randomCode(i);
+        const tamCode = randomCode(i + 1000);
+
+        // Resetta i moduli e la cache di config per isolare ogni iterazione
+        jest.resetModules();
+        process.env = { ...originalEnv };
+        // Rimuove eventuali variabili MOPARDOC_* residue per partire da uno stato pulito
+        Object.keys(process.env).forEach((key) => {
+          if (key.startsWith('MOPARDOC_') || key.startsWith('MOPARDOCS_')) delete process.env[key];
+        });
+
+        // Imposta le sei variabili obbligatorie (percorso locale, senza MOPARDOC_PARAM_NAME)
+        Object.assign(process.env, VALID_SECRET);
+        // Sovrascrive i due codici con i valori random dell'iterazione
+        process.env.MOPARDOC_API_ACCESS_CODE = apiCode;
+        process.env.MOPARDOC_TAM_ACCESS_CODE = tamCode;
+
+        // Carica la config appena costruita (buildConfig è esercitato internamente)
+        const { getConfig } = require('../config');
+        const config = await getConfig();
+
+        // La mappatura deve riflettere esattamente i valori del secret/env
+        expect(config.jobDocs.apiAccessCode).toBe(apiCode);
+        expect(config.jobDocs.tamAccessCode).toBe(tamCode);
+      }
+    });
+  });
+
+  // Property 2: La validazione locale fallisce su variabile d'ambiente mancante
+  // Tag: Feature: mopardoc-access-codes-to-secret, Property 2
+  // Validates: Requirements 1.4, 2.3
+  describe('Property 2: la validazione locale fallisce su variabile d\'ambiente mancante', () => {
+    // Elenco delle sei variabili obbligatorie nel percorso locale
+    const REQUIRED_KEYS = Object.keys(VALID_SECRET);
+
+    it('rimuovendo un sottoinsieme non vuoto di variabili obbligatorie, getConfig() fallisce elencandole e non costruisce la config (>=100 iterazioni)', async () => {
+      // Esegue almeno 100 iterazioni scegliendo casualmente quali variabili rimuovere
+      for (let i = 0; i < 120; i++) {
+        // Determina casualmente quali chiavi rimuovere, garantendo almeno una rimozione
+        let toRemove = REQUIRED_KEYS.filter(() => Math.random() < 0.5);
+        if (toRemove.length === 0) {
+          // Forza la rimozione di almeno una variabile (ciclo sulle chiavi per varietà)
+          toRemove = [REQUIRED_KEYS[i % REQUIRED_KEYS.length]];
+        }
+
+        // Resetta i moduli e ripristina l'ambiente per isolare l'iterazione
+        jest.resetModules();
+        process.env = { ...originalEnv };
+        // Assicura il percorso locale rimuovendo MOPARDOC_PARAM_NAME e residui MOPARDOC_*
+        Object.keys(process.env).forEach((key) => {
+          if (key.startsWith('MOPARDOC_') || key.startsWith('MOPARDOCS_')) delete process.env[key];
+        });
+
+        // Imposta tutte le sei variabili obbligatorie...
+        Object.assign(process.env, VALID_SECRET);
+        // ...poi rimuove il sottoinsieme scelto per questa iterazione
+        toRemove.forEach((key) => delete process.env[key]);
+
+        // Spia buildConfig indirettamente: la config non deve essere costruita in caso di errore
+        const { getConfig } = require('../config');
+
+        // getConfig() deve fallire con un errore che elenca esattamente le variabili mancanti
+        let thrown;
+        try {
+          await getConfig();
+        } catch (err) {
+          thrown = err;
+        }
+
+        // Deve essere stato lanciato un errore (la config NON è stata costruita)
+        expect(thrown).toBeInstanceOf(Error);
+        // Il messaggio elenca il prefisso atteso e ciascuna variabile rimossa
+        expect(thrown.message).toContain('[config] Variabili d\'ambiente obbligatorie mancanti:');
+        toRemove.forEach((key) => {
+          expect(thrown.message).toContain(key);
+        });
+      }
     });
   });
 });
