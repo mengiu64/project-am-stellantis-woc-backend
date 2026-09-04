@@ -70,6 +70,8 @@ function buildConfig(secrets) {
       basePath: '/job-docs/connector/v1', // Path corretto per l'API Gateway IBM (da collection Postman)
       ibmClientId: secrets.MOPARDOC_IBM_CLIENT_ID,
       ibmClientSecret: secrets.MOPARDOC_IBM_CLIENT_SECRET,
+      apiAccessCode: secrets.MOPARDOC_API_ACCESS_CODE, // Nuovo: codice API mappato dal secret, usato da createAccessToken
+      tamAccessCode: secrets.MOPARDOC_TAM_ACCESS_CODE, // Nuovo: codice TAM mappato dal secret, usato da createJobCard
     },
 
     // MoparDocs Browser API (Fiat) — upload e download documenti
@@ -127,6 +129,8 @@ async function getConfig() {
       'MOPARDOC_IBM_CLIENT_SECRET',
       'MOPARDOC_PING_CLIENT_ID',
       'MOPARDOC_PING_CLIENT_SECRET',
+      'MOPARDOC_API_ACCESS_CODE', // Nuova var obbligatoria in locale: codice di accesso API
+      'MOPARDOC_TAM_ACCESS_CODE', // Nuova var obbligatoria in locale: codice di accesso TAM
     ];
     // Verifica che tutte le variabili obbligatorie siano presenti
     const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
@@ -141,6 +145,8 @@ async function getConfig() {
       MOPARDOC_IBM_CLIENT_SECRET: process.env.MOPARDOC_IBM_CLIENT_SECRET,
       MOPARDOC_PING_CLIENT_ID: process.env.MOPARDOC_PING_CLIENT_ID,
       MOPARDOC_PING_CLIENT_SECRET: process.env.MOPARDOC_PING_CLIENT_SECRET,
+      MOPARDOC_API_ACCESS_CODE: process.env.MOPARDOC_API_ACCESS_CODE, // Nuovo: codice API dal .env
+      MOPARDOC_TAM_ACCESS_CODE: process.env.MOPARDOC_TAM_ACCESS_CODE, // Nuovo: codice TAM dal .env
     };
   }
 
