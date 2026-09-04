@@ -53,9 +53,10 @@ async function getSecretValue(secretArn) {
 /**
  * Carica le credenziali dal percorso SSM → Secrets Manager.
  * Utilizza la cache in memoria per evitare chiamate ripetute durante il warm start.
- * @returns {Promise<object>} Oggetto con le 4 credenziali:
+ * @returns {Promise<object>} Oggetto con le 6 credenziali:
  *   { MOPARDOC_IBM_CLIENT_ID, MOPARDOC_IBM_CLIENT_SECRET,
- *     MOPARDOC_PING_CLIENT_ID, MOPARDOC_PING_CLIENT_SECRET }
+ *     MOPARDOC_PING_CLIENT_ID, MOPARDOC_PING_CLIENT_SECRET,
+ *     MOPARDOC_API_ACCESS_CODE, MOPARDOC_TAM_ACCESS_CODE }
  * @throws {Error} Se la variabile d'ambiente MOPARDOC_PARAM_NAME non è configurata
  * @throws {Error} Se il parametro SSM o il secret non sono recuperabili
  */
@@ -86,6 +87,8 @@ async function loadSecrets() {
     'MOPARDOC_IBM_CLIENT_SECRET',
     'MOPARDOC_PING_CLIENT_ID',
     'MOPARDOC_PING_CLIENT_SECRET',
+    'MOPARDOC_API_ACCESS_CODE', // Nuova chiave: codice di accesso API usato da createAccessToken
+    'MOPARDOC_TAM_ACCESS_CODE', // Nuova chiave: codice di accesso TAM usato da createJobCard
   ];
   // Filtra le chiavi mancanti
   const missingKeys = requiredKeys.filter((k) => !secrets[k]);
