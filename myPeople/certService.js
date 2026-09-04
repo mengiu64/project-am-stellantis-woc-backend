@@ -91,7 +91,11 @@ async function loadHttpsAgent() {
     fetchSecret(config.secrets.keySecretId),
   ]);
 
-  return new https.Agent({ cert, key });
+  // keepAlive: riusa la stessa connessione TCP/mTLS tra invocazioni "warm" della
+  // stessa istanza Lambda (l'Agent è già cachato in-process, vedi cachedAgentPromise
+  // sopra), evitando di rifare un handshake mTLS completo (costoso: certificati
+  // client+server) ad ogni chiamata verso myPeople.
+  return new https.Agent({ cert, key, keepAlive: true });
 }
 
 /** Resetta la cache (solo per i test). */
