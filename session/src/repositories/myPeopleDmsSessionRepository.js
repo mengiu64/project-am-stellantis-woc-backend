@@ -359,7 +359,7 @@ function lowercaseKeys(obj) {
 }
 
 /**
- * Come lowercaseKeys, ma inserisce anche `DJCLISTPARAMETER` subito dopo la
+ * Come lowercaseKeys, ma inserisce anche `djcListParameter` subito dopo la
  * chiave `code` (parametro richiesto dall'integrazione DJC, ottenuto
  * concatenando `market` e `code` del singolo OIC con "_", es.
  * "1000_00010925") e `brandLogos` subito dopo la chiave `brands` (array di
@@ -373,7 +373,7 @@ function buildOicWithBrandLogos(oic, brandLogosByCode) {
   for (const [key, value] of Object.entries(lowered)) {
     result[key] = value;
     if (key === 'code') {
-      result.DJCLISTPARAMETER = buildDjcListParameter(lowered.market, lowered.code);
+      result.djcListParameter = builddjcListParameter(lowered.market, lowered.code);
     }
     if (key === 'brands') {
       result.brandLogos = resolveBrandLogos(value, brandLogosByCode);
@@ -383,14 +383,14 @@ function buildOicWithBrandLogos(oic, brandLogosByCode) {
   if (!brandLogosInserted) {
     result.brandLogos = [];
   }
-  if (!('DJCLISTPARAMETER' in result)) {
-    result.DJCLISTPARAMETER = buildDjcListParameter(lowered.market, lowered.code);
+  if (!('djcListParameter' in result)) {
+    result.djcListParameter = builddjcListParameter(lowered.market, lowered.code);
   }
   return result;
 }
 
-/** Concatena market e code (in questo ordine, separati da "_") per il parametro DJCLISTPARAMETER; null se uno dei due manca. */
-function buildDjcListParameter(market, code) {
+/** Concatena market e code (in questo ordine, separati da "_") per il parametro djcListParameter; null se uno dei due manca. */
+function builddjcListParameter(market, code) {
   if (market == null || code == null) return null;
   return `${market}_${code}`;
 }
