@@ -359,9 +359,12 @@ function lowercaseKeys(obj) {
 }
 
 /**
- * Come lowercaseKeys, ma inserisce anche `brandLogos` subito dopo la chiave
- * `brands`: array di logo_s3_key risolti a partire dal CSV di codici brand
- * (`brandLogosByCode`: mappa codbrand -> logo_s3_key già letta da woc.anag_brand).
+ * Come lowercaseKeys, ma inserisce anche `DJCLISTPARAMETER` subito dopo la
+ * chiave `code` (parametro richiesto dall'integrazione DJC, ottenuto
+ * concatenando `market` e `code` del singolo OIC con "_", es.
+ * "1000_00010925") e `brandLogos` subito dopo la chiave `brands` (array di
+ * logo_s3_key risolti a partire dal CSV di codici brand, `brandLogosByCode`:
+ * mappa codbrand -> logo_s3_key già letta da woc.anag_brand).
  */
 function buildOicWithBrandLogos(oic, brandLogosByCode) {
   const lowered = lowercaseKeys(oic);
@@ -369,6 +372,9 @@ function buildOicWithBrandLogos(oic, brandLogosByCode) {
   let brandLogosInserted = false;
   for (const [key, value] of Object.entries(lowered)) {
     result[key] = value;
+    if (key === 'code') {
+      result.DJCLISTPARAMETER = buildDjcListParameter(lowered.market, lowered.code);
+    }
     if (key === 'brands') {
       result.brandLogos = resolveBrandLogos(value, brandLogosByCode);
       brandLogosInserted = true;
@@ -377,7 +383,16 @@ function buildOicWithBrandLogos(oic, brandLogosByCode) {
   if (!brandLogosInserted) {
     result.brandLogos = [];
   }
+  if (!('DJCLISTPARAMETER' in result)) {
+    result.DJCLISTPARAMETER = buildDjcListParameter(lowered.market, lowered.code);
+  }
   return result;
+}
+
+/** Concatena market e code (in questo ordine, separati da "_") per il parametro DJCLISTPARAMETER; null se uno dei due manca. */
+function buildDjcListParameter(market, code) {
+  if (market == null || code == null) return null;
+  return `${market}_${code}`;
 }
 
 /** Risolve il CSV di codici brand (es. "30,31,33,43") in un array di logo_s3_key, scartando i codici senza logo noto. */

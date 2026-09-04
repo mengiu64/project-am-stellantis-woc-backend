@@ -161,6 +161,7 @@ describe('MyPeopleDmsSessionRepository', () => {
             'assets/images/logo/brand-stla/OPEL.png',
           ],
           main: 'N',
+          DJCLISTPARAMETER: '1000_00010925',
         },
         {
           market: '1000',
@@ -172,6 +173,7 @@ describe('MyPeopleDmsSessionRepository', () => {
             'assets/images/logo/brand-stla/ALFAROMEO.png',
           ],
           main: 'Y',
+          DJCLISTPARAMETER: '1000_00007584',
         },
       ],
       applications: [],
@@ -505,6 +507,7 @@ describe('MyPeopleDmsSessionRepository', () => {
         ],
         type: 'AFTERSALES',
         main: 'N',
+        DJCLISTPARAMETER: '1000_00010925',
       },
       {
         market: '1000',
@@ -521,11 +524,16 @@ describe('MyPeopleDmsSessionRepository', () => {
         ],
         type: 'AFTERSALES',
         main: 'Y',
+        DJCLISTPARAMETER: '1000_00007584',
       },
     ]);
     // brandLogos deve comparire subito dopo brands, non in coda all'oggetto.
     expect(Object.keys(data.oics[0]).indexOf('brandLogos')).toBe(
       Object.keys(data.oics[0]).indexOf('brands') + 1,
+    );
+    // DJCLISTPARAMETER deve comparire subito dopo code, non in coda all'oggetto.
+    expect(Object.keys(data.oics[0]).indexOf('DJCLISTPARAMETER')).toBe(
+      Object.keys(data.oics[0]).indexOf('code') + 1,
     );
   });
 
@@ -565,7 +573,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([
-      { market: '1000', code: '00010925', state: 'ACTIVE', brandLogos: [], main: 'N' },
+      { market: '1000', code: '00010925', state: 'ACTIVE', brandLogos: [], main: 'N', DJCLISTPARAMETER: '1000_00010925' },
     ]);
     // Nessun codice brand da risolvere: non deve nemmeno interrogare il DB.
     expect(getBrandLogosFn).not.toHaveBeenCalled();
@@ -589,7 +597,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([
-      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N' },
+      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N', DJCLISTPARAMETER: '1000_00010925' },
     ]);
     expect(getBrandLogosFn).toHaveBeenCalledWith({ codes: ['30', '99'] });
   });

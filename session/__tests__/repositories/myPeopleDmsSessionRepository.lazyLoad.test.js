@@ -89,6 +89,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
           'assets/images/logo/brand-stla/ALFAROMEO.png',
         ],
         main: 'Y',
+        DJCLISTPARAMETER: null,
       },
     ]);
   });
