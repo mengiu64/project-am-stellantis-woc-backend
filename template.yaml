@@ -242,16 +242,6 @@ Parameters:
 
 # ── Conditions ─────────────────────────────────────────────────────────────────
 
-# ── Mappings ──────────────────────────────────────────────────────────────────
-
-Mappings:
-  # Naming per ambiente (Req 8): dev/stage usano il segmento "np-" e un suffisso
-  # di ambiente; prod non ha né segmento "np-" né suffisso.
-  EnvNaming:
-    dev:   { infix: "np-", suffix: "-dev" }
-    stage: { infix: "np-", suffix: "-stage" }
-    prod:  { infix: "",    suffix: "" }
-
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
@@ -283,11 +273,7 @@ Resources:
   AgendaSoaFunction:
     Type: AWS::Serverless::Function
     Properties:
-      # Naming per ambiente (Req 8): composto via !Sub + !FindInMap sulla mappa EnvNaming.
-      FunctionName: !Sub
-        - "lmb-${Infix}bsn0027990-agendasoa${Suffix}"
-        - Infix:  !FindInMap [EnvNaming, !Ref Environment, infix]
-          Suffix: !FindInMap [EnvNaming, !Ref Environment, suffix]
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoa"
       CodeUri: agendaSoa/
       # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
       # localhost:2773 per il recupero dei segreti mTLS.
@@ -326,11 +312,7 @@ Resources:
   AgendaSoaNagaFunction:
     Type: AWS::Serverless::Function
     Properties:
-      # Naming per ambiente (Req 8): composto via !Sub + !FindInMap sulla mappa EnvNaming.
-      FunctionName: !Sub
-        - "lmb-${Infix}bsn0027990-agendasoanaga${Suffix}"
-        - Infix:  !FindInMap [EnvNaming, !Ref Environment, infix]
-          Suffix: !FindInMap [EnvNaming, !Ref Environment, suffix]
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoanaga"
       CodeUri: agendaSoaNaga/
       # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
       # localhost:2773 per il recupero dei segreti mTLS.
