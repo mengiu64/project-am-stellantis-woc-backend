@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite) — redeploy trigger
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -272,6 +272,10 @@ Resources:
 
   AgendaSoaFunction:
     Type: AWS::Serverless::Function
+    # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
+    # la Lambda riusa quella esistente invece di crearne una in automatico
+    # (evita il conflitto AlreadyExists sul replace del FunctionName).
+    DependsOn: AgendaSoaFunctionLogGroup
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoa"
       CodeUri: agendaSoa/
@@ -306,11 +310,17 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AgendaSoaFunction}"
+      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
+      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
+      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoa"
       RetentionInDays: 30
 
   AgendaSoaNagaFunction:
     Type: AWS::Serverless::Function
+    # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
+    # la Lambda riusa quella esistente invece di crearne una in automatico
+    # (evita il conflitto AlreadyExists sul replace del FunctionName).
+    DependsOn: AgendaSoaNagaFunctionLogGroup
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoanaga"
       CodeUri: agendaSoaNaga/
@@ -345,7 +355,9 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AgendaSoaNagaFunction}"
+      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
+      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
+      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoanaga"
       RetentionInDays: 30
 
   DmsFunction:
