@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite) — redeploy trigger
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
