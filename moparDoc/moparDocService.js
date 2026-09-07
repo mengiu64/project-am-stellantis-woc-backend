@@ -99,14 +99,22 @@ async function postJson(targetName, resourcePath, payload, opts = {}) {
 
 /**
  * CreateJobCard — crea una job card sul connector job-docs (PSA).
- * @param {{vin: string, market: string, source: string, UserName: string, dealerCode: string, JobCard_Title: string, TAMAccessCode: string}} params
+ * TAMAccessCode non è più un parametro del body: viene caricato dalla configurazione (secret / .env).
+ * @param {{vin: string, market: string, source: string, UserName: string, dealerCode: string, JobCard_Title: string}} params
  */
 async function createJobCard(params) {
-  const required = ['vin', 'market', 'source', 'UserName', 'dealerCode', 'JobCard_Title', 'TAMAccessCode'];
+  // Rimosso TAMAccessCode dai campi obbligatori: ora proviene dalla configurazione, non dal body
+  const required = ['vin', 'market', 'source', 'UserName', 'dealerCode', 'JobCard_Title'];
   const missing = required.filter((k) => !params || !params[k]);
   if (missing.length > 0) {
     throw new Error(`[createJobCard] Missing required field(s): ${missing.join(', ')}`);
   }
+
+  // Recupera la configurazione (credenziali e codici di accesso dal secret / .env); eventuali errori si propagano al chiamante
+  const config = await getConfig();
+
+  // Log: costruzione payload — NON stampa mai il valore del codice TAM
+  console.log('[createJobCard] Costruzione payload CreateJobCard; TAMAccessCode caricato dalla configurazione');
 
   const payload = {
     vin: params.vin,
@@ -115,7 +123,7 @@ async function createJobCard(params) {
     UserName: params.UserName,
     dealerCode: params.dealerCode,
     JobCard_Title: params.JobCard_Title,
-    TAMAccessCode: params.TAMAccessCode,
+    TAMAccessCode: config.jobDocs.tamAccessCode, // Valore dal secret; eventuale params.TAMAccessCode ignorato
   };
 
   return postJson('jobDocs', '/CreateJobCard', payload);
@@ -125,21 +133,29 @@ async function createJobCard(params) {
  * CreateAccessToken — ottiene un APIAccessCode/AccessToken per una job card
  * già creata (necessario per autenticare getUploadDocURL/uploadedDoc verso
  * MoparDocs Browser API). Stesso connector job-docs (PSA) di createJobCard.
- * @param {{JobCardId: string, UserName: string, dealerCode: string, market: string, APIAccessCode: string}} params
+ * APIAccessCode non è più un parametro di input: proviene dalla configurazione (secret).
+ * @param {{JobCardId: string, UserName: string, dealerCode: string, market: string}} params
  */
 async function createAccessToken(params) {
-  const required = ['JobCardId', 'UserName', 'dealerCode', 'market', 'APIAccessCode'];
+  // Rimosso APIAccessCode dai campi obbligatori: ora proviene dalla configurazione, non dal body
+  const required = ['JobCardId', 'UserName', 'dealerCode', 'market'];
   const missing = required.filter((k) => !params || !params[k]);
   if (missing.length > 0) {
     throw new Error(`[createAccessToken] Missing required field(s): ${missing.join(', ')}`);
   }
+
+  // Recupera la configurazione (credenziali e codici di accesso dal secret / .env); eventuali errori si propagano
+  const config = await getConfig();
+
+  // Log: costruzione payload — NON stampa mai il valore del codice API
+  console.log('[createAccessToken] Costruzione payload CreateAccessToken; APIAccessCode caricato dalla configurazione');
 
   const payload = {
     JobCardId: params.JobCardId,
     UserName: params.UserName,
     dealerCode: params.dealerCode,
     market: params.market,
-    APIAccessCode: params.APIAccessCode,
+    APIAccessCode: config.jobDocs.apiAccessCode, // Valore dal secret; eventuale params.APIAccessCode ignorato
   };
 
   return postJson('jobDocs', '/CreateAccessToken', payload);

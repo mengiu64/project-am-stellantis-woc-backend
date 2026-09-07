@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite)
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite) — redeploy trigger
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -242,16 +242,6 @@ Parameters:
 
 # ── Conditions ─────────────────────────────────────────────────────────────────
 
-# ── Mappings ──────────────────────────────────────────────────────────────────
-
-Mappings:
-  # Naming per ambiente (Req 8): dev/stage usano il segmento "np-" e un suffisso
-  # di ambiente; prod non ha né segmento "np-" né suffisso.
-  EnvNaming:
-    dev:   { infix: "np-", suffix: "-dev" }
-    stage: { infix: "np-", suffix: "-stage" }
-    prod:  { infix: "",    suffix: "" }
-
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
@@ -282,12 +272,12 @@ Resources:
 
   AgendaSoaFunction:
     Type: AWS::Serverless::Function
+    # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
+    # la Lambda riusa quella esistente invece di crearne una in automatico
+    # (evita il conflitto AlreadyExists sul replace del FunctionName).
+    DependsOn: AgendaSoaFunctionLogGroup
     Properties:
-      # Naming per ambiente (Req 8): composto via !Sub + !FindInMap sulla mappa EnvNaming.
-      FunctionName: !Sub
-        - "lmb-${Infix}bsn0027990-agendasoa${Suffix}"
-        - Infix:  !FindInMap [EnvNaming, !Ref Environment, infix]
-          Suffix: !FindInMap [EnvNaming, !Ref Environment, suffix]
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoa"
       CodeUri: agendaSoa/
       # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
       # localhost:2773 per il recupero dei segreti mTLS.
@@ -320,17 +310,19 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AgendaSoaFunction}"
+      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
+      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
+      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoa"
       RetentionInDays: 30
 
   AgendaSoaNagaFunction:
     Type: AWS::Serverless::Function
+    # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
+    # la Lambda riusa quella esistente invece di crearne una in automatico
+    # (evita il conflitto AlreadyExists sul replace del FunctionName).
+    DependsOn: AgendaSoaNagaFunctionLogGroup
     Properties:
-      # Naming per ambiente (Req 8): composto via !Sub + !FindInMap sulla mappa EnvNaming.
-      FunctionName: !Sub
-        - "lmb-${Infix}bsn0027990-agendasoanaga${Suffix}"
-        - Infix:  !FindInMap [EnvNaming, !Ref Environment, infix]
-          Suffix: !FindInMap [EnvNaming, !Ref Environment, suffix]
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoanaga"
       CodeUri: agendaSoaNaga/
       # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
       # localhost:2773 per il recupero dei segreti mTLS.
@@ -363,7 +355,9 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AgendaSoaNagaFunction}"
+      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
+      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
+      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoanaga"
       RetentionInDays: 30
 
   DmsFunction:
