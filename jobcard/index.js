@@ -8,6 +8,7 @@
  *   node index.js listCurrent <dealerId> <currentDate>
  *   node index.js details     <jobCardId>
  *   node index.js saveJobcard <payloadJsonFile>
+ *   node index.js dml         <jobCardId>
  *
  * Options for "list" (key=value):
  *   vin=<value>
@@ -34,6 +35,13 @@
  *   node index.js listCurrent 0062219 2026-05-20
  *   node index.js details 79
  *   node index.js saveJobcard ./payload.json
+ *   node index.js dml 79
+ *
+ * "dml" (getDataFromDMLFromTmp) legge /tmp/<jobCardId>.json, già salvato da
+ * una precedente "details" (getJobCardDetails/saveJobCardDetailsToTmp), e
+ * applica l'arricchimento prezzo/disponibilità DML (getDataFromDML) al
+ * relativo jobCardDetail: non richiama DGT (nessun bearerToken PingFederate
+ * necessario), solo il gateway DML.
  *
  * "saveJobcard" (POST /jobCard) è la stessa azione esposta anche dalla lambda
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
@@ -42,11 +50,11 @@
  */
 
 const { getBearerToken } = require('./authService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard } = require('./jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getDataFromDMLFromTmp } = require('./jobCardService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard'];
+const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml'];
 
 /**
  * Resolves { action, body } from either:
@@ -96,16 +104,24 @@ exports.handler = async (event) => {
   }
 
   try {
-    const token = await getBearerToken();
     let result;
-    if (action === 'list') {
-      result = await getJobCardList(token, body);
-    } else if (action === 'listCurrent') {
-      result = await getJobCardListCurrent(token, body.dealerId, body.currentDate);
-    } else if (action === 'details') {
-      result = await getJobCardDetails(token, body.jobCardId ?? body.id);
+    if (action === 'dml') {
+      // Non chiama DGT (nessun bearerToken PingFederate necessario): legge
+      // /tmp/<jobCardId>.json salvato da una precedente "details" e chiama
+      // solo il gateway DML (jobCardService.getDataFromDMLFromTmp gestisce
+      // internamente il proprio token verso dms/authService).
+      result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id);
     } else {
-      result = await saveJobCard(token, body.payload ?? body);
+      const token = await getBearerToken();
+      if (action === 'list') {
+        result = await getJobCardList(token, body);
+      } else if (action === 'listCurrent') {
+        result = await getJobCardListCurrent(token, body.dealerId, body.currentDate);
+      } else if (action === 'details') {
+        result = await getJobCardDetails(token, body.jobCardId ?? body.id);
+      } else {
+        result = await saveJobCard(token, body.payload ?? body);
+      }
     }
 
     return {
@@ -176,6 +192,13 @@ async function runSaveJobcard(payloadJsonFile) {
   return result;
 }
 
+async function runDml(jobCardId) {
+  console.log('\n=== JobCard DML (da /tmp) ===');
+  const result = await getDataFromDMLFromTmp(jobCardId);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 async function main() {
   const [, , command, param, ...rest] = process.argv;
 
@@ -200,12 +223,16 @@ async function main() {
         process.exit(1);
       }
       await runSaveJobcard(param);
+    } else if (command === 'dml') {
+      const jobCardId = param || '79';
+      await runDml(jobCardId);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js list        <dealerId> [key=value ...]');
       console.error('  node index.js listCurrent <dealerId> <currentDate>');
       console.error('  node index.js details     <jobCardId>');
       console.error('  node index.js saveJobcard <payloadJsonFile>');
+      console.error('  node index.js dml         <jobCardId>');
       process.exit(1);
     }
   } catch (err) {

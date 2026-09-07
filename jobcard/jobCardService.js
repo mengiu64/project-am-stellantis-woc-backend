@@ -674,6 +674,36 @@ async function getDataFromDML(jobCardDetail) {
 }
 
 /**
+ * Legge /tmp/<jobCardId>.json (salvato da getJobCardDetails tramite
+ * saveJobCardDetailsToTmp durante una precedente GET /jobCardDetails) e
+ * applica getDataFromDML al relativo jobCardDetail, così da poter richiamare
+ * l'arricchimento DML senza rifare la chiamata a DGT. Il file può contenere
+ * sia la risposta completa ({ jobCardDetail: {...} }) sia già il jobCardDetail.
+ * @param {string|number} jobCardId - usato per risolvere /tmp/<jobCardId>.json
+ * @returns {Promise<object>} il body letto da /tmp con jobCardDetail arricchito
+ */
+async function getDataFromDMLFromTmp(jobCardId) {
+  if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
+    throw new Error('[jobCard] jobCardId is required');
+  }
+
+  const filePath = path.join('/tmp', `${jobCardId}.json`);
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    throw new Error(`[jobCard] impossibile leggere ${filePath}: ${err.message}`);
+  }
+
+  const body = JSON.parse(raw);
+  const jobCardDetail = body?.jobCardDetail ?? body;
+
+  await getDataFromDML(jobCardDetail);
+
+  return body;
+}
+
+/**
  * Calls jobCardDetails endpoint.
  * @param {string} bearerToken      - ****** from PingFederate
  * @param {string|number} jobCardId - JobCard identifier (input parameter)
@@ -761,4 +791,4 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML };
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp };
