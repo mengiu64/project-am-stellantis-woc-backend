@@ -24,7 +24,7 @@ const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry } = require('../../dms/dmsService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML } = require('../jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -1119,6 +1119,77 @@ describe('jobCardService', () => {
         dmsDiscountPercentage: 1,
         laborRateAmount: 70,
       }));
+    });
+  });
+
+  // ── getDataFromDMLFromTmp ────────────────────────────────────────────────
+
+  describe('getDataFromDMLFromTmp', () => {
+    test('throws if jobCardId is missing', async () => {
+      await expect(getDataFromDMLFromTmp('')).rejects.toThrow('[jobCard] jobCardId is required');
+      await expect(getDataFromDMLFromTmp(null)).rejects.toThrow('[jobCard] jobCardId is required');
+      await expect(getDataFromDMLFromTmp(undefined)).rejects.toThrow('[jobCard] jobCardId is required');
+    });
+
+    test('throws if /tmp/<jobCardId>.json cannot be read', async () => {
+      fs.readFileSync.mockImplementation(() => {
+        throw new Error('ENOENT: no such file');
+      });
+
+      await expect(getDataFromDMLFromTmp('79')).rejects.toThrow('impossibile leggere');
+    });
+
+    test('reads /tmp/<jobCardId>.json, applies getDataFromDML to jobCardDetail and returns the full body', async () => {
+      const body = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-1' },
+          vehicleInfo: { identification: { vin: 'VIN1' } },
+          jobs: [
+            {
+              partInfo: [{ partNumber: 'P1', itemQuantity: 2 }],
+              laborInfo: [],
+            },
+          ],
+        },
+      };
+      fs.readFileSync.mockReturnValue(JSON.stringify(body));
+      postDmsInquiry.mockResolvedValue({
+        WorkLines: [
+          {
+            PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 42, DiscountPercentage: 1, QuantityAvailable: 2 }],
+            LaborItems: [],
+          },
+        ],
+      });
+
+      const result = await getDataFromDMLFromTmp('79');
+
+      expect(fs.readFileSync).toHaveBeenCalledWith(expect.stringContaining('79.json'), 'utf8');
+      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+        PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
+      }));
+      expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        originalPriceExclVat: 42,
+        dmsDiscountPercentage: 1,
+        QuantityAvailable: 2,
+      }));
+    });
+
+    test('supports a /tmp file containing directly the jobCardDetail (no jobCardDetail wrapper)', async () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-2' },
+        vehicleInfo: { identification: { vin: 'VIN2' } },
+        jobs: [],
+      };
+      fs.readFileSync.mockReturnValue(JSON.stringify(jobCardDetail));
+      postDmsInquiry.mockResolvedValue({ WorkLines: [] });
+
+      const result = await getDataFromDMLFromTmp('80');
+
+      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+        PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-2', VehicleID: 'VIN2' }),
+      }));
+      expect(result).toEqual(jobCardDetail);
     });
   });
 });
