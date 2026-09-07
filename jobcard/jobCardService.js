@@ -479,6 +479,7 @@ function saveJobCardDetailsToTmp(jobCardId, body) {
   } catch (err) {
     console.warn(`[jobCard] impossibile salvare jobCardDetails in ${filePath}: ${err.message}`);
   }
+  return body;
 }
 
 /**
@@ -660,6 +661,19 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
 }
 
 /**
+ * Interroga il gateway DML (getCartPriceAndAvailability) per prezzo/
+ * disponibilita di ricambi e manodopera e applica il risultato (in place)
+ * al jobCardDetail tramite applyDataFromDml.
+ * @param {object} jobCardDetail - jobCardDetail (stesso formato di
+ *                                 sanitized.jobCardDetail in getJobCardDetails)
+ * @returns {Promise<object>} il jobCardDetail arricchito con i dati DML
+ */
+async function getDataFromDML(jobCardDetail) {
+  const dataFromDml = await getCartPriceAndAvailability(jobCardDetail);
+  return applyDataFromDml(jobCardDetail, dataFromDml);
+}
+
+/**
  * Calls jobCardDetails endpoint.
  * @param {string} bearerToken      - ****** from PingFederate
  * @param {string|number} jobCardId - JobCard identifier (input parameter)
@@ -669,6 +683,7 @@ async function getJobCardDetails(bearerToken, jobCardId) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
     throw new Error('[jobCard] jobCardId is required');
   }
+
 
   const options = buildDgtOptions('/jobCardDetails', 'GET', { jobCardId: String(jobCardId) }, bearerToken);
 
@@ -682,12 +697,8 @@ async function getJobCardDetails(bearerToken, jobCardId) {
   }
 
   const sanitized = sanitizeJobCardDetails(response.body);
-  saveJobCardDetailsToTmp(jobCardId, sanitized);
 
-  const dataFromDml = await getCartPriceAndAvailability(sanitized.jobCardDetail);
-  applyDataFromDml(sanitized.jobCardDetail, dataFromDml);
-
-  return sanitized;
+  return saveJobCardDetailsToTmp(jobCardId, sanitized);
 }
 
 /**
@@ -750,4 +761,4 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml };
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML };

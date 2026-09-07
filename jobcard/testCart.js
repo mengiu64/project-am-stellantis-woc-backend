@@ -1,52 +1,34 @@
 'use strict';
 
 /**
- * testCart.js — verifica getCartPriceAndAvailability + applyDataFromDml via
- * riga di comando, senza dover rifare l'intera GET /jobCardDetails ogni volta.
+ * testCart.js — verifica GET /jobCardDetails via riga di comando, senza
+ * arricchimento DML (v. testCartDML.js per prezzo/disponibilità DML).
  *
  * Uso:
- *   node testCart.js file   <jobCardDetailJsonFile>
- *   node testCart.js tmp    <jobCardId>
- *   node testCart.js fetch  <jobCardId>
+ *   node testCart.js file  <jobCardDetailJsonFile>
+ *   node testCart.js fetch <jobCardId>
  *
  * Modalità:
- *   file  - Carica un jobCardDetail da un file JSON locale. Il file può
- *           contenere sia { "jobCardDetail": {...} } (risposta completa di
- *           jobCardDetails) sia direttamente il jobCardDetail.
- *   tmp   - Legge /tmp/<jobCardId>.json, già salvato da getJobCardDetails
- *           (saveJobCardDetailsToTmp) durante una precedente chiamata reale
- *           a "node index.js details <jobCardId>": utile per rilanciare
- *           getCartPriceAndAvailability/applyDataFromDml senza richiamare DGT.
- *   fetch - Esegue una vera GET /jobCardDetails (node index.js details) e,
- *           dato che getJobCardDetails chiama già internamente
- *           getCartPriceAndAvailability + applyDataFromDml, mostra qui solo
- *           il payload WorkLines/jobCardDetail arricchito che sarebbe stato
- *           prodotto (ricostruendolo dallo stesso jobCardDetail restituito),
- *           utile per ispezionare il mapping senza dover leggere i log della
- *           lambda dms.
+ *   file  - Carica un jobCardDetail da un file JSON locale e lo stampa. Il
+ *           file può contenere sia { "jobCardDetail": {...} } (risposta
+ *           completa di jobCardDetails) sia direttamente il jobCardDetail.
+ *   fetch - Esegue una vera GET /jobCardDetails (node index.js details) e
+ *           stampa il json restituito da getJobCardDetails, cioè lo stesso
+ *           prodotto da sanitizeJobCardDetails (nessun arricchimento DML).
  *
- * Dopo la chiamata a getCartPriceAndAvailability, lo script applica anche
- * applyDataFromDml al jobCardDetail (in place) e ne stampa il risultato, così
- * da poter verificare in un unico passaggio sia la risposta DML grezza sia
- * il jobCardDetail arricchito (originalPriceExclVat/appDiscountPercentage/
- * QuantityAvailable su partInfo, laborDuration/appDiscountPercentage/
- * laborRateAmount su laborInfo).
- *
- * Richiede jobcard/.env (PING_CLIENT_ID/SECRET, DGT_CLIENT_ID/SECRET, solo
- * per "fetch") e dms/.env (DMS_PING_*, DML_IBM_*) valorizzati, dato che
- * getCartPriceAndAvailability chiama davvero il gateway DML.
+ * Richiede jobcard/.env (PING_CLIENT_ID/SECRET, DGT_CLIENT_ID/SECRET)
+ * valorizzato (solo per "fetch").
  *
  * Esempi:
  *   node testCart.js file  ./jobCardDetail-sample.json
- *   node testCart.js tmp   79
  *   node testCart.js fetch 79
  */
 
-// jobcard/config.js e dms/config.js caricano già il proprio .env
-// autonomamente al require (nessuna dipendenza da dotenv necessaria).
+// jobcard/config.js carica già il proprio .env autonomamente al require
+// (nessuna dipendenza da dotenv necessaria).
 const fs = require('fs');
 const path = require('path');
-const { getJobCardDetails, getCartPriceAndAvailability, applyDataFromDml } = require('./jobCardService');
+const { getJobCardDetails } = require('./jobCardService');
 const { getBearerToken } = require('./authService');
 
 const [, , command, arg1] = process.argv;
@@ -61,17 +43,15 @@ function printResult(label, data) {
 function printUsage() {
   console.log('\nUso: node testCart.js <command> <arg>\n');
   console.log('  file  <jobCardDetailJsonFile>  Carica jobCardDetail da file locale');
-  console.log('  tmp   <jobCardId>              Legge /tmp/<jobCardId>.json (già salvato da una GET precedente)');
-  console.log('  fetch <jobCardId>              Esegue una vera GET /jobCardDetails + getCartPriceAndAvailability\n');
+  console.log('  fetch <jobCardId>              Esegue una vera GET /jobCardDetails (nessun arricchimento DML)\n');
   console.log('Esempi:');
   console.log('  node testCart.js file  ./jobCardDetail-sample.json');
-  console.log('  node testCart.js tmp   79');
   console.log('  node testCart.js fetch 79\n');
 }
 
 /**
- * Estrae il jobCardDetail da un body letto da file/tmp, che può essere sia
- * la risposta completa ({ jobCardDetail: {...} }) sia già il jobCardDetail.
+ * Estrae il jobCardDetail da un body letto da file, che può essere sia la
+ * risposta completa ({ jobCardDetail: {...} }) sia già il jobCardDetail.
  */
 function extractJobCardDetail(body) {
   return body?.jobCardDetail ?? body;
@@ -84,31 +64,19 @@ async function main() {
   }
 
   try {
-    let jobCardDetail;
-
     switch (command) {
       case 'file': {
         const filePath = path.resolve(arg1);
         const raw = fs.readFileSync(filePath, 'utf8');
-        jobCardDetail = extractJobCardDetail(JSON.parse(raw));
-        break;
-      }
-
-      case 'tmp': {
-        const filePath = path.join('/tmp', `${arg1}.json`);
-        const raw = fs.readFileSync(filePath, 'utf8');
-        jobCardDetail = extractJobCardDetail(JSON.parse(raw));
+        const jobCardDetail = extractJobCardDetail(JSON.parse(raw));
+        printResult('jobCardDetail da file (nessun arricchimento DML)', jobCardDetail);
         break;
       }
 
       case 'fetch': {
         const token = await getBearerToken();
         const body = await getJobCardDetails(token, arg1);
-        // getJobCardDetails ha già chiamato getCartPriceAndAvailability +
-        // applyDataFromDml internamente: qui li richiamiamo di nuovo solo
-        // per stampare il risultato in questo script (stesso jobCardDetail,
-        // stessa chiamata).
-        jobCardDetail = extractJobCardDetail(body);
+        printResult('getJobCardDetails result (sanitizeJobCardDetails, nessun arricchimento DML)', body);
         break;
       }
 
@@ -117,12 +85,6 @@ async function main() {
         process.exit(1);
         return;
     }
-
-    const dataFromDml = await getCartPriceAndAvailability(jobCardDetail);
-    printResult('getCartPriceAndAvailability result (risposta DML grezza)', dataFromDml);
-
-    applyDataFromDml(jobCardDetail, dataFromDml);
-    printResult('jobCardDetail dopo applyDataFromDml (jobs arricchiti)', jobCardDetail);
   } catch (err) {
     console.error('\n❌ Errore:', err.message);
     process.exit(1);

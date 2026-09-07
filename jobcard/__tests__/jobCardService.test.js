@@ -24,7 +24,7 @@ const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry } = require('../../dms/dmsService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml } = require('../jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -871,17 +871,14 @@ describe('jobCardService', () => {
       });
     });
 
-    test('is invoked by getJobCardDetails with the sanitized jobCardDetail', async () => {
-      const body = {
-        jobCardDetail: {
-          roInfo: { jobCardSrpId: 'JCID-1' },
-          vehicleInfo: { identification: { vin: 'VIN1' } },
-          jobs: [],
-        },
+    test('is invoked by getDataFromDML with the sanitized jobCardDetail', async () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        vehicleInfo: { identification: { vin: 'VIN1' } },
+        jobs: [],
       };
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
 
-      await getJobCardDetails('token', '79');
+      await getDataFromDML(jobCardDetail);
 
       expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
@@ -1089,20 +1086,17 @@ describe('jobCardService', () => {
       expect(result).toBe(jobCardDetail);
     });
 
-    test('is invoked by getJobCardDetails, enriching jobs with the DML response', async () => {
-      const body = {
-        jobCardDetail: {
-          roInfo: { jobCardSrpId: 'JCID-1' },
-          vehicleInfo: { identification: { vin: 'VIN1' } },
-          jobs: [
-            {
-              partInfo: [{ partNumber: 'P1', itemQuantity: 2 }],
-              laborInfo: [{ laborOperationCode: 'OP1' }],
-            },
-          ],
-        },
+    test('is invoked by getDataFromDML, enriching jobs with the DML response', async () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        vehicleInfo: { identification: { vin: 'VIN1' } },
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 2 }],
+            laborInfo: [{ laborOperationCode: 'OP1' }],
+          },
+        ],
       };
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
       postDmsInquiry.mockResolvedValue({
         WorkLines: [
           {
@@ -1112,15 +1106,15 @@ describe('jobCardService', () => {
         ],
       });
 
-      const result = await getJobCardDetails('token', '79');
+      const result = await getDataFromDML(jobCardDetail);
 
-      expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+      expect(result.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
         originalPriceExclVat: 42,
         dmsDiscountPercentage: 1,
         QuantityAvailable: 2,
         availability: 'orange',
       }));
-      expect(result.jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
+      expect(result.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
         laborDuration: 0.5,
         dmsDiscountPercentage: 1,
         laborRateAmount: 70,
