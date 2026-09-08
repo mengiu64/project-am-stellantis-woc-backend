@@ -79,6 +79,7 @@ function buildRepository(overrides = {}) {
     registerDmsSettingsDealerFn: jest.fn().mockResolvedValue(undefined),
     getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
     getBrandLogosFn: jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE),
+    getCountryIsoCodeFn: jest.fn().mockResolvedValue('IT'),
     ...overrides,
   });
 }
@@ -90,12 +91,14 @@ describe('MyPeopleDmsSessionRepository', () => {
     const registerDmsSettingsDealerFn = jest.fn().mockResolvedValue(undefined);
     const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
     const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
+    const getCountryIsoCodeFn = jest.fn().mockResolvedValue('IT');
     const repository = buildRepository({
       readUserProfilesFn,
       getDmsSettingsCacheFn,
       registerDmsSettingsDealerFn,
       getDmlConfigurationFn,
       getBrandLogosFn,
+      getCountryIsoCodeFn,
     });
 
     const data = await repository.getSessionData('0073741.d235');
@@ -111,10 +114,12 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(getBrandLogosFn).toHaveBeenCalledWith({
       codes: ['30', '31', '33', '43', '00', '77', '66', '57', '70', '83'],
     });
+    expect(getCountryIsoCodeFn).toHaveBeenCalledWith({ market: '1000' });
 
     expect(data).toEqual({
       username: '0073741.d235',
       codmarket: '1000',
+      marketIso: 'IT',
       oic: '00007584',
       sincom: '0073741',
       firstname: 'GUIDO',
@@ -180,6 +185,50 @@ describe('MyPeopleDmsSessionRepository', () => {
       companytypes: DML_CONFIGURATION_RESPONSE.companyTypes,
       customertitles: DML_CONFIGURATION_RESPONSE.customerTitles,
     });
+  });
+
+  test('marketIso è null e getCountryIsoCode non viene interrogata quando manca il codmarket', async () => {
+    const getCountryIsoCodeFn = jest.fn();
+    const repository = buildRepository({
+      getCountryIsoCodeFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' }, // MARKETCODE assente
+            OICs: [{ CODE: '00010925', MAIN: 'Y' }],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(getCountryIsoCodeFn).not.toHaveBeenCalled();
+    expect(data.marketIso).toBeNull();
+  });
+
+  test('non propaga (mai) errori di lettura di marketIso (woc.ang_snowflakes): il campo diventa null', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const repository = buildRepository({
+      getCountryIsoCodeFn: jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED')),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.marketIso).toBeNull();
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
+  });
+
+  test('marketIso è null quando la tabella woc.ang_snowflakes non ha una riga per il mercato', async () => {
+    const repository = buildRepository({
+      getCountryIsoCodeFn: jest.fn().mockResolvedValue(null),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.marketIso).toBeNull();
   });
 
   test('lancia errore se username è mancante, senza chiamare alcun servizio', async () => {

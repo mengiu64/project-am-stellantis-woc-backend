@@ -6,9 +6,13 @@ jest.mock('../db', () => ({
 jest.mock('../PkConfigRepository', () => ({
   getPkwstouse: jest.fn(),
 }));
+jest.mock('../AnagSnowflakesRepository', () => ({
+  getCountryIsoCode: jest.fn(),
+}));
 
 const { getPool } = require('../db');
 const { getPkwstouse } = require('../PkConfigRepository');
+const { getCountryIsoCode } = require('../AnagSnowflakesRepository');
 const { handler } = require('../index');
 
 const FAKE_POOL = { query: jest.fn() };
@@ -62,6 +66,22 @@ describe('dbManager index.handler', () => {
     const res = await handler({ action: 'unknownAction', body: {} });
     expect(res.statusCode).toBe(400);
     expect(getPkwstouse).not.toHaveBeenCalled();
+  });
+
+  it('resolves marketIso via direct invocation payload { action, body }', async () => {
+    getCountryIsoCode.mockResolvedValue('IT');
+
+    const res = await handler({ action: 'getCountryIsoCode', body: { market: '1000' } });
+
+    expect(getCountryIsoCode).toHaveBeenCalledWith(FAKE_POOL, { market: '1000' });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', marketIso: 'IT' });
+  });
+
+  it('maps getCountryIsoCode repository "is required" errors to 400', async () => {
+    getCountryIsoCode.mockRejectedValue(new Error('"market" is required'));
+    const res = await handler({ action: 'getCountryIsoCode', body: {} });
+    expect(res.statusCode).toBe(400);
   });
 
   it('parses a stringified JSON body from an API Gateway event', async () => {
@@ -175,5 +195,37 @@ describe('dbManager CLI', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith('\n[ERROR]', 'db down');
+  });
+
+  it('runGetCountryIsoCode prints the result and returns marketIso', async () => {
+    const { runGetCountryIsoCode } = require('../index');
+    getCountryIsoCode.mockResolvedValue('IT');
+
+    const result = await runGetCountryIsoCode('1000');
+
+    expect(getCountryIsoCode).toHaveBeenCalledWith(FAKE_POOL, { market: '1000' });
+    expect(result).toBe('IT');
+    expect(consoleLogSpy).toHaveBeenCalled();
+  });
+
+  it('main() runs getCountryIsoCode with market from argv', async () => {
+    const { main } = require('../index');
+    getCountryIsoCode.mockResolvedValue('IT');
+    process.argv = ['node', 'index.js', 'getCountryIsoCode', '1000'];
+
+    await main();
+
+    expect(getCountryIsoCode).toHaveBeenCalledWith(FAKE_POOL, { market: '1000' });
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('main() exits 1 when market is missing for getCountryIsoCode', async () => {
+    const { main } = require('../index');
+    process.argv = ['node', 'index.js', 'getCountryIsoCode'];
+
+    await main();
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(getCountryIsoCode).not.toHaveBeenCalled();
   });
 });

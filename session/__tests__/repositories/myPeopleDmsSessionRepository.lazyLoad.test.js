@@ -42,11 +42,21 @@ jest.mock('../../../dmlConfigSync/DmsSettingsRepository', () => ({
   registerDealer: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../../../dbManager/db', () => ({
+  getPool: jest.fn().mockResolvedValue({ __fakeDbManagerPool: true, query: jest.fn() }),
+}));
+
+jest.mock('../../../dbManager/AnagSnowflakesRepository', () => ({
+  getCountryIsoCode: jest.fn().mockResolvedValue('IT'),
+}));
+
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
 const myPeopleService = require('../../../myPeople/myPeopleService');
 const dmlConfigSyncDb = require('../../../dmlConfigSync/db');
 const dmlConfigRepository = require('../../../dmlConfigSync/DmlConfigRepository');
 const dmsSettingsRepository = require('../../../dmlConfigSync/DmsSettingsRepository');
+const dbManagerDb = require('../../../dbManager/db');
+const anagSnowflakesRepository = require('../../../dbManager/AnagSnowflakesRepository');
 
 describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dmlConfigSync)', () => {
   afterEach(() => jest.clearAllMocks());
@@ -57,6 +67,11 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
 
     expect(myPeopleService.readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
     expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
+    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(1); // loadGetCountryIsoCode
+    expect(anagSnowflakesRepository.getCountryIsoCode).toHaveBeenCalledWith(
+      { __fakeDbManagerPool: true, query: expect.any(Function) },
+      { market: '1000' },
+    );
     expect(dmsSettingsRepository.getDmsSettings).toHaveBeenCalledWith(
       { __fakePool: true, query: expect.any(Function) },
       { country: 'IT', brand: 'FT', dealer: '0073741' },
@@ -67,6 +82,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
       { country: 'it', language: 'it' },
     );
     expect(data.codmarket).toBe('1000');
+    expect(data.marketIso).toBe('IT');
     expect(data.sincom).toBe('0073741');
     expect(data.brandvehic_reftech).toBe('FT');
     expect(data.isdml).toBe(true);

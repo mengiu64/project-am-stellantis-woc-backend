@@ -6,8 +6,8 @@ const { SessionNotFoundError } = require('../errors');
 
 // Cross-lambda-folder require, stesso pattern già usato da pkManager/PkManager.js
 // (require(path.resolve(__dirname, '../dms/...'))): il build di SessionFunction
-// (Metadata: BuildMethod: makefile, vedi Makefile) impacchetta myPeople/ e
-// dmlConfigSync/ come cartelle sorelle di session/ dentro l'artifact di deploy, cosi'
+// (Metadata: BuildMethod: makefile, vedi Makefile) impacchetta myPeople/, dmlConfigSync/
+// e dbManager/ come cartelle sorelle di session/ dentro l'artifact di deploy, cosi'
 // questi require relativi continuano a risolvere correttamente anche a runtime in
 // Lambda. Caricati "on demand" (lazy) invece che in cima al file: myPeople/config.js
 // valida le proprie variabili d'ambiente non appena richiesto, e nei test unitari
@@ -17,12 +17,15 @@ const { SessionNotFoundError } = require('../errors');
 // "dmlConfigSync", che chiama i servizi DML live una volta al giorno) — il Makefile
 // continua comunque a impacchettare dms/ come cartella sorella perché è una
 // dipendenza transitiva di dmlConfigSync/index.js (non invocato da session, ma
-// comunque parte della stessa cartella sorella).
+// comunque parte della stessa cartella sorella). dbManager/ (db.js +
+// AnagSnowflakesRepository.js) è invece usato direttamente da session per risolvere
+// `marketIso` (tabella woc.ang_snowflakes), stesso cluster Aurora "wiadvisor".
 let _readUserProfiles;
 let _getDmsSettingsCache;
 let _registerDmsSettingsDealer;
 let _getDmlConfiguration;
 let _getBrandLogos;
+let _getCountryIsoCode;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -115,6 +118,24 @@ function loadGetBrandLogos() {
   return _getBrandLogos;
 }
 
+// Codice ISO paese del dealer (marketIso), letto dalla tabella woc.ang_snowflakes
+// (snapshot dell'estrazione Snowflake "M2m-queries") a partire dal codmarket
+// dell'utente (Attributes.MARKETCODE). Stesso cluster Aurora "wiadvisor", stesso
+// pool/utente applicativo least-privilege del modulo dbManager (già impacchettato
+// come cartella sorella di session/, vedi Makefile), quindi nessuna nuova
+// variabile d'ambiente/permesso necessario.
+function loadGetCountryIsoCode() {
+  if (!_getCountryIsoCode) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
+    const { getCountryIsoCode } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
+    _getCountryIsoCode = async ({ market }) => {
+      const pool = await getPool();
+      return getCountryIsoCode(pool, { market });
+    };
+  }
+  return _getCountryIsoCode;
+}
+
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
 // es. "00") verso il codice brand "RefTech" atteso da dms/settings (es. "FT").
 // Tabella fornita dal business (fonte: myPeople -> dms brand mapping).
@@ -168,6 +189,16 @@ const BRAND_CODE_TO_REFTECH = {
  *      fault-tolerant delle altre letture DB di questa classe: `[]` se `brands`
  *      è assente/vuoto, se un codice non ha un logo associato, o se la query fallisce.
  *
+ *      Espone inoltre `marketIso`: il codice ISO paese del dealer (colonna
+ *      cd_dealer_country_iso_code), letto dalla tabella woc.ang_snowflakes
+ *      (snapshot dell'estrazione Snowflake "M2m-queries") a partire dal
+ *      `codmarket` dell'utente (`Attributes.MARKETCODE`, colonna cd_market_code).
+ *      Stesso principio fault-tolerant delle altre letture DB di questa classe:
+ *      `null` se `codmarket` è assente, se non esiste ancora una riga per il
+ *      mercato, o se la query fallisce per qualunque motivo (la disponibilità
+ *      di questo campo non deve mai condizionare il resto della risposta di
+ *      sessione).
+ *
  *      `isdml`/`dmlcustomerupdate`/`dmldiscount` (derivati da dms/settings) NON
  *      vengono più ricavati da una chiamata live (dms/authService.getBearerToken +
  *      dms/dmsService.getDmsSettings): sono letti dalla cache woc.dms_settings
@@ -193,6 +224,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     registerDmsSettingsDealerFn,
     getDmlConfigurationFn,
     getBrandLogosFn,
+    getCountryIsoCodeFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
@@ -200,6 +232,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     this._registerDmsSettingsDealerFn = registerDmsSettingsDealerFn;
     this._getDmlConfigurationFn = getDmlConfigurationFn;
     this._getBrandLogosFn = getBrandLogosFn;
+    this._getCountryIsoCodeFn = getCountryIsoCodeFn;
   }
 
   /**
@@ -248,6 +281,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const registerDmsSettingsDealer = this._registerDmsSettingsDealerFn || loadRegisterDmsSettingsDealer();
     const getDmlConfiguration = this._getDmlConfigurationFn || loadGetDmlConfiguration();
     const getBrandLogos = this._getBrandLogosFn || loadGetBrandLogos();
+    const getCountryIsoCode = this._getCountryIsoCodeFn || loadGetCountryIsoCode();
+    const market = attributes.MARKETCODE || null;
 
     // Tutti i codici brand (CSV) usati nell'array oics, deduplicati, per un'unica
     // query batch invece di una query per ogni oic.
@@ -263,7 +298,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // un errore di lettura non deve mai far fallire la sessione: si ritornano i
     // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
     // registra (best-effort) la combinazione per la prossima sync schedulata.
-    const [dmsSettings, dmlConfiguration, brandLogosByCode] = await Promise.all([
+    const [dmsSettings, dmlConfiguration, brandLogosByCode, marketIso] = await Promise.all([
       (countryDms && brandReftech && dealer)
         ? getDmsSettingsCache({ country: countryDms, brand: brandReftech, dealer })
           .then(async (cached) => {
@@ -296,6 +331,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return {};
         })
         : Promise.resolve({}),
+      market
+        ? getCountryIsoCode({ market }).catch((err) => {
+          console.error(`[session] lettura marketIso (woc.ang_snowflakes) fallita per market="${market}": ${err.message}`);
+          return null;
+        })
+        : Promise.resolve(null),
     ]);
 
     const dmsMap = buildDmsSettingsMap(dmsSettings);
@@ -303,6 +344,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     return {
       username,
       codmarket: attributes.MARKETCODE || null,
+      marketIso,
       oic: mainOic.CODE || null,
       sincom: dealer,
       firstname: attributes.FIRSTNAME || null,

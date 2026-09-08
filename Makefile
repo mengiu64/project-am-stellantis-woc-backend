@@ -49,21 +49,27 @@ build-PkManagerFunction:
 # di PkManagerFunction sopra. Include anche dmlConfigSync/ (db.js + DmlConfigRepository.js)
 # perché la stessa repository legge la cache company-types/customer-titles (tabella
 # woc.dml_configurations) tramite require(path.resolve(__dirname, '../../../dmlConfigSync/...')).
+# Include infine dbManager/ (db.js + AnagSnowflakesRepository.js) perché la stessa
+# repository risolve `marketIso` (tabella woc.ang_snowflakes) tramite
+# require(path.resolve(__dirname, '../../../dbManager/...')).
 build-SessionFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dmlConfigSync"
+	mkdir -p "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dmlConfigSync" "$(ARTIFACTS_DIR)/dbManager"
 	cp -r session/. "$(ARTIFACTS_DIR)/session/"
 	cp -r myPeople/. "$(ARTIFACTS_DIR)/myPeople/"
 	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
 	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
+	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
 		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
-		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md
+		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md \
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/myPeople)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
 
 # PkFavoriteFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché,
 # per l'arricchimento dei preferiti in GET (una chiamata al gateway DML per ciascun

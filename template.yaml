@@ -776,7 +776,9 @@ Resources:
   # SessionFunction impacchetta l'intero repo (CodeUri: ./, BuildMethod: makefile) perché,
   # oltre al proprio codice, richiede in-process myPeople/myPeopleService e dms/authService +
   # dms/dmsService (stesso pattern già usato da PkManagerFunction per dms/pkEper/..., vedi
-  # Makefile) per il flusso "evolutivo" username -> myPeople -> dms/settings.
+  # Makefile) per il flusso "evolutivo" username -> myPeople -> dms/settings, oltre a
+  # dbManager/db.js + dbManager/AnagSnowflakesRepository.js per risolvere `marketIso`
+  # (tabella woc.ang_snowflakes).
   SessionFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -837,6 +839,14 @@ Resources:
           DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
           DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+          # dbManager/db.js (in-process, vedi Makefile) — risoluzione di `marketIso`
+          # (tabella woc.ang_snowflakes) tramite dbManager/AnagSnowflakesRepository.
+          # Riusa lo stesso Aurora/secret di pkFavorite/dmlConfigSync (nessun nuovo
+          # parametro CFN necessario).
+          DBMANAGER_DB_HOST:      !Ref PkFavoriteDbHost
+          DBMANAGER_DB_PORT:      !Ref PkFavoriteDbPort
+          DBMANAGER_DB_NAME:      !Ref PkFavoriteDbName
+          DBMANAGER_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
 
   SessionFunctionLogGroup:
     Type: AWS::Logs::LogGroup
