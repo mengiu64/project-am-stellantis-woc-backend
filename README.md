@@ -188,7 +188,8 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 | `PartsInquiryHeader.DocumentID` | ❌ | Numero Repair Order univoco. Contenuto non obbligatorio (può essere sconosciuto/omesso, es. per `LFP` quando l'ordine di riparazione non esiste ancora), ma il DML richiede comunque la chiave presente: se assente/`null`/`undefined`, viene inviata come stringa vuota `''` |
 | `PartsInquiryHeader.CustomerIdDms` | ❌ | ID cliente nel DMS. Come `DocumentID`, contenuto non obbligatorio: se assente/`null`/`undefined`, viene inviata come `null` (chiave sempre presente) |
 | `PartsInquiryHeader.VehicleID` | ✅ | VIN del veicolo |
-| `ApplicationArea` | ✅ | Mittente, timestamp e BODID (UUID) |
+| `ApplicationArea` | ✅ | Mittente, timestamp e BODID (UUID). Se omesso, viene costruito internamente da `buildApplicationArea()` usando `config.sender` (default statici da env) sovrascritto per-request da `sender` (vedi sotto), se fornito |
+| `sender` | ❌ | Scorciatoia: sottoinsieme dei campi di `config.sender` (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`) da sovrascrivere per questa richiesta, cosi' `ApplicationArea.Sender` riflette il dealer/brand/mercato reale del chiamante (es. `PkManager.getPriceAndAvailability`) invece dei soli default statici via env. Ignorato quando `ApplicationArea` è già fornito. Non inviato as-is al DML |
 | `UpSelling.Packages` | ❌ | Usato per `LFP` |
 | `WorkLines` | ❌ | Usato per `WL` |
 | `SpareParts.PartsItem` | ❌ | Usato per `MP` |

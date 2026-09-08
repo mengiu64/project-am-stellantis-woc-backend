@@ -219,10 +219,27 @@ function validateTypeSection(body, messageType) {
  * invokes the lambda: callers only need to provide the business payload
  * (PartsInquiryHeader + type-specific section).
  *
+ * Il Sender NON è più statico: `config.sender` (variabili d'ambiente) resta il
+ * fallback per i campi non forniti (uso da CLI/replay file), ma il chiamante
+ * (es. PkManager.getPriceAndAvailability, che conosce il dealer/brand/mercato
+ * reale della richiesta tramite wsConfig) può sovrascrivere per-request uno o
+ * più campi passando `senderOverrides` — così il Sender riflette il dealer
+ * effettivo che ha originato la inquiry invece di un unico dealer fisso
+ * configurato via env.
+ *
+ * @param {object} [senderOverrides] - Sottoinsieme di config.sender da
+ *                     sovrascrivere per questa richiesta (stessi nomi campo:
+ *                     componentId, dealerNumberId, dealerNumberIdSource,
+ *                     dealerCountryCode, languageCode, physicalSiteId,
+ *                     serviceId, currencyId, brand). Valori undefined/null
+ *                     vengono ignorati (resta il default di config.sender).
  * @returns {object} ApplicationArea
  */
-function buildApplicationArea() {
-  const s = config.sender;
+function buildApplicationArea(senderOverrides = {}) {
+  const s = { ...config.sender };
+  for (const [key, value] of Object.entries(senderOverrides || {})) {
+    if (value !== undefined && value !== null) s[key] = value;
+  }
   return {
     Sender: {
       ComponentID: s.componentId,
@@ -307,8 +324,17 @@ function buildWorkLines(workLines = [], customerAccountDmsId = null) {
  * @param {object} body        - InquiryRequest payload (per DML_inquiry_V_4.2.yml)
  * @param {object}   [body.ApplicationArea] - Optional; built internally via
  *                     buildApplicationArea() when omitted, using config.sender
+ *                     (eventualmente sovrascritto da body.sender, vedi sotto)
  *                     and a freshly generated BODID/CreationDateTime. Provide it
  *                     only when replaying a pre-built request (e.g. from file).
+ * @param {object}   [body.sender] - Shortcut: sottoinsieme di config.sender da
+ *                     sovrascrivere per-request (stessi nomi campo: dealerNumberId,
+ *                     dealerNumberIdSource, dealerCountryCode, languageCode,
+ *                     physicalSiteId, serviceId, currencyId, brand, componentId).
+ *                     Usato per costruire un ApplicationArea.Sender dinamico (dealer/
+ *                     brand/mercato reale della richiesta, es. da PkManager.wsConfig)
+ *                     invece dei soli default statici da env. Ignorato quando
+ *                     body.ApplicationArea è già fornito. Not sent as-is.
  * @param {object}   [body.PartsInquiryHeader] - Optional; built internally from the
  *                     flat root-level fields below (DocumentID/CustomerIdDms/
  *                     MessageType/VehicleID) when omitted. If provided, it always
@@ -352,11 +378,16 @@ function buildWorkLines(workLines = [], customerAccountDmsId = null) {
  */
 async function postDmsInquiry(bearerToken, body = {}) {
   // Il payload non è più interamente delegato a chi chiama la lambda: se manca
-  // ApplicationArea (Sender/BODID/CreationDateTime), lo costruiamo qui.
+  // ApplicationArea (Sender/BODID/CreationDateTime), lo costruiamo qui — usando
+  // body.sender (dealer/brand/mercato reale della richiesta, se fornito dal
+  // chiamante) come override dei default statici di config.sender, cosi' il
+  // Sender non è più fisso/uguale per ogni dealer ma riflette chi ha originato
+  // davvero la inquiry.
   const requestBody = {
     ...body,
-    ApplicationArea: body.ApplicationArea || buildApplicationArea(),
+    ApplicationArea: body.ApplicationArea || buildApplicationArea(body.sender),
   };
+  delete requestBody.sender;
 
   // Scorciatoia "flat": se il chiamante non fornisce già PartsInquiryHeader
   // annidato, lo costruiamo qui dai campi root-level (DocumentID/CustomerIdDms/

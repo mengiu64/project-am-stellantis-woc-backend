@@ -455,6 +455,95 @@ describe('postDmsInquiry — ApplicationArea built internally', () => {
     const [, payload] = httpsRequest.mock.calls[0];
     expect(JSON.parse(payload).ApplicationArea).toEqual(APPLICATION_AREA);
   });
+
+  test('overrides Sender fields from body.sender with the real dealer/brand/market of the request', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      PartsInquiryHeader: {
+        DocumentID: '84564621',
+        CustomerIdDms: '854265',
+        MessageType: 'WL',
+        VehicleID: '3C4NJCBH7KT831816',
+      },
+      WorkLines: [],
+      sender: {
+        dealerNumberId: '0710740',
+        dealerNumberIdSource: '0710740',
+        dealerCountryCode: 'IT',
+        languageCode: 'it-IT',
+        physicalSiteId: 'SITE99',
+        brand: 'FT',
+      },
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.ApplicationArea.Sender).toEqual({
+      // ComponentID/ServiceID/CurrencyID non sovrascritti: restano il default
+      // di config.sender perché non presenti in body.sender.
+      ComponentID: '1.0.0',
+      DealerNumberID: '0710740',
+      DealerNumberIDSource: '0710740',
+      DealerCountryCode: 'IT',
+      LanguageCode: 'it-IT',
+      PhysicalSiteID: 'SITE99',
+      ServiceID: 'DE-0710736.D001',
+      CurrencyID: 'EUR',
+      Brand: 'FT',
+    });
+  });
+
+  test('does not send body.sender as-is on the wire (consumed to build ApplicationArea)', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      PartsInquiryHeader: {
+        DocumentID: '84564621',
+        CustomerIdDms: '854265',
+        MessageType: 'WL',
+        VehicleID: '3C4NJCBH7KT831816',
+      },
+      WorkLines: [],
+      sender: { brand: 'FT' },
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(payload).sender).toBeUndefined();
+  });
+
+  test('ignores body.sender null/undefined field values, keeping config.sender defaults for those', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const body = {
+      PartsInquiryHeader: {
+        DocumentID: '84564621',
+        CustomerIdDms: '854265',
+        MessageType: 'WL',
+        VehicleID: '3C4NJCBH7KT831816',
+      },
+      WorkLines: [],
+      sender: { brand: 'FT', dealerCountryCode: undefined, languageCode: null },
+    };
+    await postDmsInquiry('token', body);
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sender = JSON.parse(payload).ApplicationArea.Sender;
+    expect(sender.Brand).toBe('FT');
+    expect(sender.DealerCountryCode).toBe('DE');
+    expect(sender.LanguageCode).toBe('de-DE');
+  });
+
+  test('ignores body.sender when caller already provides ApplicationArea', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    await postDmsInquiry('token', { ...baseInquiryBody(), sender: { brand: 'IGNORED' } });
+
+    const [, payload] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(payload).ApplicationArea).toEqual(APPLICATION_AREA);
+  });
 });
 
 // ── postDmsInquiry — LFP UpSelling.Packages built from package ──────────

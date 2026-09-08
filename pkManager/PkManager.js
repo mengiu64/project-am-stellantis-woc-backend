@@ -248,6 +248,30 @@ class PkManager {
     return detailMap;
   } 
 
+  // ── _buildDmsSender ───────────────────────────────────────────────────────────
+  // Deriva ApplicationArea.Sender per la inquiry DML dal dealer/brand/mercato
+  // REALE della richiesta corrente (this.wsConfig, valorizzato dal chiamante in
+  // costruzione — vedi getPriceAndAvailability/pkManager/index.js), invece di
+  // lasciare che dms/dmsService.js usi sempre gli stessi valori statici di
+  // config.sender (env vars) per qualunque dealer. Solo i campi per cui esiste
+  // un dato reale in wsConfig vengono sovrascritti: gli altri (componentId,
+  // serviceId, currencyId) restano sui default env-based di dms, non essendoci
+  // qui un equivalente affidabile.
+  //
+  // @returns {object} sender override da passare a postDmsInquiry(token, { sender, ... })
+  _buildDmsSender() {
+    const { eper, docsoa, menupricing } = this.wsConfig;
+    const dealerNumberId = menupricing?.dealerIdentificationCode ?? eper?.coddealer ?? docsoa?.codePdv;
+    return {
+      dealerNumberId,
+      dealerNumberIdSource: dealerNumberId,
+      dealerCountryCode: menupricing?.countryCode ?? docsoa?.pays,
+      languageCode: menupricing?.languageCode ?? docsoa?.langue,
+      physicalSiteId: docsoa?.codePdv,
+      brand: docsoa?.codbrand,
+    };
+  }
+
   // ── getPriceAndAvailability ──────────────────────────────────────────────────
   // Porting di WadManager.class.php::getPartsAvailabilityXP(), che interroga il
   // gateway DML per prezzo/disponibilità di ricambi e manodopera.
@@ -262,13 +286,17 @@ class PkManager {
   // `foreach ($pkDetail['listaRicambi']...)` della versione PHP.
   //
   // NB: qui costruiamo solo il payload "di business" (PartsInquiryHeader +
-  // workLines/customerAccountDmsId semplificati). Sia l'envelope ApplicationArea
-  // sia la struttura DML nidificata di WorkLines (PartsItem/LaborItem con
-  // PartType/PartStatus/LaborType) non sono più responsabilità del chiamante:
-  // vengono costruiti internamente dalla lambda dms
-  // (dmsService.js::postDmsInquiry -> buildApplicationArea() / buildWorkLines()),
-  // che quindi possiede l'intero payload della richiesta invece di riceverlo
-  // già pronto.
+  // workLines/customerAccountDmsId semplificati) più un `sender` dinamico
+  // (_buildDmsSender(), derivato dal dealer/brand/mercato reale di
+  // this.wsConfig). La struttura DML nidificata di WorkLines
+  // (PartsItem/LaborItem con PartType/PartStatus/LaborType) e l'envelope
+  // ApplicationArea non sono più responsabilità del chiamante: vengono
+  // costruiti internamente dalla lambda dms (dmsService.js::postDmsInquiry ->
+  // buildApplicationArea(sender) / buildWorkLines()), che quindi possiede
+  // l'intero payload della richiesta invece di riceverlo già pronto — ma usa
+  // il `sender` passato qui per non inviare sempre lo stesso dealer/brand/
+  // paese fisso (config.sender via env) indipendentemente da chi ha
+  // effettivamente originato la richiesta.
   //
   // @param {string} documentId - Repair Order number (PartsInquiryHeader.DocumentID)
   // @param {string} customerId - Customer ID DMS (PartsInquiryHeader.CustomerIdDms)
@@ -296,6 +324,10 @@ class PkManager {
       },
       customerAccountDmsId: null,
       workLines,
+      // Sender dinamico (dealer/brand/mercato reali di questa richiesta, da
+      // wsConfig) invece dei default statici env-based della lambda dms — vedi
+      // _buildDmsSender().
+      sender: this._buildDmsSender(),
     };
 
     // Chiamo il gateway DML (token da cache/PingFederate + POST /inquiry): la

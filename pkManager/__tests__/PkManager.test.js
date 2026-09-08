@@ -909,6 +909,54 @@ describe('PkManager', () => {
       const [, body] = postDmsInquiry.mock.calls[0];
       expect(body.WorkLines).toBeUndefined();
     });
+
+    test('builds a dynamic sender from wsConfig (dealer/brand/mercato reali) instead of the static dms env defaults', async () => {
+      const manager = new PkManager({
+        eper: { coddealer: 'EPER-DEALER' },
+        docsoa: { codbrand: 'FT', pays: 'IT', langue: 'it', codePdv: 'SITE001' },
+        menupricing: { dealerIdentificationCode: 'MP-DEALER', countryCode: 'IT', languageCode: 'it-IT' },
+      });
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
+
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.sender).toEqual({
+        dealerNumberId: 'MP-DEALER',
+        dealerNumberIdSource: 'MP-DEALER',
+        dealerCountryCode: 'IT',
+        languageCode: 'it-IT',
+        physicalSiteId: 'SITE001',
+        brand: 'FT',
+      });
+    });
+
+    test('sender falls back to eper.coddealer/docsoa fields when menupricing overrides are absent', async () => {
+      const manager = new PkManager({
+        eper: { coddealer: 'EPER-DEALER' },
+        docsoa: { codbrand: 'AP', pays: 'DE', langue: 'de', codePdv: 'SITE002' },
+        menupricing: { dealerIdentificationCode: undefined, countryCode: undefined, languageCode: undefined },
+      });
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
+
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.sender).toEqual({
+        dealerNumberId: 'EPER-DEALER',
+        dealerNumberIdSource: 'EPER-DEALER',
+        dealerCountryCode: 'DE',
+        languageCode: 'de',
+        physicalSiteId: 'SITE002',
+        brand: 'AP',
+      });
+    });
   });
 
   // ── getPkList ──────────────────────────────────────────────────────────────

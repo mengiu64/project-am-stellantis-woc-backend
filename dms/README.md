@@ -91,6 +91,16 @@ node index.js customer-titles fr fr
 
 Invia una richiesta DML inquiry. `ApplicationArea` (Sender/BODID/CreationDateTime) **non va costruito dal chiamante**: viene generato internamente da `dmsService.js::postDmsInquiry()` (da `config.sender`) quando manca dal body — vale sia per la CLI sia per qualunque altro chiamante della lambda (es. `pkManager`). Qui ci limitiamo a costruire la sezione tipo-specifica (vuota, da popolare prima dell'uso in produzione).
 
+> **Sender dinamico per-request (`sender`)**: `ApplicationArea.Sender` **non è più statico** — `config.sender` (variabili d'ambiente) resta il fallback per i campi non forniti, ma il chiamante può sovrascrivere per-request uno o più campi (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`) passando un oggetto `sender` a livello root del body:
+> ```json
+> {
+>   "MessageType": "WL",
+>   "VehicleID": "3C4NJCBH7KT831816",
+>   "sender": { "dealerNumberId": "0710740", "dealerCountryCode": "IT", "brand": "FT" }
+> }
+> ```
+> Solo i campi effettivamente presenti in `sender` (non `undefined`/`null`) sovrascrivono il default di `config.sender`; gli altri restano invariati. `sender` non viene mai inviato as-is al DML e viene ignorato quando il body fornisce già `ApplicationArea` completo. `pkManager/PkManager.js::getPriceAndAvailability()` usa questo meccanismo (via `_buildDmsSender()`) per costruire il Sender dal dealer/brand/mercato reale della richiesta (`this.wsConfig`), invece di lasciare che ogni inquiry dichiari sempre lo stesso dealer fisso configurato via env.
+
 > **Sezione tipo-specifica obbligatoria ed esclusiva**: in base al `MessageType` il body deve contenere **una e una sola** delle sezioni `UpSelling` (LFP) / `WorkLines` (WL) / `SpareParts` (MP). `postDmsInquiry()` valida questo vincolo e rigetta la richiesta se la sezione attesa manca o se ne sono presenti altre non pertinenti al `MessageType` dichiarato.
 
 > **LFP — scorciatoia `package`**: per `MessageType: 'LFP'` il chiamante non deve costruire `UpSelling.Packages` a mano. Basta passare `package` — un identificativo (codice o nome, la ricerca lato DML avviene per entrambi) come singola stringa (es. `'ABC'`) o array (es. `['ABC', 'DEF']`) — e `postDmsInquiry()` genera `UpSelling.Packages` internamente via `buildUpSellingPackages()`. Se `UpSelling` è già presente nel body, ha sempre la precedenza e `package` viene ignorato.
