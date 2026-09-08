@@ -390,8 +390,24 @@ class PkManager {
 
     // 1) valorizza this.pkDetailList
     await this.getValidPackagesDetail(market, pkwstouse, vehicleId);
-    // 2) interroga il DML per prezzo/disponibilità, usando this.pkDetailList
-    const priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId);
+
+    // 2) interroga il DML per prezzo/disponibilità, usando this.pkDetailList.
+    // Un errore del DML (es. HTTP 400 "No data found in dispatching table" per
+    // dealer/brand non registrati nel dispatching table del gateway) non deve
+    // interrompere l'intero getPkList: senza prezzo/disponibilità i pacchetti
+    // restano comunque utilizzabili (solo privi di AV_LOCAL/PRICE/SCONTO), quindi
+    // logghiamo l'errore, lo esponiamo su this.dmlWarning (letto dal chiamante,
+    // es. pkManager/index.js, per includerlo nel "message" della response) e
+    // proseguiamo con un risultato vuoto (nessuna WorkLine da mappare al passo 3/4).
+    this.dmlWarning = null;
+    let priceAndAvailability;
+    try {
+      priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId);
+    } catch (err) {
+      this.dmlWarning = err.message ?? String(err);
+      console.error('[PkManager.getPkList] getPriceAndAvailability fallita, proseguo senza prezzo/disponibilità:', this.dmlWarning);
+      priceAndAvailability = {};
+    }
 
     // 3) indicizzo le WorkLines per WorkLineReference (== pkDetail.codice, vedi
     //    getPriceAndAvailability). NON si può usare un'unica mappa globale

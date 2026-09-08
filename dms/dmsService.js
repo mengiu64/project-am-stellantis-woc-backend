@@ -461,11 +461,24 @@ async function postDmsInquiry(bearerToken, body = {}) {
   };
 
   console.log(`[dms] POST https://${base.hostname}${fullPath} (MessageType=${header.MessageType})`);
+  // Log esplicito dell'intero payload inviato al DML (nessun dato sensibile qui:
+  // il bearer token è solo nell'header Authorization, mascherato sopra), utile per
+  // diagnosticare errori lato DML come "No data found in dispatching table" che
+  // dipendono dai valori di ApplicationArea.Sender/PartsInquiryHeader inviati.
+  console.log('[dms] inquiry payload:', payload);
   const response = await httpsRequest(options, payload);
 
   if (response.statusCode !== 200) {
+    // Il DML restituisce spesso { success, errorCode, message } anche sugli errori
+    // HTTP: quando presente, lo esponiamo esplicitamente nel messaggio dell'errore
+    // (oltre al body grezzo) così chi intercetta l'eccezione sa subito perché il
+    // DML non ha restituito dati, senza dover riparsare JSON.stringify(response.body).
+    const dmlBody   = response.body || {};
+    const reason    = dmlBody.message
+      ? ` — Il DML non ha restituito dati${dmlBody.errorCode ? ` (${dmlBody.errorCode})` : ''}: ${dmlBody.message}`
+      : '';
     throw new Error(
-      `[dms] inquiry failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}`
+      `[dms] inquiry failed: HTTP ${response.statusCode} - ${JSON.stringify(response.body)}${reason}`
     );
   }
 
