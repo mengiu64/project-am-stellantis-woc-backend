@@ -90,22 +90,10 @@ exports.handler = async (event) => {
       result = await manager.getPriceAndAvailability(documentId, customerId, VIN);
     }
 
-    // getPkList non si arresta più su un errore del DML (vedi PkManager.getPkList):
-    // se this.dmlWarning è valorizzato, il pkDetailList è comunque valido ma privo
-    // di prezzo/disponibilità (AV_LOCAL/PRICE/SCONTO) — lo segnaliamo nel "message"
-    // della response invece di far fallire l'intera richiesta con 502.
-    const responseBody = (action === 'getPkList' && manager.dmlWarning)
-      ? {
-          success: true,
-          data: result,
-          message: `pkDetailList recuperato ma senza prezzo/disponibilità: il DML non ha restituito dati (${manager.dmlWarning})`,
-        }
-      : result;
-
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(responseBody),
+      body: JSON.stringify(result),
     };
   } catch (err) {
     const statusCode = /non riconosciuto/.test(err.message ?? '') ? 400 : 502;
