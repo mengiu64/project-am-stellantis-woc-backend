@@ -13,6 +13,9 @@ jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
 // mock sopra: PkManager.js lo richiede con path.resolve(__dirname, '../dbManager/...').
 jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
 jest.mock('../../dbManager/PkConfigRepository', () => ({ getPkwstouse: jest.fn() }));
+// woc.config_packages (letta da PkManager.getConfigPackages, sostituisce la
+// precedente costante statica CONFIG_PACKAGES) — stesso pattern di mock sopra.
+jest.mock('../../dbManager/ConfigPackagesRepository', () => ({ getConfigPackages: jest.fn() }));
 
 const { WsIQPckEper } = require('../../pkEper/WsIQPckEper');
 const { DocSOARestClient } = require('../../pkDocsoa/DocSOARestClient');
@@ -21,7 +24,28 @@ const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry } = require('../../dms/dmsService');
 const { getPool } = require('../../dbManager/db');
 const { getPkwstouse } = require('../../dbManager/PkConfigRepository');
+const { getConfigPackages: getConfigPackagesFromDb } = require('../../dbManager/ConfigPackagesRepository');
 const { PkManager } = require('../PkManager');
+
+// Dati equivalenti alla precedente costante statica CONFIG_PACKAGES, ora servita
+// da woc.config_packages tramite dbManager/ConfigPackagesRepository.
+const STATIC_CONFIG_PACKAGES = {
+  eper: { BODY: ['7210E221', '7015A041'] },
+  docsoa: {
+    ACCESSORIES: ['95R04A', '95R10A', '64E91A', '64EADA'],
+    MECHANICH: [
+      '220800985012', '020320055471', '42001A', '42055A', '44001A',
+      '95R02A01FR0101', '95R02A01FR0201', '95R02A01FR0XXX', '98B11A', '98B12A',
+      '020120055467', '020120055468', '020120055469', '42025A', '42120A', '44020A',
+    ],
+  },
+  menupricing: {
+    BODY: [
+      '221000135012', '054065105278', '054065305427', '054065505280',
+      '054065705406', '054065905276', '054066105400',
+    ],
+  },
+};
 
 describe('PkManager', () => {
   let ORIGINAL_ENV;
@@ -38,6 +62,9 @@ describe('PkManager', () => {
     // 'menupricing') continuano a fluire invariati come pkwstouse risolto.
     getPool.mockResolvedValue({});
     getPkwstouse.mockImplementation(async (pool, { codbrand }) => codbrand);
+    getConfigPackagesFromDb.mockImplementation(async (pool, { pkwstouse }) => (
+      STATIC_CONFIG_PACKAGES[(pkwstouse ?? '').toLowerCase()] ?? {}
+    ));
   });
 
   afterEach(() => {
@@ -102,22 +129,22 @@ describe('PkManager', () => {
   // ── getConfigPackages ─────────────────────────────────────────────────────
 
   describe('getConfigPackages', () => {
-    test('returns static config for eper', () => {
+    test('returns config for eper', async () => {
       const manager = new PkManager();
-      const result = manager.getConfigPackages('1000', 'eper');
-      expect(result).toEqual({ BODY: ['7210E221', '7015A041'], MECHANICH: [], ACCESSORIES: [] });
+      const result = await manager.getConfigPackages('eper');
+      expect(result).toEqual({ BODY: ['7210E221', '7015A041'] });
     });
 
-    test('returns static config for docsoa', () => {
+    test('returns config for docsoa', async () => {
       const manager = new PkManager();
-      const result = manager.getConfigPackages('1000', 'docsoa');
+      const result = await manager.getConfigPackages('docsoa');
       expect(result.ACCESSORIES).toContain('95R04A');
       expect(result.MECHANICH).toContain('42001A');
     });
 
-    test('returns static config for menupricing', () => {
+    test('returns config for menupricing', async () => {
       const manager = new PkManager();
-      const result = manager.getConfigPackages('1000', 'menupricing');
+      const result = await manager.getConfigPackages('menupricing');
       expect(result).toEqual({
         BODY: [
           '221000135012',
@@ -128,26 +155,31 @@ describe('PkManager', () => {
           '054065905276',
           '054066105400'
         ],
-        MECHANICH: [],
-        ACCESSORIES: [],
       });
     });
 
-    test('is case-insensitive on pkwstouse', () => {
+    test('is case-insensitive on pkwstouse', async () => {
       const manager = new PkManager();
-      expect(manager.getConfigPackages('1000', 'EPER')).toEqual(manager.getConfigPackages('1000', 'eper'));
+      expect(await manager.getConfigPackages('EPER')).toEqual(await manager.getConfigPackages('eper'));
     });
 
-    test('throws for unrecognized pkwstouse', () => {
+    test('queries dbManager.ConfigPackagesRepository via getPool', async () => {
       const manager = new PkManager();
-      expect(() => manager.getConfigPackages('1000', 'unknown')).toThrow(
-        'pkwstouse non riconosciuto: "unknown". Valori ammessi: eper, docsoa, menupricing'
+      await manager.getConfigPackages('eper');
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(getConfigPackagesFromDb).toHaveBeenCalledWith({}, { pkwstouse: 'eper' });
+    });
+
+    test('throws for unrecognized pkwstouse', async () => {
+      const manager = new PkManager();
+      await expect(manager.getConfigPackages('unknown')).rejects.toThrow(
+        'pkwstouse non riconosciuto: "unknown"'
       );
     });
 
-    test('throws when pkwstouse is undefined', () => {
+    test('throws when pkwstouse is undefined', async () => {
       const manager = new PkManager();
-      expect(() => manager.getConfigPackages('1000', undefined)).toThrow('pkwstouse non riconosciuto');
+      await expect(manager.getConfigPackages(undefined)).rejects.toThrow('pkwstouse non riconosciuto');
     });
   });
 

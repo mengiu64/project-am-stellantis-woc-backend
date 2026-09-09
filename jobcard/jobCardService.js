@@ -6,6 +6,7 @@ const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
+const { getBearerToken } = require('./authService');
 
 /**
  * Builds common HTTPS request options for DGT API calls.
@@ -679,20 +680,42 @@ async function getDataFromDML(jobCardDetail) {
  * applica getDataFromDML al relativo jobCardDetail, così da poter richiamare
  * l'arricchimento DML senza rifare la chiamata a DGT. Il file può contenere
  * sia la risposta completa ({ jobCardDetail: {...} }) sia già il jobCardDetail.
- * @param {string|number} jobCardId - usato per risolvere /tmp/<jobCardId>.json
+ *
+ * Il file può mancare (es. /tmp è locale all'istanza Lambda: cold start o
+ * un'istanza diversa da quella che ha servito la precedente GET
+ * /jobCardDetails, oppure scrittura fallita — v. saveJobCardDetailsToTmp): in
+ * quel caso, invece di fallire, viene richiamato getJobCardDetails (che
+ * rigenera il file tramite saveJobCardDetailsToTmp) e si ritenta la lettura
+ * del file appena prodotto.
+ * @param {string|number} jobCardId  - usato per risolvere /tmp/<jobCardId>.json
+ * @param {string} [bearerToken]     - ****** da PingFederate, usato solo per
+ *                                     rigenerare il file via getJobCardDetails
+ *                                     quando mancante. Se omesso e serve
+ *                                     rigenerare, ne viene richiesto uno nuovo
+ *                                     ad authService.getBearerToken().
  * @returns {Promise<object>} il body letto da /tmp con jobCardDetail arricchito
  */
-async function getDataFromDMLFromTmp(jobCardId) {
+async function getDataFromDMLFromTmp(jobCardId, bearerToken) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
     throw new Error('[jobCard] jobCardId is required');
   }
 
   const filePath = path.join('/tmp', `${jobCardId}.json`);
+
   let raw;
   try {
     raw = fs.readFileSync(filePath, 'utf8');
   } catch (err) {
-    throw new Error(`[jobCard] impossibile leggere ${filePath}: ${err.message}`);
+    console.warn(`[jobCard] ${filePath} non trovato (${err.message}): rigenero tramite getJobCardDetails`);
+
+    const token = bearerToken ?? await getBearerToken();
+    await getJobCardDetails(token, jobCardId);
+
+    try {
+      raw = fs.readFileSync(filePath, 'utf8');
+    } catch (retryErr) {
+      throw new Error(`[jobCard] impossibile leggere ${filePath} dopo rigenerazione: ${retryErr.message}`);
+    }
   }
 
   const body = JSON.parse(raw);

@@ -17,11 +17,13 @@ jest.mock('../config', () => ({
 }));
 jest.mock('../httpClient');
 jest.mock('fs');
+jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
 
 const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
+const { getBearerToken: getDgtBearerToken } = require('../authService');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry } = require('../../dms/dmsService');
 const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp } = require('../jobCardService');
@@ -32,6 +34,7 @@ describe('jobCardService', () => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     getBearerToken.mockResolvedValue('DML-TOKEN');
+    getDgtBearerToken.mockResolvedValue('DGT-TOKEN');
     postDmsInquiry.mockResolvedValue({ success: true });
   });
 
@@ -1131,12 +1134,50 @@ describe('jobCardService', () => {
       await expect(getDataFromDMLFromTmp(undefined)).rejects.toThrow('[jobCard] jobCardId is required');
     });
 
-    test('throws if /tmp/<jobCardId>.json cannot be read', async () => {
+    test('regenerates /tmp/<jobCardId>.json via getJobCardDetails when missing, then reads it', async () => {
+      const regeneratedBody = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-79' },
+          vehicleInfo: { identification: { vin: 'VIN79' } },
+          jobs: [],
+        },
+      };
+      // Prima lettura fallisce (ENOENT), la seconda (dopo getJobCardDetails) ha successo
+      fs.readFileSync
+        .mockImplementationOnce(() => { throw new Error('ENOENT: no such file'); })
+        .mockImplementationOnce(() => JSON.stringify(regeneratedBody));
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: regeneratedBody });
+      postDmsInquiry.mockResolvedValue({ WorkLines: [] });
+
+      const result = await getDataFromDMLFromTmp('79');
+
+      expect(getDgtBearerToken).toHaveBeenCalledTimes(1);
+      expect(httpsRequest).toHaveBeenCalledTimes(1); // getJobCardDetails -> DGT
+      expect(fs.readFileSync).toHaveBeenCalledTimes(2);
+      expect(result).toEqual(regeneratedBody);
+    });
+
+    test('throws if /tmp/<jobCardId>.json still cannot be read after regeneration', async () => {
       fs.readFileSync.mockImplementation(() => {
         throw new Error('ENOENT: no such file');
       });
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
       await expect(getDataFromDMLFromTmp('79')).rejects.toThrow('impossibile leggere');
+      expect(getDgtBearerToken).toHaveBeenCalledTimes(1);
+    });
+
+    test('uses the bearerToken passed explicitly instead of requesting a new one, when regenerating', async () => {
+      const regeneratedBody = { jobCardDetail: { roInfo: {}, vehicleInfo: {}, jobs: [] } };
+      fs.readFileSync
+        .mockImplementationOnce(() => { throw new Error('ENOENT: no such file'); })
+        .mockImplementationOnce(() => JSON.stringify(regeneratedBody));
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: regeneratedBody });
+      postDmsInquiry.mockResolvedValue({ WorkLines: [] });
+
+      await getDataFromDMLFromTmp('79', 'EXPLICIT-TOKEN');
+
+      expect(getDgtBearerToken).not.toHaveBeenCalled();
     });
 
     test('reads /tmp/<jobCardId>.json, applies getDataFromDML to jobCardDetail and returns the full body', async () => {

@@ -40,8 +40,9 @@
  * "dml" (getDataFromDMLFromTmp) legge /tmp/<jobCardId>.json, già salvato da
  * una precedente "details" (getJobCardDetails/saveJobCardDetailsToTmp), e
  * applica l'arricchimento prezzo/disponibilità DML (getDataFromDML) al
- * relativo jobCardDetail: non richiama DGT (nessun bearerToken PingFederate
- * necessario), solo il gateway DML.
+ * relativo jobCardDetail. Se il file manca (es. /tmp non condiviso tra
+ * istanze Lambda diverse), richiama DGT (getJobCardDetails, con un
+ * bearerToken PingFederate) per rigenerarlo e rilegge il file prodotto.
  *
  * "saveJobcard" (POST /jobCard) è la stessa azione esposta anche dalla lambda
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
@@ -106,10 +107,11 @@ exports.handler = async (event) => {
   try {
     let result;
     if (action === 'dml') {
-      // Non chiama DGT (nessun bearerToken PingFederate necessario): legge
-      // /tmp/<jobCardId>.json salvato da una precedente "details" e chiama
-      // solo il gateway DML (jobCardService.getDataFromDMLFromTmp gestisce
-      // internamente il proprio token verso dms/authService).
+      // Legge /tmp/<jobCardId>.json salvato da una precedente "details" e
+      // chiama il gateway DML (jobCardService.getDataFromDMLFromTmp gestisce
+      // internamente il proprio token verso dms/authService). Se il file
+      // manca, getDataFromDMLFromTmp richiama DGT (getJobCardDetails) per
+      // rigenerarlo, recuperando un bearerToken PingFederate solo in quel caso.
       result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id);
     } else {
       const token = await getBearerToken();

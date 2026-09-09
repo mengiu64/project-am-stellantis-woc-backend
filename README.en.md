@@ -412,7 +412,7 @@ Orchestrator Lambda that manages **package configuration and validation** across
 
 | `event.action` | Manager method | Description |
 |---|---|---|
-| `getConfigPackages` | `manager.getConfigPackages(market, pkwstouse)` | Static package configuration for the given ws |
+| `getConfigPackages` | `manager.getConfigPackages(pkwstouse)` | Package configuration for the given ws, read from `woc.config_packages` (Aurora PostgreSQL) via `dbManager/ConfigPackagesRepository.js` |
 | `getValidPackages` | `manager.getValidPackages(market, pkwstouse, VIN)` | Intersection between config and live packages from the WS |
 | `getValidPackagesDetail` | `manager.getValidPackagesDetail(market, pkwstouse, VIN)` | `getValidPackages` + detail of each package in parallel |
 | `getPriceAndAvailability` | `manager.getPriceAndAvailability(market, pkwstouse, VIN)` | `getValidPackagesDetail` + `AV_LOCAL`/`PRICE`/`SCONTO` enrichment for each `listaOperazioni`/`listaRicambi` row |
@@ -838,7 +838,7 @@ cd agendaSoa && npm run test:coverage
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods
-- **PkManager** – constructor (config from env vars), `getConfigPackages` (static map per ws), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalization via `_normalizePkDetail`, error-item handling), docsoa forfait→tempario fallback (`ibxDetailtpService`, using `rowData.ref` as `refTp`), `_fetchDetail`/`_fetchLiveMap` with mocks of the three sibling clients
+- **PkManager** – constructor (config from env vars), `getConfigPackages` (map per ws, read from `woc.config_packages` via `dbManager/ConfigPackagesRepository.js`), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalization via `_normalizePkDetail`, error-item handling), docsoa forfait→tempario fallback (`ibxDetailtpService`, using `rowData.ref` as `refTp`), `_fetchDetail`/`_fetchLiveMap` with mocks of the three sibling clients
 
 #### translations
 - **index** – CLI/Lambda dispatch to the `translations` handler

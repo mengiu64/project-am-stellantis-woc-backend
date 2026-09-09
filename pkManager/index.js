@@ -76,7 +76,7 @@ exports.handler = async (event) => {
     const manager = new PkManager(body.wsConfig);
     let result;
     if (action === 'getConfigPackages') {
-      result = manager.getConfigPackages(market, pkwstouse);
+      result = await manager.getConfigPackages(pkwstouse);
     } else if (action === 'getValidPackages') {
       result = await manager.getValidPackages(market, pkwstouse, VIN);
     } else if (action === 'getValidPackagesDetail') {
@@ -153,7 +153,7 @@ async function main() {
       const pkwstouse = arg1;
       const market    = arg2 ?? '1000';
       if (!pkwstouse) { printUsage(); process.exit(1); }
-      const result = manager.getConfigPackages(market, pkwstouse);
+      const result = await manager.getConfigPackages(pkwstouse);
       printResult(`getConfigPackages  market="${market}"  pkwstouse="${pkwstouse}"`, result);
 
     } else if (command === 'getValidPackages') {
