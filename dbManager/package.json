@@ -29,6 +29,7 @@
     ],
     "collectCoverageFrom": [
       "PkConfigRepository.js",
+      "ConfigPackagesRepository.js",
       "AnagSnowflakesRepository.js",
       "db.js",
       "index.js"

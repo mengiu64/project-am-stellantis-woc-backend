@@ -41,63 +41,10 @@ async function pLimit(taskFns, concurrency) {
 }
 
 // ─── Configurazione pacchetti per ws ──────────────────────────────────────────
-// Mappa statica: pkwstouse → categoria → lista codici
-const CONFIG_PACKAGES = {
-  eper: {
-    BODY: [
-      '7210E221',
-      '7015A041'
-    ],
-    MECHANICH: [
-    ],
-    ACCESSORIES: [
-    ],
-  },
-
-  docsoa: {
-    ACCESSORIES: [
-      '95R04A',
-      '95R10A',
-      '64E91A',
-      '64EADA',
-    ],
-    MECHANICH: [
-      '220800985012',
-      '020320055471',
-      '42001A',
-      '42055A',
-      '44001A',
-      '95R02A01FR0101',
-      '95R02A01FR0201',
-      '95R02A01FR0XXX',
-      '98B11A',
-      '98B12A',
-      '020120055467',
-      '020120055468',
-      '020120055469',
-      '42025A',
-      '42120A',
-      '44020A'
-
-    ],
-  },
-
-  menupricing: {
-    BODY: [
-      '221000135012',
-      '054065105278',
-      '054065305427',
-      '054065505280',
-      '054065705406',
-      '054065905276',
-      '054066105400'
-    ],
-    MECHANICH: [
-    ],
-    ACCESSORIES: [
-    ],
-  },
-};
+// La mappa pkwstouse → department → [codici] non è più una costante statica
+// hardcoded qui: viene letta a runtime dalla tabella woc.config_packages
+// (Aurora PostgreSQL) tramite dbManager/ConfigPackagesRepository.js — vedi
+// PkManager.getConfigPackages().
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Classe PkManager
@@ -142,23 +89,25 @@ class PkManager {
   }
 
   // ── getConfigPackages ────────────────────────────────────────────────────────
-  // Restituisce la mappa categoria → [codici] per il ws specificato.
+  // Restituisce la mappa department → [codici] per il ws specificato, letta da
+  // woc.config_packages (Aurora PostgreSQL) tramite dbManager/ConfigPackagesRepository.
+  // Non è più una lookup sincrona su una costante statica: interroga il DB ad
+  // ogni chiamata, stesso pattern di dbManager.getPkwstouse usato in getPkList.
   //
-  // @param {string} market      - Codice mercato (es. '1000'). Riservato per a
-  //                               future personalizzazioni per mercato.
   // @param {string} pkwstouse   - Identificativo del web service:
   //                               'eper' | 'docsoa' | 'menupricing'
-  // @returns {object}           - { BODY?: [...], MECHANICH?: [...], ACCESSORIES?: [...] }
-  //                               Lancia Error se pkwstouse non è riconosciuto.
-  getConfigPackages(market, pkwstouse) {
+  // @returns {Promise<object>}  - { BODY?: [...], MECHANICH?: [...], ACCESSORIES?: [...] }
+  //                               Lancia Error se pkwstouse non ha righe configurate.
+  async getConfigPackages(pkwstouse) {
     const key = (pkwstouse ?? '').toLowerCase();
-    const config = CONFIG_PACKAGES[key];
 
-    if (!config) {
-      throw new Error(
-        `pkwstouse non riconosciuto: "${pkwstouse}". ` +
-        `Valori ammessi: ${Object.keys(CONFIG_PACKAGES).join(', ')}`
-      );
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { getConfigPackages: getConfigPackagesFromDb } = require(path.resolve(__dirname, '../dbManager/ConfigPackagesRepository'));
+    const pool   = await getPool();
+    const config = key ? await getConfigPackagesFromDb(pool, { pkwstouse: key }) : {};
+
+    if (!config || Object.keys(config).length === 0) {
+      throw new Error(`pkwstouse non riconosciuto: "${pkwstouse}"`);
     }
 
     return config;
@@ -174,8 +123,8 @@ class PkManager {
   // @returns {object}          - { BODY?: { [codice]: obj }, MECHANICH?: {...}, ACCESSORIES?: {...} }
   //                              Solo le categorie con almeno un codice valido sono incluse.
   async getValidPackages(market, pkwstouse, VIN) {
-    // Step 1: configurazione locale
-    const config = this.getConfigPackages(market, pkwstouse);
+    // Step 1: configurazione da DB (woc.config_packages)
+    const config = await this.getConfigPackages(pkwstouse);
 
     // Step 2: pacchetti live dal WS
     const liveMap = await this._fetchLiveMap(pkwstouse, VIN);

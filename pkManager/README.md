@@ -81,7 +81,7 @@ node index.js <metodo> [argomenti...]
 Esempi:
 
 ```bash
-# Configurazione statica (getConfigPackages)
+# Configurazione pacchetti (getConfigPackages, letta da woc.config_packages)
 node index.js pkwstouse eper
 node index.js pkwstouse docsoa
 node index.js pkwstouse menupricing 1000
@@ -101,7 +101,7 @@ node index.js getValidPackagesDetail menupricing  W0VZT6GT7M1017935 1000
 
 | Metodo                    | Argomenti                          | Descrizione                                                                                         |
 |---------------------------|------------------------------------|-----------------------------------------------------------------------------------------------------|
-| `getConfigPackages`       | `market` `pkwstouse`               | Configurazione statica: mappa `{ CATEGORY: [codici] }` per il ws indicato                          |
+| `getConfigPackages`       | `pkwstouse`                        | Mappa `{ DEPARTMENT: [codici] }` per il ws indicato, letta da `woc.config_packages` (Aurora PostgreSQL) tramite `dbManager/ConfigPackagesRepository.js` (non più una costante statica) |
 | `getValidPackages`        | `market` `pkwstouse` `VIN`         | Intersezione tra config e pacchetti live dal WS: `{ CATEGORY: { [codice]: obj } }`                 |
 | `getValidPackagesDetail`  | `market` `pkwstouse` `VIN`         | Chiama `getValidPackages` poi recupera in parallelo il dettaglio di ogni pacchetto: `{ [codice]: detail }` |
 | `getPriceAndAvailability` | `market` `pkwstouse` `VIN`         | Arricchisce il dettaglio di `getValidPackagesDetail` con `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga  |
