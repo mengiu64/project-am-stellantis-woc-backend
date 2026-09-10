@@ -56,6 +56,27 @@ function resolveActionAndBody(event) {
   return { action, body };
 }
 
+/**
+ * Estrae lo username autenticato. Se l'evento ha un requestContext.authorizer,
+ * SOLO authorizer.sub è attendibile. Altrimenti (nessun authorizer
+ * nell'evento: invocazione diretta Lambda / CLI di test) si accetta
+ * body.username come comodità per i test — MAI un valore body-supplied
+ * quando è presente un vero authorizer (un client potrebbe altrimenti
+ * impersonare un altro dealer).
+ *
+ * Usato per la risoluzione automatica del Sender dinamico dell'inquiry DMS
+ * (v. PkManager.js::_buildDmsSender / dms/dmsService.js::resolveDynamicSenderFields):
+ * lo stesso meccanismo/stessi criteri già applicati in jobcard/index.js e
+ * pkFavorite/index.js.
+ */
+function resolveUsername(event, body) {
+  const authz = (event && event.requestContext && event.requestContext.authorizer) || null;
+  if (authz) {
+    return authz.sub || body.username || null;
+  }
+  return body.username || null;
+}
+
 exports.handler = async (event) => {
   const { action, body } = resolveActionAndBody(event);
 
@@ -71,6 +92,7 @@ exports.handler = async (event) => {
   }
 
   const { market, pkwstouse, codbrand, VIN, documentId, customerId, dealerIdentificationCode } = body;
+  const username = resolveUsername(event, body);
 
   try {
     const manager = new PkManager(body.wsConfig);
@@ -82,12 +104,12 @@ exports.handler = async (event) => {
     } else if (action === 'getValidPackagesDetail') {
       result = await manager.getValidPackagesDetail(market, pkwstouse, VIN);
     } else if (action === 'getPkList') {
-      result = await manager.getPkList(codbrand, documentId, customerId, VIN, market, dealerIdentificationCode);
+      result = await manager.getPkList(codbrand, documentId, customerId, VIN, market, dealerIdentificationCode, username);
     } else {
       // getPriceAndAvailability richiede pkDetailList valorizzato: se non
       // fornito esplicitamente, lo recupera prima con getValidPackagesDetail
       await manager.getValidPackagesDetail(market, pkwstouse, VIN);
-      result = await manager.getPriceAndAvailability(documentId, customerId, VIN, market);
+      result = await manager.getPriceAndAvailability(documentId, customerId, VIN, market, username);
     }
 
     return {

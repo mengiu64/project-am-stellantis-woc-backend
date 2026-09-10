@@ -211,6 +211,83 @@ function validateTypeSection(body, messageType) {
 }
 
 /**
+ * Risolve automaticamente (best-effort) i campi del Sender dinamico che
+ * TUTTI i chiamanti di postDmsInquiry (jobcard, pkFavorite, pkManager)
+ * devono ricavare con GLI STESSI criteri, usando SOLO dati già "di dominio"
+ * della richiesta corrente (username autenticato, VIN) — mai un valore che
+ * il FE dovrebbe fornire esplicitamente:
+ *  - mainSincom/market/language/dealerCountryCode <- identifiers.username,
+ *    tramite session/src/sessionContextCache.js::getCachedSessionContext
+ *    (stessa risoluzione myPeople della lambda `session`, cache best-effort
+ *    su /tmp/session-context-<username>.json);
+ *  - brand <- identifiers.vin, tramite v360/v360Service.js::getCachedBrand
+ *    (campo `data.brandCode` della risposta di v360 getdetails, cache
+ *    best-effort su /tmp/v360-getdetails-<vin>.json) — il brand del VEICOLO
+ *    (non del dealer/sessione: un dealer multi-brand può servire un veicolo
+ *    di un brand diverso dal proprio, es. dealer Stellantis IT che vende un
+ *    ricambio per un veicolo di un altro brand) è il dato corretto da usare
+ *    per il lookup physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes)
+ *    fatto da buildApplicationArea().
+ *
+ * `overrides` (già noti/espliciti al chiamante, es. wsConfig di pkManager, o
+ * query/body per test/debug) hanno SEMPRE priorità sui valori auto-risolti:
+ * questa funzione valorizza SOLO i campi assenti in `overrides`.
+ *
+ * Interamente best-effort: se username/vin sono assenti, o le rispettive
+ * risoluzioni fallissero (myPeople/ASV360 irraggiungibili, cache /tmp non
+ * accessibile, utente/vin non trovato, ...), i soli campi non risolvibili
+ * restano assenti dal risultato — non viene MAI sollevata un'eccezione che
+ * blocchi la costruzione del Sender: buildApplicationArea() ricade comunque
+ * sui default statici di config.sender per i campi mancanti.
+ *
+ * NB: richiede in-process, come cartelle sorelle, session/src (+ myPeople +
+ * dmlConfigSync, di cui session dipende) e v360/ — i chiamanti (jobcard,
+ * pkFavorite, pkManager) devono quindi impacchettarle (Makefile, Metadata:
+ * BuildMethod: makefile in template.yaml), esattamente come già fanno con
+ * dms/dbManager. La lambda dms stessa NON invoca mai questa funzione dal
+ * proprio handler (index.js): resta quindi "leggera" (non bundla session/
+ * myPeople/dmlConfigSync/v360), nonostante la funzione viva in questo file —
+ * è pensata per essere richiamata dai chiamanti di postDmsInquiry, non da dms
+ * stessa.
+ *
+ * @param {{ username?: string, vin?: string }} [identifiers]
+ * @param {object} [overrides] - campi già noti/espliciti (mainSincom/market/
+ *                               brand/language/dealerCountryCode), hanno
+ *                               sempre priorità sui valori auto-risolti
+ * @returns {Promise<{ mainSincom?: string, market?: string, brand?: string, language?: string, dealerCountryCode?: string }>}
+ */
+async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
+  const { username, vin } = identifiers || {};
+  const result = { ...overrides };
+
+  const needsSessionFields = !result.mainSincom || !result.market || !result.language || !result.dealerCountryCode;
+  if (username && needsSessionFields) {
+    try {
+      const { getCachedSessionContext } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
+      const resolved = await getCachedSessionContext(username);
+      result.mainSincom = result.mainSincom || resolved.mainSincom;
+      result.market = result.market || resolved.market;
+      result.language = result.language || resolved.language;
+      result.dealerCountryCode = result.dealerCountryCode || resolved.dealerCountryCode;
+    } catch (err) {
+      console.warn(`[dms] impossibile risolvere i dati di sessione per "${username}": ${err.message}`);
+    }
+  }
+
+  if (!result.brand && vin) {
+    try {
+      const { getCachedBrand } = require(path.resolve(__dirname, '../v360/v360Service'));
+      const brand = await getCachedBrand(vin);
+      if (brand) result.brand = brand;
+    } catch (err) {
+      console.warn(`[dms] impossibile risolvere il brand da v360 per vin="${vin}": ${err.message}`);
+    }
+  }
+
+  return result;
+}
+
+/**
  * Builds the ApplicationArea envelope (Sender + CreationDateTime + BODID).
  *
  * This used to be built by every caller of postDmsInquiry (CLI positional mode,
@@ -538,6 +615,7 @@ module.exports = {
   postDmsInquiry,
   buildTypeSection,
   buildApplicationArea,
+  resolveDynamicSenderFields,
   validateTypeSection,
   buildUpSellingPackages,
   buildWorkLines,

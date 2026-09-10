@@ -52,13 +52,19 @@
  *    convenzione di session/pkFavorite), con fallback a body.username SOLO
  *    quando l'evento non ha alcun requestContext.authorizer (invocazione
  *    diretta/CLI di test);
- *  - mainSincom/market/language/dealerCountryCode: presi da body, poiché il
- *    chiamante (frontend) li ha già ottenuti da una precedente chiamata a
- *    session (sincom/codmarket/language/marketIso) — nessuna cache dedicata
- *    in questa lambda, solo /tmp/<jobCardId>.json per il jobCardDetail.
- * Questi campi sono opzionali e "best effort": se assenti, buildDmsSender
- * semplicemente non li valorizza e il Sender resta sui default statici di
- * dms/config.js — "dml" non richiede quindi autenticazione obbligatoria.
+ *  - mainSincom/market/language/dealerCountryCode: il frontend NON li passa
+ *    (e non deve passarli) — sono letti da body SOLO come override
+ *    opzionale/di test; nel flusso reale sono assenti, e buildDmsSender li
+ *    risolve automaticamente da session/src/sessionContextCache.js
+ *    ::getCachedSessionContext(username) (stessa risoluzione myPeople della
+ *    lambda session, con cache best-effort su /tmp/session-context-<username>.json,
+ *    utile quando la stessa istanza Lambda "warm" gestisce più richieste
+ *    "dml" dello stesso utente in rapida successione).
+ * Questi campi sono opzionali e "best effort": se assenti E non risolvibili
+ * da session (username mancante, myPeople irraggiungibile, ecc.),
+ * buildDmsSender semplicemente non li valorizza e il Sender resta sui
+ * default statici di dms/config.js — "dml" non richiede quindi
+ * autenticazione obbligatoria.
  *
  * "saveJobcard" (POST /jobCard) è la stessa azione esposta anche dalla lambda
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
@@ -94,11 +100,12 @@ function resolveUsername(event, body) {
 
 /**
  * Costruisce il sessionContext da passare a getDataFromDMLFromTmp per il
- * Sender dinamico dell'inquiry DMS (v. jobCardService.buildDmsSender):
- * mainSincom/market/language/dealerCountryCode sono presi dal body (il
- * chiamante li ha già ottenuti da una precedente chiamata a session), lo
- * username SEMPRE da resolveUsername (authorizer.sub, mai dal body quando
- * presente un authorizer).
+ * Sender dinamico dell'inquiry DMS (v. jobCardService.buildDmsSender): lo
+ * username è SEMPRE da resolveUsername (authorizer.sub, mai dal body quando
+ * presente un authorizer). mainSincom/market/language/dealerCountryCode da
+ * body sono un override opzionale/di test: nel flusso reale il frontend non
+ * li invia, e buildDmsSender li risolve da solo (automaticamente, dato solo
+ * lo username) tramite session/src/sessionContextCache.js.
  */
 function resolveSessionContext(event, body) {
   return {

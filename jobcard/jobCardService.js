@@ -487,21 +487,31 @@ function saveJobCardDetailsToTmp(jobCardId, body) {
  * Costruisce il Sender dinamico (ApplicationArea.Sender) dell'inquiry DMS per
  * getCartPriceAndAvailability, chiamata SEMPRE dopo che il chiamante e' gia'
  * entrato nel dettaglio dell'ordine di riparazione — ha quindi gia' a
- * disposizione sia i dati di sessione (session/src/repositories) sia il
- * jobCardDetail appena recuperato/sanificato, senza bisogno di una cache
- * dedicata: sessionContext viene passato dal chiamante (jobcard/index.js),
- * il brand e' letto direttamente dal jobCardDetail.
+ * disposizione il jobCardDetail appena recuperato/sanificato (da cui si
+ * legge il VIN). Il **frontend non passa (e non deve passare) mainSincom/
+ * market/brand/lingua/country**: se `sessionContext` non li contiene già,
+ * vengono risolti automaticamente da `dms/dmsService.js
+ * ::resolveDynamicSenderFields({ username, vin })` — STESSO meccanismo
+ * centralizzato usato anche da pkFavorite/index.js::buildDmsSender e
+ * pkManager/PkManager.js::_buildDmsSender, cosicché tutti i chiamanti
+ * dell'inquiry DMS risolvano il Sender dinamico con gli identici criteri:
+ *  - mainSincom/market/language/dealerCountryCode <- username (authorizer.sub),
+ *    tramite session/src/sessionContextCache.js (myPeople, cache /tmp)
+ *  - brand <- VIN, tramite v360/v360Service.js::getCachedBrand (v360
+ *    getdetails, campo data.brandCode, cache /tmp) — il brand del VEICOLO,
+ *    non quello (di default) del dealer/sessione: un dealer multi-brand può
+ *    servire un veicolo di un brand diverso dal proprio.
  *
  * componentId e currencyId NON vengono sovrascritti qui: restano i valori
  * statici configurati via env in dms/config.js (config.sender), come da
  * indicazione esplicita — solo i campi realmente dipendenti dal dealer/
- * mercato/utente della richiesta corrente vengono valorizzati:
- *  - dealerNumberId          <- sessionContext.mainSincom (session.sincom/MAINSINCOM)
- *  - serviceId               <- sessionContext.username (session.username/loginname)
- *  - languageCode            <- sessionContext.language (session.language)
- *  - dealerCountryCode       <- sessionContext.dealerCountryCode (session.marketIso)
- *  - brand                   <- jobCardDetail.roInfo.stellantisBrand (fallback roInfo.brand)
- *  - market                  <- sessionContext.market (solo chiave di lookup, non un campo Sender)
+ * mercato/utente/veicolo della richiesta corrente vengono valorizzati:
+ *  - dealerNumberId          <- sessionContext.mainSincom, o (fallback automatico) session.sincom
+ *  - serviceId               <- sessionContext.username (da authorizer.sub)
+ *  - languageCode            <- sessionContext.language, o (fallback automatico) session.language
+ *  - dealerCountryCode       <- sessionContext.dealerCountryCode, o (fallback automatico) session.marketIso
+ *  - brand                   <- sessionContext.brand, o (fallback automatico) v360 getdetails.data.brandCode per il VIN di jobCardDetail
+ *  - market                  <- sessionContext.market, o (fallback automatico) session.codmarket (solo chiave di lookup, non un campo Sender)
  *
  * physicalSiteId/dealerNumberIdSource NON vengono più risolti qui: il lookup
  * su woc.ang_snowflakes (dbManager/AnagSnowflakesRepository.js
@@ -511,18 +521,32 @@ function saveJobCardDetailsToTmp(jobCardId, body) {
  * qualunque chiamante (jobcard, pkManager, pkFavorite) — jobcard non accede
  * più direttamente a dbManager.
  *
- * @param {object} jobCardDetail - usato solo per derivare il brand
- *                                 (roInfo.stellantisBrand, fallback roInfo.brand)
- * @param {object} [sessionContext] - dati di sessione gia' disponibili al chiamante
- * @param {string} [sessionContext.mainSincom]       - session.sincom (MAINSINCOM)
- * @param {string} [sessionContext.username]         - session.username (loginname)
- * @param {string} [sessionContext.market]           - session.codmarket (solo per il lookup DB lato dms, non inviato al DML)
- * @param {string} [sessionContext.language]         - session.language
- * @param {string} [sessionContext.dealerCountryCode] - session.marketIso
+ * La risoluzione automatica è **best-effort**: se manca username/vin, o la
+ * risoluzione fallisce per qualunque motivo (myPeople/ASV360 irraggiungibili,
+ * cache /tmp non scrivibile, ...), i campi mancanti restano semplicemente
+ * assenti dal sender (mai un'eccezione che blocchi
+ * getCartPriceAndAvailability) — il Sender ricade sui default statici di
+ * dms/config.js per quei soli campi.
+ *
+ * @param {object} jobCardDetail - usato solo per derivare il VIN (vehicleInfo.identification.vin)
+ * @param {object} [sessionContext] - dati già disponibili al chiamante (solo username è garantito)
+ * @param {string} [sessionContext.username]         - da event.requestContext.authorizer.sub — usato sia come serviceId sia come chiave per la risoluzione automatica via session
+ * @param {string} [sessionContext.mainSincom]       - override esplicito (opzionale); se assente, risolto da session.sincom
+ * @param {string} [sessionContext.market]           - override esplicito (opzionale); se assente, risolto da session.codmarket (solo per il lookup DB lato dms, non inviato al DML)
+ * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da v360 getdetails.data.brandCode per il VIN
+ * @param {string} [sessionContext.language]         - override esplicito (opzionale); se assente, risolto da session.language
+ * @param {string} [sessionContext.dealerCountryCode] - override esplicito (opzionale); se assente, risolto da session.marketIso
  * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
  */
 async function buildDmsSender(jobCardDetail, sessionContext = {}) {
-  const { mainSincom, username, market, language, dealerCountryCode } = sessionContext;
+  const { username } = sessionContext;
+  const vin = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
+
+  const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
+  const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
+    { username, vin },
+    sessionContext,
+  );
 
   const sender = {};
   if (mainSincom) sender.dealerNumberId = mainSincom;
@@ -530,8 +554,6 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   if (language) sender.languageCode = language;
   if (dealerCountryCode) sender.dealerCountryCode = dealerCountryCode;
   if (market) sender.market = market;
-
-  const brand = jobCardDetail?.roInfo?.stellantisBrand ?? jobCardDetail?.roInfo?.brand ?? null;
   if (brand) sender.brand = brand;
 
   return sender;

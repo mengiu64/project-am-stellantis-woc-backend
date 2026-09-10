@@ -33,11 +33,15 @@ jest.mock('../config', () => ({
 jest.mock('../httpClient');
 jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
 jest.mock('../../dbManager/AnagSnowflakesRepository', () => ({ getPhysicalSiteAndSincom: jest.fn() }));
+jest.mock('../../session/src/sessionContextCache', () => ({ getCachedSessionContext: jest.fn() }));
+jest.mock('../../v360/v360Service', () => ({ getCachedBrand: jest.fn() }));
 
 const { httpsRequest } = require('../httpClient');
 const { getPool } = require('../../dbManager/db');
 const { getPhysicalSiteAndSincom } = require('../../dbManager/AnagSnowflakesRepository');
-const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea } = require('../dmsService');
+const { getCachedSessionContext } = require('../../session/src/sessionContextCache');
+const { getCachedBrand } = require('../../v360/v360Service');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea, resolveDynamicSenderFields } = require('../dmsService');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -645,6 +649,155 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
     const sent = JSON.parse(payload);
     expect(sent.ApplicationArea.Sender.PhysicalSiteID).toBe('SITE-DYN');
     expect(sent.sender).toBeUndefined();
+  });
+});
+
+// ── resolveDynamicSenderFields — risoluzione centralizzata mainSincom/market/
+// language/dealerCountryCode (session, per username) e brand (v360, per vin) ──
+// Punto unico usato da jobcard/jobCardService.js::buildDmsSender,
+// pkFavorite/index.js::buildDmsSender e pkManager/PkManager.js::_buildDmsSender
+// per costruire il Sender dinamico dell'inquiry DMS senza duplicare la logica
+// di risoluzione automatica in ciascun chiamante.
+
+describe('resolveDynamicSenderFields', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => console.warn.mockRestore());
+
+  test('returns overrides unchanged when neither username nor vin are provided', async () => {
+    const result = await resolveDynamicSenderFields({}, { mainSincom: '0062230' });
+
+    expect(result).toEqual({ mainSincom: '0062230' });
+    expect(getCachedSessionContext).not.toHaveBeenCalled();
+    expect(getCachedBrand).not.toHaveBeenCalled();
+  });
+
+  test('resolves mainSincom/market/language/dealerCountryCode from session when username is provided and fields are missing', async () => {
+    getCachedSessionContext.mockResolvedValue({
+      mainSincom: '0062230',
+      market: '10102',
+      language: 'it',
+      dealerCountryCode: 'IT',
+    });
+
+    const result = await resolveDynamicSenderFields({ username: '0062230.d001' }, {});
+
+    expect(getCachedSessionContext).toHaveBeenCalledWith('0062230.d001');
+    expect(result).toEqual({
+      mainSincom: '0062230',
+      market: '10102',
+      language: 'it',
+      dealerCountryCode: 'IT',
+    });
+  });
+
+  test('explicit overrides win over session-resolved fields', async () => {
+    getCachedSessionContext.mockResolvedValue({
+      mainSincom: '9999999',
+      market: '99999',
+      language: 'en',
+      dealerCountryCode: 'GB',
+    });
+
+    const result = await resolveDynamicSenderFields(
+      { username: '0062230.d001' },
+      { mainSincom: '0062230', language: 'it' },
+    );
+
+    expect(result).toEqual({
+      mainSincom: '0062230', // esplicito, non sovrascritto
+      language: 'it', // esplicito, non sovrascritto
+      market: '99999', // assente in overrides, risolto da session
+      dealerCountryCode: 'GB', // assente in overrides, risolto da session
+    });
+  });
+
+  test('does not call the session resolver when all session-backed fields are already present in overrides', async () => {
+    const overrides = { mainSincom: '0062230', market: '10102', language: 'it', dealerCountryCode: 'IT' };
+
+    const result = await resolveDynamicSenderFields({ username: '0062230.d001' }, overrides);
+
+    expect(getCachedSessionContext).not.toHaveBeenCalled();
+    expect(result).toEqual(overrides);
+  });
+
+  test('does not call the session resolver when username is missing, even if fields are needed', async () => {
+    const result = await resolveDynamicSenderFields({}, {});
+
+    expect(getCachedSessionContext).not.toHaveBeenCalled();
+    expect(result).toEqual({});
+  });
+
+  test('best-effort: falls back to overrides only when the session resolver throws', async () => {
+    getCachedSessionContext.mockRejectedValue(new Error('myPeople down'));
+
+    const result = await resolveDynamicSenderFields({ username: '0062230.d001' }, { mainSincom: '0062230' });
+
+    expect(result).toEqual({ mainSincom: '0062230' });
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  test('resolves brand from v360 (getCachedBrand) when vin is provided and brand is missing', async () => {
+    getCachedBrand.mockResolvedValue('FT');
+
+    const result = await resolveDynamicSenderFields({ vin: 'VF3CABHW6GT204366' }, {});
+
+    expect(getCachedBrand).toHaveBeenCalledWith('VF3CABHW6GT204366');
+    expect(result).toEqual({ brand: 'FT' });
+  });
+
+  test('explicit brand override wins and v360 is not called', async () => {
+    const result = await resolveDynamicSenderFields({ vin: 'VF3CABHW6GT204366' }, { brand: 'AP' });
+
+    expect(getCachedBrand).not.toHaveBeenCalled();
+    expect(result).toEqual({ brand: 'AP' });
+  });
+
+  test('does not call v360 when vin is missing', async () => {
+    const result = await resolveDynamicSenderFields({}, {});
+
+    expect(getCachedBrand).not.toHaveBeenCalled();
+    expect(result).toEqual({});
+  });
+
+  test('leaves brand unset when getCachedBrand resolves null (best-effort)', async () => {
+    getCachedBrand.mockResolvedValue(null);
+
+    const result = await resolveDynamicSenderFields({ vin: 'VF3CABHW6GT204366' }, {});
+
+    expect(result.brand).toBeUndefined();
+  });
+
+  test('best-effort: falls back to overrides only when getCachedBrand throws', async () => {
+    getCachedBrand.mockRejectedValue(new Error('v360 down'));
+
+    const result = await resolveDynamicSenderFields({ vin: 'VF3CABHW6GT204366' }, { mainSincom: '0062230' });
+
+    expect(result).toEqual({ mainSincom: '0062230' });
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  test('combines session (username) and v360 (vin) resolution in a single call', async () => {
+    getCachedSessionContext.mockResolvedValue({
+      mainSincom: '0062230',
+      market: '10102',
+      language: 'it',
+      dealerCountryCode: 'IT',
+    });
+    getCachedBrand.mockResolvedValue('FT');
+
+    const result = await resolveDynamicSenderFields({ username: '0062230.d001', vin: 'VF3CABHW6GT204366' }, {});
+
+    expect(result).toEqual({
+      mainSincom: '0062230',
+      market: '10102',
+      language: 'it',
+      dealerCountryCode: 'IT',
+      brand: 'FT',
+    });
   });
 });
 

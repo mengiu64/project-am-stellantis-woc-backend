@@ -26,7 +26,7 @@
  */
 
 const { getBearerToken } = require('./authService');
-const { otaCompatibility, getDetails } = require('./v360Service');
+const { otaCompatibility, getDetailsWithCache } = require('./v360Service');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ exports.handler = async (event) => {
     const token = await getBearerToken();
     const result = action === 'otaCompatibility'
       ? await otaCompatibility(token, body)
-      : await getDetails(token, body);
+      : await getDetailsWithCache(token, body);
 
     return {
       statusCode: 200,
@@ -129,7 +129,7 @@ async function runGetDetails(vin, extraArgs) {
   console.log('\n=== Get Details ===');
   const params = { vin, ...parseKvArgs(extraArgs) };
   const token = await getBearerToken();
-  const result = await getDetails(token, params);
+  const result = await getDetailsWithCache(token, params);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }

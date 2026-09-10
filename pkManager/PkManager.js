@@ -198,43 +198,62 @@ class PkManager {
   } 
 
   // ── _buildDmsSender ───────────────────────────────────────────────────────────
-  // Deriva ApplicationArea.Sender per la inquiry DML dal dealer/brand/mercato
-  // REALE della richiesta corrente (this.wsConfig, valorizzato dal chiamante in
-  // costruzione — vedi getPriceAndAvailability/pkManager/index.js), invece di
-  // lasciare che dms/dmsService.js usi sempre gli stessi valori statici di
-  // config.sender (env vars) per qualunque dealer. Solo i campi per cui esiste
-  // un dato reale in wsConfig vengono sovrascritti: gli altri (componentId,
-  // serviceId, currencyId) restano sui default env-based di dms, non essendoci
-  // qui un equivalente affidabile.
+  // Deriva ApplicationArea.Sender per la inquiry DML tramite lo STESSO
+  // meccanismo centralizzato usato anche da jobcard/jobCardService.js
+  // ::buildDmsSender e pkFavorite/index.js::buildDmsSender:
+  // dms/dmsService.js::resolveDynamicSenderFields({ username, vin }, overrides).
+  // I valori derivati da this.wsConfig (valorizzato dal chiamante in
+  // costruzione — vedi getPriceAndAvailability/pkManager/index.js) restano
+  // override ESPLICITI che vincono sempre sulla risoluzione automatica: solo
+  // i campi per cui wsConfig non fornisce alcun dato reale vengono risolti
+  // automaticamente da username (session, myPeople) e vin (v360 brand).
   //
-  // physicalSiteId/dealerNumberIdSource NON vengono più risolti qui: il lookup
-  // su woc.ang_snowflakes (dbManager/AnagSnowflakesRepository.js
-  // ::getPhysicalSiteAndSincom) e' centralizzato in dms/dmsService.js
-  // ::buildApplicationArea(), che riceve dealerNumberId/market/brand tramite
-  // questo stesso sender e applica lo stesso identico meccanismo/criteri per
-  // qualunque chiamante (jobcard, pkManager, pkFavorite) — pkManager non
-  // accede più direttamente a dbManager per questo scopo (resta usato altrove,
-  // es. getPkList/getPkwstouse).
+  // physicalSiteId NON viene risolto qui: il lookup su woc.ang_snowflakes
+  // (dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndSincom) e'
+  // centralizzato in dms/dmsService.js::buildApplicationArea(), che riceve
+  // dealerNumberId/market/brand tramite questo stesso sender e applica lo
+  // stesso identico meccanismo/criteri per qualunque chiamante (jobcard,
+  // pkManager, pkFavorite) — pkManager non accede più direttamente a
+  // dbManager per questo scopo (resta usato altrove, es. getPkList/getPkwstouse).
   //
-  // @param {string} [market] - Codice mercato (stesso "market" di getPkList/
-  //                            getPriceAndAvailability), propagato a dms per il
-  //                            lookup physicalSiteId/dealerNumberIdSource, non
-  //                            inviato al DML
-  // @returns {object} sender override da passare a postDmsInquiry(token, { sender, ... })
-  _buildDmsSender(market) {
+  // @param {string} [market]     - Codice mercato (stesso "market" di getPkList/
+  //                                getPriceAndAvailability), propagato a dms per il
+  //                                lookup physicalSiteId/dealerNumberIdSource, non
+  //                                inviato al DML
+  // @param {string} [vehicleId]  - VIN della richiesta corrente, usato per risolvere
+  //                                automaticamente il brand via v360 quando
+  //                                docsoa.codbrand non è disponibile
+  // @param {string} [username]   - username autenticato (authorizer.sub), usato sia
+  //                                come serviceId sia per risolvere automaticamente
+  //                                mainSincom/market/language/dealerCountryCode via
+  //                                session quando wsConfig non li fornisce
+  // @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
+  async _buildDmsSender(market, vehicleId, username) {
     const { eper, docsoa, menupricing } = this.wsConfig;
-    const dealerNumberId = menupricing?.dealerIdentificationCode ?? eper?.coddealer ?? docsoa?.codePdv;
-    const brand = docsoa?.codbrand;
+    const overrides = {
+      mainSincom: menupricing?.dealerIdentificationCode ?? eper?.coddealer ?? docsoa?.codePdv,
+      market,
+      brand: docsoa?.codbrand,
+      language: menupricing?.languageCode ?? docsoa?.langue,
+      dealerCountryCode: menupricing?.countryCode ?? docsoa?.pays,
+    };
 
-    return {
+    const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
+    const resolved = await resolveDynamicSenderFields({ username, vin: vehicleId }, overrides);
+    const dealerNumberId = resolved.mainSincom;
+
+    const sender = {
       dealerNumberId,
       dealerNumberIdSource: dealerNumberId,
-      dealerCountryCode: menupricing?.countryCode ?? docsoa?.pays,
-      languageCode: menupricing?.languageCode ?? docsoa?.langue,
+      dealerCountryCode: resolved.dealerCountryCode,
+      languageCode: resolved.language,
       physicalSiteId: docsoa?.codePdv,
-      brand,
-      market,
+      brand: resolved.brand,
+      market: resolved.market,
     };
+    if (username) sender.serviceId = username;
+
+    return sender;
   }
 
   // ── getPriceAndAvailability ──────────────────────────────────────────────────
@@ -253,7 +272,8 @@ class PkManager {
   // NB: qui costruiamo solo il payload "di business" (PartsInquiryHeader +
   // workLines/customerAccountDmsId semplificati) più un `sender` dinamico
   // (_buildDmsSender(), derivato dal dealer/brand/mercato reale di
-  // this.wsConfig). La struttura DML nidificata di WorkLines
+  // this.wsConfig, con fallback automatico via username/vin quando wsConfig
+  // non fornisce un dato). La struttura DML nidificata di WorkLines
   // (PartsItem/LaborItem con PartType/PartStatus/LaborType) e l'envelope
   // ApplicationArea non sono più responsabilità del chiamante: vengono
   // costruiti internamente dalla lambda dms (dmsService.js::postDmsInquiry ->
@@ -271,8 +291,11 @@ class PkManager {
   //                              che lo usa per il lookup physicalSiteId/
   //                              dealerNumberIdSource su woc.ang_snowflakes —
   //                              non inviato al DML come campo Sender
+  // @param {string} [username] - username autenticato (authorizer.sub), propagato
+  //                              a _buildDmsSender per la risoluzione automatica
+  //                              via session/v360 quando wsConfig non basta
   // @returns {Promise<object>} - Risposta di postDmsInquiry (InquiryResponse)
-  async getPriceAndAvailability(documentId, customerId, vehicleId, market) {
+  async getPriceAndAvailability(documentId, customerId, vehicleId, market, username) {
     const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
     const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
 
@@ -295,10 +318,11 @@ class PkManager {
       customerAccountDmsId: null,
       workLines,
       // Sender dinamico (dealer/brand/mercato reali di questa richiesta, da
-      // wsConfig — physicalSiteId/dealerNumberIdSource arricchiti lato dms da
-      // woc.ang_snowflakes quando possibile) invece dei default statici
-      // env-based della lambda dms — vedi _buildDmsSender().
-      sender: this._buildDmsSender(market),
+      // wsConfig — con fallback automatico via username/vin quando wsConfig
+      // non li fornisce, e physicalSiteId/dealerNumberIdSource arricchiti
+      // lato dms da woc.ang_snowflakes quando possibile) invece dei default
+      // statici env-based della lambda dms — vedi _buildDmsSender().
+      sender: await this._buildDmsSender(market, vehicleId, username),
     };
 
     // Chiamo il gateway DML (token da cache/PingFederate + POST /inquiry): la
@@ -332,6 +356,10 @@ class PkManager {
   // @param {string} [dealerIdentificationCode] - Override di wsConfig.menupricing.dealerIdentificationCode,
   //                                              usato dai metodi menupricing (_fetchLiveMap/_fetchDetail)
   //                                              quando pkwstouse === 'menupricing'
+  // @param {string} [username]                - username autenticato (authorizer.sub), propagato a
+  //                                              getPriceAndAvailability => _buildDmsSender per la
+  //                                              risoluzione automatica del Sender via session/v360
+  //                                              quando wsConfig non basta
   // @returns {Promise<Array>}  - this.pkDetailList arricchito con AV_LOCAL/PRICE/SCONTO
   //                              e normalizzato (via _normalizePkDetail) in un
   //                              contratto identico per ogni pacchetto, qualunque
@@ -341,7 +369,7 @@ class PkManager {
   //                              voci per cui il dettaglio del singolo pacchetto
   //                              non è stato recuperabile restano invece
   //                              { error, category } (non normalizzate).
-  async getPkList(codbrand, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode) {
+  async getPkList(codbrand, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode, username) {
     console.log('[PkManager.getPkList] parametri chiamata:', { codbrand, documentId, customerId, vehicleId, market, dealerIdentificationCode });
 
     // 0) risolvo pkwstouse (eper/docsoa/menupricing) leggendo HQ_PKCONFIG tramite
@@ -373,7 +401,7 @@ class PkManager {
     this.dmlWarning = null;
     let priceAndAvailability;
     try {
-      priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId, market);
+      priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId, market, username);
     } catch (err) {
       this.dmlWarning = err.message ?? String(err);
       console.error('[PkManager.getPkList] getPriceAndAvailability fallita, proseguo senza prezzo/disponibilità:', this.dmlWarning);

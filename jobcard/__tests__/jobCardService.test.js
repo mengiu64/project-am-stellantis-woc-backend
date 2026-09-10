@@ -19,13 +19,13 @@ jest.mock('../httpClient');
 jest.mock('fs');
 jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
+jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
 
 const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
 const { getBearerToken: getDgtBearerToken } = require('../authService');
 const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry } = require('../../dms/dmsService');
+const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
 const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
 
 describe('jobCardService', () => {
@@ -36,6 +36,10 @@ describe('jobCardService', () => {
     getBearerToken.mockResolvedValue('DML-TOKEN');
     getDgtBearerToken.mockResolvedValue('DGT-TOKEN');
     postDmsInquiry.mockResolvedValue({ success: true });
+    // Di default si comporta come il vero dms/dmsService.js
+    // ::resolveDynamicSenderFields quando la risoluzione automatica (session/
+    // v360) non produce nulla: ritorna semplicemente gli overrides.
+    resolveDynamicSenderFields.mockImplementation((_identifiers, overrides) => Promise.resolve({ ...overrides }));
   });
 
   afterEach(() => {
@@ -896,17 +900,22 @@ describe('jobCardService', () => {
   // eseguito qui: è centralizzato in dms/dmsService.js::buildApplicationArea
   // (vedi dms/__tests__/dmsService.test.js), che lo applica identicamente a
   // qualunque chiamante di postDmsInquiry. buildDmsSender si limita quindi a
-  // mappare sessionContext/jobCardDetail sui campi del sender (incluso
-  // `market`, solo chiave di lookup lato dms, non un campo Sender).
+  // estrarre username/vin ed a delegare la risoluzione dinamica (mainSincom/
+  // market/language/dealerCountryCode/brand) a
+  // dms/dmsService.js::resolveDynamicSenderFields (mockata qui), mappandone
+  // il risultato sui campi del sender (incluso `market`, solo chiave di
+  // lookup lato dms, non un campo Sender).
 
   describe('buildDmsSender', () => {
-    test('returns {} when no sessionContext/jobCardDetail brand is provided', async () => {
+    test('returns {} when resolveDynamicSenderFields resolves nothing', async () => {
       const result = await buildDmsSender({});
 
       expect(result).toEqual({});
     });
 
-    test('maps sessionContext fields to the corresponding sender keys, skipping undefined ones', async () => {
+    test('maps resolveDynamicSenderFields fields to the corresponding sender keys, skipping undefined ones', async () => {
+      resolveDynamicSenderFields.mockResolvedValue({ mainSincom: '0062219', language: 'fr', dealerCountryCode: 'FR' });
+
       const result = await buildDmsSender({}, { mainSincom: '0062219', username: 'jdoe', language: 'fr', dealerCountryCode: 'FR' });
 
       expect(result).toEqual({
@@ -917,8 +926,21 @@ describe('jobCardService', () => {
       });
     });
 
-    test('includes brand from roInfo.stellantisBrand and market (pass-through key for dms centralized lookup)', async () => {
-      const jobCardDetail = { roInfo: { stellantisBrand: 'FT' } };
+    test('extracts vin from jobCardDetail.vehicleInfo.identification.vin and passes username/vin to resolveDynamicSenderFields', async () => {
+      const jobCardDetail = { vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } } };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe', mainSincom: '0062219', market: 'FR' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe', mainSincom: '0062219', market: 'FR' },
+      );
+    });
+
+    test('includes brand from resolveDynamicSenderFields (v360) and market (pass-through key for dms centralized lookup)', async () => {
+      const jobCardDetail = { vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } } };
+      resolveDynamicSenderFields.mockResolvedValue({ mainSincom: '0062219', market: 'FR', brand: 'FT' });
+
       const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
 
       expect(result).toEqual({
@@ -926,13 +948,6 @@ describe('jobCardService', () => {
         market: 'FR',
         brand: 'FT',
       });
-    });
-
-    test('falls back to roInfo.brand when roInfo.stellantisBrand is absent', async () => {
-      const jobCardDetail = { roInfo: { brand: '0I' } };
-      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
-
-      expect(result.brand).toBe('0I');
     });
 
     test('omits market/brand when not available', async () => {

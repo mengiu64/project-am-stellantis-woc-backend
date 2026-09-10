@@ -26,6 +26,8 @@ jest.mock('../config', () => ({
   },
 }));
 jest.mock('../httpClient');
+jest.mock('fs');
+jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../s3ConfigRepository', () => ({
   S3ConfigRepository: jest.fn().mockImplementation(() => ({
     getBrandOwners: jest.fn().mockResolvedValue(require('../../config/brandowner.json')),
@@ -33,16 +35,22 @@ jest.mock('../s3ConfigRepository', () => ({
   })),
 }));
 
+const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
-const { otaCompatibility, getDetails } = require('../v360Service');
+const { getBearerToken } = require('../authService');
+const { otaCompatibility, getDetails, getDetailsWithCache, getCachedBrand } = require('../v360Service');
 
 describe('v360Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  afterEach(() => console.log.mockRestore());
+  afterEach(() => {
+    console.log.mockRestore();
+    console.warn.mockRestore();
+  });
 
   // ── otaCompatibility ─────────────────────────────────────────────────────────
 
@@ -329,4 +337,102 @@ describe('v360Service', () => {
 
     expect(result.data.energyTypeDesignation).toBeUndefined();
   });
+
+  // ── getDetailsWithCache ──────────────────────────────────────────────────────
+  // Stesso pattern di jobcard/jobCardService.js::getDataFromDMLFromTmp +
+  // saveJobCardDetailsToTmp: cache /tmp per-vin, best-effort, mai un errore
+  // di scrittura che blocchi la risposta.
+
+  describe('getDetailsWithCache', () => {
+    test('throws if vin is missing', async () => {
+      await expect(getDetailsWithCache('token', {})).rejects.toThrow('[v360] vin is required for getdetails');
+    });
+
+    test('cache miss: calls getDetails (ASV360) and saves the response to /tmp/v360-getdetails-<vin>.json', async () => {
+      const expectedBody = { statusCode: 200, data: { vin: 'VIN456', brandCode: 'FT' } };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+      fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT: no such file'); });
+
+      const result = await getDetailsWithCache('token', { vin: 'VIN456' });
+
+      expect(httpsRequest).toHaveBeenCalledTimes(1);
+      expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
+      const [filePath, content, encoding] = fs.writeFileSync.mock.calls[0];
+      expect(filePath).toBe('/tmp/v360-getdetails-VIN456.json');
+      expect(JSON.parse(content)).toEqual(expectedBody);
+      expect(encoding).toBe('utf8');
+      expect(result).toEqual(expectedBody);
+    });
+
+    test('cache hit: reads /tmp/v360-getdetails-<vin>.json and does not call ASV360', async () => {
+      const cachedBody = { statusCode: 200, data: { vin: 'VIN456', brandCode: 'FT' } };
+      fs.readFileSync.mockReturnValue(JSON.stringify(cachedBody));
+
+      const result = await getDetailsWithCache('token', { vin: 'VIN456' });
+
+      expect(fs.readFileSync).toHaveBeenCalledWith('/tmp/v360-getdetails-VIN456.json', 'utf8');
+      expect(httpsRequest).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(result).toEqual(cachedBody);
+    });
+
+    test('still returns the response even if writing to /tmp fails', async () => {
+      const expectedBody = { statusCode: 200, data: { vin: 'VIN456', brandCode: 'FT' } };
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: expectedBody });
+      fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT: no such file'); });
+      fs.writeFileSync.mockImplementation(() => { throw new Error('disk full'); });
+
+      await expect(getDetailsWithCache('token', { vin: 'VIN456' })).resolves.toEqual(expectedBody);
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('impossibile salvare getdetails'));
+    });
+  });
+
+  // ── getCachedBrand ───────────────────────────────────────────────────────────
+
+  describe('getCachedBrand', () => {
+    test('returns null when vin is missing', async () => {
+      expect(await getCachedBrand()).toBeNull();
+      expect(await getCachedBrand('')).toBeNull();
+      expect(getBearerToken).not.toHaveBeenCalled();
+    });
+
+    test('resolves data.brandCode from getDetailsWithCache (cache miss -> ASV360)', async () => {
+      getBearerToken.mockResolvedValue('V360-TOKEN');
+      fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT: no such file'); });
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { data: { brandCode: 'FT' } } });
+
+      const brand = await getCachedBrand('VIN456');
+
+      expect(getBearerToken).toHaveBeenCalledTimes(1);
+      expect(brand).toBe('FT');
+    });
+
+    test('resolves data.brandCode from cache (cache hit, no ASV360 call needed)', async () => {
+      getBearerToken.mockResolvedValue('V360-TOKEN');
+      fs.readFileSync.mockReturnValue(JSON.stringify({ data: { brandCode: 'AR' } }));
+
+      const brand = await getCachedBrand('VIN456');
+
+      expect(httpsRequest).not.toHaveBeenCalled();
+      expect(brand).toBe('AR');
+    });
+
+    test('returns null (best-effort) when the response has no data.brandCode', async () => {
+      getBearerToken.mockResolvedValue('V360-TOKEN');
+      fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT: no such file'); });
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { data: {} } });
+
+      expect(await getCachedBrand('VIN456')).toBeNull();
+    });
+
+    test('returns null (best-effort) and logs a warning when ASV360/PingFederate fails', async () => {
+      getBearerToken.mockRejectedValue(new Error('PingFederate unreachable'));
+
+      const brand = await getCachedBrand('VIN456');
+
+      expect(brand).toBeNull();
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('impossibile risolvere il brand per vin="VIN456"'));
+    });
+  });
 });
+

@@ -7,7 +7,7 @@ jest.mock('../../pkEper/WsIQPckEper', () => ({ WsIQPckEper: jest.fn() }));
 jest.mock('../../pkDocsoa/DocSOARestClient', () => ({ DocSOARestClient: jest.fn() }));
 jest.mock('../../pkMenupricing/MenuPricingSoapClient', () => ({ MenuPricingSoapClient: jest.fn() }));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
+jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
 // dbManager (usato da getPkList per risolvere pkwstouse da HQ_PKCONFIG via
 // dbManager.getPkwstouse(pool, { codmarket, codbrand })), stesso pattern dei
 // mock sopra: PkManager.js lo richiede con path.resolve(__dirname, '../dbManager/...').
@@ -21,7 +21,7 @@ const { WsIQPckEper } = require('../../pkEper/WsIQPckEper');
 const { DocSOARestClient } = require('../../pkDocsoa/DocSOARestClient');
 const { MenuPricingSoapClient } = require('../../pkMenupricing/MenuPricingSoapClient');
 const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry } = require('../../dms/dmsService');
+const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
 const { getPool } = require('../../dbManager/db');
 const { getPkwstouse } = require('../../dbManager/PkConfigRepository');
 const { getConfigPackages: getConfigPackagesFromDb } = require('../../dbManager/ConfigPackagesRepository');
@@ -65,6 +65,12 @@ describe('PkManager', () => {
     getConfigPackagesFromDb.mockImplementation(async (pool, { pkwstouse }) => (
       STATIC_CONFIG_PACKAGES[(pkwstouse ?? '').toLowerCase()] ?? {}
     ));
+    // Di default si comporta come il vero dms/dmsService.js
+    // ::resolveDynamicSenderFields quando la risoluzione automatica (session/
+    // v360) non produce nulla: ritorna semplicemente gli overrides derivati
+    // da wsConfig (comportamento storico dei test già esistenti, che non
+    // passano username/vin).
+    resolveDynamicSenderFields.mockImplementation((_identifiers, overrides) => Promise.resolve({ ...overrides }));
   });
 
   afterEach(() => {
@@ -1036,6 +1042,55 @@ describe('PkManager', () => {
       expect(body.sender.physicalSiteId).toBe('SITE001');
       expect(body.sender.dealerNumberIdSource).toBe('MP-DEALER');
     });
+
+    test('propagates username/vin to resolveDynamicSenderFields and sets serviceId when username is provided', async () => {
+      const manager = new PkManager({
+        docsoa: { codbrand: 'FT', codePdv: 'SITE001' },
+        menupricing: { dealerIdentificationCode: 'MP-DEALER' },
+      });
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123', '1000', '0062230.d001');
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: '0062230.d001', vin: 'VIN123' },
+        expect.objectContaining({ mainSincom: 'MP-DEALER', market: '1000', brand: 'FT' }),
+      );
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.sender.serviceId).toBe('0062230.d001');
+    });
+
+    test('resolves mainSincom/market/brand/language/dealerCountryCode automatically when wsConfig does not provide them', async () => {
+      const manager = new PkManager();
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+      resolveDynamicSenderFields.mockResolvedValue({
+        mainSincom: '0062230',
+        market: '10102',
+        brand: 'FT',
+        language: 'it',
+        dealerCountryCode: 'IT',
+      });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123', undefined, '0062230.d001');
+
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.sender).toEqual({
+        dealerNumberId: '0062230',
+        dealerNumberIdSource: '0062230',
+        dealerCountryCode: 'IT',
+        languageCode: 'it',
+        physicalSiteId: undefined,
+        brand: 'FT',
+        market: '10102',
+        serviceId: '0062230.d001',
+      });
+    });
   });
 
   // ── getPkList ──────────────────────────────────────────────────────────────
@@ -1092,7 +1147,7 @@ describe('PkManager', () => {
       const result = await manager.getPkList('eper', 'DOC1', 'CUST1', 'VIN123', '1000');
 
       expect(manager.getValidPackagesDetail).toHaveBeenCalledWith('1000', 'eper', 'VIN123');
-      expect(manager.getPriceAndAvailability).toHaveBeenCalledWith('DOC1', 'CUST1', 'VIN123', '1000');
+      expect(manager.getPriceAndAvailability).toHaveBeenCalledWith('DOC1', 'CUST1', 'VIN123', '1000', undefined);
 
       const [pkDetail] = result;
       expect(pkDetail.listaRicambi[0]).toMatchObject({ COD: 'SP1', AV_LOCAL: 3, PRICE: 12.5, SCONTO: 10 });

@@ -8,12 +8,12 @@ jest.mock('../FavoriteRepository', () => ({
   toggleFavorite: jest.fn(),
 }));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn() }));
+jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
 
 const { getPool } = require('../db');
 const { listFavorites, toggleFavorite } = require('../FavoriteRepository');
 const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry } = require('../../dms/dmsService');
+const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
 const { handler } = require('../index');
 
 const FAKE_POOL = { query: jest.fn() };
@@ -31,6 +31,11 @@ describe('pkfavorite index.handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     getPool.mockResolvedValue(FAKE_POOL);
+    // Nessuna risoluzione automatica di default: i singoli test che vogliono
+    // verificarla la sovrascrivono esplicitamente. Di default si comporta
+    // come il vero dms/dmsService.js::resolveDynamicSenderFields quando la
+    // risoluzione non produce nulla: ritorna semplicemente gli overrides.
+    resolveDynamicSenderFields.mockImplementation((_identifiers, overrides) => Promise.resolve({ ...overrides }));
   });
 
   it('returns 401 when authorizer.sub is missing (requestContext present)', async () => {
@@ -81,10 +86,15 @@ describe('pkfavorite index.handler', () => {
     expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', {
       PartsInquiryHeader: { MessageType: 'LFP', VehicleID: 'VF3CABHW6GT204366' },
       package: 'FORFAIT',
-      // Nessun dato di sessione (mainSincom/market/brand/...) in query: il
-      // Sender dinamico contiene solo serviceId (username da authorizer.sub).
+      // Nessun dato di sessione (mainSincom/market/brand/...) in query, e
+      // resolveDynamicSenderFields (mockata) non risolve nulla: il Sender
+      // dinamico contiene solo serviceId (username da authorizer.sub).
       sender: { serviceId: '0062230.d001' },
     });
+    expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+      { username: '0062230.d001', vin: 'VF3CABHW6GT204366' },
+      expect.anything(),
+    );
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body);
     expect(parsed).toEqual({
@@ -188,6 +198,99 @@ describe('pkfavorite index.handler', () => {
 
     expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
       sender: expect.objectContaining({ market: '10102', brand: 'AP', dealerCountryCode: 'FR' }),
+    }));
+  });
+
+  it('GET: nessun parametro dal FE — risolve automaticamente mainSincom/market/brand/language/dealerCountryCode tramite dms/dmsService.js::resolveDynamicSenderFields, usando solo lo username autenticato e il vin', async () => {
+    // Il caso reale: il FE passa solo vin (nessun mainSincom/market/brand/
+    // language/dealerCountryCode in query). Il Sender dinamico viene quindi
+    // costruito interamente a partire da username+vin, tramite
+    // dms/dmsService.js::resolveDynamicSenderFields (session + v360).
+    listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
+    getBearerToken.mockResolvedValue('fake-bearer-token');
+    postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
+    resolveDynamicSenderFields.mockResolvedValue({
+      mainSincom: '0062230',
+      market: '10102',
+      brand: 'FT',
+      language: 'it',
+      dealerCountryCode: 'IT',
+    });
+
+    const event = apiGwEvent({
+      method: 'GET',
+      authorizerSub: '0062230.d001',
+      query: { vin: 'VF3CABHW6GT204366' },
+    });
+
+    await handler(event);
+
+    expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+      { username: '0062230.d001', vin: 'VF3CABHW6GT204366' },
+      expect.anything(),
+    );
+    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+      sender: {
+        dealerNumberId: '0062230',
+        serviceId: '0062230.d001',
+        languageCode: 'it',
+        dealerCountryCode: 'IT',
+        brand: 'FT',
+        market: '10102',
+      },
+    }));
+  });
+
+  it('GET: i parametri espliciti in query hanno priorità sulla risoluzione automatica', async () => {
+    listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
+    getBearerToken.mockResolvedValue('fake-bearer-token');
+    postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
+    // Simula il comportamento reale di resolveDynamicSenderFields: gli
+    // override espliciti (query) vincono sempre sulla risoluzione automatica.
+    resolveDynamicSenderFields.mockImplementation((_identifiers, overrides) => Promise.resolve({
+      mainSincom: overrides.mainSincom || '9999999',
+      market: overrides.market || '99999',
+      brand: overrides.brand || 'XX',
+      language: overrides.language || 'en',
+      dealerCountryCode: overrides.dealerCountryCode || 'GB',
+    }));
+
+    const event = apiGwEvent({
+      method: 'GET',
+      authorizerSub: '0062230.d001',
+      query: { vin: 'VF3CABHW6GT204366', mainSincom: '1234567', brand: 'AP' },
+    });
+
+    await handler(event);
+
+    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+      sender: expect.objectContaining({
+        dealerNumberId: '1234567', // esplicito, non sovrascritto dalla risoluzione automatica
+        brand: 'AP', // esplicito, non sovrascritto dalla risoluzione automatica
+        market: '99999', // assente in query, risolto automaticamente
+        languageCode: 'en', // assente in query, risolto automaticamente
+        dealerCountryCode: 'GB', // assente in query, risolto automaticamente
+      }),
+    }));
+  });
+
+  it('GET: se la risoluzione automatica fallisce, il Sender ricade sui soli campi già disponibili (nessun errore propagato)', async () => {
+    listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
+    getBearerToken.mockResolvedValue('fake-bearer-token');
+    postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
+    resolveDynamicSenderFields.mockResolvedValue({}); // best-effort: es. myPeople/v360 irraggiungibili
+
+    const event = apiGwEvent({
+      method: 'GET',
+      authorizerSub: '0062230.d001',
+      query: { vin: 'VF3CABHW6GT204366' },
+    });
+
+    const res = await handler(event);
+
+    expect(res.statusCode).toBe(200);
+    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+      sender: { serviceId: '0062230.d001' },
     }));
   });
 

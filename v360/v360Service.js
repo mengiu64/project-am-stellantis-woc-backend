@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
@@ -188,4 +190,91 @@ async function getDetails(bearerToken, params = {}) {
   return result;
 }
 
-module.exports = { otaCompatibility, getDetails };
+/** Path del file di cache /tmp per il getdetails di un dato VIN. */
+function tmpFilePathForVin(vin) {
+  return path.join('/tmp', `v360-getdetails-${vin}.json`);
+}
+
+/**
+ * Persiste la risposta di getdetails in /tmp/v360-getdetails-<vin>.json, così
+ * da poter essere riletta (da questa stessa lambda, azione "getdetails", o da
+ * un chiamante in-process come jobcard/pkFavorite/pkManager che bundlano
+ * v360/ come cartella sorella — v. dms/dmsService.js
+ * ::resolveDynamicSenderFields) senza rifare la chiamata ad ASV360. Un
+ * eventuale errore di scrittura non deve far fallire la richiesta: viene
+ * solo loggato come warning (stesso pattern di
+ * jobcard/jobCardService.js::saveJobCardDetailsToTmp).
+ */
+function saveGetDetailsToTmp(vin, body) {
+  const filePath = tmpFilePathForVin(vin);
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(body), 'utf8');
+    console.log(`[v360] getdetails salvato in ${filePath}`);
+  } catch (err) {
+    console.warn(`[v360] impossibile salvare getdetails in ${filePath}: ${err.message}`);
+  }
+  return body;
+}
+
+/**
+ * Come getDetails, ma legge prima /tmp/v360-getdetails-<vin>.json: se
+ * presente (salvato da una precedente chiamata riuscita per lo stesso VIN
+ * nella stessa istanza Lambda "warm"), lo restituisce senza richiamare
+ * ASV360; altrimenti chiama getDetails e salva la risposta nel file per le
+ * richieste successive. Usata sia dall'azione "getdetails" di questa stessa
+ * lambda (index.js), sia da getCachedBrand() (chiamata dai chiamanti esterni
+ * per il Sender dinamico DMS).
+ *
+ * @param {string} bearerToken
+ * @param {object} params - stessi parametri di getDetails (vin obbligatorio)
+ * @returns {Promise<object>} risposta di getdetails (da cache o "live")
+ */
+async function getDetailsWithCache(bearerToken, params = {}) {
+  const { vin } = params;
+  if (!vin) {
+    throw new Error('[v360] vin is required for getdetails');
+  }
+
+  const filePath = tmpFilePathForVin(vin);
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    console.log(`[v360] getdetails letto da cache ${filePath}`);
+    return JSON.parse(raw);
+  } catch (_) {
+    // cache assente/non leggibile: richiamo il servizio reale
+  }
+
+  const result = await getDetails(bearerToken, params);
+  return saveGetDetailsToTmp(vin, result);
+}
+
+/**
+ * Risolve (best-effort) il codice brand del veicolo (data.brandCode) dato il
+ * VIN, tramite getDetailsWithCache (cache /tmp per-vin). Usata dai chiamanti
+ * che costruiscono il Sender dinamico dell'inquiry DMS (jobcard, pkFavorite,
+ * pkManager — v. dms/dmsService.js::resolveDynamicSenderFields) per popolare
+ * il campo `brand` senza doverlo ricevere dal FE: il FE passa solo il VIN
+ * (già un dato "di dominio" della richiesta), non un brand esplicito.
+ *
+ * Interamente best-effort: se il vin è assente, se occorre un ****** e
+ * PingFederate/ASV360 non rispondono, o se la risposta non contiene
+ * data.brandCode, ritorna null — non blocca mai il chiamante (il Sender
+ * resta senza brand, esattamente come prima di questa modifica).
+ *
+ * @param {string} vin
+ * @returns {Promise<string|null>}
+ */
+async function getCachedBrand(vin) {
+  if (!vin) return null;
+  try {
+    const { getBearerToken } = require(path.resolve(__dirname, './authService'));
+    const token = await getBearerToken();
+    const result = await getDetailsWithCache(token, { vin });
+    return result?.data?.brandCode ?? null;
+  } catch (err) {
+    console.warn(`[v360] impossibile risolvere il brand per vin="${vin}": ${err.message}`);
+    return null;
+  }
+}
+
+module.exports = { otaCompatibility, getDetails, getDetailsWithCache, getCachedBrand };

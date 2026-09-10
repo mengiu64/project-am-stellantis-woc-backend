@@ -181,7 +181,7 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 | `PartsInquiryHeader.CustomerIdDms` | ❌ | Customer ID in DMS. Like `DocumentID`, content is optional: if missing/`null`/`undefined`, it's sent as `null` (key always present) |
 | `PartsInquiryHeader.VehicleID` | ✅ | Vehicle VIN |
 | `ApplicationArea` | ✅ | Sender, timestamp and BODID (UUID). If omitted, it's built internally by `buildApplicationArea()` using `config.sender` (static env defaults) overridden per-request by `sender` (see below), if provided |
-| `sender` | ❌ | Shortcut: subset of `config.sender` fields (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`, plus `market` — see note below) to override for this request, so `ApplicationArea.Sender` reflects the caller's real dealer/brand/market (`jobcard`/`pkManager`/`pkFavorite` — see the respective sections) instead of only the static env defaults. Ignored when `ApplicationArea` is already provided. Not sent as-is to the DML |
+| `sender` | ❌ | Shortcut: subset of `config.sender` fields (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`, plus `market` — see note below) to override for this request, so `ApplicationArea.Sender` reflects the caller's real dealer/brand/market (`jobcard`/`pkManager`/`pkFavorite` — see the respective sections), resolved **automatically and never supplied by the frontend** (see the "Automatic resolution" note below), instead of only the static env defaults. Ignored when `ApplicationArea` is already provided. Not sent as-is to the DML |
 | `UpSelling.Packages` | ❌ | Used for `LFP` |
 | `WorkLines` | ❌ | Used for `WL` |
 | `SpareParts.PartsItem` | ❌ | Used for `MP` |
@@ -207,6 +207,45 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > `Metadata: BuildMethod: makefile`, see `Makefile`) and the `DBMANAGER_DB_*`
 > environment variables (same Aurora "wiadvisor" as
 > `PkManagerFunction`/`SessionFunction`).
+>
+> **Automatic resolution of `dealerNumberId`/`market`/`brand`/language/country
+> (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
+> `dealerCountryCode` and `brand` **must never be supplied by the frontend**
+> (none of the callers treat them as "trusted" FE-supplied data any more): they
+> are resolved automatically, with the same criteria for `jobcard`/
+> `pkManager`/`pkFavorite`, by
+> `dms/dmsService.js::resolveDynamicSenderFields({ username, vin }, overrides)`,
+> called by each `buildDmsSender`/`_buildDmsSender` BEFORE `postDmsInquiry`:
+> - `mainSincom`/`market`/`language`/`dealerCountryCode` ← `username`
+>   (`event.requestContext.authorizer.sub`), via
+>   `session/src/sessionContextCache.js::getCachedSessionContext` — the same
+>   myPeople resolution as the `session` lambda, with a best-effort cache at
+>   `/tmp/session-context-<username>.json`;
+> - `brand` ← the current request's `vin`, via
+>   `v360/v360Service.js::getCachedBrand` (the `data.brandCode` field of the
+>   v360 `getdetails` response, with a best-effort cache at
+>   `/tmp/v360-getdetails-<vin>.json`) — the **vehicle's** brand, not the
+>   dealer/session default (a multi-brand dealer may service a vehicle of a
+>   different brand than its own).
+>
+> Any value already known to the caller (`overrides`, e.g. `pkManager`'s
+> `this.wsConfig`) always takes priority over the auto-resolved values: the
+> function only fills in the fields that are missing. It is entirely
+> **best-effort** (try/catch + `console.warn`, never an exception that blocks
+> building the Sender): if `username`/`vin` are missing, or session/myPeople/
+> v360 aren't reachable, the unresolved fields simply stay absent and
+> `config.sender`'s static defaults apply for those fields. Because of this,
+> besides `dbManager/`, every Lambda that bundles `dms/` in-process
+> (`JobCardFunction`, `PkManagerFunction`, `PkFavoriteFunction`) must also
+> bundle `session/` (+ `myPeople/` and `dmlConfigSync/`, which `session`
+> depends on) and `v360/` as sibling folders (see `Makefile`), and declare the
+> same `MYPEOPLE_*`/`DMLCONFIGSYNC_DB_*`/`V360_PING_*`/`ASV_*`/
+> `CONFIG_BUCKET_NAME` variables already used by `SessionFunction`/
+> `V360Function` in `template.yaml`. The `dms` lambda itself **never calls**
+> `resolveDynamicSenderFields` from its own handler: it stays "lightweight"
+> (it doesn't bundle `session`/`myPeople`/`dmlConfigSync`/`v360`), even though
+> the function lives in this file — it's meant to be called by `postDmsInquiry`
+> callers.
 
 #### CLI usage
 
@@ -281,30 +320,38 @@ price and availability, following the same pattern as
 `pkManager/PkManager.js::getPriceAndAvailability` and `pkFavorite/index.js`
 (see [dms](#dms) → `postDmsInquiry`). The `dml` action is always called
 **after** the caller has already entered the repair order detail, so it
-already has both session data and the freshly-retrieved `jobCardDetail` — no
-dedicated cache is needed: `jobCardService.js::buildDmsSender()` builds the
-`sender` (override of `ApplicationArea.Sender`, see the `postDmsInquiry` table
-in [dms](#dms)) with a pure field mapping (**no `dbManager` access here**: the
-`woc.ang_snowflakes` lookup for `physicalSiteId`/`dealerNumberIdSource` is now
-centralized in `dms/dmsService.js::buildApplicationArea`, see the "Centralized
-dynamic Sender" note in the [dms](#dms) section — the same mechanism is also
-shared by `pkManager`/`pkFavorite`):
+already has both session data and the freshly-retrieved `jobCardDetail`. The
+**frontend does not (and must not) supply mainSincom/market/brand/language/
+country**: `jobCardService.js::buildDmsSender(jobCardDetail, sessionContext)`
+extracts only the VIN from
+`jobCardDetail.vehicleInfo.identification.vin` and delegates the dynamic
+resolution of everything else to
+`dms/dmsService.js::resolveDynamicSenderFields({ username, vin }, sessionContext)`
+— the SAME centralized mechanism used by `pkManager`/`pkFavorite` too (see the
+"Automatic resolution" note in the [dms](#dms) section):
 
-- `dealerNumberId` ← `mainSincom` (session MAINSINCOM)
+- `dealerNumberId` ← `resolved.mainSincom` (from `sessionContext.mainSincom` if already known, otherwise resolved from `username` via `session/src/sessionContextCache.js`)
 - `serviceId` ← `username` (resolved from `event.requestContext.authorizer.sub`, falling back to `body.username` only when there's no `requestContext.authorizer` — local/CLI use)
-- `languageCode` / `dealerCountryCode` ← session data already available (language/`marketIso`)
-- `brand` ← `jobCardDetail.roInfo.stellantisBrand`/`roInfo.brand`
-- `market` ← session data (only a lookup key on the `dms` side, never an actual `Sender` field)
-- `physicalSiteId`/`dealerNumberIdSource`/`componentId`/`currencyId` stay the static env defaults (`dms/config.js`), unless `dms` resolves them dynamically (see above)
+- `languageCode` / `dealerCountryCode` ← `resolved.language`/`resolved.dealerCountryCode` (same, from session if not already known)
+- `brand` ← `resolved.brand` (from `sessionContext.brand` if already known, otherwise resolved from the VIN via `v360/v360Service.js::getCachedBrand` — the vehicle's brand, not the dealer's)
+- `market` ← `resolved.market` (only a lookup key on the `dms` side, never an actual `Sender` field)
+- `physicalSiteId`/`dealerNumberIdSource`/`componentId`/`currencyId` stay the static env defaults (`dms/config.js`), unless `dms` resolves them dynamically (see `buildApplicationArea` above)
 
-`JobCardFunction` still requires, in addition to
-`../dms/authService`/`../dms/dmsService` (already present), also the
-`dbManager/` source (built via `Metadata: BuildMethod: makefile`, see
-`Makefile`) and the same `DBMANAGER_DB_*` variables used by
-`PkManagerFunction`/`SessionFunction` (same `wiadvisor` Aurora) — not because
-`jobCardService.js` accesses `dbManager` directly (it no longer does), but
-because the `dms/` code is bundled **in-process** (see Makefile) and
-`buildApplicationArea` needs it for the centralized lookup.
+Resolution is entirely **best-effort**: if `sessionContext`/`vin` are missing
+or session/myPeople/v360 aren't reachable, the unresolved fields simply stay
+absent from the `sender` — never an exception that blocks
+`getCartPriceAndAvailability`. `JobCardFunction` therefore requires, in
+addition to `../dms/authService`/`../dms/dmsService`/`../dbManager` (already
+present for `buildApplicationArea`'s `physicalSiteId`/`dealerNumberIdSource`
+lookup), also the `../session` source (+ `../myPeople` and
+`../dmlConfigSync`, which `session` depends on) and `../v360` (built via
+`Metadata: BuildMethod: makefile`, see `Makefile`), with the same
+`MYPEOPLE_*`/`DMLCONFIGSYNC_DB_*`/`V360_PING_*`/`ASV_*`/`CONFIG_BUCKET_NAME`
+variables already used by `SessionFunction`/`V360Function` in
+`template.yaml` — not because `jobCardService.js` accesses these folders
+directly, but because
+`dms/dmsService.js::resolveDynamicSenderFields`/`buildApplicationArea`,
+bundled **in-process**, need them for the centralized resolution.
 
 #### CLI usage
 
@@ -480,7 +527,30 @@ Orchestrator Lambda that manages **package configuration and validation** across
 
 Every package detail also reports `isFixedPrice`/`packageType`: always `"0"`/`"QE"` for `eper`; for `menupricing`/`docsoa`, `"1"`/`"FP"` if the package is fixed-price (promotional "Lex" for menupricing, forfait `ibxDetailForfaitService` for docsoa), otherwise `"0"`/`"QE"`. For `docsoa`, if the forfait isn't found, a fallback to `ibxDetailtpService` (tempario) is attempted. See `pkManager/README.md` for the full details.
 
-> **Dynamic Sender (`getPriceAndAvailability`)**: `PkManager.js::_buildDmsSender()` derives the DML inquiry Sender (see the `sender` table in [dms](#dms) → `postDmsInquiry`) from `this.wsConfig` (eper/docsoa/menupricing): `dealerNumberId` from `menupricing.dealerIdentificationCode`/`eper.coddealer`/`docsoa.codePdv`, `dealerCountryCode`/`languageCode` from menupricing/docsoa, `brand` from `docsoa.codbrand`, `physicalSiteId` from `docsoa.codePdv` (static default), `market` passed through as-is (same parameter as `getPkList`/`getPriceAndAvailability`). `_buildDmsSender()` is **synchronous and never touches `dbManager`**: the dynamic `physicalSiteId`/`dealerNumberIdSource` lookup on `woc.ang_snowflakes` is centralized in `dms/dmsService.js::buildApplicationArea` (see the "Centralized dynamic Sender" note in the [dms](#dms) section, the same mechanism also shared by `jobcard`/`pkFavorite`): if the passed `sender` contains `dealerNumberId`+`market`+`brand`, `dms` performs the lookup and overrides the "synthetic" values (`docsoa.codePdv` / the same `dealerNumberId`) with the real ones.
+> **Dynamic Sender (`getPriceAndAvailability`)**: `PkManager.js::_buildDmsSender(market,
+> vehicleId, username)` derives the DML inquiry Sender (see the `sender` table
+> in [dms](#dms) → `postDmsInquiry`) from `this.wsConfig` (eper/docsoa/
+> menupricing) as **explicit** overrides (`mainSincom` from
+> `menupricing.dealerIdentificationCode`/`eper.coddealer`/`docsoa.codePdv`,
+> `dealerCountryCode`/`language` from menupricing/docsoa, `brand` from
+> `docsoa.codbrand`), then delegates to
+> `dms/dmsService.js::resolveDynamicSenderFields({ username, vin: vehicleId }, overrides)`
+> — the SAME centralized mechanism used by `jobcard`/`pkFavorite` too (see the
+> "Automatic resolution" note in the [dms](#dms) section): only the fields
+> `wsConfig` doesn't provide are resolved automatically from `username`
+> (session/myPeople) and `vehicleId` (brand via v360). `physicalSiteId` stays
+> `docsoa.codePdv` (static default); `market` is passed through as-is (same
+> parameter as `getPkList`/`getPriceAndAvailability`, both now extended with a
+> `username` parameter propagated to `_buildDmsSender`). `_buildDmsSender()` is
+> **asynchronous and never touches `dbManager` directly**: the dynamic
+> `physicalSiteId`/`dealerNumberIdSource` lookup on `woc.ang_snowflakes` stays
+> centralized in `dms/dmsService.js::buildApplicationArea` (see the
+> "Centralized dynamic Sender" note in the [dms](#dms) section): if the passed
+> `sender` contains `dealerNumberId`+`market`+`brand`, `dms` performs the
+> lookup and overrides the "synthetic" values (`docsoa.codePdv` / the same
+> `dealerNumberId`) with the real ones. `username` is resolved by
+> `pkManager/index.js::resolveUsername(event, body)` (same authorizer.sub/
+> `body.username` fallback pattern as `jobcard`/`pkFavorite`).
 
 > ⚠️ **Note**: `getValidPackages`/`getValidPackagesDetail` internally call methods (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) not yet implemented on the `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient` clients. To be completed before using these two actions in production.
 

@@ -49,15 +49,16 @@ function loadDmsClient() {
 
 /**
  * Costruisce il Sender dinamico (ApplicationArea.Sender) delle inquiry DMS
- * (MessageType LFP) usate per arricchire i preferiti, con lo stesso
- * meccanismo/stessi criteri già applicati in jobcard/jobCardService.js
+ * (MessageType LFP) usate per arricchire i preferiti, tramite lo STESSO
+ * meccanismo centralizzato usato anche da jobcard/jobCardService.js
  * ::buildDmsSender e pkManager/PkManager.js::_buildDmsSender:
- *  - dealerNumberId          <- sessionContext.mainSincom
+ * dms/dmsService.js::resolveDynamicSenderFields({ username, vin }, overrides).
+ *  - dealerNumberId          <- sessionContext.mainSincom, o (fallback automatico) session.sincom
  *  - serviceId               <- username (già risolto da authorizer.sub)
- *  - languageCode            <- sessionContext.language
- *  - dealerCountryCode       <- sessionContext.dealerCountryCode
- *  - brand                   <- sessionContext.brand
- *  - market                  <- sessionContext.market (solo chiave di lookup
+ *  - languageCode            <- sessionContext.language, o (fallback automatico) session.language
+ *  - dealerCountryCode       <- sessionContext.dealerCountryCode, o (fallback automatico) session.marketIso
+ *  - brand                   <- sessionContext.brand, o (fallback automatico) v360 getdetails.data.brandCode per il vin
+ *  - market                  <- sessionContext.market, o (fallback automatico) session.codmarket (solo chiave di lookup
  *                               woc.ang_snowflakes lato dms, non un campo Sender)
  *
  * componentId/currencyId NON vengono sovrascritti: restano i default statici
@@ -67,14 +68,21 @@ function loadDmsClient() {
  * brand tramite questo stesso sender — pkFavorite non accede direttamente a
  * dbManager.
  *
- * A differenza di jobcard (dove mainSincom/market/language/dealerCountryCode
- * arrivano dalla sessione già caricata per il repair order) e di pkManager
- * (dove arrivano da wsConfig), pkFavorite non ha una repair order/wsConfig in
- * corso: questi dati, se disponibili lato FE (sessione dealer già nota),
- * vanno quindi passati come parametri della richiesta GET (query string) —
- * vedi resolveSessionContext(). Se assenti, il Sender ricade sui soli campi
- * disponibili (serviceId) più i default statici di dms/config.js, esattamente
- * come già avveniva prima di questa modifica.
+ * Il **frontend non passa (e non deve passare) mainSincom/market/brand/
+ * lingua/country**: resolveSessionContext(body) resta un override
+ * opzionale/di test (query string), ma nel flusso reale questi campi sono
+ * assenti — vengono quindi risolti automaticamente da
+ * resolveDynamicSenderFields usando SOLO lo `username` già autenticato
+ * (mainSincom/market/language/dealerCountryCode, tramite
+ * session/src/sessionContextCache.js con cache best-effort su
+ * /tmp/session-context-<username>.json — utile perché lo stesso username può
+ * richiedere l'arricchimento DML di più pacchetti preferiti nella stessa
+ * invocazione/istanza Lambda "warm") e il `vin` della richiesta corrente
+ * (brand, tramite v360/v360Service.js::getCachedBrand, cache best-effort su
+ * /tmp/v360-getdetails-<vin>.json). Se la risoluzione fallisce (username/vin
+ * assenti, myPeople/ASV360 irraggiungibili/...) i soli campi mancanti
+ * restano non valorizzati — mai un'eccezione che blocchi la GET dei
+ * preferiti.
  *
  * @param {object} [sessionContext]
  * @param {string} [sessionContext.mainSincom]
@@ -83,10 +91,15 @@ function loadDmsClient() {
  * @param {string} [sessionContext.language]
  * @param {string} [sessionContext.dealerCountryCode]
  * @param {string} [username]
- * @returns {object} sender override da passare a postDmsInquiry(token, { sender, ... })
+ * @param {string} [vin] - VIN della richiesta corrente, usato per risolvere automaticamente il brand via v360
+ * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
  */
-function buildDmsSender(sessionContext = {}, username) {
-  const { mainSincom, market, brand, language, dealerCountryCode } = sessionContext;
+async function buildDmsSender(sessionContext = {}, username, vin) {
+  const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
+  const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
+    { username, vin },
+    sessionContext,
+  );
 
   const sender = {};
   if (mainSincom) sender.dealerNumberId = mainSincom;
@@ -98,6 +111,7 @@ function buildDmsSender(sessionContext = {}, username) {
 
   return sender;
 }
+
 
 /**
  * Per ciascun codice pacchetto preferito, interroga il gateway DML
@@ -174,11 +188,12 @@ function resolveUsername(event, body) {
 }
 
 /**
- * Estrae i dati di sessione (dealer/mercato/lingua) necessari per il Sender
- * dinamico dell'inquiry DMS (vedi buildDmsSender()), passati dal FE come
- * parametri della richiesta GET (query string) — pkFavorite non ha una
- * repair order/sessione già caricata da cui derivarli, a differenza di
- * jobcard/pkManager.
+ * Estrae eventuali override espliciti di dealer/mercato/lingua per il Sender
+ * dinamico dell'inquiry DMS (vedi buildDmsSender()), dalla query string della
+ * richiesta GET. Il frontend reale NON invia questi parametri: sono un
+ * meccanismo di override opzionale (utile per test/debug) — buildDmsSender()
+ * risolve automaticamente i campi assenti da session/src/sessionContextCache.js
+ * usando solo lo username già autenticato.
  */
 function resolveSessionContext(body) {
   return {
@@ -229,7 +244,7 @@ exports.handler = async (event = {}) => {
         return response(400, { success: false, message: '"vin" è obbligatorio' });
       }
       const favoriteRows = await listFavorites(pool, { username });
-      const sender = buildDmsSender(resolveSessionContext(body), username);
+      const sender = await buildDmsSender(resolveSessionContext(body), username, vin);
       const favorites = await enrichFavoritesWithDms(vin, favoriteRows.map((row) => row.packageCode), sender);
       return response(200, { success: true, username, vin, favorites });
     }

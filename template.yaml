@@ -440,16 +440,25 @@ Resources:
       # proprio dbManager — nessun nuovo parametro CFN necessario (il lookup
       # physicalSiteId/dealerNumberIdSource su woc.ang_snowflakes è centralizzato
       # in dms/dmsService.js, non in jobCardService.js::buildDmsSender).
+      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
+      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
+      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
+      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
+      # dmlConfigSync/v360 già usate da SessionFunction/V360Function.
       Layers:
         - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -480,6 +489,32 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
           DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
+          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
+          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
+          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
+          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
+          # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
+          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
+          # valori usati da V360Function.
+          V360_PING_CLIENT_ID:      !Ref V360PingClientId
+          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          ASV_CLIENT_ID:            !Ref AsvClientId
+          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -769,11 +804,18 @@ Resources:
       # dbManager (anch'esso imbarcato in-process via Makefile) richiede lo stesso
       # secret Aurora "wiadvisor_app" di pkDocsoa (DocsoaDbSecretId): nessun nuovo
       # parametro/permesso da aggiungere.
+      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
+      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
+      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
+      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
+      # dmlConfigSync/v360 già usate da SessionFunction/V360Function.
       Layers:
         - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
@@ -832,6 +874,32 @@ Resources:
           DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
+          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
+          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
+          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
+          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
+          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
+          # secret di DBMANAGER_DB_*/DOCSOA_DB_* (nessun nuovo parametro CFN necessario).
+          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
+          # valori usati da V360Function.
+          V360_PING_CLIENT_ID:      !Ref V360PingClientId
+          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          ASV_CLIENT_ID:            !Ref AsvClientId
+          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
 
   PkManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -991,16 +1059,25 @@ Resources:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkfavorite"
       CodeUri: ./
       Handler: pkFavorite/index.handler
+      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
+      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
+      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
+      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
+      # dmlConfigSync/v360 già usate da SessionFunction/V360Function.
       Layers:
         - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1031,6 +1108,32 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref PkFavoriteDbPort
           DBMANAGER_DB_NAME:      !Ref PkFavoriteDbName
           DBMANAGER_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
+          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
+          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
+          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
+          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
+          # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
+          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
+          # valori usati da V360Function.
+          V360_PING_CLIENT_ID:      !Ref V360PingClientId
+          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          ASV_CLIENT_ID:            !Ref AsvClientId
+          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
 
   PkFavoriteFunctionLogGroup:
     Type: AWS::Logs::LogGroup
