@@ -29,6 +29,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [moparDoc](#mopardoc)
    - [isStellantisBrand](#isstellantisbrand)   
    - [dmlConfigSync](#dmlconfigsync)
+   - [auroraAutoStart](#auroraautostart)
 3. [Installazione](#installazione)
 4. [Variabili d'ambiente](#variabili-dambiente)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -57,7 +58,8 @@ project-am-stellantis-woc-backend/
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
-└── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
+├── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
+└── auroraAutoStart/    # Lambda – Avvio automatico mattutino (EventBridge Schedule, solo stage) del cluster Aurora se spento dal tool Stellantis di startstop
 
 ```
 
@@ -876,6 +878,34 @@ node index.js sync
 
 ---
 
+### auroraAutoStart
+
+Lambda **schedulata** (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC nei giorni lavorativi lun-ven, vedi `template.yaml`) il cui unico scopo è **avviare automaticamente ogni mattina il cluster Aurora di stage se risulta spento**.
+
+**Contesto:** un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo repository) spegne ogni sera il cluster Aurora `rds-np-bsn0027990-${Environment}-aurora` per risparmio costi sull'ambiente non-prod (verificabile dal tag `stla_scheduler_action` applicato al cluster e dagli eventi RDS ~19:12 UTC), ma **non prevede alcun riavvio automatico al mattino** — confermato via CloudTrail: prima di questa Lambda, tutte le chiamate `StartDBCluster` storiche erano invocazioni manuali di un operatore.
+
+Ad ogni esecuzione:
+1. legge lo stato corrente del cluster (`rds:DescribeDBClusters`);
+2. se lo stato è `"stopped"`, invoca `rds:StartDBCluster`;
+3. se lo stato è qualsiasi altro valore (`available`, `starting`, `backing-up`, ...) non fa nulla — idempotente, sicuro da rieseguire anche se il cluster è già stato avviato manualmente prima dello scheduling.
+
+> **Nota:** deployata **solo per l'ambiente stage** (`Condition: IsStage` in `template.yaml`) — l'ambiente **dev** resta sempre acceso 24/7 (nessuno spegnimento automatico osservato) e **prod** non è gestito da questo scheduler. Nessun nuovo parametro CloudFormation: il nome del cluster è derivato con la stessa convenzione di naming già in uso (`rds-np-bsn0027990-${Environment}-aurora`).
+
+#### Funzioni principali
+
+| Funzione | Descrizione |
+|---|---|
+| `handler()` | Entry-point Lambda (trigger `Schedule`): legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` e chiama `startClusterIfStopped()` |
+| `startClusterIfStopped(dbClusterIdentifier, deps)` | Verifica lo stato del cluster e lo avvia solo se `"stopped"`; ritorna `{clusterIdentifier, previousStatus, action, message}`; dipendenze iniettabili via `deps` per i test |
+
+#### Utilizzo CLI
+
+```bash
+node index.js
+```
+
+---
+
 ## Installazione
 
 Ogni modulo è indipendente. Installare le dipendenze separatamente:
@@ -897,6 +927,8 @@ cd myPeople       && npm install
 cd pkFavorite     && npm install
 cd moparDoc       && npm install
 cd isStellantisBrand && npm install
+cd dmlConfigSync  && npm install
+cd auroraAutoStart && npm install
 ```
 
 ---
@@ -1099,6 +1131,17 @@ DMLCONFIGSYNC_DB_SSL=true                     # (opzionale) default true
 
 ---
 
+### auroraAutoStart
+
+```env
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AWS_REGION=eu-west-1                                                  # (opzionale in Lambda: già impostata automaticamente da AWS)
+```
+
+> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata automaticamente da `template.yaml` (`!Sub "rds-np-bsn0027990-${Environment}-aurora"`), nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
+
+---
+
 ## Unit Test & Coverage
 
 ### Framework
@@ -1138,7 +1181,8 @@ cd agendaSoa && npm run test:coverage
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
-| **Totale** | **53** | **658** | |
+| **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
+| **Totale** | **55** | **666** | |
 
 ### Copertura del codice
 
@@ -1160,6 +1204,7 @@ cd agendaSoa && npm run test:coverage
 | **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
 | **isStellantisBrand** | 100% ✅ | 97.87% ✅ | 100% ✅ | 100% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
+| **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 
@@ -1242,6 +1287,10 @@ cd agendaSoa && npm run test:coverage
 - **db** – creazione/cache del pool `pg` (variabili d'ambiente dirette vs lettura da Secrets Manager), `connectionTimeoutMillis` configurato
 - **DmlConfigRepository** – `listEnabledMarkets` (mercati attivi ordinati), `upsertDmlConfiguration` (validazione `country`/`language`, upsert con `ON CONFLICT`, default `[]` per array non validi), `getDmlConfiguration` (validazione parametri, riga trovata/assente, normalizzazione difensiva di colonne JSONB non-array)
 - **DmsSettingsRepository** – `listEnabledDealers` (combinazioni attive ordinate), `upsertDmsSettings` (validazione `country`/`brand`/`dealer`, scomposizione della risposta in colonne separate `success`/`data`, default `success:false`/`data:[]` per risposte assenti/fallite), `getDmsSettings` (validazione parametri, ricostruzione di `{success, data}` da riga trovata, `null` se combinazione mai vista, normalizzazione difensiva di `data` non-array), `registerDealer` (`INSERT ... ON CONFLICT DO NOTHING`, nessuna query se `country`/`brand`/`dealer` mancante)
+
+#### auroraAutoStart
+- **index (handler)** – legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` e delega a `startClusterIfStopped`; errore se la variabile non è impostata; propagazione dell'errore in caso di fallimento del servizio
+- **services/auroraClusterService (startClusterIfStopped)** – avvio (`rds:StartDBCluster`) solo quando lo stato corrente è `"stopped"`; nessuna azione (idempotente) per qualunque altro stato (`available`, `starting`, ...); errore se il cluster non viene trovato; dipendenze iniettabili (`rdsClient`) per i test, con copertura anche del ramo di default (istanziazione interna di `RDSClient`)
 
 ---
 

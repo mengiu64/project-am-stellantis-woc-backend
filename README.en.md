@@ -25,6 +25,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [session](#session)
    - [isStellantisBrand](#isstellantisbrand)
    - [dmlConfigSync](#dmlconfigsync)
+   - [auroraAutoStart](#auroraautostart)
 3. [Installation](#installation)
 4. [Environment variables](#environment-variables)
 5. [Unit Test & Coverage](#unit-test--coverage)
@@ -49,7 +50,8 @@ project-am-stellantis-woc-backend/
 ├── translations/       # Lambda – translation retrieval from S3
 ├── session/            # Lambda – session data (codmarket, oic, sincom, ...)
 ├── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
-└── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles + dms/settings per market/dealer -> Aurora cache, read by session
+├── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles + dms/settings per market/dealer -> Aurora cache, read by session
+└── auroraAutoStart/    # Lambda – weekday morning auto-start (EventBridge Schedule, stage only) of the Aurora cluster if stopped by the Stellantis startstop tool
 
 ```
 
@@ -579,6 +581,24 @@ node index.js sync
 
 ---
 
+### auroraAutoStart
+
+**Scheduled** Lambda (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC on weekdays, see `template.yaml`) whose sole purpose is to **automatically start the stage Aurora cluster every morning if it is stopped**.
+
+**Context:** a centralized Stellantis tool ("Stellantis startstop tool", external to this repository) stops the Aurora cluster `rds-np-bsn0027990-${Environment}-aurora` every evening for cost savings on the non-prod environment (visible via the `stla_scheduler_action` tag on the cluster and RDS events around 19:12 UTC), but does **not** provide any automatic morning restart — confirmed via CloudTrail: before this Lambda, every historical `StartDBCluster` call was a manual operator invocation.
+
+On each run: reads the cluster's current status (`rds:DescribeDBClusters`); if `"stopped"`, calls `rds:StartDBCluster`; for any other status (`available`, `starting`, `backing-up`, ...) it does nothing — idempotent, safe to re-run even if the cluster was already started manually before the schedule fires.
+
+> **Note:** deployed **only for the `stage` environment** (`Condition: IsStage` in `template.yaml`) — `dev` stays always on (no automatic shutdown observed) and `prod` is not managed by this scheduler. No new CloudFormation parameter: the cluster name follows the same existing naming convention (`rds-np-bsn0027990-${Environment}-aurora`).
+
+#### CLI usage
+
+```bash
+node index.js
+```
+
+---
+
 ## Installation
 
 Each module is independent. Install dependencies separately:
@@ -596,6 +616,8 @@ cd pkManager      && npm install
 cd translations   && npm install
 cd session        && npm install
 cd isStellantisBrand && npm install
+cd dmlConfigSync  && npm install
+cd auroraAutoStart && npm install
 ```
 
 ---
@@ -745,6 +767,17 @@ DMLCONFIGSYNC_DB_SSL=true                     # (optional) default true
 
 ---
 
+### auroraAutoStart
+
+```env
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
+AWS_REGION=eu-west-1                                                  # (optional in Lambda: already set automatically by AWS)
+```
+
+> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is automatically set by `template.yaml` (`!Sub "rds-np-bsn0027990-${Environment}-aurora"`), no DB secret/credential required (uses only the RDS management API via IAM, no database connection).
+
+---
+
 ## Unit Test & Coverage
 
 ### Framework
@@ -780,7 +813,8 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
-| **Total** | **42** | **483** | |
+| **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
+| **Total** | **44** | **491** | |
 
 ### Code coverage
 
@@ -798,6 +832,7 @@ cd agendaSoa && npm run test:coverage
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
+| **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 

@@ -244,6 +244,7 @@ Parameters:
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
+  IsStage: !Equals [!Ref Environment, stage]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
 
 # ── Globals ───────────────────────────────────────────────────────────────────
@@ -1089,6 +1090,62 @@ Resources:
     UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub "/aws/lambda/${DmlConfigSyncFunction}"
+      RetentionInDays: 30
+
+  # ── auroraAutoStart (riavvio automatico mattutino del cluster Aurora di stage) ──
+  #
+  # Un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo
+  # repository) spegne ogni sera il cluster Aurora "rds-np-bsn0027990-${Environment}-aurora"
+  # per risparmio costi (tag "stla_scheduler_action" applicato al cluster), ma NON
+  # prevede un riavvio automatico al mattino: verificato via CloudTrail (tutti gli
+  # StartDBCluster storici erano invocazioni manuali di un operatore). Questa Lambda,
+  # triggerata da EventBridge Schedule (Events.WeekdayMorningStart sotto), chiama
+  # rds:StartDBCluster SOLO se lo stato corrente del cluster è "stopped" (idempotente:
+  # nessun errore se già avviato manualmente prima dello scheduling).
+  # Deployata SOLO per l'ambiente stage (Condition: IsStage): l'ambiente dev resta
+  # sempre acceso (nessuno spegnimento automatico osservato), prod non è gestito da
+  # questo scheduler. Nessun nuovo parametro CloudFormation: il nome del cluster segue
+  # la stessa convenzione di naming già in uso ("rds-np-bsn0027990-${Environment}-aurora").
+  AuroraAutoStartFunction:
+    Type: AWS::Serverless::Function
+    Condition: IsStage
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-auroraautostart"
+      CodeUri: auroraAutoStart/
+      Timeout: 30
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - rds:DescribeDBClusters
+                - rds:StartDBCluster
+              Resource: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:rds-np-bsn0027990-${Environment}-aurora"
+      Environment:
+        Variables:
+          AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER: !Sub "rds-np-bsn0027990-${Environment}-aurora"
+      Events:
+        WeekdayMorningStart:
+          Type: Schedule
+          Properties:
+            # 06:00 UTC nei giorni lavorativi (lun-ven) = 08:00 CEST / 07:00 CET:
+            # con margine rispetto all'orario di lavoro EMEA (~08:00-09:00 locale),
+            # considerando anche i pochi minuti necessari ad Aurora per passare da
+            # "stopped" ad "available". Nessuna esecuzione nel weekend (il cluster
+            # viene comunque rispento la sera dal tool Stellantis se avviato per
+            # errore). Nota: EventBridge Schedule interpreta sempre l'orario in UTC,
+            # non in ora locale — regolabile senza toccare il codice.
+            Schedule: cron(0 6 ? * MON-FRI *)
+            Name: !Sub "sch-np-bsn0027990-${Environment}-auroraautostart-weekday-morning"
+            Description: Avvio automatico mattutino (lun-ven) del cluster Aurora di stage se spento
+            Enabled: true
+
+  AuroraAutoStartFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: IsStage
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AuroraAutoStartFunction}"
       RetentionInDays: 30
 
   # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
