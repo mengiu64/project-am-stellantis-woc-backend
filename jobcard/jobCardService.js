@@ -484,6 +484,60 @@ function saveJobCardDetailsToTmp(jobCardId, body) {
 }
 
 /**
+ * Costruisce il Sender dinamico (ApplicationArea.Sender) dell'inquiry DMS per
+ * getCartPriceAndAvailability, chiamata SEMPRE dopo che il chiamante e' gia'
+ * entrato nel dettaglio dell'ordine di riparazione — ha quindi gia' a
+ * disposizione sia i dati di sessione (session/src/repositories) sia il
+ * jobCardDetail appena recuperato/sanificato, senza bisogno di una cache
+ * dedicata: sessionContext viene passato dal chiamante (jobcard/index.js),
+ * il brand e' letto direttamente dal jobCardDetail.
+ *
+ * componentId e currencyId NON vengono sovrascritti qui: restano i valori
+ * statici configurati via env in dms/config.js (config.sender), come da
+ * indicazione esplicita — solo i campi realmente dipendenti dal dealer/
+ * mercato/utente della richiesta corrente vengono valorizzati:
+ *  - dealerNumberId          <- sessionContext.mainSincom (session.sincom/MAINSINCOM)
+ *  - serviceId               <- sessionContext.username (session.username/loginname)
+ *  - languageCode            <- sessionContext.language (session.language)
+ *  - dealerCountryCode       <- sessionContext.dealerCountryCode (session.marketIso)
+ *  - brand                   <- jobCardDetail.roInfo.stellantisBrand (fallback roInfo.brand)
+ *  - market                  <- sessionContext.market (solo chiave di lookup, non un campo Sender)
+ *
+ * physicalSiteId/dealerNumberIdSource NON vengono più risolti qui: il lookup
+ * su woc.ang_snowflakes (dbManager/AnagSnowflakesRepository.js
+ * ::getPhysicalSiteAndSincom) e' centralizzato in dms/dmsService.js
+ * ::buildApplicationArea(), che riceve dealerNumberId/market/brand tramite
+ * questo stesso sender e applica lo stesso identico meccanismo/criteri per
+ * qualunque chiamante (jobcard, pkManager, pkFavorite) — jobcard non accede
+ * più direttamente a dbManager.
+ *
+ * @param {object} jobCardDetail - usato solo per derivare il brand
+ *                                 (roInfo.stellantisBrand, fallback roInfo.brand)
+ * @param {object} [sessionContext] - dati di sessione gia' disponibili al chiamante
+ * @param {string} [sessionContext.mainSincom]       - session.sincom (MAINSINCOM)
+ * @param {string} [sessionContext.username]         - session.username (loginname)
+ * @param {string} [sessionContext.market]           - session.codmarket (solo per il lookup DB lato dms, non inviato al DML)
+ * @param {string} [sessionContext.language]         - session.language
+ * @param {string} [sessionContext.dealerCountryCode] - session.marketIso
+ * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
+ */
+async function buildDmsSender(jobCardDetail, sessionContext = {}) {
+  const { mainSincom, username, market, language, dealerCountryCode } = sessionContext;
+
+  const sender = {};
+  if (mainSincom) sender.dealerNumberId = mainSincom;
+  if (username) sender.serviceId = username;
+  if (language) sender.languageCode = language;
+  if (dealerCountryCode) sender.dealerCountryCode = dealerCountryCode;
+  if (market) sender.market = market;
+
+  const brand = jobCardDetail?.roInfo?.stellantisBrand ?? jobCardDetail?.roInfo?.brand ?? null;
+  if (brand) sender.brand = brand;
+
+  return sender;
+}
+
+/**
  * Interroga il gateway DML (dms/dmsService.js::postDmsInquiry, MessageType=WL)
  * per prezzo/disponibilita di ricambi e manodopera del jobCardDetail appena
  * recuperato/sanificato, sullo stesso modello di
@@ -498,9 +552,11 @@ function saveJobCardDetailsToTmp(jobCardId, body) {
  * @param {object} jobCardDetail - jobCardDetail (da jobCardDetails GET, dopo
  *                                 sanitizeJobCardDetails): roInfo, vehicleInfo,
  *                                 jobs[].partInfo[]/laborInfo[]
+ * @param {object} [sessionContext] - dati di sessione gia' disponibili al chiamante,
+ *                                 usati per costruire un Sender dinamico — v. buildDmsSender()
  * @returns {Promise<object>} risposta di postDmsInquiry (InquiryResponse)
  */
-async function getCartPriceAndAvailability(jobCardDetail) {
+async function getCartPriceAndAvailability(jobCardDetail, sessionContext = {}) {
   const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
   const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
 
@@ -543,6 +599,7 @@ async function getCartPriceAndAvailability(jobCardDetail) {
         })),
       },
     ],
+    sender: await buildDmsSender(jobCardDetail, sessionContext),
   };
 
   const token = await getBearerToken();
@@ -667,10 +724,13 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
  * al jobCardDetail tramite applyDataFromDml.
  * @param {object} jobCardDetail - jobCardDetail (stesso formato di
  *                                 sanitized.jobCardDetail in getJobCardDetails)
+ * @param {object} [sessionContext] - dati di sessione gia' disponibili al
+ *                                 chiamante, propagati a getCartPriceAndAvailability
+ *                                 per il Sender dinamico — v. buildDmsSender()
  * @returns {Promise<object>} il jobCardDetail arricchito con i dati DML
  */
-async function getDataFromDML(jobCardDetail) {
-  const dataFromDml = await getCartPriceAndAvailability(jobCardDetail);
+async function getDataFromDML(jobCardDetail, sessionContext) {
+  const dataFromDml = await getCartPriceAndAvailability(jobCardDetail, sessionContext);
   return applyDataFromDml(jobCardDetail, dataFromDml);
 }
 
@@ -693,9 +753,14 @@ async function getDataFromDML(jobCardDetail) {
  *                                     quando mancante. Se omesso e serve
  *                                     rigenerare, ne viene richiesto uno nuovo
  *                                     ad authService.getBearerToken().
+ * @param {object} [sessionContext] - dati di sessione gia' disponibili al
+ *                                 chiamante (username/mainSincom/market/
+ *                                 language/dealerCountryCode), propagati fino a
+ *                                 getCartPriceAndAvailability per il Sender
+ *                                 dinamico — v. buildDmsSender()
  * @returns {Promise<object>} il body letto da /tmp con jobCardDetail arricchito
  */
-async function getDataFromDMLFromTmp(jobCardId, bearerToken) {
+async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
     throw new Error('[jobCard] jobCardId is required');
   }
@@ -721,7 +786,7 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken) {
   const body = JSON.parse(raw);
   const jobCardDetail = body?.jobCardDetail ?? body;
 
-  await getDataFromDML(jobCardDetail);
+  await getDataFromDML(jobCardDetail, sessionContext);
 
   return body;
 }
@@ -814,4 +879,4 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp };
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender };

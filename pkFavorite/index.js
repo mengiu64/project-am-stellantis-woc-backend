@@ -48,6 +48,58 @@ function loadDmsClient() {
 }
 
 /**
+ * Costruisce il Sender dinamico (ApplicationArea.Sender) delle inquiry DMS
+ * (MessageType LFP) usate per arricchire i preferiti, con lo stesso
+ * meccanismo/stessi criteri già applicati in jobcard/jobCardService.js
+ * ::buildDmsSender e pkManager/PkManager.js::_buildDmsSender:
+ *  - dealerNumberId          <- sessionContext.mainSincom
+ *  - serviceId               <- username (già risolto da authorizer.sub)
+ *  - languageCode            <- sessionContext.language
+ *  - dealerCountryCode       <- sessionContext.dealerCountryCode
+ *  - brand                   <- sessionContext.brand
+ *  - market                  <- sessionContext.market (solo chiave di lookup
+ *                               woc.ang_snowflakes lato dms, non un campo Sender)
+ *
+ * componentId/currencyId NON vengono sovrascritti: restano i default statici
+ * di dms/config.js. physicalSiteId/dealerNumberIdSource NON vengono risolti
+ * qui: il lookup su woc.ang_snowflakes è centralizzato in
+ * dms/dmsService.js::buildApplicationArea, che riceve dealerNumberId/market/
+ * brand tramite questo stesso sender — pkFavorite non accede direttamente a
+ * dbManager.
+ *
+ * A differenza di jobcard (dove mainSincom/market/language/dealerCountryCode
+ * arrivano dalla sessione già caricata per il repair order) e di pkManager
+ * (dove arrivano da wsConfig), pkFavorite non ha una repair order/wsConfig in
+ * corso: questi dati, se disponibili lato FE (sessione dealer già nota),
+ * vanno quindi passati come parametri della richiesta GET (query string) —
+ * vedi resolveSessionContext(). Se assenti, il Sender ricade sui soli campi
+ * disponibili (serviceId) più i default statici di dms/config.js, esattamente
+ * come già avveniva prima di questa modifica.
+ *
+ * @param {object} [sessionContext]
+ * @param {string} [sessionContext.mainSincom]
+ * @param {string} [sessionContext.market]
+ * @param {string} [sessionContext.brand]
+ * @param {string} [sessionContext.language]
+ * @param {string} [sessionContext.dealerCountryCode]
+ * @param {string} [username]
+ * @returns {object} sender override da passare a postDmsInquiry(token, { sender, ... })
+ */
+function buildDmsSender(sessionContext = {}, username) {
+  const { mainSincom, market, brand, language, dealerCountryCode } = sessionContext;
+
+  const sender = {};
+  if (mainSincom) sender.dealerNumberId = mainSincom;
+  if (username) sender.serviceId = username;
+  if (language) sender.languageCode = language;
+  if (dealerCountryCode) sender.dealerCountryCode = dealerCountryCode;
+  if (brand) sender.brand = brand;
+  if (market) sender.market = market;
+
+  return sender;
+}
+
+/**
  * Per ciascun codice pacchetto preferito, interroga il gateway DML
  * (MessageType LFP) e ne estrae/combina i soli campi richiesti dal FE:
  * Code, PackageDescription, PartsAvailablity, TotalPriceInclTax, TotalPriceExclTax.
@@ -57,9 +109,11 @@ function loadDmsClient() {
  *
  * @param {string} vin
  * @param {string[]} packageCodes - codici pacchetto preferiti (da PKFAVORITE)
+ * @param {object} [sender] - Sender dinamico (vedi buildDmsSender()), passato a
+ *                             postDmsInquiry per ciascuna inquiry LFP
  * @returns {Promise<Array<{Code, PackageDescription, PartsAvailablity, TotalPriceInclTax, TotalPriceExclTax}>>}
  */
-async function enrichFavoritesWithDms(vin, packageCodes) {
+async function enrichFavoritesWithDms(vin, packageCodes, sender) {
   if (!packageCodes.length) return [];
 
   const { getBearerToken, postDmsInquiry } = loadDmsClient();
@@ -69,6 +123,7 @@ async function enrichFavoritesWithDms(vin, packageCodes) {
     packageCodes.map((packageCode) => postDmsInquiry(token, {
       PartsInquiryHeader: { MessageType: 'LFP', VehicleID: vin },
       package: packageCode,
+      sender,
     })),
   );
 
@@ -118,6 +173,23 @@ function resolveUsername(event, body) {
   return body.username || null;
 }
 
+/**
+ * Estrae i dati di sessione (dealer/mercato/lingua) necessari per il Sender
+ * dinamico dell'inquiry DMS (vedi buildDmsSender()), passati dal FE come
+ * parametri della richiesta GET (query string) — pkFavorite non ha una
+ * repair order/sessione già caricata da cui derivarli, a differenza di
+ * jobcard/pkManager.
+ */
+function resolveSessionContext(body) {
+  return {
+    mainSincom: body.mainSincom,
+    market: body.market ?? body.codmarket,
+    brand: body.brand ?? body.codbrand,
+    language: body.language,
+    dealerCountryCode: body.dealerCountryCode ?? body.marketIso,
+  };
+}
+
 function parseBody(event) {
   if (!event.body) return {};
   try {
@@ -157,7 +229,8 @@ exports.handler = async (event = {}) => {
         return response(400, { success: false, message: '"vin" è obbligatorio' });
       }
       const favoriteRows = await listFavorites(pool, { username });
-      const favorites = await enrichFavoritesWithDms(vin, favoriteRows.map((row) => row.packageCode));
+      const sender = buildDmsSender(resolveSessionContext(body), username);
+      const favorites = await enrichFavoritesWithDms(vin, favoriteRows.map((row) => row.packageCode), sender);
       return response(200, { success: true, username, vin, favorites });
     }
 

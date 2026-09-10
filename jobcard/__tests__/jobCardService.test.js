@@ -26,7 +26,7 @@ const { httpsRequest } = require('../httpClient');
 const { getBearerToken: getDgtBearerToken } = require('../authService');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry } = require('../../dms/dmsService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp } = require('../jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -849,6 +849,7 @@ describe('jobCardService', () => {
             ],
           },
         ],
+        sender: {},
       });
     });
 
@@ -871,6 +872,7 @@ describe('jobCardService', () => {
             LaborItem: [],
           },
         ],
+        sender: {},
       });
     });
 
@@ -886,6 +888,57 @@ describe('jobCardService', () => {
       expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
+    });
+  });
+
+  // ── buildDmsSender ───────────────────────────────────────────────────────
+  // Il lookup dbManager/AnagSnowflakesRepository (woc.ang_snowflakes) NON è più
+  // eseguito qui: è centralizzato in dms/dmsService.js::buildApplicationArea
+  // (vedi dms/__tests__/dmsService.test.js), che lo applica identicamente a
+  // qualunque chiamante di postDmsInquiry. buildDmsSender si limita quindi a
+  // mappare sessionContext/jobCardDetail sui campi del sender (incluso
+  // `market`, solo chiave di lookup lato dms, non un campo Sender).
+
+  describe('buildDmsSender', () => {
+    test('returns {} when no sessionContext/jobCardDetail brand is provided', async () => {
+      const result = await buildDmsSender({});
+
+      expect(result).toEqual({});
+    });
+
+    test('maps sessionContext fields to the corresponding sender keys, skipping undefined ones', async () => {
+      const result = await buildDmsSender({}, { mainSincom: '0062219', username: 'jdoe', language: 'fr', dealerCountryCode: 'FR' });
+
+      expect(result).toEqual({
+        dealerNumberId: '0062219',
+        serviceId: 'jdoe',
+        languageCode: 'fr',
+        dealerCountryCode: 'FR',
+      });
+    });
+
+    test('includes brand from roInfo.stellantisBrand and market (pass-through key for dms centralized lookup)', async () => {
+      const jobCardDetail = { roInfo: { stellantisBrand: 'FT' } };
+      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
+
+      expect(result).toEqual({
+        dealerNumberId: '0062219',
+        market: 'FR',
+        brand: 'FT',
+      });
+    });
+
+    test('falls back to roInfo.brand when roInfo.stellantisBrand is absent', async () => {
+      const jobCardDetail = { roInfo: { brand: '0I' } };
+      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
+
+      expect(result.brand).toBe('0I');
+    });
+
+    test('omits market/brand when not available', async () => {
+      const result = await buildDmsSender({}, { mainSincom: '0062219' });
+
+      expect(result).toEqual({ dealerNumberId: '0062219' });
     });
   });
 

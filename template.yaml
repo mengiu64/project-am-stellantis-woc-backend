@@ -361,14 +361,42 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoanaga"
       RetentionInDays: 30
 
+  # CodeUri: ./ + BuildMethod: makefile perché dmsService.js::buildApplicationArea
+  # richiede in-process dbManager/db + dbManager/AnagSnowflakesRepository (stesso
+  # pattern di PkManagerFunction/SessionFunction/PkFavoriteFunction/JobCardFunction,
+  # vedi Makefile) per risolvere physicalSiteId/dealerNumberIdSource da
+  # woc.ang_snowflakes — logica centralizzata qui e condivisa da tutti i chiamanti
+  # di postDmsInquiry (jobcard, pkManager, pkFavorite).
   DmsFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dms"
-      CodeUri: dms/
+      CodeUri: ./
+      Handler: dms/index.handler
+      # dbManager (imbarcato in-process via Makefile) richiede l'estensione Lambda
+      # + il permesso Secrets Manager per leggere lo stesso secret Aurora
+      # "wiadvisor_app" già usato da PkManagerFunction/PkFavoriteFunction/SessionFunction/
+      # JobCardFunction per il proprio dbManager — nessun nuovo parametro CFN necessario.
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # PkFavoriteFunction/SessionFunction/PkManagerFunction/JobCardFunction).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
@@ -376,6 +404,14 @@ Resources:
           DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
+          # dbManager/db.js (in-process, vedi Makefile) — dmsService.js::buildApplicationArea
+          # risolve physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per
+          # il Sender dinamico. Riusa lo stesso Aurora/secret di PkManagerFunction
+          # (nessun nuovo parametro CFN necessario).
+          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
+          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
+          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
+          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
 
   DmsFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -397,9 +433,31 @@ Resources:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-jobcard"
       CodeUri: ./
       Handler: jobcard/index.handler
+      # dbManager (imbarcato in-process via Makefile, richiesto da dms/dmsService.js
+      # ::buildApplicationArea) richiede l'estensione Lambda + il permesso Secrets
+      # Manager per leggere lo stesso secret Aurora "wiadvisor_app" già usato da
+      # PkManagerFunction/PkFavoriteFunction/SessionFunction/DmsFunction per il
+      # proprio dbManager — nessun nuovo parametro CFN necessario (il lookup
+      # physicalSiteId/dealerNumberIdSource su woc.ang_snowflakes è centralizzato
+      # in dms/dmsService.js, non in jobCardService.js::buildDmsSender).
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
+            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
+            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
+            # occurred while executing request" (stesso problema già risolto per
+            # PkFavoriteFunction/SessionFunction/PkManagerFunction).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
@@ -413,6 +471,15 @@ Resources:
           DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
+          # dbManager/db.js (in-process, vedi Makefile) — richiesto da dms/dmsService.js
+          # ::buildApplicationArea (imbarcato in-process insieme a jobcard), che risolve
+          # physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per il Sender
+          # dinamico dell'inquiry DMS. Riusa lo stesso Aurora/secret di PkManagerFunction/
+          # DmsFunction (nessun nuovo parametro CFN necessario).
+          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
+          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
+          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
+          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -955,6 +1022,15 @@ Resources:
           DML_IBM_CLIENT_ID:     !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
           DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
+          # dbManager/db.js (in-process, vedi Makefile) — richiesto da
+          # dms/dmsService.js::buildApplicationArea (bundlato insieme a pkFavorite)
+          # per risolvere physicalSiteId/dealerNumberIdSource (tabella
+          # woc.ang_snowflakes) del Sender dinamico dell'inquiry DMS. Riusa lo
+          # stesso Aurora/secret di pkFavorite (nessun nuovo parametro CFN necessario).
+          DBMANAGER_DB_HOST:      !Ref PkFavoriteDbHost
+          DBMANAGER_DB_PORT:      !Ref PkFavoriteDbPort
+          DBMANAGER_DB_NAME:      !Ref PkFavoriteDbName
+          DBMANAGER_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
 
   PkFavoriteFunctionLogGroup:
     Type: AWS::Logs::LogGroup

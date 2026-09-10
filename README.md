@@ -191,10 +191,31 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 | `PartsInquiryHeader.CustomerIdDms` | ❌ | ID cliente nel DMS. Come `DocumentID`, contenuto non obbligatorio: se assente/`null`/`undefined`, viene inviata come `null` (chiave sempre presente) |
 | `PartsInquiryHeader.VehicleID` | ✅ | VIN del veicolo |
 | `ApplicationArea` | ✅ | Mittente, timestamp e BODID (UUID). Se omesso, viene costruito internamente da `buildApplicationArea()` usando `config.sender` (default statici da env) sovrascritto per-request da `sender` (vedi sotto), se fornito |
-| `sender` | ❌ | Scorciatoia: sottoinsieme dei campi di `config.sender` (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`) da sovrascrivere per questa richiesta, cosi' `ApplicationArea.Sender` riflette il dealer/brand/mercato reale del chiamante (es. `PkManager.getPriceAndAvailability`) invece dei soli default statici via env. Ignorato quando `ApplicationArea` è già fornito. Non inviato as-is al DML |
+| `sender` | ❌ | Scorciatoia: sottoinsieme dei campi di `config.sender` (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`, più `market` — vedi nota sotto) da sovrascrivere per questa richiesta, cosi' `ApplicationArea.Sender` riflette il dealer/brand/mercato reale del chiamante (`jobcard`/`pkManager`/`pkFavorite` — vedi rispettive sezioni) invece dei soli default statici via env. Ignorato quando `ApplicationArea` è già fornito. Non inviato as-is al DML |
 | `UpSelling.Packages` | ❌ | Usato per `LFP` |
 | `WorkLines` | ❌ | Usato per `WL` |
 | `SpareParts.PartsItem` | ❌ | Usato per `MP` |
+
+> **Sender dinamico centralizzato (`buildApplicationArea`)**: la risoluzione di
+> `physicalSiteId`/`dealerNumberIdSource` tramite lookup su `woc.ang_snowflakes`
+> (`dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndSincom`) è
+> **interamente centralizzata qui**, in `dms/dmsService.js::buildApplicationArea`,
+> cosi' tutti i chiamanti (`jobcard`, `pkManager`, `pkFavorite`) condividono lo
+> stesso identico meccanismo/stessi criteri, invece di duplicare la query
+> ciascuno per conto proprio. Quando il `sender` passato a `postDmsInquiry`
+> contiene **tutti e tre** `dealerNumberId` (il `mainSincom`), `market` e
+> `brand`, `buildApplicationArea` esegue il lookup (chiave
+> `mainSincom`+`market`+`brand`) e — se trova una riga — sovrascrive
+> `physicalSiteId`/`dealerNumberIdSource`; **`market` non è mai inoltrato al
+> DML**: serve solo come chiave di ricerca lato lookup, non è un campo di
+> `ApplicationArea.Sender`. Il lookup è **best-effort**: se manca anche uno solo
+> dei tre campi, o la query fallisce, si prosegue senza modificare
+> `physicalSiteId`/`dealerNumberIdSource` (solo un warning in log) — non blocca
+> mai la chiamata al gateway DML. Per questo, ogni funzione Lambda che include
+> `dms/` in-process (`JobCardFunction`, `PkManagerFunction`, `PkFavoriteFunction`)
+> e la stessa `DmsFunction` richiedono anche il codice sorgente di `dbManager/`
+> (build via `Metadata: BuildMethod: makefile`, v. `Makefile`) e le variabili
+> `DBMANAGER_DB_*` (stesso Aurora `wiadvisor` di `PkManagerFunction`/`SessionFunction`).
 
 #### Utilizzo CLI
 
@@ -271,6 +292,40 @@ payload (`Save*`). **API Gateway instrada le richieste POST verso la lambda
 coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
 esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
 `jobcard/README.md` e `djc/README.md`.
+
+#### `getCartPriceAndAvailability` (azione `dml`) — Sender dinamico
+
+`getCartPriceAndAvailability` (invocata dall'azione `dml` di `index.js`, tramite
+`getDataFromDMLFromTmp`/`getDataFromDML`) interroga il gateway DML
+(`dms/dmsService.js::postDmsInquiry`, `MessageType=WL`) per prezzo/disponibilita
+di ricambi e manodopera, sullo stesso modello di
+`pkManager/PkManager.js::getPriceAndAvailability` e `pkFavorite/index.js` (v.
+[dms](#dms) → `postDmsInquiry`). L'azione `dml` viene chiamata **sempre dopo**
+che il chiamante e' gia' entrato nel dettaglio della repair order, quindi ha
+gia' a disposizione sia i dati di sessione sia il `jobCardDetail` appena
+recuperato — non serve percio' una cache dedicata: `jobCardService.js
+::buildDmsSender()` costruisce il `sender` (override di
+`ApplicationArea.Sender`, v. tabella `postDmsInquiry` in [dms](#dms)) con la
+sola mappatura dei campi disponibili (**nessun accesso a `dbManager` qui**: il
+lookup su `woc.ang_snowflakes` per `physicalSiteId`/`dealerNumberIdSource` è
+ora centralizzato in `dms/dmsService.js::buildApplicationArea`, v. nota
+"Sender dinamico centralizzato" nella sezione [dms](#dms) — stesso meccanismo
+condiviso anche da `pkManager`/`pkFavorite`):
+
+- `dealerNumberId` ← `mainSincom` (MAINSINCOM di sessione)
+- `serviceId` ← `username` (risolto da `event.requestContext.authorizer.sub`, fallback `body.username` solo se manca `requestContext.authorizer` — uso locale/CLI)
+- `languageCode` / `dealerCountryCode` ← dati di sessione gia' disponibili (lingua/`marketIso`)
+- `brand` ← `jobCardDetail.roInfo.stellantisBrand`/`roInfo.brand`
+- `market` ← dati di sessione (solo chiave di lookup lato `dms`, mai un campo `Sender` vero e proprio)
+- `physicalSiteId`/`dealerNumberIdSource`/`componentId`/`currencyId` restano i default statici via env (`dms/config.js`), a meno che `dms` non li risolva dinamicamente (v. sopra)
+
+`JobCardFunction` richiede comunque, oltre a `../dms/authService`/`../dms/dmsService`
+(gia' presenti), anche il codice sorgente di `dbManager/` (build via
+`Metadata: BuildMethod: makefile`, v. `Makefile`) e le stesse variabili
+`DBMANAGER_DB_*` usate da `PkManagerFunction`/`SessionFunction` (stesso Aurora
+`wiadvisor`) — non perché `jobCardService.js` acceda direttamente a `dbManager`
+(non lo fa più), ma perché il codice di `dms/` è incluso **in-process** (v.
+Makefile) e `buildApplicationArea` ne ha bisogno per il lookup centralizzato.
 
 #### Utilizzo CLI
 
@@ -575,6 +630,8 @@ Lambda orchestratore che gestisce la **configurazione e la validazione dei pacch
 
 Ogni dettaglio pacchetto riporta anche `isFixedPrice`/`packageType`: sempre `"0"`/`"QE"` per `eper`; per `menupricing`/`docsoa`, `"1"`/`"FP"` se il pacchetto è a prezzo fisso (promozione "Lex" per menupricing, forfait `ibxDetailForfaitService` per docsoa), altrimenti `"0"`/`"QE"`. Per `docsoa`, se il forfait non viene trovato si tenta un fallback su `ibxDetailtpService` (tempario). Vedi `pkManager/README.md` per il dettaglio completo.
 
+> **Sender dinamico (`getPriceAndAvailability`)**: `PkManager.js::_buildDmsSender()` deriva il Sender dell'inquiry DMS (v. tabella `sender` in [dms](#dms) → `postDmsInquiry`) da `this.wsConfig` (eper/docsoa/menupricing): `dealerNumberId` da `menupricing.dealerIdentificationCode`/`eper.coddealer`/`docsoa.codePdv`, `dealerCountryCode`/`languageCode` da menupricing/docsoa, `brand` da `docsoa.codbrand`, `physicalSiteId` da `docsoa.codePdv` (default statico), `market` passato as-is (stesso parametro di `getPkList`/`getPriceAndAvailability`). `_buildDmsSender()` è **sincrono e non accede a `dbManager`**: il lookup dinamico `physicalSiteId`/`dealerNumberIdSource` su `woc.ang_snowflakes` è centralizzato in `dms/dmsService.js::buildApplicationArea` (v. nota "Sender dinamico centralizzato" nella sezione [dms](#dms), stesso meccanismo condiviso da `jobcard`/`pkFavorite`): se il `sender` passato contiene `dealerNumberId`+`market`+`brand`, `dms` esegue il lookup e sovrascrive i valori "sintetici" (`docsoa.codePdv` / lo stesso `dealerNumberId`) con quelli reali.
+
 > ⚠️ **Nota**: `getValidPackages`/`getValidPackagesDetail` invocano internamente metodi (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) non ancora implementati sui client `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient`. Da completare prima di un utilizzo in produzione di queste due action.
 
 #### Struttura
@@ -824,10 +881,27 @@ Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per sing
 
 | Metodo | Parametri | Descrizione |
 |---|---|---|
-| `GET` | `vin` (query, obbligatorio) | Elenca tutti i pacchetti preferiti dell'utente autenticato (ricerca solo per username); i dati vengono poi arricchiti via DML usando il `vin` indicato |
+| `GET` | `vin` (query, obbligatorio); `mainSincom`, `market`/`codmarket`, `brand`/`codbrand`, `language`, `dealerCountryCode`/`marketIso` (query, tutti opzionali) | Elenca tutti i pacchetti preferiti dell'utente autenticato (ricerca solo per username); i dati vengono poi arricchiti via DML usando il `vin` indicato |
 | `POST` | `vin`, `package` (body, obbligatori) | Aggiunge/rimuove (toggle) il pacchetto preferito |
 
 > **Sicurezza:** lo `username` **non** viene mai letto dal body quando è presente un contesto di autenticazione (`event.requestContext.authorizer.sub`): in quel caso è l'unica fonte accettata (401 se assente). Il fallback su `body.username` è consentito solo in assenza totale di `authorizer` (comodo per test CLI/invocazione diretta), stesso identico criterio già adottato in `session`.
+
+> **Sender dinamico (GET)**: come `jobcard`/`pkManager` (v. nota "Sender
+> dinamico centralizzato" nella sezione [dms](#dms)), ogni chiamata DML (`LFP`,
+> una per pacchetto preferito) usa un `sender` costruito da
+> `index.js::buildDmsSender(resolveSessionContext(body), username)` con la
+> stessa mappatura/criteri degli altri chiamanti: `dealerNumberId` ←
+> `mainSincom`, `serviceId` ← `username` (da authorizer), `languageCode` ←
+> `language`, `dealerCountryCode` ← `dealerCountryCode`/`marketIso`, `brand` ←
+> `brand`/`codbrand`, `market` ← `market`/`codmarket` (solo chiave di lookup
+> lato `dms`, mai un campo `Sender`). A differenza di `jobcard`/`pkManager`,
+> `pkFavorite` non ha una repair order/sessione/wsConfig già caricata da cui
+> derivare questi dati: se il FE li conosce (sessione dealer già nota lato
+> client), deve passarli come **parametri opzionali della query GET** —
+> altrimenti il `sender` ricade sui soli campi disponibili (`serviceId`) più i
+> default statici di `dms/config.js`, esattamente come prima di questa
+> modifica. La CLI (`node index.js list ...`) non passa alcun sender
+> (comportamento invariato).
 
 #### Utilizzo CLI
 
@@ -955,6 +1029,13 @@ DMS_PING_CLIENT_SECRET=...          # Client Secret PingFederate (dedicato dms)
 DML_IBM_CLIENT_ID=...              # X-IBM-Client-Id per le API DML
 DML_IBM_CLIENT_SECRET=...          # X-IBM-Client-Secret per le API DML
 DML_X_TARGET_ENV=stage             # Ambiente target (stage / prod)
+# Per il lookup centralizzato (best-effort) di physicalSiteId/
+# dealerNumberIdSource su woc.ang_snowflakes in buildApplicationArea() —
+# stesse variabili/stesso Aurora "wiadvisor" di PkManagerFunction/SessionFunction
+DBMANAGER_DB_HOST=...
+DBMANAGER_DB_PORT=5432
+DBMANAGER_DB_NAME=...
+DBMANAGER_DB_SECRET_ID=...
 ```
 
 ### jobcard
@@ -964,7 +1045,17 @@ JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate (dedicato jobcard)
 JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate (dedicato jobcard)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT
+# Richieste perché il codice sorgente di dms/ è incluso in-process (Makefile):
+# dms/dmsService.js::buildApplicationArea esegue il lookup best-effort di
+# physicalSiteId/dealerNumberIdSource su woc.ang_snowflakes — stesse
+# variabili/stesso Aurora "wiadvisor" di PkManagerFunction/SessionFunction.
+# jobCardService.js non accede più direttamente a dbManager.
+DBMANAGER_DB_HOST=...
+DBMANAGER_DB_PORT=5432
+DBMANAGER_DB_NAME=...
+DBMANAGER_DB_SECRET_ID=...
 ```
+
 
 ### djc
 
@@ -1111,6 +1202,14 @@ PKFAVORITE_DB_USER=...                     # (opzionale) se assente, letto da Se
 PKFAVORITE_DB_PASSWORD=...                 # (opzionale) se assente, letto da Secrets Manager
 PKFAVORITE_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (opzionale) id secret con user/password/dbname/port
 PKFAVORITE_DB_SSL=true                     # (opzionale) default true
+# Per il codice sorgente di dms/ incluso in-process (Makefile): dms/dmsService.js
+# ::buildApplicationArea esegue il lookup best-effort di physicalSiteId/
+# dealerNumberIdSource su woc.ang_snowflakes — stesso Aurora "wiadvisor" di
+# PkManagerFunction/SessionFunction (riusa gli stessi parametri PkFavoriteDb*)
+DBMANAGER_DB_HOST=...
+DBMANAGER_DB_PORT=5432
+DBMANAGER_DB_NAME=...
+DBMANAGER_DB_SECRET_ID=...
 ```
 
 > **Nota:** user/password del DB **non** vanno messi nel `.env` in produzione: sono recuperati a runtime da AWS Secrets Manager tramite l'AWS Parameters and Secrets Lambda Extension, stesso layer riusato da `myPeople`. La connessione avviene sempre tramite **RDS Proxy**, non direttamente sul cluster Aurora.

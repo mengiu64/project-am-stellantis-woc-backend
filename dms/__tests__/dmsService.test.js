@@ -31,9 +31,13 @@ jest.mock('../config', () => ({
   },
 }));
 jest.mock('../httpClient');
+jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
+jest.mock('../../dbManager/AnagSnowflakesRepository', () => ({ getPhysicalSiteAndSincom: jest.fn() }));
 
 const { httpsRequest } = require('../httpClient');
-const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines } = require('../dmsService');
+const { getPool } = require('../../dbManager/db');
+const { getPhysicalSiteAndSincom } = require('../../dbManager/AnagSnowflakesRepository');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea } = require('../dmsService');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -543,6 +547,104 @@ describe('postDmsInquiry — ApplicationArea built internally', () => {
 
     const [, payload] = httpsRequest.mock.calls[0];
     expect(JSON.parse(payload).ApplicationArea).toEqual(APPLICATION_AREA);
+  });
+});
+
+// ── buildApplicationArea / postDmsInquiry — physicalSiteId/dealerNumberIdSource
+// dinamici centralizzati (woc.ang_snowflakes) ────────────────────────────────
+// Logica precedentemente duplicata in jobcard/jobCardService.js::buildDmsSender
+// e pkManager/PkManager.js::_buildDmsSender, ora centralizzata qui: qualunque
+// chiamante di postDmsInquiry (jobcard, pkManager, pkFavorite, ...) beneficia
+// dello stesso identico meccanismo/stessi criteri passando dealerNumberId +
+// market (solo chiave di lookup, non un campo Sender) + brand in body.sender.
+
+describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    getPool.mockResolvedValue({ fakePool: true });
+  });
+
+  afterEach(() => console.warn.mockRestore());
+
+  test('does not perform DB lookup when market is missing', async () => {
+    const area = await buildApplicationArea({ dealerNumberId: '0710740', brand: 'FT' });
+    expect(getPhysicalSiteAndSincom).not.toHaveBeenCalled();
+    expect(area.Sender.PhysicalSiteID).toBe('00007532'); // default statico di config.sender
+  });
+
+  test('does not perform DB lookup when brand is missing', async () => {
+    const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000' });
+    expect(getPhysicalSiteAndSincom).not.toHaveBeenCalled();
+    expect(area.Sender.PhysicalSiteID).toBe('00007532');
+  });
+
+  test('does not perform DB lookup when dealerNumberId is missing', async () => {
+    const area = await buildApplicationArea({ market: '1000', brand: 'FT' });
+    expect(getPhysicalSiteAndSincom).not.toHaveBeenCalled();
+    expect(area.Sender.PhysicalSiteID).toBe('00007532');
+  });
+
+  test('performs DB lookup and overrides physicalSiteId/dealerNumberIdSource when all three are present', async () => {
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN' });
+
+    const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+      mainSincom: '0710740',
+      market: '1000',
+      brand: 'FT',
+    });
+    expect(area.Sender.PhysicalSiteID).toBe('SITE-DYN');
+    expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+  });
+
+  test('does not send `market` on the wire as a Sender field', async () => {
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN' });
+
+    const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
+
+    expect(area.Sender.market).toBeUndefined();
+    expect(area.Sender.Market).toBeUndefined();
+  });
+
+  test('falls back to existing values when the DB lookup fails, without throwing', async () => {
+    getPhysicalSiteAndSincom.mockRejectedValue(new Error('DB down'));
+
+    const area = await buildApplicationArea({ dealerNumberId: '0710740', dealerNumberIdSource: '0710740', market: '1000', brand: 'FT' });
+
+    expect(area.Sender.PhysicalSiteID).toBe('00007532');
+    expect(area.Sender.DealerNumberIDSource).toBe('0710740'); // valore esplicito passato in senderOverrides, non sovrascritto
+    expect(console.warn).toHaveBeenCalled();
+  });
+
+  test('falls back to existing values when the DB lookup resolves null fields', async () => {
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: null, dealerNumberIdSource: null });
+
+    const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
+
+    expect(area.Sender.PhysicalSiteID).toBe('00007532');
+  });
+
+  test('postDmsInquiry propagates body.sender.market through to buildApplicationArea', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN' });
+
+    await postDmsInquiry('token', {
+      PartsInquiryHeader: { DocumentID: '1', CustomerIdDms: '2', MessageType: 'WL', VehicleID: 'VIN' },
+      WorkLines: [],
+      sender: { dealerNumberId: '0710740', market: '1000', brand: 'FT' },
+    });
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+      mainSincom: '0710740',
+      market: '1000',
+      brand: 'FT',
+    });
+    const [, payload] = httpsRequest.mock.calls[0];
+    const sent = JSON.parse(payload);
+    expect(sent.ApplicationArea.Sender.PhysicalSiteID).toBe('SITE-DYN');
+    expect(sent.sender).toBeUndefined();
   });
 });
 

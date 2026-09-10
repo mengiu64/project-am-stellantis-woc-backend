@@ -181,10 +181,32 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 | `PartsInquiryHeader.CustomerIdDms` | ❌ | Customer ID in DMS. Like `DocumentID`, content is optional: if missing/`null`/`undefined`, it's sent as `null` (key always present) |
 | `PartsInquiryHeader.VehicleID` | ✅ | Vehicle VIN |
 | `ApplicationArea` | ✅ | Sender, timestamp and BODID (UUID). If omitted, it's built internally by `buildApplicationArea()` using `config.sender` (static env defaults) overridden per-request by `sender` (see below), if provided |
-| `sender` | ❌ | Shortcut: subset of `config.sender` fields (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`) to override for this request, so `ApplicationArea.Sender` reflects the caller's real dealer/brand/market (e.g. `PkManager.getPriceAndAvailability`) instead of only the static env defaults. Ignored when `ApplicationArea` is already provided. Not sent as-is to the DML |
+| `sender` | ❌ | Shortcut: subset of `config.sender` fields (`dealerNumberId`, `dealerNumberIdSource`, `dealerCountryCode`, `languageCode`, `physicalSiteId`, `serviceId`, `currencyId`, `brand`, `componentId`, plus `market` — see note below) to override for this request, so `ApplicationArea.Sender` reflects the caller's real dealer/brand/market (`jobcard`/`pkManager`/`pkFavorite` — see the respective sections) instead of only the static env defaults. Ignored when `ApplicationArea` is already provided. Not sent as-is to the DML |
 | `UpSelling.Packages` | ❌ | Used for `LFP` |
 | `WorkLines` | ❌ | Used for `WL` |
 | `SpareParts.PartsItem` | ❌ | Used for `MP` |
+
+> **Centralized dynamic Sender (`buildApplicationArea`)**: resolving
+> `physicalSiteId`/`dealerNumberIdSource` via a `woc.ang_snowflakes` lookup
+> (`dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndSincom`) is now
+> **entirely centralized here**, in `dms/dmsService.js::buildApplicationArea`,
+> so every caller (`jobcard`, `pkManager`, `pkFavorite`) shares the exact same
+> mechanism/criteria instead of each duplicating the query on its own. When the
+> `sender` passed to `postDmsInquiry` contains **all three** of `dealerNumberId`
+> (the `mainSincom`), `market` and `brand`, `buildApplicationArea` performs the
+> lookup (key `mainSincom`+`market`+`brand`) and — if a row is found — overrides
+> `physicalSiteId`/`dealerNumberIdSource`; **`market` is never forwarded to the
+> DML**: it's only used as the lookup key, it's not a field of
+> `ApplicationArea.Sender`. The lookup is **best-effort**: if even one of the
+> three fields is missing, or the query fails, the flow continues without
+> modifying `physicalSiteId`/`dealerNumberIdSource` (just a log warning) — it
+> never blocks the call to the DML gateway. Because of this, every Lambda
+> function that bundles `dms/` in-process (`JobCardFunction`,
+> `PkManagerFunction`, `PkFavoriteFunction`) as well as `DmsFunction` itself
+> also requires the `dbManager/` source code (built via
+> `Metadata: BuildMethod: makefile`, see `Makefile`) and the `DBMANAGER_DB_*`
+> environment variables (same Aurora "wiadvisor" as
+> `PkManagerFunction`/`SessionFunction`).
 
 #### CLI usage
 
@@ -249,6 +271,40 @@ Before being returned, the response is enriched by `sanitizeJobCardDetails` with
 - **`roInfo.roSource`** — added right after `roInfo.sourceApplication`, with the same value.
 
 See `jobcard/README.md` for the full rule table.
+
+#### `getCartPriceAndAvailability` (`dml` action) — dynamic Sender
+
+`getCartPriceAndAvailability` (invoked by the `dml` action in `index.js`, via
+`getDataFromDMLFromTmp`/`getDataFromDML`) queries the DML gateway
+(`dms/dmsService.js::postDmsInquiry`, `MessageType=WL`) for parts/labor
+price and availability, following the same pattern as
+`pkManager/PkManager.js::getPriceAndAvailability` and `pkFavorite/index.js`
+(see [dms](#dms) → `postDmsInquiry`). The `dml` action is always called
+**after** the caller has already entered the repair order detail, so it
+already has both session data and the freshly-retrieved `jobCardDetail` — no
+dedicated cache is needed: `jobCardService.js::buildDmsSender()` builds the
+`sender` (override of `ApplicationArea.Sender`, see the `postDmsInquiry` table
+in [dms](#dms)) with a pure field mapping (**no `dbManager` access here**: the
+`woc.ang_snowflakes` lookup for `physicalSiteId`/`dealerNumberIdSource` is now
+centralized in `dms/dmsService.js::buildApplicationArea`, see the "Centralized
+dynamic Sender" note in the [dms](#dms) section — the same mechanism is also
+shared by `pkManager`/`pkFavorite`):
+
+- `dealerNumberId` ← `mainSincom` (session MAINSINCOM)
+- `serviceId` ← `username` (resolved from `event.requestContext.authorizer.sub`, falling back to `body.username` only when there's no `requestContext.authorizer` — local/CLI use)
+- `languageCode` / `dealerCountryCode` ← session data already available (language/`marketIso`)
+- `brand` ← `jobCardDetail.roInfo.stellantisBrand`/`roInfo.brand`
+- `market` ← session data (only a lookup key on the `dms` side, never an actual `Sender` field)
+- `physicalSiteId`/`dealerNumberIdSource`/`componentId`/`currencyId` stay the static env defaults (`dms/config.js`), unless `dms` resolves them dynamically (see above)
+
+`JobCardFunction` still requires, in addition to
+`../dms/authService`/`../dms/dmsService` (already present), also the
+`dbManager/` source (built via `Metadata: BuildMethod: makefile`, see
+`Makefile`) and the same `DBMANAGER_DB_*` variables used by
+`PkManagerFunction`/`SessionFunction` (same `wiadvisor` Aurora) — not because
+`jobCardService.js` accesses `dbManager` directly (it no longer does), but
+because the `dms/` code is bundled **in-process** (see Makefile) and
+`buildApplicationArea` needs it for the centralized lookup.
 
 #### CLI usage
 
@@ -423,6 +479,8 @@ Orchestrator Lambda that manages **package configuration and validation** across
 `pkwstouse` accepts the values: `eper`, `docsoa`, `menupricing`.
 
 Every package detail also reports `isFixedPrice`/`packageType`: always `"0"`/`"QE"` for `eper`; for `menupricing`/`docsoa`, `"1"`/`"FP"` if the package is fixed-price (promotional "Lex" for menupricing, forfait `ibxDetailForfaitService` for docsoa), otherwise `"0"`/`"QE"`. For `docsoa`, if the forfait isn't found, a fallback to `ibxDetailtpService` (tempario) is attempted. See `pkManager/README.md` for the full details.
+
+> **Dynamic Sender (`getPriceAndAvailability`)**: `PkManager.js::_buildDmsSender()` derives the DML inquiry Sender (see the `sender` table in [dms](#dms) → `postDmsInquiry`) from `this.wsConfig` (eper/docsoa/menupricing): `dealerNumberId` from `menupricing.dealerIdentificationCode`/`eper.coddealer`/`docsoa.codePdv`, `dealerCountryCode`/`languageCode` from menupricing/docsoa, `brand` from `docsoa.codbrand`, `physicalSiteId` from `docsoa.codePdv` (static default), `market` passed through as-is (same parameter as `getPkList`/`getPriceAndAvailability`). `_buildDmsSender()` is **synchronous and never touches `dbManager`**: the dynamic `physicalSiteId`/`dealerNumberIdSource` lookup on `woc.ang_snowflakes` is centralized in `dms/dmsService.js::buildApplicationArea` (see the "Centralized dynamic Sender" note in the [dms](#dms) section, the same mechanism also shared by `jobcard`/`pkFavorite`): if the passed `sender` contains `dealerNumberId`+`market`+`brand`, `dms` performs the lookup and overrides the "synthetic" values (`docsoa.codePdv` / the same `dealerNumberId`) with the real ones.
 
 > ⚠️ **Note**: `getValidPackages`/`getValidPackagesDetail` internally call methods (`getCompletePkEperList`, `getCompletePkMpList`, `getCompletePkSOAList`) not yet implemented on the `WsIQPckEper`/`MenuPricingSoapClient`/`DocSOARestClient` clients. To be completed before using these two actions in production.
 
@@ -644,6 +702,13 @@ DMS_PING_CLIENT_SECRET=...          # PingFederate Client Secret (dms-dedicated)
 DML_IBM_CLIENT_ID=...              # X-IBM-Client-Id for DML APIs
 DML_IBM_CLIENT_SECRET=...          # X-IBM-Client-Secret for DML APIs
 DML_X_TARGET_ENV=stage             # Target environment (stage / prod)
+# For the centralized (best-effort) lookup of physicalSiteId/
+# dealerNumberIdSource on woc.ang_snowflakes in buildApplicationArea() — same
+# variables/same "wiadvisor" Aurora as PkManagerFunction/SessionFunction
+DBMANAGER_DB_HOST=...
+DBMANAGER_DB_PORT=5432
+DBMANAGER_DB_NAME=...
+DBMANAGER_DB_SECRET_ID=...
 ```
 
 ### jobcard
@@ -653,6 +718,15 @@ JOBCARD_PING_CLIENT_ID=...          # PingFederate Client ID (jobcard-dedicated)
 JOBCARD_PING_CLIENT_SECRET=...      # PingFederate Client Secret (jobcard-dedicated)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id for DGT APIs
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret for DGT APIs
+# Required because the dms/ source code is bundled in-process (Makefile):
+# dms/dmsService.js::buildApplicationArea performs the best-effort lookup of
+# physicalSiteId/dealerNumberIdSource on woc.ang_snowflakes — same
+# variables/same "wiadvisor" Aurora as PkManagerFunction/SessionFunction.
+# jobCardService.js no longer accesses dbManager directly.
+DBMANAGER_DB_HOST=...
+DBMANAGER_DB_PORT=5432
+DBMANAGER_DB_NAME=...
+DBMANAGER_DB_SECRET_ID=...
 ```
 
 ### v360

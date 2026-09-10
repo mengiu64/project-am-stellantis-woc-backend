@@ -77,31 +77,42 @@ build-SessionFunction:
 # codice sorgente di dms tramite path relativi (../dms/authService, ../dms/dmsService):
 # stesso identico motivo/pattern di PkManagerFunction/SessionFunction sopra.
 build-PkFavoriteFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/pkFavorite" "$(ARTIFACTS_DIR)/dms"
+	mkdir -p "$(ARTIFACTS_DIR)/pkFavorite" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager"
 	cp -r pkFavorite/. "$(ARTIFACTS_DIR)/pkFavorite/"
 	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/pkFavorite/__tests__ "$(ARTIFACTS_DIR)"/pkFavorite/coverage "$(ARTIFACTS_DIR)"/pkFavorite/.env* \
-		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/pkFavorite)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
 
 # JobCardFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché,
 # per il flusso di arricchimento prezzo/disponibilità del carrello
 # (jobCardService.js::getCartPriceAndAvailability), jobcard/jobCardService.js
 # richiede il codice sorgente di dms tramite path relativi (../dms/authService,
 # ../dms/dmsService): stesso identico motivo/pattern di
-# PkManagerFunction/SessionFunction/PkFavoriteFunction sopra.
+# PkManagerFunction/SessionFunction/PkFavoriteFunction sopra. Include anche
+# dbManager/ (db.js + AnagSnowflakesRepository.js) perché dms/dmsService.js
+# ::buildApplicationArea (imbarcato in-process insieme a jobcard) risolve
+# physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes, stesso Aurora
+# "wiadvisor" già usato da PkManagerFunction/SessionFunction) tramite
+# require(path.resolve(__dirname, '../dbManager/...')).
 build-JobCardFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/jobcard" "$(ARTIFACTS_DIR)/dms"
+	mkdir -p "$(ARTIFACTS_DIR)/jobcard" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager"
 	cp -r jobcard/. "$(ARTIFACTS_DIR)/jobcard/"
 	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/jobcard/__tests__ "$(ARTIFACTS_DIR)"/jobcard/coverage "$(ARTIFACTS_DIR)"/jobcard/.env* \
 		"$(ARTIFACTS_DIR)"/jobcard/testCart.js "$(ARTIFACTS_DIR)"/jobcard/jobCardDetail-sample.json \
-		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/jobcard)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
 
 # DmlConfigSyncFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
 # dmlConfigSync/index.js richiede il codice sorgente di dms tramite path relativi
@@ -117,3 +128,19 @@ build-DmlConfigSyncFunction:
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+
+# DmsFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
+# dms/dmsService.js::buildApplicationArea richiede il codice sorgente di dbManager
+# tramite path relativi (../dbManager/db, ../dbManager/AnagSnowflakesRepository)
+# per risolvere physicalSiteId/dealerNumberIdSource da woc.ang_snowflakes — stesso
+# lookup centralizzato qui e condiviso da tutti i chiamanti di postDmsInquiry
+# (jobcard, pkManager, pkFavorite), invece di essere duplicato in ciascuno.
+build-DmsFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager"
+	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)

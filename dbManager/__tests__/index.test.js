@@ -8,11 +8,12 @@ jest.mock('../PkConfigRepository', () => ({
 }));
 jest.mock('../AnagSnowflakesRepository', () => ({
   getCountryIsoCode: jest.fn(),
+  getPhysicalSiteAndSincom: jest.fn(),
 }));
 
 const { getPool } = require('../db');
 const { getPkwstouse } = require('../PkConfigRepository');
-const { getCountryIsoCode } = require('../AnagSnowflakesRepository');
+const { getCountryIsoCode, getPhysicalSiteAndSincom } = require('../AnagSnowflakesRepository');
 const { handler } = require('../index');
 
 const FAKE_POOL = { query: jest.fn() };
@@ -81,6 +82,32 @@ describe('dbManager index.handler', () => {
   it('maps getCountryIsoCode repository "is required" errors to 400', async () => {
     getCountryIsoCode.mockRejectedValue(new Error('"market" is required'));
     const res = await handler({ action: 'getCountryIsoCode', body: {} });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('resolves physicalSiteId/dealerNumberIdSource via direct invocation payload { action, body }', async () => {
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230' });
+
+    const res = await handler({
+      action: 'getPhysicalSite',
+      body: { mainSincom: '0073741', market: '1000', brand: 'FT' },
+    });
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith(FAKE_POOL, { mainSincom: '0073741', market: '1000', brand: 'FT' });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      success: true,
+      mainSincom: '0073741',
+      market: '1000',
+      brand: 'FT',
+      physicalSiteId: 'SITE001',
+      dealerNumberIdSource: '0062230',
+    });
+  });
+
+  it('maps getPhysicalSite repository "is required" errors to 400', async () => {
+    getPhysicalSiteAndSincom.mockRejectedValue(new Error('"brand" is required'));
+    const res = await handler({ action: 'getPhysicalSite', body: { mainSincom: '0073741', market: '1000' } });
     expect(res.statusCode).toBe(400);
   });
 
@@ -227,5 +254,37 @@ describe('dbManager CLI', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(getCountryIsoCode).not.toHaveBeenCalled();
+  });
+
+  it('runGetPhysicalSite prints the result and returns it', async () => {
+    const { runGetPhysicalSite } = require('../index');
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230' });
+
+    const result = await runGetPhysicalSite('0073741', '1000', 'FT');
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith(FAKE_POOL, { mainSincom: '0073741', market: '1000', brand: 'FT' });
+    expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230' });
+    expect(consoleLogSpy).toHaveBeenCalled();
+  });
+
+  it('main() runs getPhysicalSite with mainSincom/market/brand from argv', async () => {
+    const { main } = require('../index');
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230' });
+    process.argv = ['node', 'index.js', 'getPhysicalSite', '0073741', '1000', 'FT'];
+
+    await main();
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith(FAKE_POOL, { mainSincom: '0073741', market: '1000', brand: 'FT' });
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('main() exits 1 when mainSincom/market/brand are missing for getPhysicalSite', async () => {
+    const { main } = require('../index');
+    process.argv = ['node', 'index.js', 'getPhysicalSite', '0073741'];
+
+    await main();
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(getPhysicalSiteAndSincom).not.toHaveBeenCalled();
   });
 });

@@ -989,6 +989,53 @@ describe('PkManager', () => {
         brand: 'AP',
       });
     });
+
+    test('includes `market` in the sender so dms can centrally resolve physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes)', async () => {
+      const manager = new PkManager({
+        eper: { coddealer: 'EPER-DEALER' },
+        docsoa: { codbrand: 'FT', pays: 'IT', langue: 'it', codePdv: 'SITE001' },
+        menupricing: { dealerIdentificationCode: 'MP-DEALER', countryCode: 'IT', languageCode: 'it-IT' },
+      });
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123', '1000');
+
+      // Il lookup su woc.ang_snowflakes NON è più eseguito qui: pkManager passa
+      // solo `market` a dms/dmsService.js::postDmsInquiry, che lo usa per il
+      // lookup centralizzato (vedi dms/__tests__/dmsService.test.js).
+      expect(getPool).not.toHaveBeenCalled();
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.sender).toEqual({
+        dealerNumberId: 'MP-DEALER',
+        dealerNumberIdSource: 'MP-DEALER',
+        dealerCountryCode: 'IT',
+        languageCode: 'it-IT',
+        physicalSiteId: 'SITE001',
+        brand: 'FT',
+        market: '1000',
+      });
+    });
+
+    test('omits `market` from the sender when not provided', async () => {
+      const manager = new PkManager({
+        docsoa: { codbrand: 'FT', codePdv: 'SITE001' },
+        menupricing: { dealerIdentificationCode: 'MP-DEALER' },
+      });
+      manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
+
+      getBearerToken.mockResolvedValue('TOKEN123');
+      postDmsInquiry.mockResolvedValue({ success: true });
+
+      await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
+
+      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(body.sender.market).toBeUndefined();
+      expect(body.sender.physicalSiteId).toBe('SITE001');
+      expect(body.sender.dealerNumberIdSource).toBe('MP-DEALER');
+    });
   });
 
   // ── getPkList ──────────────────────────────────────────────────────────────
@@ -1045,7 +1092,7 @@ describe('PkManager', () => {
       const result = await manager.getPkList('eper', 'DOC1', 'CUST1', 'VIN123', '1000');
 
       expect(manager.getValidPackagesDetail).toHaveBeenCalledWith('1000', 'eper', 'VIN123');
-      expect(manager.getPriceAndAvailability).toHaveBeenCalledWith('DOC1', 'CUST1', 'VIN123');
+      expect(manager.getPriceAndAvailability).toHaveBeenCalledWith('DOC1', 'CUST1', 'VIN123', '1000');
 
       const [pkDetail] = result;
       expect(pkDetail.listaRicambi[0]).toMatchObject({ COD: 'SP1', AV_LOCAL: 3, PRICE: 12.5, SCONTO: 10 });

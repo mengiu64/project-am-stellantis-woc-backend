@@ -87,7 +87,7 @@ exports.handler = async (event) => {
       // getPriceAndAvailability richiede pkDetailList valorizzato: se non
       // fornito esplicitamente, lo recupera prima con getValidPackagesDetail
       await manager.getValidPackagesDetail(market, pkwstouse, VIN);
-      result = await manager.getPriceAndAvailability(documentId, customerId, VIN);
+      result = await manager.getPriceAndAvailability(documentId, customerId, VIN, market);
     }
 
     return {
@@ -189,7 +189,7 @@ async function main() {
 
       // 2) getPriceAndAvailability legge pkDetailList dalla stessa istanza
       console.log(`\n▶  getPriceAndAvailability  documentId="${documentId}"  customerId="${customerId}"  VIN="${VIN}"`);
-      const result = await manager.getPriceAndAvailability(documentId, customerId, VIN);
+      const result = await manager.getPriceAndAvailability(documentId, customerId, VIN, market);
       printResult('getPriceAndAvailability', result);
 
     } else if (command === 'getPkList') {

@@ -14,14 +14,22 @@
  * (cd_market_code), leggendo la tabella woc.ang_snowflakes. Vedi
  * AnagSnowflakesRepository.js.
  *
+ * Espone inoltre il metodo getPhysicalSite(mainSincom, market, brand): risolve
+ * physicalSiteId (gn_physical_site_arcad) e dealerNumberIdSource
+ * (cd_sincom_code) dalla stessa tabella woc.ang_snowflakes, usati dal
+ * chiamante (es. jobcard/jobCardService.js) per completare il Sender
+ * dell'inquiry DMS in modo dinamico invece dei valori statici via env. Vedi
+ * AnagSnowflakesRepository.js::getPhysicalSiteAndSincom.
+ *
  * Uso CLI:
  *   node index.js getPkwstouse <codmarket> <codbrand>
  *   node index.js getCountryIsoCode <market>
+ *   node index.js getPhysicalSite <mainSincom> <market> <brand>
  */
 
 const { getPool } = require('./db');
 const { getPkwstouse } = require('./PkConfigRepository');
-const { getCountryIsoCode } = require('./AnagSnowflakesRepository');
+const { getCountryIsoCode, getPhysicalSiteAndSincom } = require('./AnagSnowflakesRepository');
 
 function parseBody(event) {
   if (!event.body) return {};
@@ -47,7 +55,7 @@ exports.handler = async (event = {}) => {
     ? (event.body || {})
     : { ...(event.queryStringParameters || {}), ...parseBody(event) };
   const action = event.action || body.action || 'getPkwstouse';
-  const { codmarket, codbrand, market } = body;
+  const { codmarket, codbrand, market, mainSincom, brand } = body;
 
   try {
     const pool = await getPool();
@@ -60,6 +68,11 @@ exports.handler = async (event = {}) => {
     if (action === 'getCountryIsoCode') {
       const marketIso = await getCountryIsoCode(pool, { market });
       return response(200, { success: true, market, marketIso });
+    }
+
+    if (action === 'getPhysicalSite') {
+      const { physicalSiteId, dealerNumberIdSource } = await getPhysicalSiteAndSincom(pool, { mainSincom, market, brand });
+      return response(200, { success: true, mainSincom, market, brand, physicalSiteId, dealerNumberIdSource });
     }
 
     return response(400, { success: false, message: `Azione non supportata: "${action}"` });
@@ -87,8 +100,16 @@ async function runGetCountryIsoCode(market) {
   return marketIso;
 }
 
+async function runGetPhysicalSite(mainSincom, market, brand) {
+  console.log('\n=== dbManager getPhysicalSite ===');
+  const pool = await getPool();
+  const result = await getPhysicalSiteAndSincom(pool, { mainSincom, market, brand });
+  console.log(JSON.stringify({ success: true, mainSincom, market, brand, ...result }, null, 2));
+  return result;
+}
+
 async function main() {
-  const [, , command, arg1, arg2] = process.argv;
+  const [, , command, arg1, arg2, arg3] = process.argv;
 
   try {
     if (command === 'getPkwstouse') {
@@ -111,10 +132,22 @@ async function main() {
         return;
       }
       await runGetCountryIsoCode(market);
+    } else if (command === 'getPhysicalSite') {
+      // node index.js getPhysicalSite <mainSincom> <market> <brand>
+      const mainSincom = arg1;
+      const market = arg2;
+      const brand = arg3;
+      if (!mainSincom || !market || !brand) {
+        console.error('[ERROR] "mainSincom", "market" e "brand" sono obbligatori. Uso: node index.js getPhysicalSite <mainSincom> <market> <brand>');
+        process.exit(1);
+        return;
+      }
+      await runGetPhysicalSite(mainSincom, market, brand);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js getPkwstouse <codmarket> <codbrand>');
       console.error('  node index.js getCountryIsoCode <market>');
+      console.error('  node index.js getPhysicalSite <mainSincom> <market> <brand>');
       process.exit(1);
     }
   } catch (err) {
@@ -130,4 +163,5 @@ if (require.main === module) {
 module.exports.parseBody = parseBody;
 module.exports.runGetPkwstouse = runGetPkwstouse;
 module.exports.runGetCountryIsoCode = runGetCountryIsoCode;
+module.exports.runGetPhysicalSite = runGetPhysicalSite;
 module.exports.main = main;

@@ -44,6 +44,22 @@
  * istanze Lambda diverse), richiama DGT (getJobCardDetails, con un
  * bearerToken PingFederate) per rigenerarlo e rilegge il file prodotto.
  *
+ * Per costruire il Sender dinamico dell'inquiry DMS (v.
+ * jobCardService.buildDmsSender), "dml" accetta anche un sessionContext,
+ * derivato da:
+ *  - username: SEMPRE da event.requestContext.authorizer.sub quando presente
+ *    (Lambda Authorizer — mai un valore fornito dal chiamante, stessa
+ *    convenzione di session/pkFavorite), con fallback a body.username SOLO
+ *    quando l'evento non ha alcun requestContext.authorizer (invocazione
+ *    diretta/CLI di test);
+ *  - mainSincom/market/language/dealerCountryCode: presi da body, poiché il
+ *    chiamante (frontend) li ha già ottenuti da una precedente chiamata a
+ *    session (sincom/codmarket/language/marketIso) — nessuna cache dedicata
+ *    in questa lambda, solo /tmp/<jobCardId>.json per il jobCardDetail.
+ * Questi campi sono opzionali e "best effort": se assenti, buildDmsSender
+ * semplicemente non li valorizza e il Sender resta sui default statici di
+ * dms/config.js — "dml" non richiede quindi autenticazione obbligatoria.
+ *
  * "saveJobcard" (POST /jobCard) è la stessa azione esposta anche dalla lambda
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
  * API Gateway instrada le richieste POST verso la lambda djc, ma il metodo è
@@ -56,6 +72,43 @@ const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, g
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
 const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml'];
+
+/**
+ * Estrae lo username autenticato per il Sender dinamico dell'azione "dml"
+ * (jobCardService.buildDmsSender -> serviceId): se l'evento ha un
+ * requestContext.authorizer, SOLO authorizer.sub è attendibile (stessa
+ * convenzione di session/pkFavorite — mai un valore fornito dal body).
+ * Altrimenti (nessun authorizer nell'evento: invocazione diretta/CLI di
+ * test) si accetta body.username. A differenza di session/pkFavorite, qui
+ * l'assenza di username non blocca la richiesta (401): il Sender dinamico è
+ * un arricchimento best-effort, "dml" resta utilizzabile anche senza
+ * identità risolta (v. buildDmsSender).
+ */
+function resolveUsername(event, body) {
+  const authz = (event && event.requestContext && event.requestContext.authorizer) || null;
+  if (authz) {
+    return authz.sub || null;
+  }
+  return body.username || null;
+}
+
+/**
+ * Costruisce il sessionContext da passare a getDataFromDMLFromTmp per il
+ * Sender dinamico dell'inquiry DMS (v. jobCardService.buildDmsSender):
+ * mainSincom/market/language/dealerCountryCode sono presi dal body (il
+ * chiamante li ha già ottenuti da una precedente chiamata a session), lo
+ * username SEMPRE da resolveUsername (authorizer.sub, mai dal body quando
+ * presente un authorizer).
+ */
+function resolveSessionContext(event, body) {
+  return {
+    username: resolveUsername(event, body),
+    mainSincom: body.mainSincom,
+    market: body.market ?? body.codmarket,
+    language: body.language,
+    dealerCountryCode: body.dealerCountryCode ?? body.marketIso,
+  };
+}
 
 /**
  * Resolves { action, body } from either:
@@ -112,7 +165,7 @@ exports.handler = async (event) => {
       // internamente il proprio token verso dms/authService). Se il file
       // manca, getDataFromDMLFromTmp richiama DGT (getJobCardDetails) per
       // rigenerarlo, recuperando un bearerToken PingFederate solo in quel caso.
-      result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id);
+      result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id, undefined, resolveSessionContext(event, body));
     } else {
       const token = await getBearerToken();
       if (action === 'list') {

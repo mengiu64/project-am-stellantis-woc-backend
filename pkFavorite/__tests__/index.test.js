@@ -81,6 +81,9 @@ describe('pkfavorite index.handler', () => {
     expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', {
       PartsInquiryHeader: { MessageType: 'LFP', VehicleID: 'VF3CABHW6GT204366' },
       package: 'FORFAIT',
+      // Nessun dato di sessione (mainSincom/market/brand/...) in query: il
+      // Sender dinamico contiene solo serviceId (username da authorizer.sub).
+      sender: { serviceId: '0062230.d001' },
     });
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body);
@@ -122,6 +125,70 @@ describe('pkfavorite index.handler', () => {
       { Code: 'A1', PackageDescription: 'Pkg A1', PartsAvailablity: true, TotalPriceInclTax: 10, TotalPriceExclTax: 8 },
       { Code: 'B1', PackageDescription: 'Pkg B1', PartsAvailablity: false, TotalPriceInclTax: 20, TotalPriceExclTax: 16 },
     ]);
+  });
+
+  it('GET: builds a dynamic Sender from query params (mainSincom/market/brand/language/dealerCountryCode) and threads it to every postDmsInquiry call', async () => {
+    // Stesso meccanismo/stessi criteri di jobcard::buildDmsSender e
+    // pkManager::_buildDmsSender: dealerNumberId<-mainSincom,
+    // serviceId<-username (authorizer), languageCode<-language,
+    // dealerCountryCode<-dealerCountryCode, brand<-brand, market<-market
+    // (solo chiave di lookup lato dms, mai un campo Sender vero e proprio).
+    listFavorites.mockResolvedValue([
+      { packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' },
+      { packageCode: 'TAGLIANDO', createdAt: '2026-01-02T09:00:00Z' },
+    ]);
+    getBearerToken.mockResolvedValue('fake-bearer-token');
+    postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
+
+    const event = apiGwEvent({
+      method: 'GET',
+      authorizerSub: '0062230.d001',
+      query: {
+        vin: 'VF3CABHW6GT204366',
+        mainSincom: '1234567',
+        market: '10102',
+        brand: 'AP',
+        language: 'FR',
+        dealerCountryCode: 'FR',
+      },
+    });
+
+    await handler(event);
+
+    const expectedSender = {
+      dealerNumberId: '1234567',
+      serviceId: '0062230.d001',
+      languageCode: 'FR',
+      dealerCountryCode: 'FR',
+      brand: 'AP',
+      market: '10102',
+    };
+    expect(postDmsInquiry).toHaveBeenCalledTimes(2);
+    expect(postDmsInquiry).toHaveBeenNthCalledWith(1, 'fake-bearer-token', expect.objectContaining({ sender: expectedSender }));
+    expect(postDmsInquiry).toHaveBeenNthCalledWith(2, 'fake-bearer-token', expect.objectContaining({ sender: expectedSender }));
+  });
+
+  it('GET: accepts codmarket/codbrand/marketIso as fallback query param names for market/brand/dealerCountryCode', async () => {
+    listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
+    getBearerToken.mockResolvedValue('fake-bearer-token');
+    postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
+
+    const event = apiGwEvent({
+      method: 'GET',
+      authorizerSub: '0062230.d001',
+      query: {
+        vin: 'VF3CABHW6GT204366',
+        codmarket: '10102',
+        codbrand: 'AP',
+        marketIso: 'FR',
+      },
+    });
+
+    await handler(event);
+
+    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+      sender: expect.objectContaining({ market: '10102', brand: 'AP', dealerCountryCode: 'FR' }),
+    }));
   });
 
   it('GET: con più preferiti, esegue tutte le chiamate DML in parallelo (non in coda)', async () => {

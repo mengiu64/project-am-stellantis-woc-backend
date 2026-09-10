@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const { URL } = require('url');
 const { randomUUID } = require('crypto');
 const { httpsRequest } = require('./httpClient');
@@ -221,25 +222,65 @@ function validateTypeSection(body, messageType) {
  *
  * Il Sender NON è più statico: `config.sender` (variabili d'ambiente) resta il
  * fallback per i campi non forniti (uso da CLI/replay file), ma il chiamante
- * (es. PkManager.getPriceAndAvailability, che conosce il dealer/brand/mercato
- * reale della richiesta tramite wsConfig) può sovrascrivere per-request uno o
- * più campi passando `senderOverrides` — così il Sender riflette il dealer
- * effettivo che ha originato la inquiry invece di un unico dealer fisso
- * configurato via env.
+ * (jobcard/jobCardService.js, PkManager.getPriceAndAvailability,
+ * pkFavorite/index.js, ...) può sovrascrivere per-request uno o più campi
+ * passando `senderOverrides` — così il Sender riflette il dealer effettivo
+ * che ha originato la inquiry invece di un unico dealer fisso configurato via
+ * env.
+ *
+ * physicalSiteId/dealerNumberIdSource dinamici: centralizzati QUI (non più
+ * duplicati in ogni chiamante) tramite lookup su woc.ang_snowflakes
+ * (dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndSincom). Stesso
+ * meccanismo e stessi criteri per QUALSIASI chiamante di postDmsInquiry:
+ * quando senderOverrides fornisce dealerNumberId (mainSincom) + market
+ * (usato solo come chiave di lookup, non è un campo Sender e non viene
+ * inviato al DML) + brand, si risolvono physicalSiteId/dealerNumberIdSource
+ * da DB, sovrascrivendo eventuali valori già presenti in senderOverrides o in
+ * config.sender. Il lookup è best-effort: se manca uno dei tre dati, o la
+ * query fallisce per qualunque motivo, si ricade sui valori già disponibili
+ * (senderOverrides espliciti, poi config.sender) — un problema di
+ * arricchimento del Sender non deve mai bloccare la chiamata al gateway DML.
  *
  * @param {object} [senderOverrides] - Sottoinsieme di config.sender da
  *                     sovrascrivere per questa richiesta (stessi nomi campo:
  *                     componentId, dealerNumberId, dealerNumberIdSource,
  *                     dealerCountryCode, languageCode, physicalSiteId,
- *                     serviceId, currencyId, brand). Valori undefined/null
- *                     vengono ignorati (resta il default di config.sender).
- * @returns {object} ApplicationArea
+ *                     serviceId, currencyId, brand), più `market` (solo chiave
+ *                     di lookup woc.ang_snowflakes, mai inviato al DML).
+ *                     Valori undefined/null vengono ignorati (resta il
+ *                     default di config.sender).
+ * @returns {Promise<object>} ApplicationArea
  */
-function buildApplicationArea(senderOverrides = {}) {
+async function buildApplicationArea(senderOverrides = {}) {
   const s = { ...config.sender };
   for (const [key, value] of Object.entries(senderOverrides || {})) {
     if (value !== undefined && value !== null) s[key] = value;
   }
+
+  // Il lookup scatta solo quando il CHIAMANTE fornisce esplicitamente
+  // dealerNumberId/market/brand (non quando restano i default statici di
+  // config.sender, che non rappresentano il dealer reale della richiesta) —
+  // stesso criterio già applicato dalle implementazioni precedenti in
+  // jobcard/pkManager (dove il controllo era sui dati locali, non su un
+  // eventuale default env-based).
+  const { dealerNumberId, market, brand } = senderOverrides || {};
+  if (dealerNumberId && market && brand) {
+    try {
+      const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+      const { getPhysicalSiteAndSincom } = require(path.resolve(__dirname, '../dbManager/AnagSnowflakesRepository'));
+      const pool = await getPool();
+      const { physicalSiteId, dealerNumberIdSource } = await getPhysicalSiteAndSincom(pool, {
+        mainSincom: dealerNumberId,
+        market,
+        brand,
+      });
+      if (physicalSiteId) s.physicalSiteId = physicalSiteId;
+      if (dealerNumberIdSource) s.dealerNumberIdSource = dealerNumberIdSource;
+    } catch (err) {
+      console.warn(`[dms] impossibile risolvere physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes) per mainSincom="${dealerNumberId}" market="${market}" brand="${brand}": ${err.message}`);
+    }
+  }
+
   return {
     Sender: {
       ComponentID: s.componentId,
@@ -330,11 +371,16 @@ function buildWorkLines(workLines = [], customerAccountDmsId = null) {
  * @param {object}   [body.sender] - Shortcut: sottoinsieme di config.sender da
  *                     sovrascrivere per-request (stessi nomi campo: dealerNumberId,
  *                     dealerNumberIdSource, dealerCountryCode, languageCode,
- *                     physicalSiteId, serviceId, currencyId, brand, componentId).
+ *                     physicalSiteId, serviceId, currencyId, brand, componentId),
+ *                     più `market` (solo chiave di lookup, non un campo Sender).
  *                     Usato per costruire un ApplicationArea.Sender dinamico (dealer/
- *                     brand/mercato reale della richiesta, es. da PkManager.wsConfig)
- *                     invece dei soli default statici da env. Ignorato quando
- *                     body.ApplicationArea è già fornito. Not sent as-is.
+ *                     brand/mercato reale della richiesta, es. da jobcard/jobCardService.js,
+ *                     PkManager.wsConfig, pkFavorite/index.js) invece dei soli default
+ *                     statici da env — quando dealerNumberId+market+brand sono presenti,
+ *                     physicalSiteId/dealerNumberIdSource vengono risolti dinamicamente
+ *                     da woc.ang_snowflakes (vedi buildApplicationArea()), stesso
+ *                     meccanismo e stessi criteri per qualunque chiamante. Ignorato
+ *                     quando body.ApplicationArea è già fornito. Not sent as-is.
  * @param {object}   [body.PartsInquiryHeader] - Optional; built internally from the
  *                     flat root-level fields below (DocumentID/CustomerIdDms/
  *                     MessageType/VehicleID) when omitted. If provided, it always
@@ -385,7 +431,7 @@ async function postDmsInquiry(bearerToken, body = {}) {
   // davvero la inquiry.
   const requestBody = {
     ...body,
-    ApplicationArea: body.ApplicationArea || buildApplicationArea(body.sender),
+    ApplicationArea: body.ApplicationArea || (await buildApplicationArea(body.sender)),
   };
   delete requestBody.sender;
 

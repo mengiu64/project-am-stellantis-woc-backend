@@ -207,17 +207,33 @@ class PkManager {
   // serviceId, currencyId) restano sui default env-based di dms, non essendoci
   // qui un equivalente affidabile.
   //
+  // physicalSiteId/dealerNumberIdSource NON vengono più risolti qui: il lookup
+  // su woc.ang_snowflakes (dbManager/AnagSnowflakesRepository.js
+  // ::getPhysicalSiteAndSincom) e' centralizzato in dms/dmsService.js
+  // ::buildApplicationArea(), che riceve dealerNumberId/market/brand tramite
+  // questo stesso sender e applica lo stesso identico meccanismo/criteri per
+  // qualunque chiamante (jobcard, pkManager, pkFavorite) — pkManager non
+  // accede più direttamente a dbManager per questo scopo (resta usato altrove,
+  // es. getPkList/getPkwstouse).
+  //
+  // @param {string} [market] - Codice mercato (stesso "market" di getPkList/
+  //                            getPriceAndAvailability), propagato a dms per il
+  //                            lookup physicalSiteId/dealerNumberIdSource, non
+  //                            inviato al DML
   // @returns {object} sender override da passare a postDmsInquiry(token, { sender, ... })
-  _buildDmsSender() {
+  _buildDmsSender(market) {
     const { eper, docsoa, menupricing } = this.wsConfig;
     const dealerNumberId = menupricing?.dealerIdentificationCode ?? eper?.coddealer ?? docsoa?.codePdv;
+    const brand = docsoa?.codbrand;
+
     return {
       dealerNumberId,
       dealerNumberIdSource: dealerNumberId,
       dealerCountryCode: menupricing?.countryCode ?? docsoa?.pays,
       languageCode: menupricing?.languageCode ?? docsoa?.langue,
       physicalSiteId: docsoa?.codePdv,
-      brand: docsoa?.codbrand,
+      brand,
+      market,
     };
   }
 
@@ -250,8 +266,13 @@ class PkManager {
   // @param {string} documentId - Repair Order number (PartsInquiryHeader.DocumentID)
   // @param {string} customerId - Customer ID DMS (PartsInquiryHeader.CustomerIdDms)
   // @param {string} vehicleId  - VIN (PartsInquiryHeader.VehicleID)
+  // @param {string} [market]   - Codice mercato (stesso "market" di getPkList),
+  //                              propagato via sender.market a dms/dmsService.js
+  //                              che lo usa per il lookup physicalSiteId/
+  //                              dealerNumberIdSource su woc.ang_snowflakes —
+  //                              non inviato al DML come campo Sender
   // @returns {Promise<object>} - Risposta di postDmsInquiry (InquiryResponse)
-  async getPriceAndAvailability(documentId, customerId, vehicleId) {
+  async getPriceAndAvailability(documentId, customerId, vehicleId, market) {
     const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
     const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
 
@@ -274,9 +295,10 @@ class PkManager {
       customerAccountDmsId: null,
       workLines,
       // Sender dinamico (dealer/brand/mercato reali di questa richiesta, da
-      // wsConfig) invece dei default statici env-based della lambda dms — vedi
-      // _buildDmsSender().
-      sender: this._buildDmsSender(),
+      // wsConfig — physicalSiteId/dealerNumberIdSource arricchiti lato dms da
+      // woc.ang_snowflakes quando possibile) invece dei default statici
+      // env-based della lambda dms — vedi _buildDmsSender().
+      sender: this._buildDmsSender(market),
     };
 
     // Chiamo il gateway DML (token da cache/PingFederate + POST /inquiry): la
@@ -351,7 +373,7 @@ class PkManager {
     this.dmlWarning = null;
     let priceAndAvailability;
     try {
-      priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId);
+      priceAndAvailability = await this.getPriceAndAvailability(documentId, customerId, vehicleId, market);
     } catch (err) {
       this.dmlWarning = err.message ?? String(err);
       console.error('[PkManager.getPkList] getPriceAndAvailability fallita, proseguo senza prezzo/disponibilità:', this.dmlWarning);
