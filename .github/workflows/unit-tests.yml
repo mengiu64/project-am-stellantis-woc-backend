@@ -4224,6 +4224,7 @@ jobs:
       - test-pkFavorite
       - test-moparDoc
       - test-isStellantisBrand
+      - test-auroraAutoStart
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     permissions:
@@ -4265,6 +4266,7 @@ jobs:
           (cd pkFavorite    && npm ci --omit=dev)
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
+          (cd auroraAutoStart && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -4359,6 +4361,7 @@ jobs:
       - test-pkFavorite
       - test-moparDoc
       - test-isStellantisBrand
+      - test-auroraAutoStart
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     permissions:
@@ -4400,6 +4403,7 @@ jobs:
           (cd pkFavorite    && npm ci --omit=dev)
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
+          (cd auroraAutoStart && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
@@ -4495,6 +4499,7 @@ jobs:
       - test-pkFavorite
       - test-moparDoc
       - test-isStellantisBrand
+      - test-auroraAutoStart
     if: github.event_name == 'push' && github.ref == 'refs/heads/production'
     runs-on: ubuntu-latest
     environment: prod
@@ -4537,6 +4542,7 @@ jobs:
           (cd pkFavorite    && npm ci --omit=dev)
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
+          (cd auroraAutoStart && npm ci --omit=dev)
 
       - name: SAM Build
         run: sam build --parallel
