@@ -87,6 +87,8 @@ npm run getdetails -- VF3VEAHHWFZ062040
 
 > ℹ️ La risposta di `getdetails` viene arricchita deducendo l'`owner` da `data.brandCode` tramite l'anagrafica `brandowner.json` (letta da S3). Se `owner === "XP"`, viene analizzato `data.salesCode` per trovare il primo codice presente nell'anagrafica `energytype.json` (letta da S3) e valorizzare `data.energyTypeDesignation` con la relativa descrizione.
 
+> ℹ️ **Cache `/tmp` per-VIN**: sia l'azione `getdetails` (Lambda `handler`) sia il CLI usano `getDetailsWithCache` (`v360Service.js`) invece di chiamare direttamente `getDetails`. Prima di interrogare ASV360, si legge `/tmp/v360-getdetails-<vin>.json`: se presente (scritto da una precedente chiamata riuscita per lo stesso VIN nella stessa istanza Lambda "warm", che riusa `/tmp` tra un'invocazione e l'altra finché il container resta attivo), la risposta viene restituita senza rifare la chiamata; altrimenti si chiama ASV360 e la risposta viene salvata nel file per le richieste successive nella stessa "sessione"/container. Il salvataggio è **best-effort**: un eventuale errore di scrittura in `/tmp` viene solo loggato come warning e non fa fallire la richiesta (stesso pattern di `jobcard/jobCardService.js::saveJobCardDetailsToTmp`). La stessa cache è usata anche da `getCachedBrand(vin)`, funzione best-effort usata dai chiamanti esterni (`jobcard`, `pkFavorite`, `pkManager`) per risolvere `data.brandCode` senza doverlo ricevere dal FE — v. `dms/dmsService.js::resolveDynamicSenderFields`.
+
 ---
 
 ## Parametri
