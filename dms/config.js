@@ -20,46 +20,34 @@ if (fs.existsSync(envFile)) {
     });
 }
 
-// Validate required environment variables
-const REQUIRED_ENV = [
-  'DMS_PING_CLIENT_ID',
-  'DMS_PING_CLIENT_SECRET',
-  'DML_IBM_CLIENT_ID',
-  'DML_IBM_CLIENT_SECRET',
-];
-const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
-  throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
-}
-
 // Cache della configurazione — persiste tra invocazioni nello stesso container Lambda (warm start)
 let cachedConfig = null;
 
 /**
- * Costruisce l'oggetto di configurazione a partire dalle URL/path risolte
- * (da Secrets Manager se SERVICE_URLS_SECRET_ID è configurata, altrimenti da
- * variabile d'ambiente/hardcoded default).
+ * Costruisce l'oggetto di configurazione a partire dai valori risolti (URL/path
+ * + credenziali) da Secrets Manager se SERVICE_URLS_SECRET_ID è configurata,
+ * altrimenti da variabile d'ambiente/hardcoded default (locale/CLI).
  */
-function buildConfig(urls) {
+function buildConfig(secrets) {
   return {
     // PingFederate token endpoint
     auth: {
-      url: urls.DMS_PING_URL,
+      url: secrets.DMS_PING_URL,
       grantType: 'client_credentials',
       scope: 'prd:dmy',
-      clientId: process.env.DMS_PING_CLIENT_ID,
-      clientSecret: process.env.DMS_PING_CLIENT_SECRET,
+      clientId: secrets.DMS_PING_CLIENT_ID,
+      clientSecret: secrets.DMS_PING_CLIENT_SECRET,
     },
 
     // Stellantis DML API (IBM API Connect gateway)
     dml: {
-      baseUrl: urls.DML_BASE_URL,
-      settingsPath: urls.DML_SETTINGS_PATH,
-      inquiryPath: urls.DML_INQUIRY_PATH,
-      companyTypesPath: urls.DML_COMPANY_TYPES_PATH,
-      customerTitlesPath: urls.DML_CUSTOMER_TITLES_PATH,
-      ibmClientId: process.env.DML_IBM_CLIENT_ID,
-      ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
+      baseUrl: secrets.DML_BASE_URL,
+      settingsPath: secrets.DML_SETTINGS_PATH,
+      inquiryPath: secrets.DML_INQUIRY_PATH,
+      companyTypesPath: secrets.DML_COMPANY_TYPES_PATH,
+      customerTitlesPath: secrets.DML_CUSTOMER_TITLES_PATH,
+      ibmClientId: secrets.DML_IBM_CLIENT_ID,
+      ibmClientSecret: secrets.DML_IBM_CLIENT_SECRET,
       xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',
     },
     // ApplicationArea.Sender defaults (optional, used in CLI inquiry command)
@@ -79,7 +67,7 @@ function buildConfig(urls) {
 
 /**
  * Restituisce l'oggetto di configurazione completo (con cache in memoria).
- * Le URL/path (PingFederate + DML) sono lette da AWS Secrets Manager (secret
+ * Le URL/path e le credenziali (PingFederate + DML) sono lette da AWS Secrets Manager (secret
  * unico "service urls", v. secretsLoader.js e template.yaml risorsa
  * ServiceUrlsSecret) quando SERVICE_URLS_SECRET_ID è configurata (Lambda);
  * altrimenti (locale/CLI, o singola chiave assente dal secret) da variabile
@@ -105,16 +93,29 @@ async function getConfig() {
     }
   }
 
-  const urls = {
+  const secrets = {
     DMS_PING_URL: secretUrls.DMS_PING_URL || process.env.DMS_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     DML_BASE_URL: secretUrls.DML_BASE_URL || process.env.DML_BASE_URL || 'https://emea-aws.dev.np-api.stellantis.com',
     DML_SETTINGS_PATH: secretUrls.DML_SETTINGS_PATH || process.env.DML_SETTINGS_PATH || '/ps-dev/extra/dml/dms-settings/v1/settings',
     DML_INQUIRY_PATH: secretUrls.DML_INQUIRY_PATH || process.env.DML_INQUIRY_PATH || '/ps-dev/extra/dml/aftersales/v1/inquiry',
     DML_COMPANY_TYPES_PATH: secretUrls.DML_COMPANY_TYPES_PATH || process.env.DML_COMPANY_TYPES_PATH || '/ps-dev/extra/dml/configurations/v1/company-types',
     DML_CUSTOMER_TITLES_PATH: secretUrls.DML_CUSTOMER_TITLES_PATH || process.env.DML_CUSTOMER_TITLES_PATH || '/ps-dev/extra/dml/configurations/v1/customer-titles',
+    // Credenziali PingFederate/DML: non più passate come variabile d'ambiente/
+    // parametro CFN in chiaro sulla Lambda, ma lette dallo stesso secret
+    // condiviso ("service urls") — v. template.yaml/ServiceUrlsSecretId.
+    DMS_PING_CLIENT_ID: secretUrls.DMS_PING_CLIENT_ID || process.env.DMS_PING_CLIENT_ID,
+    DMS_PING_CLIENT_SECRET: secretUrls.DMS_PING_CLIENT_SECRET || process.env.DMS_PING_CLIENT_SECRET,
+    DML_IBM_CLIENT_ID: secretUrls.DML_IBM_CLIENT_ID || process.env.DML_IBM_CLIENT_ID,
+    DML_IBM_CLIENT_SECRET: secretUrls.DML_IBM_CLIENT_SECRET || process.env.DML_IBM_CLIENT_SECRET,
   };
 
-  cachedConfig = buildConfig(urls);
+  const missingCreds = ['DMS_PING_CLIENT_ID', 'DMS_PING_CLIENT_SECRET', 'DML_IBM_CLIENT_ID', 'DML_IBM_CLIENT_SECRET']
+    .filter((k) => !secrets[k]);
+  if (missingCreds.length > 0) {
+    console.warn(`[config] Credenziali mancanti (ne' nel secret ne' in env): ${missingCreds.join(', ')}`);
+  }
+
+  cachedConfig = buildConfig(secrets);
   return cachedConfig;
 }
 

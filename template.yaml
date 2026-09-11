@@ -31,33 +31,28 @@ Parameters:
     Type: CommaDelimitedList
     Description: Comma-separated list of Security Group IDs
 
-  # ── PingFederate — DMS (dedicated client, scope prd:dmy) ──────────────────
-  DmsPingClientId:
-    Type: String
-    NoEcho: false
-  DmsPingClientSecret:
-    Type: String
-    NoEcho: true
-
-  # ── ServiceUrlsSecret — URL/path condivise (PingFederate + DMS/DML,
-  # JOBCARD/DGT, V360/ASV360) usate da dms/jobcard/djc/v360 (v.
+  # ── ServiceUrlsSecret — URL/path e credenziali condivise (PingFederate +
+  # DMS/DML, JOBCARD/DGT, V360/ASV360) usate da dms/jobcard/djc/v360 (v.
   # <modulo>/secretsLoader.js + <modulo>/config.js::getConfig). Il secret NON
   # è creato da questo template (il ruolo di deploy non ha il permesso IAM
   # secretsmanager:CreateSecret, stesso limite già riscontrato con
   # TmpCacheTable/DynamoDB): va creato una tantum fuori banda (Console/CLI
-  # AWS) con un JSON { "DMS_PING_URL": "...", "DML_BASE_URL": "...", ... }
-  # (v. README per l'elenco completo delle chiavi). Se il secret non esiste
-  # ancora o non è raggiungibile, <modulo>/config.js ricade automaticamente
-  # sulle variabili d'ambiente/default storici (nessuna interruzione di
-  # servizio). Una volta creato, aggiornare il suo valore via Console/CLI
-  # (UpdateSecret) NON richiede un nuovo `sam deploy`: un solo posto da
-  # modificare, invece di dover cercare la stessa URL duplicata in più Lambda.
+  # AWS) con un JSON { "DMS_PING_URL": "...", "DMS_PING_CLIENT_ID": "...",
+  # "DMS_PING_CLIENT_SECRET": "...", "DML_BASE_URL": "...", ... } (v. README
+  # per l'elenco completo delle chiavi). Se il secret non esiste ancora o non
+  # è raggiungibile, <modulo>/config.js ricade automaticamente sulle variabili
+  # d'ambiente/default storici (nessuna interruzione di servizio). Una volta
+  # creato, aggiornare il suo valore via Console/CLI (UpdateSecret) NON
+  # richiede un nuovo `sam deploy`: un solo posto da modificare/ruotare,
+  # invece di dover cercare la stessa credenziale duplicata in più Lambda —
+  # e nessuna credenziale in chiaro nella configurazione delle Lambda.
   ServiceUrlsSecretId:
     Type: String
     Default: sm-np-bsn0027990-dev-service-urls
     Description: >-
-      Secrets Manager secret id (o ARN) del secret condiviso con le URL/path
-      di PingFederate e dei servizi upstream usato da dms/jobcard/djc/v360.
+      Secrets Manager secret id (o ARN) del secret condiviso con URL/path e
+      credenziali di PingFederate e dei servizi upstream usato da
+      dms/jobcard/djc/v360.
 
   # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
   AgendaSoaHost:
@@ -79,12 +74,6 @@ Parameters:
     Default: apicKey
     Description: Secrets Manager secret id della chiave privata mTLS (PEM) per le Lambda AgendaSOA
 
-  # ── DMS (DML API) ─────────────────────────────────────────────────────────
-  DmlIbmClientId:
-    Type: String
-  DmlIbmClientSecret:
-    Type: String
-    NoEcho: true
   # IBM API Connect target environment for the DML gateway (X-Target-Env header).
   # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
   # of the AWS SAM "Environment" parameter (dev/stage/prod stack). It must NOT be
@@ -95,38 +84,7 @@ Parameters:
     Type: String
     Default: stage
 
-  # ── JobCard (DGT API) ─────────────────────────────────────────────────────
-  DgtClientId:
-    Type: String
-  DgtClientSecret:
-    Type: String
-    NoEcho: true
-  JobcardPingClientId:
-    Type: String
-    Description: PingFederate client id dedicated to jobcard (scope prd:dgt)
-  JobcardPingClientSecret:
-    Type: String
-    NoEcho: true
-    Description: PingFederate client secret dedicated to jobcard (scope prd:dgt)
-
   # ── MoparDoc: credenziali lette a runtime da SSM -> Secrets Manager (nessun parametro CFN) ──
-
-  # ── V360 (ASV API) ────────────────────────────────────────────────────────
-  AsvClientId:
-    Type: String
-  AsvClientSecret:
-    Type: String
-    NoEcho: true
-  AsvGetDetailsClientId:
-    Type: String
-    Description: Default clientId used in getdetails request body when not provided in input (environment-specific)
-  V360PingClientId:
-    Type: String
-    Description: PingFederate client id dedicated to v360 (scope prd:asv)
-  V360PingClientSecret:
-    Type: String
-    NoEcho: true
-    Description: PingFederate client secret dedicated to v360 (scope prd:asv)
 
   # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
   EperHost:
@@ -479,10 +437,9 @@ Resources:
               Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
-          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
+          # DMS_PING_CLIENT_ID/SECRET, DML_IBM_CLIENT_ID/SECRET: non più
+          # variabili d'ambiente in chiaro, ma lette da dms/config.js::getConfig()
+          # dal secret condiviso SERVICE_URLS_SECRET_ID (v. commento sopra).
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — dmsService.js::buildApplicationArea
@@ -511,13 +468,9 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
           # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
+          # v360/config.js::getConfig() dallo stesso secret condiviso.
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           # session/src/dynamoCache.js + v360/dynamoCache.js (in-process, vedi
           # Makefile) — cache condivisa su TmpCacheTable (v. Resources), sostituisce
@@ -589,17 +542,13 @@ Resources:
               Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
-          JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
-          JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
-          DGT_CLIENT_ID:      !Ref DgtClientId
-          DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+          # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
+          # da jobcard/config.js::getConfig() dal secret condiviso.
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML usato da
-          # getCartPriceAndAvailability, stessi valori usati da PkManagerFunction/PkFavoriteFunction.
-          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
+          # getCartPriceAndAvailability. DMS_PING_*/DML_IBM_*: non più variabili
+          # d'ambiente in chiaro, lette da dms/config.js::getConfig() dallo
+          # stesso secret condiviso.
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da dms/dmsService.js
           # ::buildApplicationArea (imbarcato in-process insieme a jobcard), che risolve
@@ -628,13 +577,9 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
           # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
+          # v360/config.js::getConfig() dallo stesso secret condiviso.
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           # jobcard/dynamoCache.js + v360/dynamoCache.js + session/src/dynamoCache.js
           # (in-process, vedi Makefile) — cache condivisa su TmpCacheTable (v.
@@ -651,8 +596,8 @@ Resources:
 
   # DjcFunction: declinazione di JobCardFunction (Digital Job Card). Espone
   # l'azione "saveJobcard" (POST /jobCard) e riusa lo stesso client
-  # PingFederate/DGT di jobcard, quindi condivide gli stessi parametri
-  # JobcardPingClientId/Secret e DgtClientId/Secret.
+  # PingFederate/DGT di jobcard, letto dallo stesso secret condiviso
+  # (ServiceUrlsSecretId).
   DjcFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -677,14 +622,11 @@ Resources:
               Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
       Environment:
         Variables:
-          JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
-          JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
-          DGT_CLIENT_ID:      !Ref DgtClientId
-          DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+          # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
+          # da djc/config.js::getConfig() dal secret condiviso (mantenuto in
+          # sync con jobcard/config.js).
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-
-  DjcFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
@@ -761,12 +703,9 @@ Resources:
               Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
       Environment:
         Variables:
-          V360_PING_CLIENT_ID:     !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET: !Ref V360PingClientSecret
-          ASV_CLIENT_ID:      !Ref AsvClientId
-          ASV_CLIENT_SECRET:  !Ref AsvClientSecret
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
+          # v360/config.js::getConfig() dal secret condiviso SERVICE_URLS_SECRET_ID.
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME: !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
@@ -1034,10 +973,9 @@ Resources:
           MP_COUNTRY_CODE:              !Ref MpCountryCode
           MP_DEALER_IDENTIFICATION_CODE: !Ref MpDealerIdentificationCode
           MP_MANUFACTURER:              !Ref MpManufacturer
-          DMS_PING_CLIENT_ID:           !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET:       !Ref DmsPingClientSecret
-          DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
+          # DMS_PING_*/DML_IBM_*/V360_PING_*/ASV_*: non più variabili d'ambiente
+          # in chiaro, lette dal secret condiviso SERVICE_URLS_SECRET_ID via
+          # dms/config.js::getConfig() e v360/config.js::getConfig() (in-process).
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
           # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
@@ -1057,14 +995,6 @@ Resources:
           DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
           DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
 
@@ -1137,11 +1067,9 @@ Resources:
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
           MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
           MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dms (usato dallo stesso flusso, per dms/settings)
-          DMS_PING_CLIENT_ID:       !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET:   !Ref DmsPingClientSecret
-          DML_IBM_CLIENT_ID:        !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:    !Ref DmlIbmClientSecret
+          # dms (usato dallo stesso flusso, per dms/settings) — DMS_PING_*/
+          # DML_IBM_*: non più variabili d'ambiente in chiaro, lette dal secret
+          # condiviso via dms/config.js::getConfig() (in-process).
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
           # dmlConfigSync/db.js (in-process, vedi Makefile) — lettura della cache
@@ -1280,11 +1208,8 @@ Resources:
           PKFAVORITE_DB_NAME:      !Ref PkFavoriteDbName
           PKFAVORITE_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML per l'arricchimento
-          # dei preferiti (MessageType LFP), stessi valori usati da PkManagerFunction.
-          DMS_PING_CLIENT_ID:    !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DML_IBM_CLIENT_ID:     !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
+          # dei preferiti (MessageType LFP). DMS_PING_*/DML_IBM_*: non più
+          # variabili d'ambiente in chiaro, lette dal secret condiviso.
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da
@@ -1314,13 +1239,9 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
           # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette dal
+          # secret condiviso via v360/config.js::getConfig() (in-process).
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
 
@@ -1431,11 +1352,8 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML per company-types/
-          # customer-titles, stessi valori usati da PkManagerFunction/PkFavoriteFunction/SessionFunction.
-          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
+          # customer-titles. DMS_PING_*/DML_IBM_*: non più variabili d'ambiente
+          # in chiaro, lette dal secret condiviso.
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
       Events:
