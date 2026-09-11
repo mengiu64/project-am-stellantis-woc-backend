@@ -39,6 +39,26 @@ Parameters:
     Type: String
     NoEcho: true
 
+  # ── ServiceUrlsSecret — URL/path condivise (PingFederate + DMS/DML,
+  # JOBCARD/DGT, V360/ASV360) usate da dms/jobcard/djc/v360 (v.
+  # <modulo>/secretsLoader.js + <modulo>/config.js::getConfig). Il secret NON
+  # è creato da questo template (il ruolo di deploy non ha il permesso IAM
+  # secretsmanager:CreateSecret, stesso limite già riscontrato con
+  # TmpCacheTable/DynamoDB): va creato una tantum fuori banda (Console/CLI
+  # AWS) con un JSON { "DMS_PING_URL": "...", "DML_BASE_URL": "...", ... }
+  # (v. README per l'elenco completo delle chiavi). Se il secret non esiste
+  # ancora o non è raggiungibile, <modulo>/config.js ricade automaticamente
+  # sulle variabili d'ambiente/default storici (nessuna interruzione di
+  # servizio). Una volta creato, aggiornare il suo valore via Console/CLI
+  # (UpdateSecret) NON richiede un nuovo `sam deploy`: un solo posto da
+  # modificare, invece di dover cercare la stessa URL duplicata in più Lambda.
+  ServiceUrlsSecretId:
+    Type: String
+    Default: sm-np-bsn0027990-dev-service-urls
+    Description: >-
+      Secrets Manager secret id (o ARN) del secret condiviso con le URL/path
+      di PingFederate e dei servizi upstream usato da dms/jobcard/djc/v360.
+
   # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
   AgendaSoaHost:
     Type: String
@@ -308,42 +328,6 @@ Resources:
         AttributeName: expiresAt
         Enabled: true
 
-  # ServiceUrlsSecret: unico posto in cui vivono TUTTE le URL/path di
-  # PingFederate e dei servizi upstream (DMS/DML, JOBCARD/DGT, V360/ASV360)
-  # condivise tra dms/jobcard/djc/v360 (v. <modulo>/secretsLoader.js +
-  # <modulo>/config.js::getConfig). Prima di questa risorsa, la stessa URL
-  # (es. DML_BASE_URL) era duplicata come env var in fino a 8 Lambda diverse
-  # (DmsFunction, JobCardFunction, DjcFunction, V360Function, PkManagerFunction,
-  # SessionFunction, PkFavoriteFunction, DmlConfigSyncFunction): per cambiarla
-  # bisognava individuare e aggiornare ogni singola occorrenza. Ora è
-  # sufficiente aggiornare il valore del secret (Console/CLI AWS,
-  # UpdateSecret), SENZA bisogno di un nuovo `sam deploy` — un successivo
-  # deploy che non tocca il valore iniziale sottostante in questo template
-  # non sovrascrive la modifica manuale (CloudFormation confronta con il
-  # template precedentemente distribuito, non con lo stato live del secret).
-  ServiceUrlsSecret:
-    Type: AWS::SecretsManager::Secret
-    Properties:
-      Name: !Sub "sm-np-bsn0027990-${Environment}-service-urls"
-      Description: >-
-        URL/path di PingFederate e dei servizi upstream (DMS/DML, JOBCARD/DGT,
-        V360/ASV360) condivise da dms/jobcard/djc/v360 — v. <modulo>/config.js
-      SecretString: !Sub |
-        {
-          "DMS_PING_URL": "https://idfed-preprod.mpsa.com:443/as/token.oauth2",
-          "DML_BASE_URL": "https://emea-aws.dev.np-api.stellantis.com",
-          "DML_SETTINGS_PATH": "/ps-dev/extra/dml/dms-settings/v1/settings",
-          "DML_INQUIRY_PATH": "/ps-dev/extra/dml/aftersales/v1/inquiry",
-          "DML_COMPANY_TYPES_PATH": "/ps-dev/extra/dml/configurations/v1/company-types",
-          "DML_CUSTOMER_TITLES_PATH": "/ps-dev/extra/dml/configurations/v1/customer-titles",
-          "JOBCARD_PING_URL": "https://idfed-preprod.mpsa.com:443/as/token.oauth2",
-          "DGT_BASE_URL": "https://emea-aws.stage.np-api.stellantis.com",
-          "DGT_BASE_PATH": "/ps-stage/extra/srp/digital-layer/v1",
-          "V360_PING_URL": "https://idfed.mpsa.com:443/as/token.oauth2",
-          "ASV_BASE_URL": "https://emea-aws.api.stellantis.com",
-          "ASV_BASE_PATH": "/ps-prod/extra/asv360/vehicle/v1"
-        }
-
   AgendaSoaFunction:
     Type: AWS::Serverless::Function
     # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
@@ -474,7 +458,7 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Ref ServiceUrlsSecret
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
@@ -499,7 +483,7 @@ Resources:
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — dmsService.js::buildApplicationArea
           # risolve physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per
@@ -586,7 +570,7 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-                - !Ref ServiceUrlsSecret
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -609,7 +593,7 @@ Resources:
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML usato da
           # getCartPriceAndAvailability, stessi valori usati da PkManagerFunction/PkFavoriteFunction.
           DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
@@ -686,18 +670,18 @@ Resources:
                 - dynamodb:PutItem
               Resource: !GetAtt TmpCacheTable.Arn
         # djc/config.js::getConfig -> secretsLoader.js — URL/path condivise
-        # (v. ServiceUrlsSecret in Resources).
+        # (v. ServiceUrlsSecretId in Parameters).
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource: !Ref ServiceUrlsSecret
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
       Environment:
         Variables:
           JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   DjcFunctionLogGroup:
@@ -770,18 +754,18 @@ Resources:
                 - dynamodb:PutItem
               Resource: !GetAtt TmpCacheTable.Arn
         # v360/config.js::getConfig -> secretsLoader.js — URL/path condivise
-        # (v. ServiceUrlsSecret in Resources).
+        # (v. ServiceUrlsSecretId in Parameters).
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource: !Ref ServiceUrlsSecret
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
       Environment:
         Variables:
           V360_PING_CLIENT_ID:     !Ref V360PingClientId
           V360_PING_CLIENT_SECRET: !Ref V360PingClientSecret
           ASV_CLIENT_ID:      !Ref AsvClientId
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME: !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
@@ -995,7 +979,7 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Ref ServiceUrlsSecret
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # pkDocsoa/functionServiceDb e dbManager/db.js leggono da Aurora tramite
             # Secrets Manager: il secret è cifrato con una chiave KMS gestita dal
             # cliente (non la default aws/secretsmanager), stesso caso già risolto
@@ -1054,7 +1038,7 @@ Resources:
           DMS_PING_CLIENT_SECRET:       !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
           # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
           # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
@@ -1124,7 +1108,7 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
-                - !Ref ServiceUrlsSecret
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1158,7 +1142,7 @@ Resources:
           DMS_PING_CLIENT_SECRET:   !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:        !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:    !Ref DmlIbmClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
           # dmlConfigSync/db.js (in-process, vedi Makefile) — lettura della cache
           # company-types/customer-titles (woc.dml_configurations), popolata dal job
@@ -1272,7 +1256,7 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-                - !Ref ServiceUrlsSecret
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1301,7 +1285,7 @@ Resources:
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:     !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da
           # dms/dmsService.js::buildApplicationArea (bundlato insieme a pkFavorite)
@@ -1431,7 +1415,7 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
-                - !Ref ServiceUrlsSecret
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1452,7 +1436,7 @@ Resources:
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
           DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecret
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
       Events:
         DailySync:

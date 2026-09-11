@@ -94,8 +94,15 @@ async function getConfig() {
 
   let secretUrls = {};
   if (process.env.SERVICE_URLS_SECRET_ID) {
-    const { loadServiceUrls } = require('./secretsLoader');
-    secretUrls = await loadServiceUrls();
+    try {
+      const { loadServiceUrls } = require('./secretsLoader');
+      secretUrls = await loadServiceUrls();
+    } catch (err) {
+      // Fallback su env var/default hardcoded se il secret non e' (ancora)
+      // configurato/raggiungibile (es. non ancora creato in un nuovo
+      // ambiente): nessun impatto sul comportamento storico.
+      console.warn(`[config] Impossibile leggere ServiceUrlsSecret, uso env var/default: ${err.message}`);
+    }
   }
 
   const urls = {
