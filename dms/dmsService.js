@@ -4,7 +4,7 @@ const path = require('path');
 const { URL } = require('url');
 const { randomUUID } = require('crypto');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 
 // Retry con backoff per getDmlConfiguration (getCompanyTypes/getCustomerTitles):
 // codici HTTP considerati transitori/riprovabili (errori del gateway API, non del
@@ -36,6 +36,7 @@ async function getDmsSettings(bearerToken, params = {}) {
   if (!brand)   throw new Error('[dms] brand is required');
   if (!dealer)  throw new Error('[dms] dealer is required');
 
+  const config = await getConfig();
   const base = new URL(config.dml.baseUrl);
   const qs = new URLSearchParams({ country, brand, dealer }).toString();
   const fullPath = `${config.dml.settingsPath}?${qs}`;
@@ -97,6 +98,7 @@ async function getDmlConfiguration(bearerToken, params = {}, path, label) {
   if (!country)  throw new Error('[dms] country is required');
   if (!language) throw new Error('[dms] language is required');
 
+  const config = await getConfig();
   const base = new URL(config.dml.baseUrl);
   const qs = new URLSearchParams({ country, language }).toString();
   const fullPath = `${path}?${qs}`;
@@ -162,6 +164,7 @@ async function getDmlConfiguration(bearerToken, params = {}, path, label) {
  * @returns {Promise<object>} parsed response body
  */
 async function getCompanyTypes(bearerToken, params = {}) {
+  const config = await getConfig();
   return getDmlConfiguration(bearerToken, params, config.dml.companyTypesPath, 'company-types');
 }
 
@@ -175,6 +178,7 @@ async function getCompanyTypes(bearerToken, params = {}) {
  * @returns {Promise<object>} parsed response body
  */
 async function getCustomerTitles(bearerToken, params = {}) {
+  const config = await getConfig();
   return getDmlConfiguration(bearerToken, params, config.dml.customerTitlesPath, 'customer-titles');
 }
 
@@ -327,6 +331,7 @@ async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
  * @returns {Promise<object>} ApplicationArea
  */
 async function buildApplicationArea(senderOverrides = {}) {
+  const config = await getConfig();
   const s = { ...config.sender };
   for (const [key, value] of Object.entries(senderOverrides || {})) {
     if (value !== undefined && value !== null) s[key] = value;
@@ -562,6 +567,7 @@ async function postDmsInquiry(bearerToken, body = {}) {
 
   validateTypeSection(requestBody, header.MessageType);
 
+  const config = await getConfig();
   const base = new URL(config.dml.baseUrl);
   const fullPath = config.dml.inquiryPath;
   const payload = JSON.stringify(requestBody);

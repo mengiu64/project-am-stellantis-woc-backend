@@ -10,7 +10,7 @@
 const crypto = require('crypto');
 const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 
 /**
  * Builds common HTTPS request options for DGT API calls.
@@ -18,9 +18,10 @@ const config = require('./config');
  * @param {string} method       - HTTP method ('GET'|'POST'|...)
  * @param {object} extraHeaders - additional request headers (parameters included)
  * @param {string} bearerToken  - Bearer token value
- * @returns {object} https.request options
+ * @returns {Promise<object>} https.request options
  */
-function buildDgtOptions(path, method, extraHeaders, bearerToken) {
+async function buildDgtOptions(path, method, extraHeaders, bearerToken) {
+  const config = await getConfig();
   const base = new URL(config.dgt.baseUrl);
   return {
     hostname: base.hostname,
@@ -54,7 +55,7 @@ async function saveJobCard(bearerToken, payload) {
   }
 
   const body = JSON.stringify(payload);
-  const options = buildDgtOptions(
+  const options = await buildDgtOptions(
     '/jobCard',
     'POST',
     { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },

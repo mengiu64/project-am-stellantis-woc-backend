@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 
 // In AWS Lambda il filesystem del pacchetto (__dirname, /var/task) è read-only:
 // solo /tmp è scrivibile. In locale (CLI) continuiamo a usare __dirname.
@@ -47,6 +47,8 @@ function writeCachedToken(access_token, expires_in) {
 async function getBearerToken() {
   const cached = readCachedToken();
   if (cached) return cached;
+
+  const config = await getConfig();
 
   const endpoint = new URL(config.auth.url);
 

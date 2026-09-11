@@ -1,19 +1,21 @@
 'use strict';
 
 jest.mock('../config', () => ({
-  auth: {
-    url: 'https://auth.test/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:dgt',
-    clientId: 'test-client-id',
-    clientSecret: 'test-client-secret',
-  },
-  dgt: {
-    baseUrl: 'https://api.dgt.test',
-    basePath: '/ps-stage/extra/srp/digital-layer/v1',
-    clientId: 'dgt-client-id',
-    clientSecret: 'dgt-client-secret',
-  },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: {
+      url: 'https://auth.test/as/token.oauth2',
+      grantType: 'client_credentials',
+      scope: 'prd:dgt',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    },
+    dgt: {
+      baseUrl: 'https://api.dgt.test',
+      basePath: '/ps-stage/extra/srp/digital-layer/v1',
+      clientId: 'dgt-client-id',
+      clientSecret: 'dgt-client-secret',
+    },
+  }),
 }));
 jest.mock('../httpClient');
 jest.mock('../dynamoCache', () => ({

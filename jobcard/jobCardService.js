@@ -4,7 +4,7 @@ const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 const { getBearerToken } = require('./authService');
 const { getCacheItem, setCacheItem } = require('./dynamoCache');
 
@@ -31,9 +31,10 @@ function cacheKeyForJobCard(jobCardId) {
  * @param {string} method       - HTTP method ('GET'|'POST'|...)
  * @param {object} extraHeaders - additional request headers (parameters included)
  * @param {string} bearerToken  - Bearer token value
- * @returns {object} https.request options
+ * @returns {Promise<object>} https.request options
  */
-function buildDgtOptions(path, method, extraHeaders, bearerToken) {
+async function buildDgtOptions(path, method, extraHeaders, bearerToken) {
+  const config = await getConfig();
   const base = new URL(config.dgt.baseUrl);
   return {
     hostname: base.hostname,
@@ -113,7 +114,7 @@ async function getJobCardList(bearerToken, params = {}) {
   if (sortBy)             headers.sortBy             = sortBy;
   if (sortOrder)          headers.sortOrder          = sortOrder;
 
-  const options = buildDgtOptions('/jobCardList', 'GET', headers, bearerToken);
+  const options = await buildDgtOptions('/jobCardList', 'GET', headers, bearerToken);
 
   console.log(`[jobCard] GET jobCardList - dealerId: ${dealerId}`);
   const response = await httpsRequest(options);
@@ -832,7 +833,7 @@ async function getJobCardDetails(bearerToken, jobCardId) {
   }
 
 
-  const options = buildDgtOptions('/jobCardDetails', 'GET', { jobCardId: String(jobCardId) }, bearerToken);
+  const options = await buildDgtOptions('/jobCardDetails', 'GET', { jobCardId: String(jobCardId) }, bearerToken);
 
   console.log(`[jobCard] GET jobCardDetails - jobCardId: ${jobCardId}`);
   const response = await httpsRequest(options);
@@ -889,7 +890,7 @@ async function saveJobCard(bearerToken, payload) {
     : payload;
 
   const body = JSON.stringify(sanitizedPayload);
-  const options = buildDgtOptions(
+  const options = await buildDgtOptions(
     '/jobCard',
     'POST',
     { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },

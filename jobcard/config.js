@@ -32,23 +32,71 @@ if (missing.length > 0) {
   throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
 }
 
-module.exports = {
-  // PingFederate token endpoint — da variabile d'ambiente (diverso in dev/stage/prod,
-  // come clientId/clientSecret), con fallback al valore preprod usato finora.
-  auth: {
-    url: process.env.JOBCARD_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:dgt',
-    clientId: process.env.JOBCARD_PING_CLIENT_ID,
-    clientSecret: process.env.JOBCARD_PING_CLIENT_SECRET,
-  },
+// Cache della configurazione — persiste tra invocazioni nello stesso container Lambda (warm start)
+let cachedConfig = null;
 
-  // Stellantis DGT API — baseUrl da variabile d'ambiente (diverso in dev/stage/prod),
-  // con fallback al valore usato finora.
-  dgt: {
-    baseUrl: process.env.DGT_BASE_URL || 'https://emea-aws.stage.np-api.stellantis.com',
-    basePath: process.env.DGT_BASE_PATH || '/ps-stage/extra/srp/digital-layer/v1',
-    clientId: process.env.DGT_CLIENT_ID,
-    clientSecret: process.env.DGT_CLIENT_SECRET,
-  },
-};
+/**
+ * Costruisce l'oggetto di configurazione a partire dalle URL/path risolte
+ * (da Secrets Manager se SERVICE_URLS_SECRET_ID è configurata, altrimenti da
+ * variabile d'ambiente/hardcoded default).
+ */
+function buildConfig(urls) {
+  return {
+    // PingFederate token endpoint
+    auth: {
+      url: urls.JOBCARD_PING_URL,
+      grantType: 'client_credentials',
+      scope: 'prd:dgt',
+      clientId: process.env.JOBCARD_PING_CLIENT_ID,
+      clientSecret: process.env.JOBCARD_PING_CLIENT_SECRET,
+    },
+
+    // Stellantis DGT API
+    dgt: {
+      baseUrl: urls.DGT_BASE_URL,
+      basePath: urls.DGT_BASE_PATH,
+      clientId: process.env.DGT_CLIENT_ID,
+      clientSecret: process.env.DGT_CLIENT_SECRET,
+    },
+  };
+}
+
+/**
+ * Restituisce l'oggetto di configurazione completo (con cache in memoria).
+ * Le URL/path (PingFederate + DGT) sono lette da AWS Secrets Manager (secret
+ * unico "service urls", v. secretsLoader.js e template.yaml risorsa
+ * ServiceUrlsSecret) quando SERVICE_URLS_SECRET_ID è configurata (Lambda);
+ * altrimenti (locale/CLI, o singola chiave assente dal secret) da variabile
+ * d'ambiente con fallback al valore usato storicamente — nessun cambio di
+ * comportamento se non esplicitamente sovrascritte.
+ * @returns {Promise<object>}
+ */
+async function getConfig() {
+  if (cachedConfig) {
+    return cachedConfig;
+  }
+
+  let secretUrls = {};
+  if (process.env.SERVICE_URLS_SECRET_ID) {
+    const { loadServiceUrls } = require('./secretsLoader');
+    secretUrls = await loadServiceUrls();
+  }
+
+  const urls = {
+    JOBCARD_PING_URL: secretUrls.JOBCARD_PING_URL || process.env.JOBCARD_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    DGT_BASE_URL: secretUrls.DGT_BASE_URL || process.env.DGT_BASE_URL || 'https://emea-aws.stage.np-api.stellantis.com',
+    DGT_BASE_PATH: secretUrls.DGT_BASE_PATH || process.env.DGT_BASE_PATH || '/ps-stage/extra/srp/digital-layer/v1',
+  };
+
+  cachedConfig = buildConfig(urls);
+  return cachedConfig;
+}
+
+/**
+ * Invalida la cache della configurazione. Utile per i test unitari e per forzare un refresh.
+ */
+function invalidateConfig() {
+  cachedConfig = null;
+}
+
+module.exports = { getConfig, invalidateConfig };

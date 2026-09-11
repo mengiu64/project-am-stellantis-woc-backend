@@ -2,13 +2,15 @@
 
 jest.mock('fs');
 jest.mock('../config', () => ({
-  auth: {
-    url: 'https://auth.test/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:dgt',
-    clientId: 'test-client-id',
-    clientSecret: 'test-client-secret',
-  },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: {
+      url: 'https://auth.test/as/token.oauth2',
+      grantType: 'client_credentials',
+      scope: 'prd:dgt',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    },
+  }),
 }));
 jest.mock('../httpClient');
 
