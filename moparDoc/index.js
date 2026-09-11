@@ -18,6 +18,9 @@
  *  - DeleteJobcard                [NUOVO]
  *  - getDocumentsDownloadUrl      [NUOVO]
  *
+ *  ── 1 metodo accorpato (orchestrazione VIN -> JobCardId reale):
+ *  - deleteDocumentsByVin         [NUOVO]
+ *
  * Usage:
  *   node index.js createJobCard     <payloadJsonFile>
  *   node index.js createAccessToken <payloadJsonFile>
@@ -30,6 +33,7 @@
  *   node index.js DeleteDocuments              <payloadJsonFile> [NUOVO]
  *   node index.js DeleteJobcard                <payloadJsonFile> [NUOVO]
  *   node index.js getDocumentsDownloadUrl      <payloadJsonFile> [NUOVO]
+ *   node index.js deleteDocumentsByVin         <payloadJsonFile> [NUOVO]
  *
  * Esempio payload createJobCard:
  *   { "vin": "...", "market": "IT", "source": "WOC", "UserName": "...",
@@ -53,6 +57,7 @@ const {
   DeleteDocuments,
   DeleteJobcard,
   getDocumentsDownloadUrl,
+  deleteDocumentsByVin, // NUOVO: azione accorpata che risolve il JobCardId dal VIN e cancella i documenti in una sola chiamata
 } = require('./moparDocService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
@@ -96,6 +101,8 @@ const VALID_ACTIONS = [
   'DeleteDocuments', // Cancella documenti
   'DeleteJobcard', // Cancella JobCard
   'getDocumentsDownloadUrl', // Genera URL download
+  // ────── Azione accorpata NUOVA (1) ──────
+  'deleteDocumentsByVin', // NUOVO: cancella documenti a partire dal solo VIN (risolve internamente il JobCardId reale)
 ];
 
 // NUOVO: Dispatcher esteso che mappa le azioni ai metodi del servizio
@@ -114,6 +121,8 @@ const ACTIONS = {
   DeleteDocuments, // Cancella documenti specifici presso MoparDocs Services
   DeleteJobcard, // Cancella una JobCard presso MoparDocs Services
   getDocumentsDownloadUrl, // Genera URL pre-firmata per il download di un documento presso MoparDocs Browser
+  // ────── Dispatcher accorpato NUOVO (1 metodo) ──────
+  deleteDocumentsByVin, // NUOVO: orchestra getDocuments + DeleteDocuments risolvendo il JobCardId reale dal VIN (vincolo: documenti sulla stessa job card)
 };
 
 exports.handler = async (event) => {
@@ -156,8 +165,11 @@ exports.handler = async (event) => {
       body: JSON.stringify(result),
     };
   } catch (err) {
-    // Determina il codice di errore: 400 se campo obbligatorio mancante, 502 se errore generico
-    const statusCode = err.message.includes('Missing required field') ? 400 : 502;
+    // MODIFICA retrocompatibile: se l'Error espone uno statusCode numerico esplicito (es. 400/500 impostati dalla funzione di servizio deleteDocumentsByVin) lo usa in via prioritaria
+    // Altrimenti mantiene l'euristica pre-esistente ('Missing required field' -> 400, altrimenti 502): le 11 azioni esistenti non impostano err.statusCode e restano quindi invariate
+    const statusCode =
+      (typeof err.statusCode === 'number' && err.statusCode) || // Usa lo statusCode esplicito quando presente e valido (copre anche il fallback 500 per eccezioni impreviste)
+      (err.message.includes('Missing required field') ? 400 : 502); // Euristica retrocompatibile per gli errori che non portano statusCode
     // Log di errore: informa dell'eccezione durante l'esecuzione dell'azione
     console.error(`[handler] ERRORE durante esecuzione "${action}": [${statusCode}] ${err.message}`);
     return {
@@ -212,7 +224,7 @@ async function main() {
     } else {
       // Log di errore: comando non riconosciuto
       console.error('[ERROR] Comando non valido. Usa:');
-      // NUOVO: Mostra la lista completa di tutti i 13 comandi disponibili
+      // NUOVO: Mostra la lista completa di tutti i 14 comandi disponibili (13 esistenti + deleteDocumentsByVin)
       console.error('  node index.js createJobCard     <payloadJsonFile>');
       console.error('  node index.js createAccessToken <payloadJsonFile>');
       console.error('  node index.js getUploadDocURL   <payloadJsonFile>');
@@ -224,6 +236,7 @@ async function main() {
       console.error('  node index.js DeleteDocuments   <payloadJsonFile>');
       console.error('  node index.js DeleteJobcard     <payloadJsonFile>');
       console.error('  node index.js getDocumentsDownloadUrl <payloadJsonFile>');
+      console.error('  node index.js deleteDocumentsByVin <payloadJsonFile>'); // NUOVO: uso CLI dell'azione accorpata deleteDocumentsByVin
       process.exit(1);
     }
   } catch (err) {

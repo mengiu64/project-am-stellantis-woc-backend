@@ -430,6 +430,159 @@ async function getDocumentsDownloadUrl(params) {
   return postJson('moparDocsServices', '/getDocumentsDownloadUrl', payload);
 }
 
+/**
+ * deleteDocumentsByVin — Azione accorpata: cancella uno o piu' documenti Mopar di un veicolo
+ * fornendo solo { source, vin, Documents }, senza conoscere il JobCardId numerico reale.
+ * Orchestra internamente getDocuments (per risolvere il JobCardId) e DeleteDocuments.
+ * Gli errori del client (input non valido, jobCardList vuota, ID non trovati, documenti su job card
+ * diverse) portano statusCode 400; gli Upstream_Failure propagati da getDocuments/DeleteDocuments
+ * non impostano statusCode e verranno mappati a 502 dall'handler; le cause realmente impreviste
+ * vengono avvolte in un Error con statusCode 500.
+ * @param {{source: string, vin: string, Documents: number[]}} params
+ */
+async function deleteDocumentsByVin(params) {
+  // Definisce i campi obbligatori attesi nell'input della nuova azione
+  const required = ['source', 'vin', 'Documents'];
+  // Filtra i campi mancanti o non valorizzati dall'array required (params puo' essere undefined)
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se manca almeno un campo obbligatorio, prepara il messaggio d'errore con l'elenco dei campi mancanti
+  if (missing.length > 0) {
+    // Costruisce un Error dedicato con il testo "Missing required field(s)" e i campi mancanti
+    const e = new Error(`[deleteDocumentsByVin] Missing required field(s): ${missing.join(', ')}`);
+    // Marca l'errore come errore del client (input non valido) impostando statusCode 400
+    e.statusCode = 400;
+    // Interrompe l'esecuzione lanciando l'errore, senza effettuare alcuna chiamata upstream
+    throw e;
+  }
+
+  // Convalida che Documents sia effettivamente un array e che non sia vuoto
+  if (!Array.isArray(params.Documents) || params.Documents.length === 0) {
+    // Costruisce un Error dedicato che indica il vincolo su Documents (array non vuoto)
+    const e = new Error('[deleteDocumentsByVin] Documents deve essere un array non vuoto');
+    // Marca l'errore come errore del client (input non valido) impostando statusCode 400
+    e.statusCode = 400;
+    // Interrompe l'esecuzione lanciando l'errore, senza effettuare alcuna chiamata upstream
+    throw e;
+  }
+
+  // Ignora esplicitamente un eventuale campo JobCardId nell'input: NON viene letto ne' usato.
+  // Il JobCardId reale sara' risolto dai dati restituiti da getDocuments (fasi successive).
+
+  // Log della ricezione richiesta con soli metadati non sensibili: VIN e numero di documenti richiesti
+  // (nessun token, credenziale o URL firmato viene mai stampato)
+  console.log(`[deleteDocumentsByVin] Richiesta ricevuta: VIN=${params.vin}, numeroDocumenti=${params.Documents.length}`);
+
+  // Avvolge l'orchestrazione (dal recupero JobCardList in poi) in un try/catch esterno per il mapping degli errori
+  try {
+    // Log: sta per essere invocata getDocuments per risolvere i JobCardId reali associati al VIN
+    console.log(`[deleteDocumentsByVin] Invocazione getDocuments per VIN=${params.vin} (riuso azione esistente, nessuna chiamata HTTP diretta)`);
+    // Riusa la funzione esistente getDocuments passando solo { vin }; eventuali Upstream_Failure si propagano al catch esterno
+    const documentsResult = await getDocuments({ vin: params.vin });
+    // Estrae la jobCardList dall'esito di getDocuments (shape: { errorCode, errorMessage, jobCardList })
+    const jobCardList = documentsResult && documentsResult.jobCardList;
+    // Log dell'esito di getDocuments con soli metadati non sensibili: numero di job card trovate
+    console.log(`[deleteDocumentsByVin] Esito getDocuments: jobCard trovate=${Array.isArray(jobCardList) ? jobCardList.length : 0}`);
+
+    // Verifica che la jobCardList sia presente e non vuota: senza job card non e' possibile risolvere alcun JobCardId
+    if (!Array.isArray(jobCardList) || jobCardList.length === 0) {
+      // Log della condizione di errore: nessuna job card trovata per il VIN richiesto
+      console.log(`[deleteDocumentsByVin] Nessuna job card trovata per il VIN=${params.vin}`);
+      // Costruisce un Error dedicato che indica l'assenza di job card per il VIN
+      const e = new Error(`[deleteDocumentsByVin] Nessuna job card trovata per il VIN ${params.vin}`);
+      // Marca l'errore come errore del client (dati incoerenti rispetto al VIN) impostando statusCode 400
+      e.statusCode = 400;
+      // Interrompe l'esecuzione lanciando l'errore, senza procedere alla risoluzione dei documenti
+      throw e;
+    }
+
+    // Inizializza la mappa che associa ogni Document_ID reale al JobCardId della job card che lo contiene
+    const documentToJobCard = new Map();
+    // Scorre ogni job card presente nella jobCardList restituita da getDocuments
+    for (const jobCard of jobCardList) {
+      // Estrae la DocumentList della job card corrente, garantendo un array anche se il campo e' assente
+      const documentList = Array.isArray(jobCard && jobCard.DocumentList) ? jobCard.DocumentList : [];
+      // Scorre ogni documento della DocumentList della job card corrente
+      for (const document of documentList) {
+        // Considera solo i documenti che espongono un campo ID valorizzato (identificativo del documento)
+        if (document && document.ID !== undefined && document.ID !== null) {
+          // Registra nella mappa l'associazione Document_ID -> JobCardId della job card contenitrice
+          documentToJobCard.set(document.ID, jobCard.JobCardId);
+        }
+      }
+    }
+
+    // Log della risoluzione (mapping): stampa solo la coppia Document_ID->JobCardId, senza mai esporre signedUrl/previewUrl
+    console.log(`[deleteDocumentsByVin] Mappa Document_ID->JobCardId risolta: ${JSON.stringify(Object.fromEntries(documentToJobCard))}`);
+
+    // Accumula i Document_ID richiesti che non risultano presenti in alcuna DocumentList del VIN (documenti mancanti)
+    const missingDocuments = params.Documents.filter((documentId) => !documentToJobCard.has(documentId));
+
+    // Se esiste almeno un Document_ID richiesto non trovato, la richiesta e' incoerente rispetto ai dati del VIN
+    if (missingDocuments.length > 0) {
+      // Log della condizione di errore: elenca gli specifici Document_ID non trovati (nessun URL firmato coinvolto)
+      console.log(`[deleteDocumentsByVin] Document ID non trovati per il VIN=${params.vin}: ${JSON.stringify(missingDocuments)}`);
+      // Costruisce un Error dedicato che elenca esplicitamente i Document_ID non trovati per il VIN
+      const e = new Error(`[deleteDocumentsByVin] Document ID non trovati per il VIN: [${missingDocuments.join(', ')}]`);
+      // Marca l'errore come errore del client (documenti richiesti inesistenti) impostando statusCode 400
+      e.statusCode = 400;
+      // Interrompe l'esecuzione lanciando l'errore, senza invocare DeleteDocuments (nessuna cancellazione)
+      throw e;
+    }
+
+    // Costruisce la ripartizione Document_ID->JobCardId limitata ai soli Document_ID effettivamente richiesti
+    const requestedPartition = params.Documents.map((documentId) => [documentId, documentToJobCard.get(documentId)]);
+    // Calcola l'insieme dei JobCardId distinti coinvolti dai Document_ID richiesti (deduplica tramite Set)
+    const distinctJobCardIds = new Set(requestedPartition.map(([, jobCardId]) => jobCardId));
+
+    // Log della verifica del vincolo: numero di JobCardId distinti coinvolti dai documenti richiesti
+    console.log(`[deleteDocumentsByVin] Verifica vincolo stessa job card: JobCardId distinti coinvolti=${distinctJobCardIds.size}`);
+
+    // Se i documenti richiesti appartengono a piu' di una job card, il vincolo "stessa job card" e' violato
+    if (distinctJobCardIds.size > 1) {
+      // Costruisce l'oggetto di ripartizione Document_ID->JobCardId da includere nel messaggio d'errore (nessun URL firmato)
+      const partition = Object.fromEntries(requestedPartition);
+      // Log della condizione di errore: i documenti coprono job card diverse, con la relativa ripartizione
+      console.log(`[deleteDocumentsByVin] Documenti su job card diverse; ripartizione=${JSON.stringify(partition)}`);
+      // Costruisce un Error dedicato che indica il vincolo violato e riporta la ripartizione Document_ID->JobCardId
+      const e = new Error(`[deleteDocumentsByVin] Tutti i documenti devono appartenere alla stessa job card. Ripartizione: ${JSON.stringify(partition)}`);
+      // Marca l'errore come errore del client (richiesta incoerente rispetto ai dati del VIN) impostando statusCode 400
+      e.statusCode = 400;
+      // Interrompe l'esecuzione lanciando l'errore, senza invocare DeleteDocuments (nessuna cancellazione parziale)
+      throw e;
+    }
+
+    // Risolve l'unico JobCardId a cui appartengono tutti i documenti richiesti (primo ed unico elemento del Set)
+    const JobCardId = distinctJobCardIds.values().next().value;
+
+    // Log: sta per essere invocata DeleteDocuments una sola volta con il JobCardId risolto (mai quello passato in input)
+    console.log(`[deleteDocumentsByVin] Invocazione DeleteDocuments: JobCardId risolto=${JobCardId}, numeroDocumenti=${params.Documents.length} (source=${params.source})`);
+    // Riusa la funzione esistente DeleteDocuments esattamente una volta con { source, JobCardId risolto, Documents }; eventuali Upstream_Failure si propagano al catch esterno
+    const result = await DeleteDocuments({ source: params.source, JobCardId, Documents: params.Documents });
+    // Log dell'esito di DeleteDocuments con soli metadati non sensibili: JobCardId risolto ed errorCode restituito dall'upstream
+    console.log(`[deleteDocumentsByVin] Esito DeleteDocuments: JobCardId=${JobCardId}, errorCode=${result && result.errorCode !== undefined ? result.errorCode : 'n/d'}`);
+
+    // Ritorna l'oggetto di successo con il JobCardId risolto, i documenti cancellati e l'esito grezzo dell'upstream
+    return { success: true, JobCardId, deleted: params.Documents, result };
+  } catch (err) {
+    // Gli Error del client gia' classificati (statusCode 400 impostato nelle fasi 1.1-1.4) vanno rilanciati invariati
+    if (err && typeof err.statusCode === 'number') {
+      // Rilancia l'errore del client cosi' com'e', preservando statusCode e messaggio originali (es. 400)
+      throw err;
+    }
+    // Gli Upstream_Failure propagati da getDocuments/DeleteDocuments hanno messaggio con prefisso "[moparDocService]" e nessuno statusCode
+    if (err && typeof err.message === 'string' && err.message.startsWith('[moparDocService]')) {
+      // Rilancia invariato l'errore upstream (senza statusCode): sara' mappato a 502 dall'handler
+      throw err;
+    }
+    // Ogni altra causa e' realmente imprevista: la si avvolge in un Error dedicato per non propagare eccezioni non gestite
+    const wrapped = new Error(`[deleteDocumentsByVin] Errore imprevisto: ${err && err.message ? err.message : err}`);
+    // Marca l'errore imprevisto con statusCode 500 (errore interno) per il mapping dell'handler
+    wrapped.statusCode = 500;
+    // Rilancia l'errore avvolto affinche' l'handler risponda con 500 senza propagare l'eccezione originale
+    throw wrapped;
+  }
+}
+
 module.exports = {
   createJobCard,
   createAccessToken,
@@ -442,4 +595,5 @@ module.exports = {
   DeleteDocuments,
   DeleteJobcard,
   getDocumentsDownloadUrl,
+  deleteDocumentsByVin, // Espone la nuova azione accorpata per la cancellazione documenti a partire dal VIN
 };
