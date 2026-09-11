@@ -208,7 +208,15 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 > `mainSincom`+`market`+`brand`) e — se trova una riga — sovrascrive
 > `physicalSiteId`/`dealerNumberIdSource`; **`market` non è mai inoltrato al
 > DML**: serve solo come chiave di ricerca lato lookup, non è un campo di
-> `ApplicationArea.Sender`. Il lookup è **best-effort**: se manca anche uno solo
+> `ApplicationArea.Sender`. Il match su `mainSincom` è fatto **in OR** tra le
+> colonne `cd_main_sincom_code` e `gn_legal_entity` (stesso dato logico,
+> valorizzato in colonne diverse a seconda della sorgente/estrazione). Il
+> `brand` è sempre cercato con un **unico criterio uniforme**, il codice
+> ARCAD/RefTech a 2 lettere (`cd_contract_brand_arcad_code`): se il chiamante
+> passa un codice in altro formato (tipicamente numerico WebDAC, es. `55`,
+> `00`, `83`) viene prima trasformato nel corrispondente codice ARCAD
+> interrogando la stessa tabella (`AnagSnowflakesRepository.js::resolveArcadBrandCode`).
+> Il lookup è **best-effort**: se manca anche uno solo
 > dei tre campi, o la query fallisce, si prosegue senza modificare
 > `physicalSiteId`/`dealerNumberIdSource` (solo un warning in log) — non blocca
 > mai la chiamata al gateway DML. Per questo, ogni funzione Lambda che include

@@ -59,35 +59,64 @@ describe('AnagSnowflakesRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('uses cd_contract_brand_arcad_code when brand is a 2-letter code', async () => {
+    it('uses cd_contract_brand_arcad_code directly (uppercased) when brand is already a 2-letter code, with OR on mainSincom/gn_legal_entity', async () => {
       const pool = makePool(async () => ({
         rows: [{ gn_physical_site_arcad: 'SITE001', cd_sincom_code: '0062230' }],
       }));
 
       const result = await getPhysicalSiteAndSincom(pool, {
-        mainSincom: '0073741', market: '1000', brand: 'FT',
+        mainSincom: '0073741', market: '1000', brand: 'ft',
       });
 
       expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230' });
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('(s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)'),
+        ['0073741', '1000', 'FT'],
+      );
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('s.cd_contract_brand_arcad_code = $3'),
-        ['0073741', '1000', 'FT'],
+        expect.anything(),
       );
     });
 
-    it('uses cd_contract_brand_webdac_code when brand is not a 2-letter code', async () => {
-      const pool = makePool(async () => ({
-        rows: [{ gn_physical_site_arcad: 'SITE002', cd_sincom_code: '0062231' }],
-      }));
+    it('transforms a non-letter brand (WebDAC numeric code) into the ARCAD code before searching', async () => {
+      const pool = {
+        query: jest.fn()
+          .mockResolvedValueOnce({ rows: [{ cd_contract_brand_arcad_code: 'FT' }] })
+          .mockResolvedValueOnce({ rows: [{ gn_physical_site_arcad: 'SITE002', cd_sincom_code: '0062231' }] }),
+      };
 
       const result = await getPhysicalSiteAndSincom(pool, {
         mainSincom: '0073741', market: '1000', brand: '55',
       });
 
       expect(result).toEqual({ physicalSiteId: 'SITE002', dealerNumberIdSource: '0062231' });
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('s.cd_contract_brand_webdac_code = $1'),
+        ['55'],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('s.cd_contract_brand_arcad_code = $3'),
+        ['0073741', '1000', 'FT'],
+      );
+    });
+
+    it('returns nulls without querying the main table when a non-letter brand cannot be resolved to an ARCAD code', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getPhysicalSiteAndSincom(pool, {
+        mainSincom: '0073741', market: '1000', brand: '999',
+      });
+
+      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null });
+      expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('s.cd_contract_brand_webdac_code = $3'),
-        ['0073741', '1000', '55'],
+        expect.stringContaining('s.cd_contract_brand_webdac_code = $1'),
+        ['999'],
       );
     });
 

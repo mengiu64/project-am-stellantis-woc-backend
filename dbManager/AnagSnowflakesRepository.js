@@ -14,10 +14,49 @@
  * completare in modo dinamico il Sender dell'inquiry DMS
  * (physicalSiteId/dealerNumberIdSource), invece dei valori statici configurati
  * via env in dms/config.js.
+ *
+ * Il match su mainSincom e' fatto in OR tra cd_main_sincom_code e
+ * gn_legal_entity (stesso dato logico, colonne diverse a seconda della
+ * sorgente/estrazione), cosi' da coprire entrambi i casi con un'unica query.
+ *
+ * Il brand viene sempre cercato tramite un unico criterio uniforme, il
+ * codice ARCAD/RefTech a 2 lettere (cd_contract_brand_arcad_code): se il
+ * chiamante passa gia' un codice a 2 lettere (es. "FT", "CY", "AR") viene
+ * usato cosi' com'e', altrimenti (tipicamente un codice numerico WebDAC, es.
+ * "55", "00", "83") viene prima risolto nel corrispondente codice ARCAD
+ * tramite resolveArcadBrandCode(), interrogando la stessa tabella.
  */
 
-/** Codice brand a 2 lettere (es. "FT", "CY", "AR") → colonna ARCAD; qualunque altro formato (tipicamente numerico, es. "55", "00") → colonna WebDAC. */
+/** Codice brand a 2 lettere (es. "FT", "CY", "AR"): formato ARCAD/RefTech, usato come unico criterio di ricerca del brand. */
 const ARCAD_BRAND_CODE_PATTERN = /^[A-Za-z]{2}$/;
+
+/**
+ * Uniforma il codice brand ricevuto al formato ARCAD/RefTech a 2 lettere
+ * (cd_contract_brand_arcad_code), unico criterio usato per cercare il brand
+ * in woc.ang_snowflakes. Se il valore ricevuto e' gia' in quel formato viene
+ * restituito cosi' com'e' (in maiuscolo); altrimenti (tipicamente un codice
+ * numerico WebDAC, es. "55", "00", "83") viene risolto interrogando la
+ * colonna cd_contract_brand_webdac_code della stessa tabella.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} brand
+ * @returns {Promise<string|null>} il codice ARCAD a 2 lettere, o null se il
+ *          brand ricevuto non e' in formato ARCAD e non e' stato possibile
+ *          risolverlo a partire dal codice WebDAC
+ */
+async function resolveArcadBrandCode(pool, brand) {
+  if (ARCAD_BRAND_CODE_PATTERN.test(brand)) return brand.toUpperCase();
+
+  const { rows } = await pool.query(
+    `SELECT s.cd_contract_brand_arcad_code
+       FROM woc.ang_snowflakes s
+      WHERE s.cd_contract_brand_webdac_code = $1
+      LIMIT 1`,
+    [brand],
+  );
+
+  return rows.length > 0 ? rows[0].cd_contract_brand_arcad_code : null;
+}
 
 /**
  * @param {import('pg').Pool} pool
@@ -41,38 +80,44 @@ async function getCountryIsoCode(pool, { market }) {
 /**
  * Risolve physicalSiteId (gn_physical_site_arcad) e dealerNumberIdSource
  * (cd_sincom_code) per il Sender dinamico dell'inquiry DMS, a partire da
- * mainSincom (cd_main_sincom_code, es. session.sincom/MAINSINCOM), market
- * (cd_market_code, es. session.codmarket) e brand (jobCardDetail.roInfo, es.
- * stellantisBrand "FT" o brand "55").
+ * mainSincom (cd_main_sincom_code/gn_legal_entity, es. session.sincom/
+ * MAINSINCOM), market (cd_market_code, es. session.codmarket) e brand
+ * (jobCardDetail.roInfo, es. stellantisBrand "FT" o brand "55").
  *
- * Il brand puo' essere espresso in due formati (stesso dato, due colonne
- * diverse in ang_snowflakes): codice a 2 lettere ARCAD/RefTech (es. "FT",
- * "CY", "AR" → cd_contract_brand_arcad_code) o codice WebDAC, tipicamente
- * numerico (es. "55", "00", "83" → cd_contract_brand_webdac_code). La colonna
- * viene scelta automaticamente in base al formato del valore ricevuto.
+ * mainSincom viene cercato in OR tra le colonne cd_main_sincom_code e
+ * gn_legal_entity (stesso dato logico, valorizzato in colonne diverse a
+ * seconda della sorgente/estrazione).
+ *
+ * Il brand e' sempre cercato tramite un unico criterio uniforme, il codice
+ * ARCAD/RefTech a 2 lettere (cd_contract_brand_arcad_code): se ricevuto in
+ * altro formato (tipicamente numerico WebDAC, es. "55", "00", "83") viene
+ * prima trasformato nel corrispondente codice ARCAD tramite
+ * resolveArcadBrandCode() — vedi sopra.
  *
  * @param {import('pg').Pool} pool
  * @param {{ mainSincom: string, market: string, brand: string }} params
  * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null }>}
  *          entrambi null se non e' stata trovata alcuna riga corrispondente
+ *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD)
  */
 async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}) {
   if (!mainSincom) throw new Error('"mainSincom" is required');
   if (!market) throw new Error('"market" is required');
   if (!brand) throw new Error('"brand" is required');
 
-  const brandColumn = ARCAD_BRAND_CODE_PATTERN.test(brand)
-    ? 'cd_contract_brand_arcad_code'
-    : 'cd_contract_brand_webdac_code';
+  const arcadBrand = await resolveArcadBrandCode(pool, brand);
+  if (!arcadBrand) {
+    return { physicalSiteId: null, dealerNumberIdSource: null };
+  }
 
   const { rows } = await pool.query(
     `SELECT s.gn_physical_site_arcad, s.cd_sincom_code
        FROM woc.ang_snowflakes s
-      WHERE s.cd_main_sincom_code = $1
+      WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
-        AND s.${brandColumn} = $3
+        AND s.cd_contract_brand_arcad_code = $3
       LIMIT 1`,
-    [mainSincom, market, brand],
+    [mainSincom, market, arcadBrand],
   );
 
   if (rows.length === 0) {
@@ -85,4 +130,4 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
   };
 }
 
-module.exports = { getCountryIsoCode, getPhysicalSiteAndSincom };
+module.exports = { getCountryIsoCode, getPhysicalSiteAndSincom, resolveArcadBrandCode };

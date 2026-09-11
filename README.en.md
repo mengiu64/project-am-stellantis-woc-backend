@@ -197,7 +197,16 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > lookup (key `mainSincom`+`market`+`brand`) and — if a row is found — overrides
 > `physicalSiteId`/`dealerNumberIdSource`; **`market` is never forwarded to the
 > DML**: it's only used as the lookup key, it's not a field of
-> `ApplicationArea.Sender`. The lookup is **best-effort**: if even one of the
+> `ApplicationArea.Sender`. The `mainSincom` match is done **with an OR**
+> between the `cd_main_sincom_code` and `gn_legal_entity` columns (same
+> logical data, populated in different columns depending on the source/
+> extraction). `brand` is always searched with a **single, uniform criterion**,
+> the 2-letter ARCAD/RefTech code (`cd_contract_brand_arcad_code`): if the
+> caller passes a brand in another format (typically a numeric WebDAC code,
+> e.g. `55`, `00`, `83`) it is first transformed into the corresponding ARCAD
+> code by querying the same table
+> (`AnagSnowflakesRepository.js::resolveArcadBrandCode`). The lookup is
+> **best-effort**: if even one of the
 > three fields is missing, or the query fails, the flow continues without
 > modifying `physicalSiteId`/`dealerNumberIdSource` (just a log warning) — it
 > never blocks the call to the DML gateway. Because of this, every Lambda
