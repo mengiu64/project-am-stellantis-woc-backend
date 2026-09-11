@@ -228,12 +228,14 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > - `mainSincom`/`market`/`language`/`dealerCountryCode` ← `username`
 >   (`event.requestContext.authorizer.sub`), via
 >   `session/src/sessionContextCache.js::getCachedSessionContext` — the same
->   myPeople resolution as the `session` lambda, with a best-effort cache at
->   `/tmp/session-context-<username>.json`;
+>   myPeople resolution as the `session` lambda, with a best-effort cache in
+>   DynamoDB (`TmpCacheTable`, key `session:context:<username>`, TTL
+>   configurable via `SESSION_CONTEXT_CACHE_TTL_MS`, default 5 min);
 > - `brand` ← the current request's `vin`, via
 >   `v360/v360Service.js::getCachedBrand` (the `data.brandCode` field of the
->   v360 `getdetails` response, with a best-effort cache at
->   `/tmp/v360-getdetails-<vin>.json`) — the **vehicle's** brand, not the
+>   v360 `getdetails` response, with a best-effort cache in DynamoDB
+>   (`TmpCacheTable`, key `v360:getdetails:<vin>`, TTL 1h via
+>   `SESSION_CACHE_TTL_SECONDS`)) — the **vehicle's** brand, not the
 >   dealer/session default (a multi-brand dealer may service a vehicle of a
 >   different brand than its own).
 >

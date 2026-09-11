@@ -163,10 +163,11 @@ exports.handler = async (event) => {
   }
 
   try {
-    // djcJson (json_orig) è il jobCardDetails salvato in /tmp/<jobCardId>.json
-    // dalla lambda jobcard (jobCardService.js::getJobCardDetails), non più
-    // get.json — che resta solo un fallback per uso locale/CLI senza jobCardId.
-    const manager = new DjcManager(undefined, jobCardId);
+    // djcJson (json_orig) è il jobCardDetails cachato in DynamoDB (chiave
+    // jobcard:jobcarddetails:<jobCardId>) dalla lambda jobcard
+    // (jobCardService.js::getJobCardDetails), non più /tmp — get.json resta
+    // solo un fallback per uso locale/CLI senza jobCardId.
+    const manager = await DjcManager.create(undefined, jobCardId);
     let result;
 
     if (action === 'SaveRoInfo') {
@@ -291,9 +292,7 @@ async function main() {
       return;
     }
 
-    const manager = new DjcManager(undefined, jobCardId);
-
-    if (command === 'SaveRoInfo') {
+    const manager = await DjcManager.create(undefined, jobCardId);
       const [
         interiorCarWash,
         exteriorCarWash,

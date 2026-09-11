@@ -1,8 +1,14 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
+jest.mock('../dynamoCache', () => ({ getCacheItem: jest.fn() }));
+
+const { getCacheItem } = require('../dynamoCache');
 const { DjcManager } = require('../DjcManager');
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
 
 // ─── Fixture djcJson minimale, coerente con la struttura di get.json ──────────
 function makeDjcJson(roInfoOverrides = {}, jobCardDetailOverrides = {}) {
@@ -121,24 +127,11 @@ describe('DjcManager', () => {
       expect(manager.djcJson).toHaveProperty('jobCardDetail.roInfo');
     });
 
-    test('loads djcJson from /tmp/<jobCardId>.json when jobCardId is provided', () => {
+    test('falls back to get.json even when jobCardId is provided (sync constructor never reads the cache)', () => {
       const jobCardId = 'TEST-JOBCARD-84564621';
-      const tmpFile = path.join('/tmp', `${jobCardId}.json`);
-      const fromTmp = makeDjcJson({ jobCardSrpId: 'FROM-TMP' });
-      fs.writeFileSync(tmpFile, JSON.stringify(fromTmp), 'utf8');
-
-      try {
-        const manager = new DjcManager(undefined, jobCardId);
-        expect(manager.djcJson.jobCardDetail.roInfo.jobCardSrpId).toBe('FROM-TMP');
-        expect(manager.jobCardId).toBe(jobCardId);
-      } finally {
-        fs.unlinkSync(tmpFile);
-      }
-    });
-
-    test('throws a clear error when /tmp/<jobCardId>.json is missing', () => {
-      expect(() => new DjcManager(undefined, 'MISSING-JOBCARD-ID'))
-        .toThrow('[djc] impossibile leggere /tmp/MISSING-JOBCARD-ID.json');
+      const manager = new DjcManager(undefined, jobCardId);
+      expect(manager.djcJson).toHaveProperty('jobCardDetail.roInfo');
+      expect(manager.jobCardId).toBe(jobCardId);
     });
 
     test('explicit djcJson takes precedence over jobCardId', () => {
@@ -147,6 +140,41 @@ describe('DjcManager', () => {
       expect(manager.djcJson).toBe(djcJson);
     });
   });
+
+  describe('create (async factory)', () => {
+    test('uses the explicit djcJson when provided, without touching the cache', async () => {
+      const djcJson = makeDjcJson();
+      const manager = await DjcManager.create(djcJson, 'IGNORED-JOBCARD-ID');
+      expect(manager.djcJson).toBe(djcJson);
+      expect(getCacheItem).not.toHaveBeenCalled();
+    });
+
+    test('reads djcJson from the DynamoDB cache when jobCardId is provided', async () => {
+      const jobCardId = 'TEST-JOBCARD-84564621';
+      const fromCache = makeDjcJson({ jobCardSrpId: 'FROM-CACHE' });
+      getCacheItem.mockResolvedValueOnce(fromCache);
+
+      const manager = await DjcManager.create(undefined, jobCardId);
+
+      expect(getCacheItem).toHaveBeenCalledWith(`jobcard:jobcarddetails:${jobCardId}`);
+      expect(manager.djcJson.jobCardDetail.roInfo.jobCardSrpId).toBe('FROM-CACHE');
+      expect(manager.jobCardId).toBe(jobCardId);
+    });
+
+    test('throws a clear error when the cache item is missing for jobCardId', async () => {
+      getCacheItem.mockResolvedValueOnce(null);
+
+      await expect(DjcManager.create(undefined, 'MISSING-JOBCARD-ID'))
+        .rejects.toThrow('[djc] jobcard:jobcarddetails:MISSING-JOBCARD-ID non trovato in cache');
+    });
+
+    test('loads djcJson from get.json when both djcJson and jobCardId are absent', async () => {
+      const manager = await DjcManager.create();
+      expect(manager.djcJson).toHaveProperty('jobCardDetail.roInfo');
+      expect(getCacheItem).not.toHaveBeenCalled();
+    });
+  });
+
 
   describe('SaveRoInfo', () => {
     test('json_orig contains only the expected subset of roInfo fields', () => {

@@ -2,15 +2,23 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { getCacheItem } = require('./dynamoCache');
 
 // ─── Percorso di default del JSON di riferimento (get.json) ───────────────────
 // Usato solo come fallback quando non è disponibile un jobCardId (es. test,
-// uso locale via CLI senza una jobcard reale da leggere da /tmp).
+// uso locale via CLI senza una jobcard reale da leggere dalla cache).
 const DEFAULT_DJC_JSON_PATH = path.resolve(__dirname, 'get.json');
 
-// Cartella dove la lambda jobcard salva jobCardDetails come <jobCardId>.json
-// (vedi jobcard/jobCardService.js::getJobCardDetails / saveJobCardDetailsToTmp).
-const TMP_DIR = '/tmp';
+/**
+ * Chiave di cache DynamoDB per jobCardDetails, condivisa con
+ * jobcard/jobCardService.js::cacheKeyForJobCard (stessa tabella TmpCacheTable,
+ * v. dynamoCache.js) — sostituisce il precedente /tmp/<jobCardId>.json.
+ * @param {string|number} jobCardId
+ * @returns {string}
+ */
+function cacheKeyForJobCard(jobCardId) {
+  return `jobcard:jobcarddetails:${jobCardId}`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Classe DjcManager
@@ -18,39 +26,68 @@ const TMP_DIR = '/tmp';
 //
 // Orchestratore Node.js per la costruzione dei payload di Digital Job Card (DJC)
 // da inviare alla Push API SRP (Save*). Il contenuto di riferimento (djcJson) è
-// lo stesso jobCardDetails prodotto dalla lambda jobcard: viene letto da
-// /tmp/<jobCardId>.json (scritto lì da jobcard/jobCardService.js) e usato come
-// sorgente dati "originale" (json_orig) da cui derivare i payload modificati
-// (json_mod) in base agli argomenti passati a ciascun metodo Save*. Se non è
-// disponibile un jobCardId, si ricade su get.json (fixture di riferimento
-// usata in locale/nei test).
+// lo stesso jobCardDetails prodotto dalla lambda jobcard: viene letto dalla
+// cache DynamoDB condivisa (chiave jobcard:jobcarddetails:<jobCardId>, scritta
+// da jobcard/jobCardService.js) e usato come sorgente dati "originale"
+// (json_orig) da cui derivare i payload modificati (json_mod) in base agli
+// argomenti passati a ciascun metodo Save*. Se non è disponibile un jobCardId,
+// si ricade su get.json (fixture di riferimento usata in locale/nei test).
 class DjcManager {
   /**
    * @param {object} [djcJson]   - Contenuto già parsato di jobCardDetails (usato
    *                                principalmente nei test). Se omesso, viene letto
-   *                                e parsato da disco in base a jobCardId.
-   * @param {string|number} [jobCardId] - Identificatore della jobcard: se presente,
-   *                                viene letto /tmp/<jobCardId>.json (prodotto dalla
-   *                                lambda jobcard). Se assente, si ricade su get.json.
+   *                                sincronamente da get.json (fallback CLI/locale
+   *                                senza jobCardId). Per leggere dalla cache
+   *                                DynamoDB in base a jobCardId, usare il factory
+   *                                asincrono DjcManager.create().
+   * @param {string|number} [jobCardId] - Identificatore della jobcard, propagato
+   *                                per riferimento/logging; la lettura effettiva
+   *                                dalla cache va fatta tramite DjcManager.create().
    */
   constructor(djcJson, jobCardId) {
     this.jobCardId = jobCardId;
-    this.djcJson = djcJson ?? DjcManager._loadDjcJson(jobCardId);
+    this.djcJson = djcJson ?? DjcManager._loadDefaultDjcJson();
   }
 
-  // ── _loadDjcJson ─────────────────────────────────────────────────────────────
-  // Legge e parsa il JSON sorgente da disco: /tmp/<jobCardId>.json se jobCardId
-  // è presente (file scritto dalla lambda jobcard), altrimenti get.json.
-  static _loadDjcJson(jobCardId) {
-    const jsonPath = jobCardId
-      ? path.join(TMP_DIR, `${jobCardId}.json`)
-      : DEFAULT_DJC_JSON_PATH;
+  /**
+   * Factory asincrona: se djcJson è già disponibile lo usa direttamente
+   * (comportamento identico al costruttore sincrono, utile nei test). Se
+   * assente e jobCardId è presente, legge jobCardDetails dalla cache DynamoDB
+   * condivisa con la lambda jobcard (chiave jobcard:jobcarddetails:<jobCardId>,
+   * v. dynamoCache.js): un item mancante/scaduto in cache genera un errore
+   * esplicito (mai un fallback silenzioso su get.json, che è solo una fixture
+   * di test/uso locale e non deve mai finire in un payload reale verso la Push
+   * API SRP). Se jobCardId è del tutto assente, si ricade su get.json.
+   * @param {object} [djcJson]
+   * @param {string|number} [jobCardId]
+   * @returns {Promise<DjcManager>}
+   */
+  static async create(djcJson, jobCardId) {
+    if (djcJson) {
+      return new DjcManager(djcJson, jobCardId);
+    }
 
+    if (jobCardId) {
+      const cacheKey = cacheKeyForJobCard(jobCardId);
+      const cached = await getCacheItem(cacheKey);
+      if (!cached) {
+        throw new Error(`[djc] ${cacheKey} non trovato in cache`);
+      }
+      return new DjcManager(cached, jobCardId);
+    }
+
+    return new DjcManager(undefined, jobCardId);
+  }
+
+  // ── _loadDefaultDjcJson ──────────────────────────────────────────────────────
+  // Legge e parsa get.json (fixture di riferimento), usato quando non è
+  // disponibile né un djcJson esplicito né un item in cache per jobCardId.
+  static _loadDefaultDjcJson() {
     let raw;
     try {
-      raw = fs.readFileSync(jsonPath, 'utf8');
+      raw = fs.readFileSync(DEFAULT_DJC_JSON_PATH, 'utf8');
     } catch (err) {
-      throw new Error(`[djc] impossibile leggere ${jsonPath}: ${err.message}`);
+      throw new Error(`[djc] impossibile leggere ${DEFAULT_DJC_JSON_PATH}: ${err.message}`);
     }
 
     return JSON.parse(raw);

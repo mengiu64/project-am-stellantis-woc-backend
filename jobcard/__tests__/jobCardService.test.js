@@ -16,13 +16,16 @@ jest.mock('../config', () => ({
   },
 }));
 jest.mock('../httpClient');
-jest.mock('fs');
+jest.mock('../dynamoCache', () => ({
+  getCacheItem: jest.fn(),
+  setCacheItem: jest.fn((key, value) => Promise.resolve(value)),
+}));
 jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
 jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
 
-const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
+const { getCacheItem, setCacheItem } = require('../dynamoCache');
 const { getBearerToken: getDgtBearerToken } = require('../authService');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
@@ -618,52 +621,50 @@ describe('jobCardService', () => {
     });
   });
 
-  // ── /tmp persistence (readable later by djc lambda) ─────────────────────────
+  // ── DynamoDB persistence (readable later by djc lambda) ────────────────────
 
-  test('saves the sanitized response body to /tmp/<jobCardId>.json', async () => {
+  test('saves the sanitized response body to the DynamoDB cache', async () => {
     const body = { jobCardId: '79', jobCardDetail: { roInfo: { foo: 'bar' } } };
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
 
     await getJobCardDetails('token', '79');
 
-    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
-    const [filePath, content, encoding] = fs.writeFileSync.mock.calls[0];
-    expect(filePath).toBe('/tmp/79.json');
-    expect(JSON.parse(content)).toEqual(body);
-    expect(encoding).toBe('utf8');
+    expect(setCacheItem).toHaveBeenCalledTimes(1);
+    const [cacheKey, value, ttlSeconds] = setCacheItem.mock.calls[0];
+    expect(cacheKey).toBe('jobcard:jobcarddetails:79');
+    expect(value).toEqual(body);
+    expect(ttlSeconds).toBe(3600);
   });
 
-  test('uses the numeric jobCardId (converted to string) as the file name', async () => {
+  test('uses the numeric jobCardId (converted to string) in the cache key', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
     await getJobCardDetails('token', 79);
 
-    const [filePath] = fs.writeFileSync.mock.calls[0];
-    expect(filePath).toBe('/tmp/79.json');
+    const [cacheKey] = setCacheItem.mock.calls[0];
+    expect(cacheKey).toBe('jobcard:jobcarddetails:79');
   });
 
-  test('still returns the response even if writing to /tmp fails', async () => {
+  test('still returns the response even if writing to the cache fails', async () => {
     const body = { jobCardId: '79' };
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
-    fs.writeFileSync.mockImplementation(() => {
-      throw new Error('disk full');
-    });
+    setCacheItem.mockResolvedValueOnce(body);
 
     await expect(getJobCardDetails('token', '79')).resolves.toEqual(body);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('impossibile salvare jobCardDetails'));
   });
 
-  test('does not write to /tmp when the request fails', async () => {
+  test('does not write to the cache when the request fails', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 404, headers: {}, body: { message: 'not found' } });
 
     await expect(getJobCardDetails('token', '99')).rejects.toThrow();
-    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    expect(setCacheItem).not.toHaveBeenCalled();
   });
 
-  test('does not write to /tmp when jobCardId is missing', async () => {
+  test('does not write to the cache when jobCardId is missing', async () => {
     await expect(getJobCardDetails('token', '')).rejects.toThrow();
-    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    expect(setCacheItem).not.toHaveBeenCalled();
   });
+
 
   test('sends date range and other optional filters as headers when provided', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
@@ -1202,7 +1203,7 @@ describe('jobCardService', () => {
       await expect(getDataFromDMLFromTmp(undefined)).rejects.toThrow('[jobCard] jobCardId is required');
     });
 
-    test('regenerates /tmp/<jobCardId>.json via getJobCardDetails when missing, then reads it', async () => {
+    test('regenerates the DynamoDB cache via getJobCardDetails when missing, then reads it', async () => {
       const regeneratedBody = {
         jobCardDetail: {
           roInfo: { jobCardSrpId: 'JCID-79' },
@@ -1210,10 +1211,10 @@ describe('jobCardService', () => {
           jobs: [],
         },
       };
-      // Prima lettura fallisce (ENOENT), la seconda (dopo getJobCardDetails) ha successo
-      fs.readFileSync
-        .mockImplementationOnce(() => { throw new Error('ENOENT: no such file'); })
-        .mockImplementationOnce(() => JSON.stringify(regeneratedBody));
+      // Prima lettura fallisce (null), la seconda (dopo getJobCardDetails) ha successo
+      getCacheItem
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(regeneratedBody);
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: regeneratedBody });
       postDmsInquiry.mockResolvedValue({ WorkLines: [] });
 
@@ -1221,14 +1222,13 @@ describe('jobCardService', () => {
 
       expect(getDgtBearerToken).toHaveBeenCalledTimes(1);
       expect(httpsRequest).toHaveBeenCalledTimes(1); // getJobCardDetails -> DGT
-      expect(fs.readFileSync).toHaveBeenCalledTimes(2);
+      expect(getCacheItem).toHaveBeenCalledTimes(2);
+      expect(getCacheItem).toHaveBeenCalledWith('jobcard:jobcarddetails:79');
       expect(result).toEqual(regeneratedBody);
     });
 
-    test('throws if /tmp/<jobCardId>.json still cannot be read after regeneration', async () => {
-      fs.readFileSync.mockImplementation(() => {
-        throw new Error('ENOENT: no such file');
-      });
+    test('throws if the DynamoDB cache still cannot be read after regeneration', async () => {
+      getCacheItem.mockResolvedValue(null);
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
       await expect(getDataFromDMLFromTmp('79')).rejects.toThrow('impossibile leggere');
@@ -1237,9 +1237,9 @@ describe('jobCardService', () => {
 
     test('uses the bearerToken passed explicitly instead of requesting a new one, when regenerating', async () => {
       const regeneratedBody = { jobCardDetail: { roInfo: {}, vehicleInfo: {}, jobs: [] } };
-      fs.readFileSync
-        .mockImplementationOnce(() => { throw new Error('ENOENT: no such file'); })
-        .mockImplementationOnce(() => JSON.stringify(regeneratedBody));
+      getCacheItem
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(regeneratedBody);
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: regeneratedBody });
       postDmsInquiry.mockResolvedValue({ WorkLines: [] });
 
@@ -1248,7 +1248,7 @@ describe('jobCardService', () => {
       expect(getDgtBearerToken).not.toHaveBeenCalled();
     });
 
-    test('reads /tmp/<jobCardId>.json, applies getDataFromDML to jobCardDetail and returns the full body', async () => {
+    test('reads the DynamoDB cache, applies getDataFromDML to jobCardDetail and returns the full body', async () => {
       const body = {
         jobCardDetail: {
           roInfo: { jobCardSrpId: 'JCID-1' },
@@ -1261,7 +1261,7 @@ describe('jobCardService', () => {
           ],
         },
       };
-      fs.readFileSync.mockReturnValue(JSON.stringify(body));
+      getCacheItem.mockResolvedValue(body);
       postDmsInquiry.mockResolvedValue({
         WorkLines: [
           {
@@ -1273,7 +1273,7 @@ describe('jobCardService', () => {
 
       const result = await getDataFromDMLFromTmp('79');
 
-      expect(fs.readFileSync).toHaveBeenCalledWith(expect.stringContaining('79.json'), 'utf8');
+      expect(getCacheItem).toHaveBeenCalledWith('jobcard:jobcarddetails:79');
       expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
@@ -1284,13 +1284,13 @@ describe('jobCardService', () => {
       }));
     });
 
-    test('supports a /tmp file containing directly the jobCardDetail (no jobCardDetail wrapper)', async () => {
+    test('supports a cache item containing directly the jobCardDetail (no jobCardDetail wrapper)', async () => {
       const jobCardDetail = {
         roInfo: { jobCardSrpId: 'JCID-2' },
         vehicleInfo: { identification: { vin: 'VIN2' } },
         jobs: [],
       };
-      fs.readFileSync.mockReturnValue(JSON.stringify(jobCardDetail));
+      getCacheItem.mockResolvedValue(jobCardDetail);
       postDmsInquiry.mockResolvedValue({ WorkLines: [] });
 
       const result = await getDataFromDMLFromTmp('80');

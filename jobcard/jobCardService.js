@@ -1,12 +1,29 @@
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
 const { getBearerToken } = require('./authService');
+const { getCacheItem, setCacheItem } = require('./dynamoCache');
+
+/**
+ * TTL (in secondi) della cache DynamoDB usata per jobCardDetails: default 1
+ * ora, configurabile via env SESSION_CACHE_TTL_SECONDS (stessa variabile
+ * usata da v360/v360Service.js per uniformare la durata di sessione).
+ */
+const JOBCARD_DETAILS_CACHE_TTL_SECONDS = Number(process.env.SESSION_CACHE_TTL_SECONDS) || 3600;
+
+/**
+ * Chiave di cache DynamoDB per jobCardDetails, condivisa con djc (che legge
+ * lo stesso item per evitare di rifare la chiamata a DGT).
+ * @param {string|number} jobCardId
+ * @returns {string}
+ */
+function cacheKeyForJobCard(jobCardId) {
+  return `jobcard:jobcarddetails:${jobCardId}`;
+}
 
 /**
  * Builds common HTTPS request options for DGT API calls.
@@ -465,21 +482,16 @@ function sanitizeJobCardDetails(body) {
 }
 
 /**
- * Persiste la risposta di jobCardDetails in /tmp/<jobCardId>.json, così da
+ * Persiste la risposta di jobCardDetails in DynamoDB (TmpCacheTable), così da
  * poter essere letta da un'altra lambda (es. djc) senza rifare la chiamata a
- * DGT. Un eventuale errore di scrittura non deve far fallire la richiesta:
- * viene solo loggato come warning.
- * @param {string|number} jobCardId - usato come nome file (<jobCardId>.json)
+ * DGT, con TTL (default 1h) invece del precedente /tmp locale all'istanza.
+ * Un eventuale errore di scrittura non deve far fallire la richiesta: viene
+ * solo loggato come warning (v. dynamoCache.js::setCacheItem).
+ * @param {string|number} jobCardId - usato per costruire la cache key
  * @param {object} body             - jobCardDetails response body (già sanitizzato)
  */
-function saveJobCardDetailsToTmp(jobCardId, body) {
-  const filePath = path.join('/tmp', `${jobCardId}.json`);
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(body), 'utf8');
-    console.log(`[jobCard] jobCardDetails salvato in ${filePath}`);
-  } catch (err) {
-    console.warn(`[jobCard] impossibile salvare jobCardDetails in ${filePath}: ${err.message}`);
-  }
+async function saveJobCardDetailsToTmp(jobCardId, body) {
+  await setCacheItem(cacheKeyForJobCard(jobCardId), body, JOBCARD_DETAILS_CACHE_TTL_SECONDS);
   return body;
 }
 
@@ -757,21 +769,20 @@ async function getDataFromDML(jobCardDetail, sessionContext) {
 }
 
 /**
- * Legge /tmp/<jobCardId>.json (salvato da getJobCardDetails tramite
- * saveJobCardDetailsToTmp durante una precedente GET /jobCardDetails) e
- * applica getDataFromDML al relativo jobCardDetail, così da poter richiamare
- * l'arricchimento DML senza rifare la chiamata a DGT. Il file può contenere
+ * Legge la cache DynamoDB (chiave jobcard:jobcarddetails:<jobCardId>,
+ * scritta da getJobCardDetails tramite saveJobCardDetailsToTmp durante una
+ * precedente GET /jobCardDetails, con TTL — v. dynamoCache.js) e applica
+ * getDataFromDML al relativo jobCardDetail, così da poter richiamare
+ * l'arricchimento DML senza rifare la chiamata a DGT. L'item può contenere
  * sia la risposta completa ({ jobCardDetail: {...} }) sia già il jobCardDetail.
  *
- * Il file può mancare (es. /tmp è locale all'istanza Lambda: cold start o
- * un'istanza diversa da quella che ha servito la precedente GET
- * /jobCardDetails, oppure scrittura fallita — v. saveJobCardDetailsToTmp): in
- * quel caso, invece di fallire, viene richiamato getJobCardDetails (che
- * rigenera il file tramite saveJobCardDetailsToTmp) e si ritenta la lettura
- * del file appena prodotto.
- * @param {string|number} jobCardId  - usato per risolvere /tmp/<jobCardId>.json
+ * L'item può mancare o essere scaduto (TTL, scrittura fallita, o mai
+ * scritto — v. saveJobCardDetailsToTmp): in quel caso, invece di fallire,
+ * viene richiamato getJobCardDetails (che rigenera l'item tramite
+ * saveJobCardDetailsToTmp) e si ritenta la lettura appena dopo.
+ * @param {string|number} jobCardId  - usato per risolvere la cache key
  * @param {string} [bearerToken]     - ****** da PingFederate, usato solo per
- *                                     rigenerare il file via getJobCardDetails
+ *                                     rigenerare l'item via getJobCardDetails
  *                                     quando mancante. Se omesso e serve
  *                                     rigenerare, ne viene richiesto uno nuovo
  *                                     ad authService.getBearerToken().
@@ -780,32 +791,28 @@ async function getDataFromDML(jobCardDetail, sessionContext) {
  *                                 language/dealerCountryCode), propagati fino a
  *                                 getCartPriceAndAvailability per il Sender
  *                                 dinamico — v. buildDmsSender()
- * @returns {Promise<object>} il body letto da /tmp con jobCardDetail arricchito
+ * @returns {Promise<object>} il body letto dalla cache con jobCardDetail arricchito
  */
 async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
     throw new Error('[jobCard] jobCardId is required');
   }
 
-  const filePath = path.join('/tmp', `${jobCardId}.json`);
+  const cacheKey = cacheKeyForJobCard(jobCardId);
 
-  let raw;
-  try {
-    raw = fs.readFileSync(filePath, 'utf8');
-  } catch (err) {
-    console.warn(`[jobCard] ${filePath} non trovato (${err.message}): rigenero tramite getJobCardDetails`);
+  let body = await getCacheItem(cacheKey);
+  if (!body) {
+    console.warn(`[jobCard] ${cacheKey} non trovato in cache: rigenero tramite getJobCardDetails`);
 
     const token = bearerToken ?? await getBearerToken();
     await getJobCardDetails(token, jobCardId);
 
-    try {
-      raw = fs.readFileSync(filePath, 'utf8');
-    } catch (retryErr) {
-      throw new Error(`[jobCard] impossibile leggere ${filePath} dopo rigenerazione: ${retryErr.message}`);
+    body = await getCacheItem(cacheKey);
+    if (!body) {
+      throw new Error(`[jobCard] impossibile leggere ${cacheKey} dalla cache dopo rigenerazione`);
     }
   }
 
-  const body = JSON.parse(raw);
   const jobCardDetail = body?.jobCardDetail ?? body;
 
   await getDataFromDML(jobCardDetail, sessionContext);
@@ -838,7 +845,7 @@ async function getJobCardDetails(bearerToken, jobCardId) {
 
   const sanitized = sanitizeJobCardDetails(response.body);
 
-  return saveJobCardDetailsToTmp(jobCardId, sanitized);
+  return await saveJobCardDetailsToTmp(jobCardId, sanitized);
 }
 
 /**

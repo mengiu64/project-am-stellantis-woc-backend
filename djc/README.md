@@ -1,8 +1,9 @@
 # djc — Node.js Digital Job Card (Push API SRP)
 
 Modulo Node.js autoconsistente che costruisce i payload da inviare alla **Push API SRP**
-(Digital Job Card) a partire dal contenuto di riferimento (`json_orig`), letto da
-`/tmp/<jobCardId>.json` — il jobCardDetails salvato lì dalla lambda `jobcard`
+(Digital Job Card) a partire dal contenuto di riferimento (`json_orig`), letto dalla
+cache condivisa DynamoDB (`TmpCacheTable`, chiave `jobcard:jobcarddetails:<jobCardId>`)
+— il jobCardDetails salvato lì dalla lambda `jobcard`
 (`jobCardService.js::getJobCardDetails`), così da evitare una nuova chiamata a DGT.
 Se non è disponibile un `jobCardId` (uso locale/CLI senza una jobcard reale), si ricade
 su `get.json`, un'istantanea statica di riferimento usata anche nei test.
@@ -25,13 +26,15 @@ djc/
 ├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
 ├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
 ├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
+├── dynamoCache.js        ← cache condivisa su DynamoDB (TmpCacheTable), sostituisce /tmp
 ├── config.js              ← credenziali/URL DGT (copia di jobcard/config.js)
 ├── get.json               ← fallback statico (usato solo quando jobCardId è assente)
 ├── __tests__/
 │   ├── DjcManager.test.js    ← test automatici (Jest)
 │   ├── jobCardService.test.js
 │   ├── authService.test.js
-│   └── httpClient.test.js
+│   ├── httpClient.test.js
+│   └── dynamoCache.test.js
 ├── package.json
 ├── .env.example           ← template variabili d'ambiente
 └── .env                    ← configurazione locale (non committare)
@@ -54,17 +57,26 @@ cp .env.example .env   # solo se si usa saveJobcard — non serve per i metodi S
 ```js
 const { DjcManager } = require('./DjcManager');
 
-const manager = new DjcManager(undefined, '84564621');
-// manager.djcJson contiene il JSON parsato di /tmp/84564621.json
+const manager = await DjcManager.create(undefined, '84564621');
+// manager.djcJson contiene il JSON letto dalla cache DynamoDB (chiave jobcard:jobcarddetails:84564621)
 ```
 
-Il costruttore è `DjcManager(djcJson, jobCardId)`:
+`DjcManager.create(djcJson, jobCardId)` è la factory asincrona da usare quando si
+vuole risolvere `djcJson` da `jobCardId`:
 - `djcJson` esplicito (utile nei test) ha sempre la precedenza;
-- altrimenti, se è presente `jobCardId`, legge e parsa `/tmp/<jobCardId>.json`;
+- altrimenti, se è presente `jobCardId`, legge l'item dalla cache DynamoDB condivisa
+  (`jobcard:jobcarddetails:<jobCardId>`, v. `dynamoCache.js`);
 - se `jobCardId` è assente, ricade su `get.json` (fallback locale/di test).
 
-Se il file `/tmp/<jobCardId>.json` non esiste (o non è leggibile), il costruttore
-lancia un errore esplicito (`[djc] impossibile leggere /tmp/<jobCardId>.json: ...`).
+Se l'item in cache per `jobCardId` non esiste (o è scaduto), `create()` rigetta con un
+errore esplicito (`[djc] jobcard:jobcarddetails:<jobCardId> non trovato in cache`) —
+non ricade **mai** silenziosamente su `get.json`, che è solo una fixture di
+test/uso locale e non deve mai finire in un payload reale verso la Push API SRP.
+
+Il costruttore sincrono `new DjcManager(djcJson, jobCardId)` resta disponibile per i
+test che passano `djcJson` esplicitamente (o per il fallback locale su `get.json`
+quando nessuno dei due parametri è fornito), ma **non** legge più `jobCardId` dalla
+cache: per quello serve sempre `DjcManager.create()`.
 
 > **Lambda handler**: `jobCardId` è un parametro obbligatorio del body (`{ "jobCardId": "84564621", ... }`);
 > la richiesta viene rigettata con `400` se assente, prima di istanziare `DjcManager`.

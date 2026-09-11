@@ -237,11 +237,13 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 >   (`event.requestContext.authorizer.sub`), tramite
 >   `session/src/sessionContextCache.js::getCachedSessionContext` — stessa
 >   risoluzione myPeople della lambda `session`, con cache best-effort su
->   `/tmp/session-context-<username>.json`;
+>   DynamoDB (`TmpCacheTable`, chiave `session:context:<username>`, TTL
+>   configurabile via `SESSION_CONTEXT_CACHE_TTL_MS`, default 5 min);
 > - `brand` ← `vin` della richiesta corrente, tramite
 >   `v360/v360Service.js::getCachedBrand` (campo `data.brandCode` della
->   risposta v360 `getdetails`, cache best-effort su
->   `/tmp/v360-getdetails-<vin>.json`) — il brand **del veicolo**, non quello
+>   risposta v360 `getdetails`, cache best-effort su DynamoDB (`TmpCacheTable`,
+>   chiave `v360:getdetails:<vin>`, TTL 1h via `SESSION_CACHE_TTL_SECONDS`)) —
+>   il brand **del veicolo**, non quello
 >   di default del dealer/sessione (un dealer multi-brand può servire un
 >   veicolo di un brand diverso dal proprio).
 >
@@ -396,10 +398,12 @@ node index.js saveJobcard <payloadJsonFile>
 
 Lambda **Digital Job Card**: declinazione della lambda `jobcard` dedicata alla
 costruzione dei payload da inviare alla **Push API SRP** (Digital Layer) e al
-loro invio effettivo. Legge il contenuto di riferimento (`jobCardDetail`) da
-`/tmp/<jobCardId>.json` (salvato lì dalla lambda `jobcard` durante una
-`getJobCardDetails`, per evitare una nuova chiamata a DGT) oppure, se
-`jobCardId` non è disponibile (uso locale/CLI), da un'istantanea statica di
+loro invio effettivo. Legge il contenuto di riferimento (`jobCardDetail`) dalla
+cache condivisa DynamoDB (`TmpCacheTable`, chiave
+`jobcard:jobcarddetails:<jobCardId>`, scritta dalla lambda `jobcard` durante
+una `getJobCardDetails`, per evitare una nuova chiamata a DGT — v.
+`DjcManager.create()`) oppure, se `jobCardId` non è disponibile (uso
+locale/CLI) o l'item in cache è assente/scaduto, da un'istantanea statica di
 riferimento (`get.json`).
 
 #### Funzioni principali
@@ -973,12 +977,13 @@ Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per sing
 > questi campi: `resolveSessionContext(body)` resta un override opzionale di
 > solo test/debug (query string, v. tabella sopra) — nel flusso reale sono
 > assenti, e vengono risolti automaticamente da `username`
-> (`session/src/sessionContextCache.js`, cache best-effort su
-> `/tmp/session-context-<username>.json`, utile perché lo stesso username può
-> richiedere l'arricchimento DML di più pacchetti preferiti nella stessa
-> invocazione/istanza Lambda "warm") e da `vin`
-> (`v360/v360Service.js::getCachedBrand`, cache best-effort su
-> `/tmp/v360-getdetails-<vin>.json`). Se la risoluzione fallisce (myPeople/
+> (`session/src/sessionContextCache.js`, cache best-effort su DynamoDB
+> (`TmpCacheTable`, chiave `session:context:<username>`), utile perché lo
+> stesso username può richiedere l'arricchimento DML di più pacchetti
+> preferiti nella stessa invocazione/istanza Lambda "warm") e da `vin`
+> (`v360/v360Service.js::getCachedBrand`, cache best-effort su DynamoDB
+> (`TmpCacheTable`, chiave `v360:getdetails:<vin>`)). Se la risoluzione
+> fallisce (myPeople/
 > ASV360 irraggiungibili, ...) i soli campi mancanti restano non valorizzati —
 > mai un'eccezione che blocchi la GET dei preferiti. La CLI (`node index.js
 > list ...`) non passa alcun sender (comportamento invariato).
@@ -1425,7 +1430,7 @@ cd agendaSoa && npm run test:coverage
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`
-- **DjcManager** – costruttore (`djcJson` esplicito, lettura da `/tmp/<jobCardId>.json`, fallback su `get.json`, errore su file assente/illeggibile), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
+- **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – costruzione envelope/richiesta SOAP-REST, parsing risposta, gestione errori HTTP/SOAP, tutti i metodi pubblici del client

@@ -1,14 +1,19 @@
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
 const config = require('./config');
 const { S3ConfigRepository } = require('./s3ConfigRepository');
+const { getCacheItem, setCacheItem } = require('./dynamoCache');
 
 const configRepository = new S3ConfigRepository();
+
+/** Durata (secondi) della cache getdetails per-VIN, allineata alla durata della sessione utente lato FE. Configurabile via env, default 3600s (60 minuti). */
+const GETDETAILS_CACHE_TTL_SECONDS = Number(process.env.SESSION_CACHE_TTL_SECONDS) > 0
+  ? Number(process.env.SESSION_CACHE_TTL_SECONDS)
+  : 3600;
 
 /**
  * Builds common HTTPS request options for ASV360 API POST calls.
@@ -190,40 +195,36 @@ async function getDetails(bearerToken, params = {}) {
   return result;
 }
 
-/** Path del file di cache /tmp per il getdetails di un dato VIN. */
-function tmpFilePathForVin(vin) {
-  return path.join('/tmp', `v360-getdetails-${vin}.json`);
+/** Chiave di cache DynamoDB (tabella TmpCacheTable) per il getdetails di un dato VIN. */
+function cacheKeyForVin(vin) {
+  return `v360:getdetails:${vin}`;
 }
 
 /**
- * Persiste la risposta di getdetails in /tmp/v360-getdetails-<vin>.json, così
- * da poter essere riletta (da questa stessa lambda, azione "getdetails", o da
- * un chiamante in-process come jobcard/pkFavorite/pkManager che bundlano
- * v360/ come cartella sorella — v. dms/dmsService.js
- * ::resolveDynamicSenderFields) senza rifare la chiamata ad ASV360. Un
+ * Persiste la risposta di getdetails in DynamoDB (chiave "v360:getdetails:<vin>",
+ * TTL = GETDETAILS_CACHE_TTL_SECONDS), così da poter essere riletta (da questa
+ * stessa lambda, azione "getdetails", o da un chiamante in-process come
+ * jobcard/pkFavorite/pkManager che bundlano v360/ come cartella sorella — v.
+ * dms/dmsService.js::resolveDynamicSenderFields) senza rifare la chiamata ad
+ * ASV360, indipendentemente dal container Lambda che serve la richiesta e per
+ * tutta la durata della sessione utente configurata (invece di dipendere dal
+ * ciclo di vita, non deterministico, dell'istanza Lambda "warm"). Un
  * eventuale errore di scrittura non deve far fallire la richiesta: viene
- * solo loggato come warning (stesso pattern di
- * jobcard/jobCardService.js::saveJobCardDetailsToTmp).
+ * solo loggato come warning da setCacheItem (dynamoCache.js).
  */
-function saveGetDetailsToTmp(vin, body) {
-  const filePath = tmpFilePathForVin(vin);
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(body), 'utf8');
-    console.log(`[v360] getdetails salvato in ${filePath}`);
-  } catch (err) {
-    console.warn(`[v360] impossibile salvare getdetails in ${filePath}: ${err.message}`);
-  }
+async function saveGetDetailsToCache(vin, body) {
+  await setCacheItem(cacheKeyForVin(vin), body, GETDETAILS_CACHE_TTL_SECONDS);
   return body;
 }
 
 /**
- * Come getDetails, ma legge prima /tmp/v360-getdetails-<vin>.json: se
- * presente (salvato da una precedente chiamata riuscita per lo stesso VIN
- * nella stessa istanza Lambda "warm"), lo restituisce senza richiamare
- * ASV360; altrimenti chiama getDetails e salva la risposta nel file per le
- * richieste successive. Usata sia dall'azione "getdetails" di questa stessa
- * lambda (index.js), sia da getCachedBrand() (chiamata dai chiamanti esterni
- * per il Sender dinamico DMS).
+ * Come getDetails, ma legge prima la cache DynamoDB "v360:getdetails:<vin>":
+ * se presente e non scaduta (salvata da una precedente chiamata riuscita per
+ * lo stesso VIN, entro la durata della sessione configurata), la restituisce
+ * senza richiamare ASV360; altrimenti chiama getDetails e salva la risposta
+ * in cache per le richieste successive. Usata sia dall'azione "getdetails" di
+ * questa stessa lambda (index.js), sia da getCachedBrand() (chiamata dai
+ * chiamanti esterni per il Sender dinamico DMS).
  *
  * @param {string} bearerToken
  * @param {object} params - stessi parametri di getDetails (vin obbligatorio)
@@ -235,17 +236,14 @@ async function getDetailsWithCache(bearerToken, params = {}) {
     throw new Error('[v360] vin is required for getdetails');
   }
 
-  const filePath = tmpFilePathForVin(vin);
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    console.log(`[v360] getdetails letto da cache ${filePath}`);
-    return JSON.parse(raw);
-  } catch (_) {
-    // cache assente/non leggibile: richiamo il servizio reale
+  const cached = await getCacheItem(cacheKeyForVin(vin));
+  if (cached) {
+    console.log(`[v360] getdetails letto da cache DynamoDB per vin="${vin}"`);
+    return cached;
   }
 
   const result = await getDetails(bearerToken, params);
-  return saveGetDetailsToTmp(vin, result);
+  return saveGetDetailsToCache(vin, result);
 }
 
 /**

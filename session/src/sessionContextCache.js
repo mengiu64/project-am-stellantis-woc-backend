@@ -18,23 +18,25 @@
  * che combina i risultati di questo modulo e di v360Service.
  *
  * getCachedSessionContext(username):
- *  1. controlla la cache locale /tmp/session-context-<username>.json
- *     (best-effort, TTL configurabile via env SESSION_CONTEXT_CACHE_TTL_MS,
- *     default 5 min): evita di richiamare myPeople ad ogni singola richiesta
- *     quando la stessa istanza Lambda (warm) gestisce più richieste dello
- *     stesso utente in rapida successione (es. una chiamata DML per ciascun
+ *  1. controlla la cache condivisa DynamoDB (TmpCacheTable, chiave
+ *     session:context:<username>, v. dynamoCache.js; TTL configurabile via
+ *     env SESSION_CONTEXT_CACHE_TTL_MS, default 5 min): evita di richiamare
+ *     myPeople ad ogni singola richiesta quando la stessa istanza Lambda
+ *     (warm) — o un'altra funzione che bundla questo modulo come sibling
+ *     (jobcard/pkFavorite/pkManager) — gestisce più richieste dello stesso
+ *     utente in rapida successione (es. una chiamata DML per ciascun
  *     pacchetto preferito in pkFavorite, o più azioni "dml" sulla stessa
  *     jobcard);
  *  2. in caso di cache-miss/scaduta, richiama in-process
  *     MyPeopleDmsSessionRepository::getSessionData(username) (stesso codice
- *     usato dalla lambda `session`) e salva il risultato in /tmp per le
+ *     usato dalla lambda `session`) e salva il risultato in DynamoDB per le
  *     richieste successive;
  *  3. estrae SOLO i campi utili al Sender DML: mainSincom<-sincom,
  *     market<-codmarket, dealerCountryCode<-marketIso, language<-language.
  *
  * Interamente best-effort: se `username` è assente, se myPeople non risponde,
- * se l'utente non è noto, o se la cache /tmp non è leggibile/scrivibile
- * (es. permessi, disco pieno), non viene MAI sollevata un'eccezione — si
+ * se l'utente non è noto, o se la cache DynamoDB non è raggiungibile (es.
+ * problemi di rete/permessi IAM), non viene MAI sollevata un'eccezione — si
  * ritorna un oggetto vuoto (o parziale) e si logga solo un warning. Il
  * chiamante (dms/dmsService.js::resolveDynamicSenderFields, usato da
  * jobcard/jobCardService.js::buildDmsSender, pkFavorite/index.js
@@ -52,9 +54,8 @@
  * presenti/aggiunti.
  */
 
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const { getCacheItem, setCacheItem } = require('./dynamoCache');
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minuti
 
@@ -64,31 +65,17 @@ function resolveTtlMs(overrideTtlMs) {
   return envTtl > 0 ? envTtl : DEFAULT_TTL_MS;
 }
 
-/** Nome file cache per-username, sanificato (evita path traversal / caratteri non validi). */
-function cacheFilePath(username) {
-  const safeName = String(username).replace(/[^a-zA-Z0-9._-]/g, '_');
-  return path.join(os.tmpdir(), `session-context-${safeName}.json`);
+/** Chiave di cache DynamoDB per-username. */
+function cacheKeyForUsername(username) {
+  return `session:context:${username}`;
 }
 
-function readCachedSessionData(username, ttlMs) {
-  try {
-    const raw = fs.readFileSync(cacheFilePath(username), 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.cachedAt !== 'number' || !parsed.sessionData) return null;
-    if (Date.now() - parsed.cachedAt > ttlMs) return null;
-    return parsed.sessionData;
-  } catch (_) {
-    return null;
-  }
+async function readCachedSessionData(username) {
+  return getCacheItem(cacheKeyForUsername(username));
 }
 
-function writeCachedSessionData(username, sessionData) {
-  const filePath = cacheFilePath(username);
-  try {
-    fs.writeFileSync(filePath, JSON.stringify({ cachedAt: Date.now(), sessionData }), 'utf8');
-  } catch (err) {
-    console.warn(`[sessionContextCache] impossibile salvare la cache di sessione in ${filePath}: ${err.message}`);
-  }
+async function writeCachedSessionData(username, sessionData, ttlMs) {
+  await setCacheItem(cacheKeyForUsername(username), sessionData, Math.ceil(ttlMs / 1000));
 }
 
 function loadGetSessionData() {
@@ -117,13 +104,13 @@ async function getCachedSessionContext(username, overrides = {}) {
 
   const ttlMs = resolveTtlMs(overrides.ttlMs);
 
-  const cached = readCachedSessionData(username, ttlMs);
+  const cached = await readCachedSessionData(username);
   if (cached) return toSenderContext(cached);
 
   try {
     const getSessionData = overrides.getSessionDataFn || loadGetSessionData();
     const sessionData = await getSessionData(username);
-    writeCachedSessionData(username, sessionData);
+    await writeCachedSessionData(username, sessionData, ttlMs);
     return toSenderContext(sessionData);
   } catch (err) {
     console.warn(`[sessionContextCache] impossibile risolvere i dati di sessione per "${username}": ${err.message}`);
@@ -132,3 +119,4 @@ async function getCachedSessionContext(username, overrides = {}) {
 }
 
 module.exports = { getCachedSessionContext };
+

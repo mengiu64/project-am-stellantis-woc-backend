@@ -271,6 +271,43 @@ Globals:
 
 Resources:
 
+  # TmpCacheTable: sostituisce le cache basate su file /tmp (locali all'istanza
+  # Lambda "warm" e quindi perse ad ogni cold start/riciclo del container, non
+  # condivise tra funzioni Lambda diverse) con un item store DynamoDB
+  # condiviso, con scadenza automatica nativa (TTL) sull'attributo `expiresAt`
+  # (epoch seconds). Usata da: v360/v360Service.js (cache getdetails per VIN),
+  # jobcard/jobCardService.js + djc/DjcManager.js (cache jobCardDetails per
+  # jobCardId — sostituisce /tmp/<jobCardId>.json, che essendo su due funzioni
+  # Lambda DISTINTE, JobCardFunction e DjcFunction, non era in realtà mai
+  # realmente condivisibile tra le due tramite /tmp) e
+  # session/src/sessionContextCache.js (cache dati sessione per username).
+  # PAY_PER_REQUEST: carico non prevedibile, evita di dover dimensionare le
+  # capacity unit.
+  #
+  # IMPORTANTE (prerequisito di rete): tutte le Lambda di questo template
+  # girano in VPC (v. Globals.Function.VpcConfig). Perché le funzioni che
+  # usano questa tabella (V360Function, JobCardFunction, DjcFunction,
+  # SessionFunction, PkManagerFunction, PkFavoriteFunction) possano
+  # raggiungere DynamoDB, la VPC deve avere un VPC Gateway Endpoint per
+  # com.amazonaws.<region>.dynamodb (stesso meccanismo, gratuito, di un
+  # eventuale endpoint S3 già presente) oppure un percorso di uscita verso
+  # Internet (NAT Gateway). Verificare con il team infra PRIMA del deploy in
+  # un nuovo ambiente/VPC.
+  TmpCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "ddb-np-bsn0027990-${Environment}-tmpcache"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: cacheKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: cacheKey
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
   AgendaSoaFunction:
     Type: AWS::Serverless::Function
     # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
@@ -467,6 +504,14 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # jobcard/dynamoCache.js — cache jobCardDetails condivisa con DjcFunction
+        # (sostituisce /tmp/<jobCardId>.json, v. TmpCacheTable in Resources).
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
@@ -515,6 +560,10 @@ Resources:
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
+          # jobcard/dynamoCache.js + v360/dynamoCache.js + session/src/dynamoCache.js
+          # (in-process, vedi Makefile) — cache condivisa su TmpCacheTable (v.
+          # Resources), sostituisce le precedenti cache basate su file /tmp.
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -536,12 +585,21 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        # djc/dynamoCache.js — legge la cache jobCardDetails condivisa scritta
+        # da JobCardFunction (v. TmpCacheTable in Resources).
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   DjcFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -605,6 +663,13 @@ Resources:
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
         - S3ReadPolicy:
             BucketName: !Ref TranslationsBucket
+        # v360/dynamoCache.js — cache getDetails per VIN (v. TmpCacheTable in Resources).
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           V360_PING_CLIENT_ID:     !Ref V360PingClientId
@@ -613,6 +678,7 @@ Resources:
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME: !Ref TranslationsBucket
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   V360FunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -830,6 +896,14 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # v360/dynamoCache.js + session/src/dynamoCache.js (in-process, vedi
+        # Makefile) — cache condivisa su TmpCacheTable (v. Resources).
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           EPER_HOST:                    !Ref EperHost
@@ -900,6 +974,7 @@ Resources:
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
+          DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
 
   PkManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -949,6 +1024,14 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # session/src/dynamoCache.js (cache dati sessione per username) — v.
+        # TmpCacheTable in Resources.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           SESSION_BUCKET_NAME: !Ref TranslationsBucket
@@ -983,6 +1066,7 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref PkFavoriteDbPort
           DBMANAGER_DB_NAME:      !Ref PkFavoriteDbName
           DBMANAGER_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   SessionFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -1086,6 +1170,14 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # v360/dynamoCache.js + session/src/dynamoCache.js (in-process, vedi
+        # Makefile) — cache condivisa su TmpCacheTable (v. Resources).
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           PKFAVORITE_DB_HOST:      !Ref PkFavoriteDbHost
@@ -1134,6 +1226,7 @@ Resources:
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
+          DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
 
   PkFavoriteFunctionLogGroup:
     Type: AWS::Logs::LogGroup
