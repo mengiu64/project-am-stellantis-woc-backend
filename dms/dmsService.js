@@ -241,14 +241,12 @@ function validateTypeSection(body, messageType) {
  * sui default statici di config.sender per i campi mancanti.
  *
  * NB: richiede in-process, come cartelle sorelle, session/src (+ myPeople +
- * dmlConfigSync, di cui session dipende) e v360/ — i chiamanti (jobcard,
- * pkFavorite, pkManager) devono quindi impacchettarle (Makefile, Metadata:
- * BuildMethod: makefile in template.yaml), esattamente come già fanno con
- * dms/dbManager. La lambda dms stessa NON invoca mai questa funzione dal
- * proprio handler (index.js): resta quindi "leggera" (non bundla session/
- * myPeople/dmlConfigSync/v360), nonostante la funzione viva in questo file —
- * è pensata per essere richiamata dai chiamanti di postDmsInquiry, non da dms
- * stessa.
+ * dmlConfigSync, di cui session dipende) e v360/ — sia i chiamanti esterni
+ * (jobcard, pkFavorite, pkManager) sia la lambda dms stessa (index.js
+ * ::resolveInquirySender, chiamata SEMPRE per l'azione "inquiry", senza che
+ * il chiamante debba risolvere/passare il Sender esplicitamente) devono
+ * quindi impacchettarle (Makefile, Metadata: BuildMethod: makefile in
+ * template.yaml), esattamente come già fanno con dms/dbManager.
  *
  * @param {{ username?: string, vin?: string }} [identifiers]
  * @param {object} [overrides] - campi già noti/espliciti (mainSincom/market/

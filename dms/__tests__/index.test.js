@@ -9,16 +9,18 @@ jest.mock('../dmsService', () => ({
   getCustomerTitles: jest.fn(),
   postDmsInquiry: jest.fn(),
   buildTypeSection: jest.fn(),
+  resolveDynamicSenderFields: jest.fn(),
 }));
 
 const { getBearerToken } = require('../authService');
-const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry } = require('../dmsService');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, resolveDynamicSenderFields } = require('../dmsService');
 const { handler } = require('../index');
 
 describe('dms lambda handler — routing (per swagger-woc.yaml)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     getBearerToken.mockResolvedValue('TOKEN');
+    resolveDynamicSenderFields.mockResolvedValue({});
   });
 
   test('GET /api/settings/dml/current -> action "settings"', async () => {
@@ -186,6 +188,91 @@ describe('dms lambda handler — routing (per swagger-woc.yaml)', () => {
     const body = JSON.parse(res.body);
     expect(body.success).toBe(false);
     expect(body.message).toContain('Unknown action: "foo"');
+  });
+
+  test('inquiry: risolve SEMPRE il Sender dinamico usando authorizer.sub e VehicleID, senza che il chiamante lo passi', async () => {
+    postDmsInquiry.mockResolvedValue({ success: true });
+    resolveDynamicSenderFields.mockResolvedValue({
+      mainSincom: '0062230',
+      market: '1000',
+      brand: 'FT',
+      language: 'fr-FR',
+      dealerCountryCode: 'FR',
+    });
+
+    const event = {
+      rawPath: '/api/repairorder/inquiry/LFP',
+      requestContext: { authorizer: { sub: '0073741.d235' } },
+      body: JSON.stringify({ VehicleID: '3C4NJCBH7KT831816' }),
+    };
+    const res = await handler(event);
+
+    expect(res.statusCode).toBe(200);
+    expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+      { username: '0073741.d235', vin: '3C4NJCBH7KT831816' },
+      expect.any(Object),
+    );
+    const [, sentBody] = postDmsInquiry.mock.calls[0];
+    expect(sentBody.sender).toEqual(expect.objectContaining({
+      dealerNumberId: '0062230',
+      serviceId: '0073741.d235',
+      languageCode: 'fr-FR',
+      dealerCountryCode: 'FR',
+      market: '1000',
+      brand: 'FT',
+    }));
+  });
+
+  test('inquiry: usa VehicleID annidato in PartsInquiryHeader quando non presente flat', async () => {
+    postDmsInquiry.mockResolvedValue({ success: true });
+    resolveDynamicSenderFields.mockResolvedValue({});
+
+    const event = {
+      action: 'inquiry',
+      requestContext: { authorizer: { sub: 'user1' } },
+      body: { PartsInquiryHeader: { MessageType: 'WL', VehicleID: 'VIN123' } },
+    };
+    await handler(event);
+
+    expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+      { username: 'user1', vin: 'VIN123' },
+      expect.any(Object),
+    );
+  });
+
+  test('inquiry: senza requestContext.authorizer, ricade su body.username (CLI/invocazione diretta)', async () => {
+    postDmsInquiry.mockResolvedValue({ success: true });
+    resolveDynamicSenderFields.mockResolvedValue({});
+
+    const event = {
+      action: 'inquiry',
+      body: { MessageType: 'LFP', VehicleID: 'VIN123', username: 'cli-user' },
+    };
+    await handler(event);
+
+    expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+      { username: 'cli-user', vin: 'VIN123' },
+      expect.any(Object),
+    );
+  });
+
+  test('inquiry: valori espliciti in body.sender hanno priorità sui valori auto-risolti', async () => {
+    postDmsInquiry.mockResolvedValue({ success: true });
+    resolveDynamicSenderFields.mockResolvedValue({
+      mainSincom: 'AUTO-RESOLVED',
+      brand: 'AUTO-BRAND',
+    });
+
+    const event = {
+      action: 'inquiry',
+      requestContext: { authorizer: { sub: 'user1' } },
+      body: { MessageType: 'LFP', VehicleID: 'VIN123', sender: { dealerNumberId: 'EXPLICIT', brand: 'EXPLICIT-BRAND' } },
+    };
+    await handler(event);
+
+    const [, sentBody] = postDmsInquiry.mock.calls[0];
+    expect(sentBody.sender.dealerNumberId).toBe('EXPLICIT');
+    expect(sentBody.sender.brand).toBe('EXPLICIT-BRAND');
   });
 
   test('returns 502 when downstream call fails with a generic error', async () => {

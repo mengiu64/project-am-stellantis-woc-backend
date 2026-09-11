@@ -191,12 +191,29 @@ build-DmlConfigSyncFunction:
 # per risolvere physicalSiteId/dealerNumberIdSource da woc.ang_snowflakes — stesso
 # lookup centralizzato qui e condiviso da tutti i chiamanti di postDmsInquiry
 # (jobcard, pkManager, pkFavorite), invece di essere duplicato in ciascuno.
+# Include anche myPeople/, session/, dmlConfigSync/ e v360/ perché dms/index.js
+# risolve SEMPRE (senza che il chiamante debba passarlo) il Sender dinamico
+# dell'azione "inquiry" tramite dmsService.js::resolveDynamicSenderFields
+# (stesso meccanismo/pattern già usato da JobCardFunction/PkManagerFunction/
+# PkFavoriteFunction/SessionFunction).
 build-DmsFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager"
+	mkdir -p "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/dmlConfigSync" "$(ARTIFACTS_DIR)/v360"
 	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
 	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
+	cp -r myPeople/. "$(ARTIFACTS_DIR)/myPeople/"
+	cp -r session/. "$(ARTIFACTS_DIR)/session/"
+	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
+	cp -r v360/. "$(ARTIFACTS_DIR)/v360/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
-		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env* \
+		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
+		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
+		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md \
+		"$(ARTIFACTS_DIR)"/v360/__tests__ "$(ARTIFACTS_DIR)"/v360/coverage "$(ARTIFACTS_DIR)"/v360/.env* "$(ARTIFACTS_DIR)"/v360/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/myPeople)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/v360)

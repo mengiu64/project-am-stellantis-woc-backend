@@ -38,11 +38,77 @@
 
 const fs            = require('fs');
 const { getBearerToken } = require('./authService');
-const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection } = require('./dmsService');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, resolveDynamicSenderFields } = require('./dmsService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
 const VALID_ACTIONS = ['settings', 'company-types', 'customer-titles', 'inquiry'];
+
+/**
+ * Estrae lo username autenticato per il Sender dinamico dell'azione "inquiry"
+ * (v. resolveInquirySender sotto): se l'evento ha un requestContext.authorizer,
+ * SOLO authorizer.sub è attendibile (stessa convenzione di
+ * session/pkFavorite/jobcard — mai un valore fornito dal body). Altrimenti
+ * (nessun authorizer nell'evento: invocazione diretta/CLI di test) si accetta
+ * body.username.
+ */
+function resolveUsername(event, body) {
+  const authz = (event && event.requestContext && event.requestContext.authorizer) || null;
+  if (authz) {
+    return authz.sub || null;
+  }
+  return (body && body.username) || null;
+}
+
+/**
+ * Risolve SEMPRE il Sender dinamico dell'azione "inquiry", direttamente qui
+ * nell'handler — nessun chiamante (jobcard/pkManager/pkFavorite, o
+ * un'invocazione diretta/API Gateway della lambda dms) deve più risolverlo e
+ * passarlo esplicitamente: stesso identico meccanismo/criteri già
+ * centralizzati in dmsService.js::resolveDynamicSenderFields e usati da
+ * jobcard/pkManager/pkFavorite:
+ *  - username SEMPRE da event.requestContext.authorizer.sub quando presente
+ *    (resolveUsername sopra), usato sia come chiave di risoluzione sessione
+ *    sia come ApplicationArea.Sender.ServiceID;
+ *  - vin dal body (VehicleID flat o PartsInquiryHeader.VehicleID);
+ *  - mainSincom/market/language/dealerCountryCode <- sessione (username),
+ *    tramite session/src/sessionContextCache.js::getCachedSessionContext;
+ *  - brand <- VIN, tramite v360/v360Service.js::getCachedBrand.
+ * Eventuali campi già presenti in body.sender (override espliciti, es. per
+ * test/replay da file) hanno sempre priorità sui valori auto-risolti.
+ * Interamente best-effort (v. resolveDynamicSenderFields): un fallimento di
+ * risoluzione non blocca mai la inquiry, il Sender ricade sui default statici
+ * di config.sender per i soli campi non risolvibili.
+ */
+async function resolveInquirySender(event, body) {
+  const explicit = (body && body.sender) || {};
+  const username = resolveUsername(event, body);
+  const vin = (body && (body.VehicleID || (body.PartsInquiryHeader && body.PartsInquiryHeader.VehicleID))) || null;
+
+  const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
+    { username, vin },
+    {
+      mainSincom: explicit.dealerNumberId,
+      market: explicit.market,
+      brand: explicit.brand,
+      language: explicit.languageCode,
+      dealerCountryCode: explicit.dealerCountryCode,
+    },
+  );
+
+  // Anche se resolveDynamicSenderFields già dà priorità agli overrides
+  // espliciti passati come secondo argomento, li riapplichiamo qui a valle
+  // per difesa in profondità: un valore già presente in body.sender (esplicito
+  // dal chiamante) non deve MAI essere sovrascritto dal valore auto-risolto.
+  const sender = { ...explicit };
+  if (mainSincom && !sender.dealerNumberId) sender.dealerNumberId = mainSincom;
+  if (!sender.serviceId && username) sender.serviceId = username;
+  if (language && !sender.languageCode) sender.languageCode = language;
+  if (dealerCountryCode && !sender.dealerCountryCode) sender.dealerCountryCode = dealerCountryCode;
+  if (market && !sender.market) sender.market = market;
+  if (brand && !sender.brand) sender.brand = brand;
+  return sender;
+}
 
 // MessageType values accepted by the DML inquiry endpoint (per swagger-woc.yaml
 // path parameter `/api/repairorder/inquiry/{type}`). Kept in sync with
@@ -145,6 +211,12 @@ exports.handler = async (event) => {
   }
 
   try {
+    if (action === 'inquiry') {
+      // Sender dinamico SEMPRE risolto qui, senza bisogno che il chiamante lo
+      // passi esplicitamente (v. resolveInquirySender sopra).
+      body.sender = await resolveInquirySender(event, body);
+    }
+
     const token = await getBearerToken();
     const result = await ACTION_HANDLERS[action](token, body);
 
@@ -233,6 +305,13 @@ async function runCustomerTitles(country, language) {
       },
       ...buildTypeSection(type),
     };
+  }
+
+  // Stessa risoluzione dinamica del Sender usata dall'handler Lambda (v.
+  // resolveInquirySender sopra): anche da CLI il Sender non è mai statico,
+  // salvo replay esplicito di un ApplicationArea già completo da --file.
+  if (!body.ApplicationArea) {
+    body.sender = await resolveInquirySender(null, body);
   }
 
   const type = body?.PartsInquiryHeader?.MessageType;
