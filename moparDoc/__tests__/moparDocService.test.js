@@ -550,3 +550,246 @@ describe('Esempio: i valori dei codici non compaiono nei log dei metodi di servi
     expect(logged).not.toContain(VALID_SECRET.MOPARDOC_API_ACCESS_CODE);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Unit test per deleteDocumentsByVin (Task 1.6).
+// Riusa i mock di ../config, ../authService e ../httpClient definiti in cima al file.
+// La strategia e' pilotare httpsRequest per endpoint (path che termina con
+// '/getDocuments' vs '/DeleteDocuments') restituendo body su misura, cosi' da
+// esercitare le funzioni reali getDocuments/DeleteDocuments e ottenere la miglior
+// copertura possibile della nuova funzione deleteDocumentsByVin.
+// ────────────────────────────────────────────────────────────────────────────
+
+// Recupera la funzione oggetto del test e il mock httpsRequest condiviso
+const { deleteDocumentsByVin } = require('../moparDocService');
+const { httpsRequest: httpsRequestDDBV } = require('../httpClient');
+
+// Helper: imposta un routing di httpsRequest per endpoint MoparDocs Services.
+// getDocumentsBody = body restituito da /getDocuments; deleteHandler = funzione
+// che riceve il payload di /DeleteDocuments e ritorna { statusCode, body } o lancia.
+function routeHttps({ getDocumentsBody, deleteHandler } = {}) {
+  // Sostituisce l'implementazione del mock condiviso per questa specifica prova
+  httpsRequestDDBV.mockImplementation((options, body) => {
+    // Distingue l'endpoint chiamato in base al path (basePath '/svc' + resourcePath)
+    if (options && options.path && options.path.endsWith('/getDocuments')) {
+      // Restituisce il body configurato per getDocuments (default: nessuna job card)
+      return Promise.resolve({ statusCode: 200, body: getDocumentsBody || { errorCode: 0, jobCardList: [] } });
+    }
+    // Gestisce l'endpoint di cancellazione documenti
+    if (options && options.path && options.path.endsWith('/DeleteDocuments')) {
+      // Se e' stato fornito un handler dedicato, lo invoca con il payload deserializzato
+      if (deleteHandler) return Promise.resolve(deleteHandler(JSON.parse(body)));
+      // Default: esito di successo applicativo (errorCode 0)
+      return Promise.resolve({ statusCode: 200, body: { errorCode: 0, errorMessage: '', ErrorDocumentID: [] } });
+    }
+    // Qualsiasi altro endpoint non atteso in questi test
+    return Promise.resolve({ statusCode: 200, body: { success: true } });
+  });
+}
+
+describe('deleteDocumentsByVin', () => {
+  // Ripristina i mock dopo ogni test per evitare contaminazione tra i casi
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test('happy path: risolve il JobCardId dai dati e chiama DeleteDocuments una sola volta', async () => {
+    // Configura getDocuments per restituire due job card; i documenti richiesti stanno tutti sulla prima
+    routeHttps({
+      getDocumentsBody: {
+        errorCode: 0,
+        jobCardList: [
+          { JobCardId: 78380, JobCard_Title: 'JCID-1', DocumentList: [{ ID: 47558 }, { ID: 47559 }] },
+          { JobCardId: 78390, JobCard_Title: 'JCID-2', DocumentList: [{ ID: 47600 }] },
+        ],
+      },
+    });
+
+    // Esegue l'azione con documenti appartenenti alla sola job card 78380
+    const result = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 47559] });
+
+    // Verifica la forma dell'oggetto di successo restituito
+    expect(result).toEqual({
+      success: true,
+      JobCardId: 78380,
+      deleted: [47558, 47559],
+      result: { errorCode: 0, errorMessage: '', ErrorDocumentID: [] },
+    });
+
+    // Isola le chiamate verso l'endpoint /DeleteDocuments
+    const deleteCalls = httpsRequestDDBV.mock.calls.filter(([o]) => o.path.endsWith('/DeleteDocuments'));
+    // DeleteDocuments deve essere invocato esattamente una volta (conteggio chiamate)
+    expect(deleteCalls).toHaveLength(1);
+    // Il payload inoltrato deve usare il JobCardId risolto (78380) e i Documents richiesti
+    const forwarded = JSON.parse(deleteCalls[0][1]);
+    expect(forwarded).toEqual({ source: 'WOC', JobCardId: 78380, Documents: [47558, 47559] });
+  });
+
+  test('usa il JobCardId risolto ignorando un JobCardId diverso passato in input', async () => {
+    // getDocuments risolve il documento sulla job card reale 78380
+    routeHttps({
+      getDocumentsBody: {
+        errorCode: 0,
+        jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }] }],
+      },
+    });
+
+    // Passa un JobCardId fasullo in input che deve essere ignorato
+    const result = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558], JobCardId: 99999 });
+
+    // Il JobCardId nel risultato deve essere quello risolto, non quello di input
+    expect(result.JobCardId).toBe(78380);
+    // Il payload inoltrato a DeleteDocuments deve contenere il JobCardId risolto (78380)
+    const deleteCall = httpsRequestDDBV.mock.calls.find(([o]) => o.path.endsWith('/DeleteDocuments'));
+    expect(JSON.parse(deleteCall[1]).JobCardId).toBe(78380);
+  });
+
+  test('lancia errore 400 "Missing required field(s)" quando manca source/vin/Documents', async () => {
+    // Predispone il routing (non dovrebbe comunque essere raggiunto)
+    routeHttps();
+    // Input privo di source, vin e Documents: deve fallire in validazione
+    await expect(deleteDocumentsByVin({})).rejects.toThrow('Missing required field(s)');
+    // Verifica che l'errore riporti statusCode 400 e che nessuna chiamata upstream sia avvenuta
+    await expect(deleteDocumentsByVin({})).rejects.toMatchObject({ statusCode: 400 });
+    expect(httpsRequestDDBV).not.toHaveBeenCalled();
+  });
+
+  test('lancia errore 400 quando Documents non e\' un array o e\' vuoto', async () => {
+    // Predispone il routing (non dovrebbe comunque essere raggiunto)
+    routeHttps();
+    // Documents come array vuoto: deve fallire con messaggio dedicato
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [] })
+    ).rejects.toThrow('array non vuoto');
+    // Documents non-array: stesso errore con statusCode 400
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: 'x' })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    // Nessuna chiamata upstream deve essere avvenuta
+    expect(httpsRequestDDBV).not.toHaveBeenCalled();
+  });
+
+  test('lancia errore 400 quando getDocuments restituisce una jobCardList vuota', async () => {
+    // getDocuments restituisce nessuna job card per il VIN
+    routeHttps({ getDocumentsBody: { errorCode: 0, jobCardList: [] } });
+    // Deve fallire indicando che nessuna job card e' stata trovata
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] })
+    ).rejects.toThrow('Nessuna job card trovata');
+    // L'errore deve avere statusCode 400
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    // DeleteDocuments non deve mai essere invocato
+    const deleteCalls = httpsRequestDDBV.mock.calls.filter(([o]) => o.path.endsWith('/DeleteDocuments'));
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  test('lancia errore 400 quando uno o piu\' Document ID non sono trovati; DeleteDocuments non chiamato', async () => {
+    // getDocuments espone solo l'ID 47558; l'ID 99999 non esiste
+    routeHttps({
+      getDocumentsBody: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }] }] },
+    });
+    // Deve fallire elencando gli ID mancanti
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 99999] })
+    ).rejects.toThrow('Document ID non trovati');
+    // L'errore deve avere statusCode 400
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 99999] })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    // DeleteDocuments non deve essere invocato
+    const deleteCalls = httpsRequestDDBV.mock.calls.filter(([o]) => o.path.endsWith('/DeleteDocuments'));
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  test('lancia errore 400 quando i documenti appartengono a job card diverse; DeleteDocuments non chiamato', async () => {
+    // Due job card: 47558 su 78380 e 47600 su 78390 (documenti su job card diverse)
+    routeHttps({
+      getDocumentsBody: {
+        errorCode: 0,
+        jobCardList: [
+          { JobCardId: 78380, DocumentList: [{ ID: 47558 }] },
+          { JobCardId: 78390, DocumentList: [{ ID: 47600 }] },
+        ],
+      },
+    });
+    // Deve fallire indicando il vincolo "stessa job card"
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 47600] })
+    ).rejects.toThrow('stessa job card');
+    // L'errore deve avere statusCode 400
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 47600] })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    // DeleteDocuments non deve essere invocato (nessuna cancellazione parziale)
+    const deleteCalls = httpsRequestDDBV.mock.calls.filter(([o]) => o.path.endsWith('/DeleteDocuments'));
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  test('propaga invariato un Upstream_Failure di getDocuments (nessuno statusCode -> handler 502)', async () => {
+    // getDocuments risponde HTTP 500: postJson lancera' un Error con prefisso [moparDocService]
+    routeHttps({ getDocumentsBody: undefined });
+    httpsRequestDDBV.mockImplementation((options) => {
+      // Simula un fallimento upstream su getDocuments
+      if (options.path.endsWith('/getDocuments')) {
+        return Promise.resolve({ statusCode: 500, body: { error: 'upstream down' } });
+      }
+      // DeleteDocuments non dovrebbe essere raggiunto
+      return Promise.resolve({ statusCode: 200, body: { errorCode: 0 } });
+    });
+
+    // L'errore upstream deve essere rilanciato invariato (messaggio con prefisso [moparDocService])
+    const caught = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] }).catch((e) => e);
+    // Il messaggio deve conservare il prefisso upstream [moparDocService]
+    expect(caught.message).toContain('[moparDocService]');
+    // Non deve avere statusCode (verra' mappato a 502 dall'handler)
+    expect(caught.statusCode).toBeUndefined();
+  });
+
+  test('propaga invariato un Upstream_Failure di DeleteDocuments (nessuno statusCode -> handler 502)', async () => {
+    // getDocuments ok; DeleteDocuments risponde con errorCode != 0 (fallimento applicativo)
+    httpsRequestDDBV.mockImplementation((options) => {
+      // getDocuments risolve il documento sulla job card 78380
+      if (options.path.endsWith('/getDocuments')) {
+        return Promise.resolve({
+          statusCode: 200,
+          body: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }] }] },
+        });
+      }
+      // DeleteDocuments segnala un fallimento applicativo (errorCode 3)
+      return Promise.resolve({ statusCode: 200, body: { errorCode: 3, errorMessage: 'Some Document ID not found' } });
+    });
+
+    // L'errore upstream di DeleteDocuments deve essere propagato invariato
+    const caught = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] }).catch((e) => e);
+    // Il messaggio deve conservare il prefisso upstream [moparDocService]
+    expect(caught.message).toContain('[moparDocService]');
+    // Non deve avere statusCode (verra' mappato a 502 dall'handler)
+    expect(caught.statusCode).toBeUndefined();
+  });
+
+  test('avvolge una causa imprevista in un errore con statusCode 500', async () => {
+    // getDocuments ok; DeleteDocuments lancia un errore generico NON upstream (senza prefisso [moparDocService])
+    httpsRequestDDBV.mockImplementation((options) => {
+      // getDocuments risolve il documento sulla job card 78380
+      if (options.path.endsWith('/getDocuments')) {
+        return Promise.resolve({
+          statusCode: 200,
+          body: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }] }] },
+        });
+      }
+      // DeleteDocuments rigetta con un errore generico imprevisto (es. errore di rete)
+      return Promise.reject(new Error('boom rete imprevista'));
+    });
+
+    // La causa imprevista deve essere avvolta con il prefisso [deleteDocumentsByVin] Errore imprevisto
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] })
+    ).rejects.toThrow('[deleteDocumentsByVin] Errore imprevisto');
+    // L'errore avvolto deve avere statusCode 500
+    await expect(
+      deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] })
+    ).rejects.toMatchObject({ statusCode: 500 });
+  });
+});
