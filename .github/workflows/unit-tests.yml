@@ -4285,6 +4285,7 @@ jobs:
               Environment=dev \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
+              ServiceUrlsSecretId="sm-np-bsn0027990-dev-service-urls" \
               DmsPingClientId="${{ secrets.PING_CLIENT_ID }}" \
               DmsPingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
               AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
@@ -4422,6 +4423,7 @@ jobs:
               Environment=stage \
               VpcSubnetIds="${{ secrets.STAGE_VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.STAGE_VPC_SECURITY_GROUP_IDS }}" \
+              ServiceUrlsSecretId="sm-np-bsn0027990-stage-service-urls" \
               DmsPingClientId="${{ secrets.PING_CLIENT_ID }}" \
               DmsPingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
               AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
@@ -4561,6 +4563,7 @@ jobs:
               Environment=prod \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
+              ServiceUrlsSecretId="sm-np-bsn0027990-prod-service-urls" \
               DmsPingClientId="${{ secrets.PING_CLIENT_ID }}" \
               DmsPingClientSecret="${{ secrets.PING_CLIENT_SECRET }}" \
               AgendaSoaHost="${{ secrets.AGENDA_SOA_HOST }}" \
