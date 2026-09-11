@@ -33,24 +33,26 @@ if (missing.length > 0) {
 }
 
 module.exports = {
-  // PingFederate token endpoint
+  // PingFederate token endpoint — da variabile d'ambiente (diverso in dev/stage/prod,
+  // come clientId/clientSecret), con fallback al valore preprod usato finora.
   auth: {
-    url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    url: process.env.DMS_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:dmy',
     clientId: process.env.DMS_PING_CLIENT_ID,
     clientSecret: process.env.DMS_PING_CLIENT_SECRET,
   },
 
-  // Stellantis DML API (IBM API Connect gateway — emea-aws.dev.np-api.stellantis.com)
+  // Stellantis DML API (IBM API Connect gateway) — baseUrl da variabile d'ambiente
+  // (diverso in dev/stage/prod), con fallback al valore usato finora.
   dml: {
-    baseUrl: 'https://emea-aws.dev.np-api.stellantis.com',
-    settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
-    inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
+    baseUrl: process.env.DML_BASE_URL || 'https://emea-aws.dev.np-api.stellantis.com',
+    settingsPath: process.env.DML_SETTINGS_PATH || '/ps-dev/extra/dml/dms-settings/v1/settings',
+    inquiryPath: process.env.DML_INQUIRY_PATH || '/ps-dev/extra/dml/aftersales/v1/inquiry',
     // "configurations" API: stesso catalogo IBM API Connect ("ps-dev") di
     // settings/inquiry.
-    companyTypesPath: '/ps-dev/extra/dml/configurations/v1/company-types',
-    customerTitlesPath: '/ps-dev/extra/dml/configurations/v1/customer-titles',
+    companyTypesPath: process.env.DML_COMPANY_TYPES_PATH || '/ps-dev/extra/dml/configurations/v1/company-types',
+    customerTitlesPath: process.env.DML_CUSTOMER_TITLES_PATH || '/ps-dev/extra/dml/configurations/v1/customer-titles',
     ibmClientId: process.env.DML_IBM_CLIENT_ID,
     ibmClientSecret: process.env.DML_IBM_CLIENT_SECRET,
     xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',

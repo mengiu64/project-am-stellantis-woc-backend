@@ -38,19 +38,21 @@ if (missing.length > 0) {
 }
 
 module.exports = {
-  // PingFederate token endpoint
+  // PingFederate token endpoint — da variabile d'ambiente (diverso in dev/stage/prod,
+  // come clientId/clientSecret), con fallback al valore preprod usato finora.
   auth: {
-    url: 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    url: process.env.JOBCARD_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:dgt',
     clientId: process.env.JOBCARD_PING_CLIENT_ID,
     clientSecret: process.env.JOBCARD_PING_CLIENT_SECRET,
   },
 
-  // Stellantis DGT API
+  // Stellantis DGT API — baseUrl da variabile d'ambiente (diverso in dev/stage/prod),
+  // con fallback al valore usato finora.
   dgt: {
-    baseUrl: 'https://emea-aws.stage.np-api.stellantis.com',
-    basePath: '/ps-stage/extra/srp/digital-layer/v1',
+    baseUrl: process.env.DGT_BASE_URL || 'https://emea-aws.stage.np-api.stellantis.com',
+    basePath: process.env.DGT_BASE_PATH || '/ps-stage/extra/srp/digital-layer/v1',
     clientId: process.env.DGT_CLIENT_ID,
     clientSecret: process.env.DGT_CLIENT_SECRET,
   },

@@ -38,6 +38,10 @@ Parameters:
   DmsPingClientSecret:
     Type: String
     NoEcho: true
+  DmsPingUrl:
+    Type: String
+    Default: https://idfed-preprod.mpsa.com:443/as/token.oauth2
+    Description: PingFederate token endpoint used by dms (environment-specific in prod)
 
   # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
   AgendaSoaHost:
@@ -65,6 +69,26 @@ Parameters:
   DmlIbmClientSecret:
     Type: String
     NoEcho: true
+  DmlBaseUrl:
+    Type: String
+    Default: https://emea-aws.dev.np-api.stellantis.com
+    Description: Stellantis DML API (IBM API Connect gateway) base URL used by dms (environment-specific in prod)
+  DmlSettingsPath:
+    Type: String
+    Default: /ps-dev/extra/dml/dms-settings/v1/settings
+    Description: DML settings API path (IBM API Connect catalog, environment-specific in prod)
+  DmlInquiryPath:
+    Type: String
+    Default: /ps-dev/extra/dml/aftersales/v1/inquiry
+    Description: DML inquiry API path (IBM API Connect catalog, environment-specific in prod)
+  DmlCompanyTypesPath:
+    Type: String
+    Default: /ps-dev/extra/dml/configurations/v1/company-types
+    Description: DML company-types API path (IBM API Connect catalog, environment-specific in prod)
+  DmlCustomerTitlesPath:
+    Type: String
+    Default: /ps-dev/extra/dml/configurations/v1/customer-titles
+    Description: DML customer-titles API path (IBM API Connect catalog, environment-specific in prod)
   # IBM API Connect target environment for the DML gateway (X-Target-Env header).
   # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
   # of the AWS SAM "Environment" parameter (dev/stage/prod stack). It must NOT be
@@ -88,6 +112,18 @@ Parameters:
     Type: String
     NoEcho: true
     Description: PingFederate client secret dedicated to jobcard (scope prd:dgt)
+  JobcardPingUrl:
+    Type: String
+    Default: https://idfed-preprod.mpsa.com:443/as/token.oauth2
+    Description: PingFederate token endpoint used by jobcard/djc (environment-specific in prod)
+  DgtBaseUrl:
+    Type: String
+    Default: https://emea-aws.stage.np-api.stellantis.com
+    Description: Stellantis DGT API base URL used by jobcard/djc (environment-specific in prod)
+  DgtBasePath:
+    Type: String
+    Default: /ps-stage/extra/srp/digital-layer/v1
+    Description: Stellantis DGT API base path (IBM API Connect catalog, environment-specific in prod) used by jobcard/djc
 
   # ── MoparDoc: credenziali lette a runtime da SSM -> Secrets Manager (nessun parametro CFN) ──
 
@@ -107,6 +143,18 @@ Parameters:
     Type: String
     NoEcho: true
     Description: PingFederate client secret dedicated to v360 (scope prd:asv)
+  V360PingUrl:
+    Type: String
+    Default: https://idfed.mpsa.com:443/as/token.oauth2
+    Description: PingFederate token endpoint used by v360 (environment-specific in prod)
+  AsvBaseUrl:
+    Type: String
+    Default: https://emea-aws.api.stellantis.com
+    Description: Stellantis ASV360 API base URL used by v360 (environment-specific in prod)
+  AsvBasePath:
+    Type: String
+    Default: /ps-prod/extra/asv360/vehicle/v1
+    Description: Stellantis ASV360 API base path (IBM API Connect catalog, environment-specific in prod) used by v360
 
   # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
   EperHost:
@@ -460,8 +508,14 @@ Resources:
         Variables:
           DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DMS_PING_URL: !Ref DmsPingUrl
           DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
+          DML_BASE_URL: !Ref DmlBaseUrl
+          DML_SETTINGS_PATH: !Ref DmlSettingsPath
+          DML_INQUIRY_PATH: !Ref DmlInquiryPath
+          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
+          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
           DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — dmsService.js::buildApplicationArea
           # risolve physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per
@@ -493,8 +547,11 @@ Resources:
           # valori usati da V360Function.
           V360_PING_CLIENT_ID:      !Ref V360PingClientId
           V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          V360_PING_URL: !Ref V360PingUrl
           ASV_CLIENT_ID:            !Ref AsvClientId
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_BASE_URL: !Ref AsvBaseUrl
+          ASV_BASE_PATH: !Ref AsvBasePath
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           # session/src/dynamoCache.js + v360/dynamoCache.js (in-process, vedi
@@ -568,14 +625,23 @@ Resources:
         Variables:
           JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
+          JOBCARD_PING_URL: !Ref JobcardPingUrl
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+          DGT_BASE_URL: !Ref DgtBaseUrl
+          DGT_BASE_PATH: !Ref DgtBasePath
           # dms/config.js (in-process, vedi Makefile) — gateway DML usato da
           # getCartPriceAndAvailability, stessi valori usati da PkManagerFunction/PkFavoriteFunction.
           DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DMS_PING_URL: !Ref DmsPingUrl
           DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
+          DML_BASE_URL: !Ref DmlBaseUrl
+          DML_SETTINGS_PATH: !Ref DmlSettingsPath
+          DML_INQUIRY_PATH: !Ref DmlInquiryPath
+          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
+          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da dms/dmsService.js
           # ::buildApplicationArea (imbarcato in-process insieme a jobcard), che risolve
@@ -608,8 +674,11 @@ Resources:
           # valori usati da V360Function.
           V360_PING_CLIENT_ID:      !Ref V360PingClientId
           V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          V360_PING_URL: !Ref V360PingUrl
           ASV_CLIENT_ID:            !Ref AsvClientId
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_BASE_URL: !Ref AsvBaseUrl
+          ASV_BASE_PATH: !Ref AsvBasePath
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           # jobcard/dynamoCache.js + v360/dynamoCache.js + session/src/dynamoCache.js
@@ -649,8 +718,11 @@ Resources:
         Variables:
           JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
           JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
+          JOBCARD_PING_URL: !Ref JobcardPingUrl
           DGT_CLIENT_ID:      !Ref DgtClientId
           DGT_CLIENT_SECRET:  !Ref DgtClientSecret
+          DGT_BASE_URL: !Ref DgtBaseUrl
+          DGT_BASE_PATH: !Ref DgtBasePath
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   DjcFunctionLogGroup:
@@ -726,8 +798,11 @@ Resources:
         Variables:
           V360_PING_CLIENT_ID:     !Ref V360PingClientId
           V360_PING_CLIENT_SECRET: !Ref V360PingClientSecret
+          V360_PING_URL: !Ref V360PingUrl
           ASV_CLIENT_ID:      !Ref AsvClientId
           ASV_CLIENT_SECRET:  !Ref AsvClientSecret
+          ASV_BASE_URL: !Ref AsvBaseUrl
+          ASV_BASE_PATH: !Ref AsvBasePath
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME: !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
@@ -997,8 +1072,14 @@ Resources:
           MP_MANUFACTURER:              !Ref MpManufacturer
           DMS_PING_CLIENT_ID:           !Ref DmsPingClientId
           DMS_PING_CLIENT_SECRET:       !Ref DmsPingClientSecret
+          DMS_PING_URL: !Ref DmsPingUrl
           DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
+          DML_BASE_URL: !Ref DmlBaseUrl
+          DML_SETTINGS_PATH: !Ref DmlSettingsPath
+          DML_INQUIRY_PATH: !Ref DmlInquiryPath
+          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
+          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
           DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
           # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
           # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
@@ -1022,8 +1103,11 @@ Resources:
           # valori usati da V360Function.
           V360_PING_CLIENT_ID:      !Ref V360PingClientId
           V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          V360_PING_URL: !Ref V360PingUrl
           ASV_CLIENT_ID:            !Ref AsvClientId
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_BASE_URL: !Ref AsvBaseUrl
+          ASV_BASE_PATH: !Ref AsvBasePath
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
@@ -1099,8 +1183,14 @@ Resources:
           # dms (usato dallo stesso flusso, per dms/settings)
           DMS_PING_CLIENT_ID:       !Ref DmsPingClientId
           DMS_PING_CLIENT_SECRET:   !Ref DmsPingClientSecret
+          DMS_PING_URL: !Ref DmsPingUrl
           DML_IBM_CLIENT_ID:        !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:    !Ref DmlIbmClientSecret
+          DML_BASE_URL: !Ref DmlBaseUrl
+          DML_SETTINGS_PATH: !Ref DmlSettingsPath
+          DML_INQUIRY_PATH: !Ref DmlInquiryPath
+          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
+          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
           DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
           # dmlConfigSync/db.js (in-process, vedi Makefile) — lettura della cache
           # company-types/customer-titles (woc.dml_configurations), popolata dal job
@@ -1240,8 +1330,14 @@ Resources:
           # dei preferiti (MessageType LFP), stessi valori usati da PkManagerFunction.
           DMS_PING_CLIENT_ID:    !Ref DmsPingClientId
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DMS_PING_URL: !Ref DmsPingUrl
           DML_IBM_CLIENT_ID:     !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
+          DML_BASE_URL: !Ref DmlBaseUrl
+          DML_SETTINGS_PATH: !Ref DmlSettingsPath
+          DML_INQUIRY_PATH: !Ref DmlInquiryPath
+          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
+          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
           DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da
           # dms/dmsService.js::buildApplicationArea (bundlato insieme a pkFavorite)
@@ -1274,8 +1370,11 @@ Resources:
           # valori usati da V360Function.
           V360_PING_CLIENT_ID:      !Ref V360PingClientId
           V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
+          V360_PING_URL: !Ref V360PingUrl
           ASV_CLIENT_ID:            !Ref AsvClientId
           ASV_CLIENT_SECRET:        !Ref AsvClientSecret
+          ASV_BASE_URL: !Ref AsvBaseUrl
+          ASV_BASE_PATH: !Ref AsvBasePath
           ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
@@ -1389,8 +1488,14 @@ Resources:
           # customer-titles, stessi valori usati da PkManagerFunction/PkFavoriteFunction/SessionFunction.
           DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
           DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
+          DMS_PING_URL: !Ref DmsPingUrl
           DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
           DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
+          DML_BASE_URL: !Ref DmlBaseUrl
+          DML_SETTINGS_PATH: !Ref DmlSettingsPath
+          DML_INQUIRY_PATH: !Ref DmlInquiryPath
+          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
+          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
       Events:
         DailySync:

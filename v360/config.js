@@ -34,19 +34,21 @@ if (missing.length > 0) {
 }
 
 module.exports = {
-  // PingFederate token endpoint
+  // PingFederate token endpoint — da variabile d'ambiente (diverso in dev/stage/prod,
+  // come clientId/clientSecret), con fallback al valore preprod usato finora.
   auth: {
-    url: 'https://idfed.mpsa.com:443/as/token.oauth2',
+    url: process.env.V360_PING_URL || 'https://idfed.mpsa.com:443/as/token.oauth2',
     grantType: 'client_credentials',
     scope: 'prd:asv',
     clientId: process.env.V360_PING_CLIENT_ID,
     clientSecret: process.env.V360_PING_CLIENT_SECRET,
   },
 
-  // Stellantis ASV360 API
+  // Stellantis ASV360 API — baseUrl da variabile d'ambiente (diverso in dev/stage/prod),
+  // con fallback al valore usato finora.
   asv: {
-    baseUrl: 'https://emea-aws.api.stellantis.com',
-    basePath: '/ps-prod/extra/asv360/vehicle/v1',
+    baseUrl: process.env.ASV_BASE_URL || 'https://emea-aws.api.stellantis.com',
+    basePath: process.env.ASV_BASE_PATH || '/ps-prod/extra/asv360/vehicle/v1',
     clientId: process.env.ASV_CLIENT_ID,
     clientSecret: process.env.ASV_CLIENT_SECRET,
   },
