@@ -12,7 +12,11 @@ const {
   DeleteDocuments,
   DeleteJobcard,
   getDocumentsDownloadUrl,
+  createJobCardAndUploadDocument,
 } = require('../moparDocService');
+
+// Import di EventEmitter per costruire una finta risposta HTTPS pilotabile nei test
+const { EventEmitter } = require('events');
 
 // Fixture condivisa a sei chiavi (Req 5.1): usata dentro la factory del mock di ../config
 jest.mock('../config', () => {
@@ -44,6 +48,64 @@ jest.mock('../httpClient', () => ({
     return Promise.resolve({ statusCode: 200, body: { success: true } });
   }),
 }));
+
+// Mock del modulo core 'https': httpsPutBinary (STEP 3) usa https.request nativo,
+// che NON passa dal mock di ../httpClient. Lo mockiamo per non toccare la rete e
+// per poter pilotare per-test lo statusCode di S3, l'eventuale errore di trasporto
+// e il corpo di risposta. La configurazione avviene tramite __setHttpsBehavior.
+jest.mock('https', () => {
+  // Comportamento corrente della finta request (modificabile per singolo test)
+  const behavior = {
+    statusCode: 200, // Status HTTP restituito da S3
+    body: '', // Corpo (XML) eventualmente restituito da S3
+    transportError: null, // Se valorizzato, la request emette un 'error' invece di rispondere
+  };
+  // request(options, callback): ritorna un finto oggetto request con on/write/end
+  const request = jest.fn((options, callback) => {
+    // Finta request: EventEmitter per gestire l'evento 'error' di trasporto
+    const req = new (require('events').EventEmitter)();
+    // write/end sono no-op che restituiscono req (come l'API reale, per il chaining)
+    req.write = jest.fn(() => req);
+    req.end = jest.fn(() => {
+      // In modalita' asincrona simula il ciclo di vita della richiesta HTTPS
+      process.nextTick(() => {
+        // Caso errore di trasporto: emette 'error' e NON invoca la callback di risposta
+        if (behavior.transportError) {
+          req.emit('error', behavior.transportError);
+          return;
+        }
+        // Caso risposta: costruisce una finta response EventEmitter con lo statusCode configurato
+        const res = new (require('events').EventEmitter)();
+        res.statusCode = behavior.statusCode;
+        // Invoca la callback passando la finta response
+        callback(res);
+        // Emette (opzionalmente) il corpo e poi 'end' per chiudere lo stream di risposta
+        if (behavior.body) {
+          res.emit('data', Buffer.from(behavior.body));
+        }
+        res.emit('end');
+      });
+      return req;
+    });
+    return req;
+  });
+  return {
+    // Espone request come la vera API 'https'
+    request,
+    // Helper di test per configurare il comportamento della finta request
+    __setHttpsBehavior: (next) => {
+      behavior.statusCode = next.statusCode !== undefined ? next.statusCode : 200;
+      behavior.body = next.body !== undefined ? next.body : '';
+      behavior.transportError = next.transportError !== undefined ? next.transportError : null;
+    },
+    // Helper di test per ripristinare il comportamento di default (S3 200)
+    __resetHttpsBehavior: () => {
+      behavior.statusCode = 200;
+      behavior.body = '';
+      behavior.transportError = null;
+    },
+  };
+});
 
 describe('moparDocService', () => {
   afterEach(() => {
@@ -791,5 +853,238 @@ describe('deleteDocumentsByVin', () => {
     await expect(
       deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] })
     ).rejects.toMatchObject({ statusCode: 500 });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Unit test per createJobCardAndUploadDocument (azione accorpata NUOVA).
+// Riusa i mock di ../config, ../authService e ../httpClient definiti in cima al
+// file, piu' il mock del modulo core 'https' per pilotare la PUT su S3 (STEP 3).
+// La strategia e' pilotare httpsRequest per endpoint (path che termina con
+// '/CreateJobCard', '/CreateAccessToken', '/getUploadDocURL', '/UploadedDoc')
+// restituendo body su misura, cosi' da esercitare le funzioni reali riusate
+// (createJobCard/createAccessToken/getUploadDocURL/uploadedDoc) e coprire in modo
+// completo la nuova funzione createJobCardAndUploadDocument e l'helper
+// httpsPutBinary (testato indirettamente tramite lo STEP 3).
+// ────────────────────────────────────────────────────────────────────────────
+
+// Recupera la funzione oggetto del test, il mock httpsRequest condiviso e gli helper del mock 'https'
+const { createJobCardAndUploadDocument: cjcud } = require('../moparDocService');
+const { httpsRequest: httpsRequestCJC } = require('../httpClient');
+const httpsMock = require('https');
+
+// Payload valido di base riusato dai test (contiene tutti i campi obbligatori)
+function validParams(overrides = {}) {
+  // Base64 di 'hello' -> Buffer non vuoto: supera il controllo del buffer vuoto
+  return {
+    vin: 'VIN123',
+    market: 'IT',
+    source: 'WOC',
+    UserName: 'user1',
+    dealerCode: '0062230',
+    JobCard_Title: 'Test JobCard',
+    Filename: 'doc.jpg',
+    ContentType: 'image/jpeg',
+    Filetype: 'jpeg',
+    FileContentBase64: Buffer.from('hello').toString('base64'),
+    ...overrides,
+  };
+}
+
+// Helper: imposta un routing di httpsRequest per i quattro endpoint del flusso accorpato.
+// Ogni chiave e' il body restituito dall'endpoint corrispondente; se assente si usa un default valido.
+function routeCjcHttps({ createJobCardBody, createAccessTokenBody, getUploadDocURLBody, uploadedDocBody } = {}) {
+  // Sostituisce l'implementazione del mock condiviso per questa specifica prova
+  httpsRequestCJC.mockImplementation((options) => {
+    // STEP 1: CreateJobCard
+    if (options && options.path && options.path.endsWith('/CreateJobCard')) {
+      return Promise.resolve({ statusCode: 200, body: createJobCardBody || { errorCode: 0, JobCardId: 78660, AccessToken: 'tok' } });
+    }
+    // STEP 1-bis: CreateAccessToken (fallback)
+    if (options && options.path && options.path.endsWith('/CreateAccessToken')) {
+      return Promise.resolve({ statusCode: 200, body: createAccessTokenBody || { errorCode: 0, AccessToken: 'tok-fallback' } });
+    }
+    // STEP 2: getUploadDocURL
+    if (options && options.path && options.path.endsWith('/getUploadDocURL')) {
+      return Promise.resolve({
+        statusCode: 200,
+        body: getUploadDocURLBody || { errorCode: 0, DocumentId: 47645, PresignedUrl: 'https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc' },
+      });
+    }
+    // STEP 4: UploadedDoc
+    if (options && options.path && options.path.endsWith('/UploadedDoc')) {
+      return Promise.resolve({ statusCode: 200, body: uploadedDocBody || { errorCode: 0, success: true } });
+    }
+    // Endpoint non atteso in questi test
+    return Promise.resolve({ statusCode: 200, body: { success: true } });
+  });
+}
+
+describe('createJobCardAndUploadDocument', () => {
+  // Ripristina i mock e il comportamento di 'https' dopo ogni test
+  afterEach(() => {
+    jest.clearAllMocks();
+    httpsMock.__resetHttpsBehavior();
+  });
+
+  test('happy path con AccessToken gia\' restituito da createJobCard: nessuna CreateAccessToken', async () => {
+    // createJobCard restituisce gia' un AccessToken -> il fallback NON deve attivarsi
+    routeCjcHttps({
+      createJobCardBody: { errorCode: 0, JobCardId: 78660, AccessToken: 'tok' },
+      getUploadDocURLBody: { errorCode: 0, DocumentId: 47645, PresignedUrl: 'https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc' },
+    });
+    // S3 risponde 200 alla PUT
+    httpsMock.__setHttpsBehavior({ statusCode: 200 });
+
+    // Esegue il flusso accorpato con input valido
+    const result = await cjcud(validParams());
+
+    // Verifica gli esiti principali del riepilogo
+    expect(result.success).toBe(true);
+    expect(result.JobCardId).toBe(78660);
+    expect(result.DocumentId).toBe(47645);
+    expect(result.uploadHttpStatus).toBe(200);
+    // createAccessToken non attivato -> lo step relativo e' null
+    expect(result.steps.createAccessToken).toBeNull();
+    // L'endpoint /CreateAccessToken NON deve essere stato chiamato
+    const accessTokenCalls = httpsRequestCJC.mock.calls.filter(([o]) => o.path.endsWith('/CreateAccessToken'));
+    expect(accessTokenCalls).toHaveLength(0);
+    // La PUT su S3 deve essere avvenuta esattamente una volta
+    expect(httpsMock.request).toHaveBeenCalledTimes(1);
+  });
+
+  test('fallback: createJobCard senza AccessToken -> chiama CreateAccessToken e usa il token ottenuto', async () => {
+    // createJobCard NON restituisce AccessToken -> deve scattare il fallback createAccessToken
+    routeCjcHttps({
+      createJobCardBody: { errorCode: 0, JobCardId: 78660 },
+      createAccessTokenBody: { errorCode: 0, AccessToken: 'tok-fallback' },
+    });
+    httpsMock.__setHttpsBehavior({ statusCode: 200 });
+
+    // Esegue il flusso accorpato
+    const result = await cjcud(validParams());
+
+    // Il flusso deve concludersi con successo
+    expect(result.success).toBe(true);
+    // Lo step createAccessToken deve essere popolato (non null) perche' il fallback e' scattato
+    expect(result.steps.createAccessToken).toEqual({ errorCode: 0, AccessToken: 'tok-fallback' });
+    // L'endpoint /CreateAccessToken deve essere stato chiamato esattamente una volta
+    const accessTokenCalls = httpsRequestCJC.mock.calls.filter(([o]) => o.path.endsWith('/CreateAccessToken'));
+    expect(accessTokenCalls).toHaveLength(1);
+    // getUploadDocURL deve ricevere l'AccessToken ottenuto dal fallback
+    const uploadCall = httpsRequestCJC.mock.calls.find(([o]) => o.path.endsWith('/getUploadDocURL'));
+    expect(JSON.parse(uploadCall[1]).AccessToken).toBe('tok-fallback');
+  });
+
+  test('lancia errore 400 "Missing required field(s)" quando mancano i campi obbligatori', async () => {
+    // Predispone il routing (non dovrebbe comunque essere raggiunto)
+    routeCjcHttps();
+    // Input vuoto: deve fallire in validazione senza alcuna chiamata upstream
+    await expect(cjcud({})).rejects.toThrow('Missing required field(s)');
+    // L'errore deve riportare statusCode 400
+    await expect(cjcud({})).rejects.toMatchObject({ statusCode: 400 });
+    // Nessuna chiamata upstream ne' PUT su S3 deve essere avvenuta
+    expect(httpsRequestCJC).not.toHaveBeenCalled();
+    expect(httpsMock.request).not.toHaveBeenCalled();
+  });
+
+  test('lancia errore 400 quando FileContentBase64 decodifica a un buffer vuoto', async () => {
+    // Predispone il routing (non dovrebbe comunque essere raggiunto)
+    routeCjcHttps();
+    // '===' e' truthy (supera il controllo required) ma Buffer.from('===','base64') ha lunghezza 0
+    await expect(
+      cjcud(validParams({ FileContentBase64: '===' }))
+    ).rejects.toThrow('risulta vuoto dopo la decodifica');
+    // L'errore deve avere statusCode 400
+    await expect(
+      cjcud(validParams({ FileContentBase64: '===' }))
+    ).rejects.toMatchObject({ statusCode: 400 });
+    // Nessuna chiamata upstream deve essere avvenuta (fallisce prima dello STEP 1)
+    expect(httpsRequestCJC).not.toHaveBeenCalled();
+  });
+
+  test('lancia errore upstream (senza statusCode -> 502) quando createJobCard non restituisce JobCardId', async () => {
+    // createJobCard risponde senza JobCardId -> errore upstream
+    routeCjcHttps({ createJobCardBody: { errorCode: 0, AccessToken: 'tok' } });
+
+    // Deve fallire indicando l'assenza del JobCardId
+    const caught = await cjcud(validParams()).catch((e) => e);
+    expect(caught.message).toContain('non ha restituito un JobCardId valido');
+    // L'errore upstream NON deve avere statusCode (verra' mappato a 502 dall'handler)
+    expect(caught.statusCode).toBeUndefined();
+  });
+
+  test('lancia errore quando il fallback createAccessToken non restituisce un AccessToken', async () => {
+    // createJobCard senza AccessToken -> fallback; createAccessToken senza AccessToken -> errore
+    routeCjcHttps({
+      createJobCardBody: { errorCode: 0, JobCardId: 78660 },
+      createAccessTokenBody: { errorCode: 0 },
+    });
+
+    // Deve fallire indicando l'assenza dell'AccessToken utilizzabile
+    const caught = await cjcud(validParams()).catch((e) => e);
+    expect(caught.message).toContain('non ha restituito un AccessToken utilizzabile');
+    // Errore upstream: nessuno statusCode
+    expect(caught.statusCode).toBeUndefined();
+  });
+
+  test('lancia errore upstream quando getUploadDocURL non restituisce DocumentId', async () => {
+    // getUploadDocURL restituisce la URL pre-firmata ma NON il DocumentId
+    routeCjcHttps({
+      getUploadDocURLBody: { errorCode: 0, PresignedUrl: 'https://bucket.s3.amazonaws.com/key?X-Amz-Signature=abc' },
+    });
+
+    // Deve fallire indicando l'assenza del DocumentId
+    const caught = await cjcud(validParams()).catch((e) => e);
+    expect(caught.message).toContain('non ha restituito un DocumentId valido');
+    // La PUT su S3 non deve essere avvenuta
+    expect(httpsMock.request).not.toHaveBeenCalled();
+  });
+
+  test('lancia errore upstream quando getUploadDocURL non restituisce una URL pre-firmata', async () => {
+    // getUploadDocURL restituisce il DocumentId ma NON la URL pre-firmata
+    routeCjcHttps({
+      getUploadDocURLBody: { errorCode: 0, DocumentId: 47645 },
+    });
+
+    // Deve fallire indicando l'assenza della URL pre-firmata
+    const caught = await cjcud(validParams()).catch((e) => e);
+    expect(caught.message).toContain('non ha restituito una URL pre-firmata valida');
+    // La PUT su S3 non deve essere avvenuta
+    expect(httpsMock.request).not.toHaveBeenCalled();
+  });
+
+  test('lancia "Upload S3 fallito" quando la PUT su S3 risponde con status non-2xx (403)', async () => {
+    // Flusso valido fino allo STEP 3; S3 risponde 403 con un XML di errore
+    routeCjcHttps();
+    httpsMock.__setHttpsBehavior({ statusCode: 403, body: '<Error><Code>AccessDenied</Code></Error>' });
+
+    // La PUT fallita deve rigettare con il messaggio dedicato di httpsPutBinary
+    await expect(cjcud(validParams())).rejects.toThrow('Upload S3 fallito');
+    // La PUT su S3 deve comunque essere stata tentata
+    expect(httpsMock.request).toHaveBeenCalledTimes(1);
+  });
+
+  test('rigetta quando la PUT su S3 emette un errore di trasporto', async () => {
+    // Flusso valido fino allo STEP 3; la request emette un errore di rete
+    routeCjcHttps();
+    httpsMock.__setHttpsBehavior({ transportError: new Error('ECONNRESET') });
+
+    // L'errore di trasporto deve essere propagato dalla Promise
+    await expect(cjcud(validParams())).rejects.toThrow('ECONNRESET');
+    // La PUT su S3 deve comunque essere stata tentata
+    expect(httpsMock.request).toHaveBeenCalledTimes(1);
+  });
+
+  test('rigetta con "URL pre-firmata non valida" quando la PresignedUrl e\' malformata', async () => {
+    // getUploadDocURL restituisce una URL non valida -> new URL() lancia prima di https.request
+    routeCjcHttps({
+      getUploadDocURLBody: { errorCode: 0, DocumentId: 47645, PresignedUrl: 'not-a-url' },
+    });
+
+    // httpsPutBinary deve rigettare per URL malformata
+    await expect(cjcud(validParams())).rejects.toThrow('URL pre-firmata non valida');
+    // https.request NON deve essere invocata (il parsing URL fallisce prima)
+    expect(httpsMock.request).not.toHaveBeenCalled();
   });
 });
