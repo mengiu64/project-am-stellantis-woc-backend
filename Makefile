@@ -139,13 +139,17 @@ build-PkFavoriteFunction:
 # ::buildApplicationArea (imbarcato in-process insieme a jobcard) risolve
 # physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes, stesso Aurora
 # "wiadvisor" già usato da PkManagerFunction/SessionFunction) tramite
-# require(path.resolve(__dirname, '../dbManager/...')). Include infine
+# require(path.resolve(__dirname, '../dbManager/...')). Include anche
 # myPeople/, session/, dmlConfigSync/ e v360/ perché
 # jobcard/jobCardService.js::buildDmsSender chiama dms/dmsService.js
 # ::resolveDynamicSenderFields (stesso identico meccanismo/stessi sibling di
-# PkFavoriteFunction/PkManagerFunction/SessionFunction sopra).
+# PkFavoriteFunction/PkManagerFunction/SessionFunction sopra). Include infine
+# agendaSoaNaga/ perché jobcard/index.js::syncAppointmentsToNaga richiede
+# require('../agendaSoaNaga/index') per sincronizzare (azione "updatenaga")
+# l'appuntamento NAGA dopo un saveJobcard riuscito con payload.appointments[]
+# valorizzato (stesso pattern require cross-cartella di PkManager.js).
 build-JobCardFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/jobcard" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/dmlConfigSync" "$(ARTIFACTS_DIR)/v360"
+	mkdir -p "$(ARTIFACTS_DIR)/jobcard" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/dmlConfigSync" "$(ARTIFACTS_DIR)/v360" "$(ARTIFACTS_DIR)/agendaSoaNaga"
 	cp -r jobcard/. "$(ARTIFACTS_DIR)/jobcard/"
 	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
 	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
@@ -153,6 +157,7 @@ build-JobCardFunction:
 	cp -r session/. "$(ARTIFACTS_DIR)/session/"
 	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
 	cp -r v360/. "$(ARTIFACTS_DIR)/v360/"
+	cp -r agendaSoaNaga/. "$(ARTIFACTS_DIR)/agendaSoaNaga/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/jobcard/__tests__ "$(ARTIFACTS_DIR)"/jobcard/coverage "$(ARTIFACTS_DIR)"/jobcard/.env* \
 		"$(ARTIFACTS_DIR)"/jobcard/testCart.js "$(ARTIFACTS_DIR)"/jobcard/jobCardDetail-sample.json \
@@ -161,7 +166,8 @@ build-JobCardFunction:
 		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
 		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
 		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md \
-		"$(ARTIFACTS_DIR)"/v360/__tests__ "$(ARTIFACTS_DIR)"/v360/coverage "$(ARTIFACTS_DIR)"/v360/.env* "$(ARTIFACTS_DIR)"/v360/README.md
+		"$(ARTIFACTS_DIR)"/v360/__tests__ "$(ARTIFACTS_DIR)"/v360/coverage "$(ARTIFACTS_DIR)"/v360/.env* "$(ARTIFACTS_DIR)"/v360/README.md \
+		"$(ARTIFACTS_DIR)"/agendaSoaNaga/__tests__ "$(ARTIFACTS_DIR)"/agendaSoaNaga/coverage "$(ARTIFACTS_DIR)"/agendaSoaNaga/.env* "$(ARTIFACTS_DIR)"/agendaSoaNaga/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/jobcard)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
@@ -169,6 +175,24 @@ build-JobCardFunction:
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/v360)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/agendaSoaNaga)
+
+# DjcFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
+# djc/index.js::syncAppointmentsToNaga richiede require('../agendaSoaNaga/index')
+# per sincronizzare (azione "updatenaga") l'appuntamento NAGA dopo un
+# saveJobcard riuscito con payload.appointments[] valorizzato: stesso identico
+# motivo/pattern di JobCardFunction sopra (djc non richiede invece dms/
+# dbManager/session/myPeople/dmlConfigSync/v360, non usando
+# getCartPriceAndAvailability).
+build-DjcFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/djc" "$(ARTIFACTS_DIR)/agendaSoaNaga"
+	cp -r djc/. "$(ARTIFACTS_DIR)/djc/"
+	cp -r agendaSoaNaga/. "$(ARTIFACTS_DIR)/agendaSoaNaga/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/djc/__tests__ "$(ARTIFACTS_DIR)"/djc/coverage "$(ARTIFACTS_DIR)"/djc/.env* \
+		"$(ARTIFACTS_DIR)"/agendaSoaNaga/__tests__ "$(ARTIFACTS_DIR)"/agendaSoaNaga/coverage "$(ARTIFACTS_DIR)"/agendaSoaNaga/.env* "$(ARTIFACTS_DIR)"/agendaSoaNaga/README.md
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/djc)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/agendaSoaNaga)
 
 # DmlConfigSyncFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
 # dmlConfigSync/index.js richiede il codice sorgente di dms tramite path relativi

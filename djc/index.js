@@ -24,12 +24,165 @@
  */
 
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const { DjcManager } = require('./DjcManager');
 // authService/jobCardService (client PingFederate/DGT condiviso con jobcard)
 // vengono richiesti solo dai rami "saveJobcard" (require lazy più sotto): le
 // altre azioni (SaveRoInfo, ecc.) non chiamano la DGT e non devono richiedere
 // le variabili d'ambiente JOBCARD_PING_CLIENT_ID/DGT_CLIENT_ID/... validate da
 // config.js al require.
+
+// ── Sincronizzazione appuntamenti NAGA (post saveJobcard) ──────────────────────
+// Copia sincronizzata della stessa logica in jobcard/index.js (stesso pattern
+// di jobCardService.js, mantenuto in sync tra le due lambda).
+
+/**
+ * Legge un file JSON da /tmp in modo best-effort (usato per session.json e
+ * <jobCardSrpId>.json): se il file manca o non è leggibile/parsabile, ritorna
+ * {} invece di sollevare un'eccezione, cosi' i soli campi da esso derivati
+ * restano assenti dal payload updatenaga (stesso approccio "best effort" già
+ * usato altrove nel progetto per gli arricchimenti opzionali di sessione).
+ */
+function readTmpJsonSafe(fileName) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join('/tmp', fileName), 'utf8'));
+  } catch (_) {
+    return {};
+  }
+}
+
+/**
+ * Converte un ISO 8601 date-time ("2026-09-10T08:15:00.000Z") nella data
+ * "a mezzanotte" richiesta da recepDate/recetDate ("2026-09-10T00:00:00.000Z").
+ */
+function toMidnightIso(isoDateTime) {
+  if (!isoDateTime) return null;
+  const datePart = String(isoDateTime).slice(0, 10);
+  return `${datePart}T00:00:00.000Z`;
+}
+
+/**
+ * Estrae l'orario "HHmm" da un ISO 8601 date-time ("2026-09-10T08:15:00.000Z" -> "0815"),
+ * richiesto da recepHours/recetHours.
+ */
+function toHoursMinutes(isoDateTime) {
+  if (!isoDateTime) return null;
+  const match = String(isoDateTime).match(/T(\d{2}):(\d{2})/);
+  return match ? `${match[1]}${match[2]}` : null;
+}
+
+/**
+ * Raccoglie i jobDescription sia dal payload di saveJobcard (payload.jobs[])
+ * sia, quando disponibile, da /tmp/<jobCardSrpId>.json (stessa cache letta
+ * da jobcard/jobCardService.js::getDataFromDMLFromTmp per una precedente
+ * jobCardDetails): usati per popolare intervention[].nom del payload updatenaga.
+ */
+function collectJobDescriptions(payload) {
+  const descriptions = [];
+
+  for (const job of payload?.jobs ?? []) {
+    if (job?.jobDescription) descriptions.push(job.jobDescription);
+  }
+
+  const jobCardSrpId = payload?.roInfo?.jobCardSrpId;
+  if (jobCardSrpId) {
+    const cached = readTmpJsonSafe(`${jobCardSrpId}.json`);
+    const jobCardDetail = cached?.jobCardDetail ?? cached;
+    for (const job of jobCardDetail?.jobs ?? []) {
+      if (job?.jobDescription) descriptions.push(job.jobDescription);
+    }
+  }
+
+  return descriptions;
+}
+
+/**
+ * Costruisce il payload updatenaga (azione agendaSoaNaga) a partire da un
+ * elemento di payload.appointments[] e dal payload saveJobcard stesso.
+ * rdvBrand/pdvid/locale/sfPdvBrand/user/clientLanguage sono risolti da
+ * /tmp/session.json (dati di sessione già salvati dal chiamante), idVINSF da
+ * /tmp/VIN.json: entrambi letti in modo best-effort (v. readTmpJsonSafe).
+ */
+function buildUpdateNagaPayload(payload, appointment) {
+  const session = readTmpJsonSafe('session.json');
+  const vinData = readTmpJsonSafe('VIN.json');
+
+  const reception = appointment?.reception ?? {};
+  const delivery = appointment?.delivery ?? {};
+
+  const nagaPayload = {
+    rdvBrand: session.brandvehic_reftech ?? null,
+    apptId: appointment.appointmentInternalId,
+    startRecep: reception.receptionServiceAdvisorId ?? null,
+    endRecep: delivery.deliveryServiceAdvisorId ?? null,
+    recepDate: toMidnightIso(reception.receptionDateTime),
+    recetDate: toMidnightIso(delivery.deliveryDateTime),
+    recepHours: toHoursMinutes(reception.receptionDateTime),
+    recetHours: toHoursMinutes(delivery.deliveryDateTime),
+    recepTimeSlot: null,
+    recetTimeSlot: null,
+    reason: null,
+    apptStatus: null,
+    comments: '',
+    rea: false,
+    exceedworkshop: false,
+    pdvid: session.pdvId ?? null,
+    locale: session.locale ?? null,
+    sfPdvBrand: session.brandvehic_fca ?? null,
+    user: session.username ?? null,
+    clientLanguage: session.locale ?? null,
+    idCustomerSF: '',
+    idVehicleSF: '',
+    intervention: collectJobDescriptions(payload).map((nom) => ({ nom })),
+    pdvLanguageList: session.locale ? [session.locale] : [],
+    sendSMS: null,
+    idVINSF: vinData.vin ?? null,
+    mobilityList: [],
+    otherMobilityList: [],
+    mapCarac: {},
+    isMobilityPresent: null,
+    isDossierDeleted: null,
+    isModification: null,
+    apptDossierId: null,
+    idDossierSF: null,
+    source: 'WiAdvisor',
+    clientNom: null,
+  };
+
+  console.log('[djc] agendaSoaNaga updatenaga payload:', JSON.stringify(nagaPayload));
+
+  return nagaPayload;
+}
+
+/**
+ * Se payload.appointments[] contiene un elemento con appointmentInternalId
+ * valorizzato, richiama in-process l'azione "updatenaga" della lambda
+ * agendaSoaNaga (stesso pattern di require cross-cartella già usato da
+ * pkManager/PkManager.js) per sincronizzare l'appuntamento NAGA dopo un
+ * saveJobcard riuscito. Best-effort: eventuali errori vengono loggati ma non
+ * fanno fallire la risposta di saveJobcard (già persistita con successo sulla DGT).
+ */
+async function syncAppointmentsToNaga(payload) {
+  const appointments = Array.isArray(payload?.appointments) ? payload.appointments : [];
+
+  for (const appointment of appointments) {
+    if (!appointment?.appointmentInternalId) continue;
+
+    try {
+      const agendaSoaNaga = require('../agendaSoaNaga/index');
+      const nagaPayload = buildUpdateNagaPayload(payload, appointment);
+      const result = await agendaSoaNaga.handler({
+        action: 'updatenaga',
+        pathParameters: { apptId: String(appointment.appointmentInternalId) },
+        body: JSON.stringify(nagaPayload),
+      });
+      console.log('[djc] agendaSoaNaga updatenaga result:', result?.statusCode);
+    } catch (err) {
+      console.error('[djc] agendaSoaNaga updatenaga error:', err.message ?? err);
+    }
+  }
+}
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -99,7 +252,9 @@ exports.handler = async (event) => {
       const { getBearerToken } = require('./authService');
       const { saveJobCard } = require('./jobCardService');
       const token = await getBearerToken();
-      const result = await saveJobCard(token, body.payload ?? body);
+      const jobCardPayload = body.payload ?? body;
+      const result = await saveJobCard(token, jobCardPayload);
+      await syncAppointmentsToNaga(jobCardPayload);
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -280,12 +435,12 @@ async function main() {
         console.error('\n❌ È richiesto il path del file JSON con il payload.');
         process.exit(1);
       }
-      const fs = require('fs');
       const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
       const { getBearerToken } = require('./authService');
       const { saveJobCard } = require('./jobCardService');
       const token = await getBearerToken();
       const result = await saveJobCard(token, payload);
+      await syncAppointmentsToNaga(payload);
       printResult('saveJobcard', result);
 
       console.log('\n✅ Completato.');
@@ -293,6 +448,7 @@ async function main() {
     }
 
     const manager = await DjcManager.create(undefined, jobCardId);
+    if (command === 'SaveRoInfo') {
       const [
         interiorCarWash,
         exteriorCarWash,

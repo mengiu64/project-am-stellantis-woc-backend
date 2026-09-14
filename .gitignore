@@ -34,6 +34,7 @@ myPeople/node_modules/
 myPeople/.env
 myPeople/coverage/
 isStellantisBrand/node_modules/
+scripts/import-ang-snowflakes/node_modules/
 .aws-sam/
 .idea/
 */.idea/

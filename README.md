@@ -340,6 +340,20 @@ coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
 esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
 `jobcard/README.md` e `djc/README.md`.
 
+Dopo una `saveJobCard` riuscita, se il payload contiene `appointments[]` con
+almeno un elemento con `appointmentInternalId` valorizzato,
+`index.js::syncAppointmentsToNaga` richiama in-process (stesso pattern di
+`pkManager/PkManager.js`) l'azione `updatenaga` della lambda **[agendaSoaNaga](#agendasoanaga)**
+per sincronizzare l'appuntamento NAGA. Il payload `updatenaga` viene costruito
+da `appointments[].reception`/`delivery` (orari/date/anagrafiche del consulente),
+da `/tmp/session.json`/`/tmp/VIN.json` (dati di sessione/VIN salvati dal
+chiamante, letti in modo best-effort) e da `jobs[].jobDescription` — sia quelli
+del payload `saveJobcard` sia, quando `roInfo.jobCardSrpId` è valorizzato,
+quelli letti da `/tmp/<jobCardSrpId>.json` (stessa cache di
+`getDataFromDMLFromTmp`) — per popolare `intervention[].nom`. Best-effort:
+eventuali errori verso agendaSoaNaga vengono loggati ma non fanno fallire la
+risposta di `saveJobcard` (già persistita con successo sulla DGT).
+
 #### `getCartPriceAndAvailability` (azione `dml`) — Sender dinamico
 
 `getCartPriceAndAvailability` (invocata dall'azione `dml` di `index.js`, tramite
@@ -433,6 +447,12 @@ parziale, payload minimo/completo e risposte di esempio — riferimento al
 documento **"SRP - DL DJC Post API Specification"** — sono documentate in
 dettaglio in `djc/README.md` e nello schema `JobCardSaveRequest` di
 `swagger-woc.yaml` (`POST /api/repairorder/{method}`, `method=save`).
+
+Dopo una `saveJobCard` riuscita, se il payload contiene `appointments[]` con
+almeno un elemento con `appointmentInternalId` valorizzato, viene sincronizzato
+anche l'appuntamento NAGA (azione `updatenaga` di **[agendaSoaNaga](#agendasoanaga)**,
+richiamata in-process) — v. dettagli nella sezione [jobcard](#jobcard) sopra
+(`index.js::syncAppointmentsToNaga`, replicata identica qui).
 
 #### Utilizzo CLI
 
