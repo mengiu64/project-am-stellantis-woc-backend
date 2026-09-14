@@ -95,28 +95,51 @@ function toSenderContext(sessionData) {
 }
 
 /**
+ * Come getCachedSessionContext, ma ritorna l'intero oggetto sessionData
+ * (myPeople + dms/settings, v. MyPeopleDmsSessionRepository::getSessionData)
+ * cosi' come cachato in DynamoDB, invece del solo sottoinsieme utile al
+ * Sender DML: usato dai chiamanti che necessitano di altri campi di sessione
+ * (es. jobcard/index.js::buildUpdateNagaPayload -> pdvId/locale/
+ * brandvehic_reftech/brandvehic_fca/username per il payload updatenaga di
+ * agendaSoaNaga). Stessa cache condivisa (chiave `session:context:<username>`)
+ * di getCachedSessionContext: una singola richiesta myPeople per utente serve
+ * quindi entrambi i chiamanti.
+ *
+ * Interamente best-effort: se `username` è assente o la risoluzione fallisce
+ * per qualunque motivo, ritorna `null` invece di sollevare un'eccezione.
+ *
  * @param {string} username
  * @param {{ getSessionDataFn?: (username: string) => Promise<object>, ttlMs?: number }} [overrides] - injection per i test
- * @returns {Promise<{ mainSincom?: string, market?: string, language?: string, dealerCountryCode?: string }>}
+ * @returns {Promise<object|null>} l'intero sessionData, o null se non risolvibile
  */
-async function getCachedSessionContext(username, overrides = {}) {
-  if (!username) return {};
+async function getCachedSessionData(username, overrides = {}) {
+  if (!username) return null;
 
   const ttlMs = resolveTtlMs(overrides.ttlMs);
 
   const cached = await readCachedSessionData(username);
-  if (cached) return toSenderContext(cached);
+  if (cached) return cached;
 
   try {
     const getSessionData = overrides.getSessionDataFn || loadGetSessionData();
     const sessionData = await getSessionData(username);
     await writeCachedSessionData(username, sessionData, ttlMs);
-    return toSenderContext(sessionData);
+    return sessionData;
   } catch (err) {
     console.warn(`[sessionContextCache] impossibile risolvere i dati di sessione per "${username}": ${err.message}`);
-    return {};
+    return null;
   }
 }
 
-module.exports = { getCachedSessionContext };
+/**
+ * @param {string} username
+ * @param {{ getSessionDataFn?: (username: string) => Promise<object>, ttlMs?: number }} [overrides] - injection per i test
+ * @returns {Promise<{ mainSincom?: string, market?: string, language?: string, dealerCountryCode?: string }>}
+ */
+async function getCachedSessionContext(username, overrides = {}) {
+  const sessionData = await getCachedSessionData(username, overrides);
+  return toSenderContext(sessionData);
+}
+
+module.exports = { getCachedSessionContext, getCachedSessionData };
 

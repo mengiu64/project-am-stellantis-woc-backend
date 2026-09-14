@@ -77,6 +77,7 @@ const path = require('path');
 
 const { getBearerToken } = require('./authService');
 const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getDataFromDMLFromTmp } = require('./jobCardService');
+const { getCachedSessionData } = require('../session/src/sessionContextCache');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -123,11 +124,12 @@ function resolveSessionContext(event, body) {
 // ── Sincronizzazione appuntamenti NAGA (post saveJobcard) ──────────────────────
 
 /**
- * Legge un file JSON da /tmp in modo best-effort (usato per session.json e
- * <jobCardSrpId>.json): se il file manca o non è leggibile/parsabile, ritorna
- * {} invece di sollevare un'eccezione, cosi' i soli campi da esso derivati
- * restano assenti dal payload updatenaga (stesso approccio "best effort" già
- * usato altrove nel progetto per gli arricchimenti opzionali di sessione).
+ * Legge un file JSON da /tmp in modo best-effort (usato per <jobCardSrpId>.json,
+ * cache locale scritta da una precedente "details"/testCartDML.js): se il file
+ * manca o non è leggibile/parsabile, ritorna {} invece di sollevare
+ * un'eccezione, cosi' i soli campi da esso derivati restano assenti dal
+ * payload updatenaga (stesso approccio "best effort" già usato altrove nel
+ * progetto per gli arricchimenti opzionali).
  */
 function readTmpJsonSafe(fileName) {
   try {
@@ -185,13 +187,37 @@ function collectJobDescriptions(payload) {
 /**
  * Costruisce il payload updatenaga (azione agendaSoaNaga) a partire da un
  * elemento di payload.appointments[] e dal payload saveJobcard stesso.
+ *
  * rdvBrand/pdvid/locale/sfPdvBrand/user/clientLanguage sono risolti da
- * /tmp/session.json (dati di sessione già salvati dal chiamante), idVINSF da
- * /tmp/VIN.json: entrambi letti in modo best-effort (v. readTmpJsonSafe).
+ * session/src/sessionContextCache.js::getCachedSessionData(username) —
+ * STESSO meccanismo (myPeople + cache condivisa DynamoDB TmpCacheTable,
+ * chiave `session:context:<username>`) già usato da
+ * jobCardService.js::buildDmsSender per il Sender dinamico dell'inquiry DMS.
+ * NON viene più letto un file /tmp/session.json: quel file non è mai stato
+ * scritto da nessun modulo del progetto e, anche se lo fosse stato, /tmp è
+ * locale all'istanza del singolo container Lambda e non è mai condiviso tra
+ * funzioni diverse (v. commento in session/src/dynamoCache.js).
+ *
+ * idVINSF è risolto direttamente da payload.vehicleInfo.identification.vin
+ * (stesso payload di saveJobcard, stesso path già usato da
+ * jobCardService.js per il VIN del jobCardDetail) invece che da un
+ * inesistente /tmp/VIN.json.
+ *
+ * `username` è SEMPRE quello autenticato (event.requestContext.authorizer.sub,
+ * risolto dal chiamante via resolveUsername — mai un valore fornito dal
+ * body/payload, stessa convenzione di session/pkFavorite).
+ *
+ * Interamente best-effort: se `username` è assente o myPeople non è
+ * raggiungibile, getCachedSessionData ritorna null e i soli campi da essa
+ * derivati restano null nel payload updatenaga.
+ *
+ * @param {object} payload - payload di saveJobcard (jobCardPayload)
+ * @param {object} appointment - elemento di payload.appointments[]
+ * @param {string|null} [username] - username autenticato (authorizer.sub)
  */
-function buildUpdateNagaPayload(payload, appointment) {
-  const session = readTmpJsonSafe('session.json');
-  const vinData = readTmpJsonSafe('VIN.json');
+async function buildUpdateNagaPayload(payload, appointment, username) {
+  const session = (await getCachedSessionData(username)) ?? {};
+  const vin = payload?.vehicleInfo?.identification?.vin ?? null;
 
   const reception = appointment?.reception ?? {};
   const delivery = appointment?.delivery ?? {};
@@ -205,8 +231,8 @@ function buildUpdateNagaPayload(payload, appointment) {
     recetDate: toMidnightIso(delivery.deliveryDateTime),
     recepHours: toHoursMinutes(reception.receptionDateTime),
     recetHours: toHoursMinutes(delivery.deliveryDateTime),
-    recepTimeSlot: null,
-    recetTimeSlot: null,
+    recepTimeSlot: 1,
+    recetTimeSlot: 1,
     reason: null,
     apptStatus: null,
     comments: '',
@@ -222,13 +248,13 @@ function buildUpdateNagaPayload(payload, appointment) {
     intervention: collectJobDescriptions(payload).map((nom) => ({ nom })),
     pdvLanguageList: session.locale ? [session.locale] : [],
     sendSMS: null,
-    idVINSF: vinData.vin ?? null,
+    idVINSF: vin,
     mobilityList: [],
     otherMobilityList: [],
     mapCarac: {},
-    isMobilityPresent: null,
-    isDossierDeleted: null,
-    isModification: null,
+    isMobilityPresent: false,
+    isDossierDeleted: false,
+    isModification: 'true',
     apptDossierId: null,
     idDossierSF: null,
     source: 'WiAdvisor',
@@ -243,8 +269,11 @@ function buildUpdateNagaPayload(payload, appointment) {
  * pkManager/PkManager.js) per sincronizzare l'appuntamento NAGA dopo un
  * saveJobcard riuscito. Best-effort: eventuali errori vengono loggati ma non
  * fanno fallire la risposta di saveJobcard (già persistita con successo sulla DGT).
+ *
+ * @param {object} payload - payload di saveJobcard (jobCardPayload)
+ * @param {string|null} [username] - username autenticato (authorizer.sub), v. buildUpdateNagaPayload
  */
-async function syncAppointmentsToNaga(payload) {
+async function syncAppointmentsToNaga(payload, username) {
   const appointments = Array.isArray(payload?.appointments) ? payload.appointments : [];
 
   for (const appointment of appointments) {
@@ -252,7 +281,7 @@ async function syncAppointmentsToNaga(payload) {
 
     try {
       const agendaSoaNaga = require('../agendaSoaNaga/index');
-      const nagaPayload = buildUpdateNagaPayload(payload, appointment);
+      const nagaPayload = await buildUpdateNagaPayload(payload, appointment, username);
       const result = await agendaSoaNaga.handler({
         action: 'updatenaga',
         pathParameters: { apptId: String(appointment.appointmentInternalId) },
@@ -332,7 +361,7 @@ exports.handler = async (event) => {
       } else {
         const jobCardPayload = body.payload ?? body;
         result = await saveJobCard(token, jobCardPayload);
-        await syncAppointmentsToNaga(jobCardPayload);
+        await syncAppointmentsToNaga(jobCardPayload, resolveUsername(event, body));
       }
     }
 
