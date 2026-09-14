@@ -58,6 +58,7 @@ const {
   DeleteJobcard,
   getDocumentsDownloadUrl,
   deleteDocumentsByVin, // NUOVO: azione accorpata che risolve il JobCardId dal VIN e cancella i documenti in una sola chiamata
+  createJobCardAndUploadDocument, // NUOVO: azione accorpata createJobCard + getUploadDocURL + PUT S3 + uploadedDoc
 } = require('./moparDocService');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ const VALID_ACTIONS = [
   'getDocumentsDownloadUrl', // Genera URL download
   // ────── Azione accorpata NUOVA (1) ──────
   'deleteDocumentsByVin', // NUOVO: cancella documenti a partire dal solo VIN (risolve internamente il JobCardId reale)
+  'createJobCardAndUploadDocument', // NUOVO: crea JobCard, ottiene URL pre-firmata, carica il binario su S3 e notifica l'upload in un'unica chiamata
 ];
 
 // NUOVO: Dispatcher esteso che mappa le azioni ai metodi del servizio
@@ -123,6 +125,7 @@ const ACTIONS = {
   getDocumentsDownloadUrl, // Genera URL pre-firmata per il download di un documento presso MoparDocs Browser
   // ────── Dispatcher accorpato NUOVO (1 metodo) ──────
   deleteDocumentsByVin, // NUOVO: orchestra getDocuments + DeleteDocuments risolvendo il JobCardId reale dal VIN (vincolo: documenti sulla stessa job card)
+  createJobCardAndUploadDocument, // NUOVO: orchestra createJobCard + getUploadDocURL + PUT su S3 + uploadedDoc in un'unica chiamata
 };
 
 exports.handler = async (event) => {

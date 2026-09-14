@@ -583,6 +583,271 @@ async function deleteDocumentsByVin(params) {
   }
 }
 
+/**
+ * httpsPutBinary — Esegue una PUT del contenuto binario verso una URL pre-firmata (S3).
+ * NON usa httpClient.js (condiviso e pensato per JSON): qui serve inviare Buffer grezzi
+ * senza serializzazione JSON e con Content-Type arbitrario, quindi si usa direttamente https.
+ * @param {string} presignedUrl - URL pre-firmata S3 restituita da getUploadDocURL
+ * @param {Buffer} buffer - contenuto binario del file da caricare
+ * @param {string} contentType - MIME type del file (es. image/jpeg)
+ * @returns {Promise<{statusCode:number, body:string}>}
+ */
+function httpsPutBinary(presignedUrl, buffer, contentType) {
+  // Importa i moduli core solo qui dentro per non toccare gli import esistenti in cima al file
+  const https = require('https'); // Client HTTPS nativo di Node
+  const { URL } = require('url'); // Parser URL nativo (gia' usato altrove nel modulo)
+
+  // Ritorna una Promise perche' https.request e' basato su callback/eventi
+  return new Promise((resolve, reject) => {
+    // Prova a interpretare la URL pre-firmata; se malformata rigetta subito con errore descrittivo
+    let target;
+    try {
+      target = new URL(presignedUrl); // Effettua il parsing della URL pre-firmata
+    } catch (e) {
+      // URL non valida: rigetta con un messaggio chiaro
+      return reject(new Error(`[httpsPutBinary] URL pre-firmata non valida: ${e.message}`));
+    }
+
+    // Costruisce le options della richiesta PUT verso S3
+    const options = {
+      hostname: target.hostname, // Host della URL pre-firmata
+      port: target.port || 443, // Porta (443 di default per https)
+      path: `${target.pathname}${target.search}`, // Path + querystring (la firma S3 vive nella querystring)
+      method: 'PUT', // Metodo richiesto per l'upload su URL pre-firmata
+      headers: {
+        'Content-Type': contentType, // Content-Type del binario caricato
+        'Content-Length': buffer.length, // Lunghezza esatta del contenuto binario
+      },
+    };
+
+    // Log della richiesta PUT: NON logga la querystring (contiene la firma S3), solo host e path base
+    console.log(`[httpsPutBinary] PUT ${target.protocol}//${target.hostname}${target.pathname} (Content-Type=${contentType}, bytes=${buffer.length})`);
+
+    // Crea la richiesta HTTPS
+    const req = https.request(options, (res) => {
+      // Accumula l'eventuale corpo della risposta (S3 in caso di errore restituisce un XML)
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk)); // Raccoglie i chunk di risposta
+      res.on('end', () => {
+        // Ricompone il corpo della risposta come stringa
+        const respBody = Buffer.concat(chunks).toString('utf8');
+        // Log dell'esito della PUT con solo lo status code (nessun dato sensibile)
+        console.log(`[httpsPutBinary] Esito PUT: HTTP ${res.statusCode}`);
+        // Considera successo qualunque 2xx
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          // Risolve con status e body
+          resolve({ statusCode: res.statusCode, body: respBody });
+        } else {
+          // Errore di upload su S3: rigetta con status e corpo (troncato) per il troubleshooting
+          reject(new Error(`[httpsPutBinary] Upload S3 fallito: HTTP ${res.statusCode} - ${respBody.slice(0, 500)}`));
+        }
+      });
+    });
+
+    // Gestione degli errori di trasporto (rete/DNS/TLS)
+    req.on('error', (err) => {
+      // Log dell'errore di trasporto
+      console.error(`[httpsPutBinary] Errore di trasporto durante la PUT: ${err.message}`);
+      // Rigetta la Promise propagando l'errore
+      reject(err);
+    });
+
+    // Scrive il corpo binario e chiude la richiesta
+    req.write(buffer); // Invia il Buffer come corpo della PUT
+    req.end(); // Termina la richiesta
+  });
+}
+
+/**
+ * createJobCardAndUploadDocument — Azione accorpata esposta al front-end.
+ * Orchestra in un'unica chiamata l'intero flusso di upload di un documento Mopar:
+ *   1) createJobCard   -> ottiene JobCardId (+ AccessToken gia' utilizzabile)
+ *   2) getUploadDocURL -> ottiene DocumentId + URL pre-firmata (S3)
+ *   3) PUT del binario sulla URL pre-firmata (upload effettivo su S3)
+ *   4) uploadedDoc     -> notifica il completamento dell'upload
+ * NON modifica i metodi esistenti: li riusa cosi' come sono.
+ *
+ * @param {object} params
+ * @param {string} params.vin              - VIN del veicolo (per createJobCard)
+ * @param {string} params.market           - Mercato (es. "IT") (per createJobCard)
+ * @param {string} params.source           - Sistema chiamante (es. "WOC") (per createJobCard)
+ * @param {string} params.UserName         - Utente richiedente (per createJobCard)
+ * @param {string} params.dealerCode       - Codice dealer (per createJobCard)
+ * @param {string} params.JobCard_Title    - Titolo della job card (per createJobCard)
+ * @param {string} params.Filename         - Nome del file da caricare (per getUploadDocURL)
+ * @param {string} params.ContentType      - MIME type del file (es. "image/jpeg")
+ * @param {string} params.Filetype         - Estensione/tipo file (es. "jpeg")
+ * @param {string} params.FileContentBase64 - Contenuto del file codificato in Base64
+ * @param {string|number} [params.Size]    - Dimensione in byte; se assente viene calcolata dal binario
+ * @returns {Promise<object>} Riepilogo con JobCardId, DocumentId ed esiti dei singoli step
+ */
+async function createJobCardAndUploadDocument(params) {
+  // Log di ingresso con soli metadati non sensibili (nessun contenuto file, nessun token)
+  console.log(`[createJobCardAndUploadDocument] Avvio flusso accorpato: VIN=${params && params.vin}, Filename=${params && params.Filename}`);
+
+  // Valida i campi obbligatori dell'intero flusso (unione dei required dei singoli step, escluso cio' che viene generato internamente)
+  const required = ['vin', 'market', 'source', 'UserName', 'dealerCode', 'JobCard_Title', 'Filename', 'ContentType', 'Filetype', 'FileContentBase64'];
+  // Calcola quali campi obbligatori mancano o sono vuoti
+  const missing = required.filter((k) => !params || !params[k]);
+  // Se manca almeno un campo obbligatorio, lancia un errore 400 (input non valido)
+  if (missing.length > 0) {
+    // Costruisce l'errore con il prefisso "Missing required field(s)" (coerente con gli altri metodi e con il mapping 400 dell'handler)
+    const e = new Error(`[createJobCardAndUploadDocument] Missing required field(s): ${missing.join(', ')}`);
+    // Marca esplicitamente l'errore come client-error (400)
+    e.statusCode = 400;
+    // Interrompe subito senza effettuare alcuna chiamata upstream
+    throw e;
+  }
+
+  // Decodifica il contenuto del file da Base64 a Buffer binario
+  let fileBuffer;
+  try {
+    // Converte la stringa Base64 nel Buffer effettivo da caricare su S3
+    fileBuffer = Buffer.from(params.FileContentBase64, 'base64');
+  } catch (e) {
+    // Base64 non valido: errore 400
+    const err = new Error(`[createJobCardAndUploadDocument] FileContentBase64 non valido: ${e.message}`);
+    err.statusCode = 400;
+    throw err;
+  }
+  // Verifica che il buffer decodificato non sia vuoto (Base64 malformato o file vuoto)
+  if (!fileBuffer || fileBuffer.length === 0) {
+    // Buffer vuoto: errore 400
+    const err = new Error('[createJobCardAndUploadDocument] Il contenuto del file (FileContentBase64) risulta vuoto dopo la decodifica');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Calcola la dimensione del file: usa params.Size se fornita, altrimenti la lunghezza del buffer decodificato
+  const fileSize = (params.Size !== undefined && params.Size !== null && `${params.Size}` !== '')
+    ? params.Size // Usa la dimensione dichiarata dal chiamante
+    : fileBuffer.length; // Altrimenti calcola i byte reali del binario
+
+  // Avvolge l'orchestrazione in try/catch per mappare gli errori in modo coerente
+  try {
+    // ── STEP 1: createJobCard ──────────────────────────────────────────────
+    // Log inizio step 1
+    console.log('[createJobCardAndUploadDocument] STEP 1/4 createJobCard...');
+    // Riusa la funzione esistente createJobCard passando solo i campi che le competono
+    const jobCardResult = await createJobCard({
+      vin: params.vin, // VIN veicolo
+      market: params.market, // Mercato
+      source: params.source, // Sistema chiamante
+      UserName: params.UserName, // Utente
+      dealerCode: params.dealerCode, // Codice dealer
+      JobCard_Title: params.JobCard_Title, // Titolo job card
+    });
+    // Estrae il JobCardId dalla risposta (l'upstream puo' usare JobCardId o JobCardID)
+    const jobCardId = jobCardResult && (jobCardResult.JobCardId ?? jobCardResult.JobCardID ?? jobCardResult.jobCardId);
+    // Estrae l'AccessToken eventualmente gia' restituito da createJobCard (in tal caso si evita una CreateAccessToken separata)
+    let accessToken = jobCardResult && (jobCardResult.AccessToken ?? jobCardResult.accessToken);
+    // Se manca il JobCardId non ha senso proseguire: errore upstream (502 via handler)
+    if (!jobCardId) {
+      throw new Error(`[createJobCardAndUploadDocument] createJobCard non ha restituito un JobCardId valido: ${JSON.stringify(jobCardResult)}`);
+    }
+    // Log esito step 1 con soli metadati non sensibili (JobCardId; MAI l'AccessToken)
+    console.log(`[createJobCardAndUploadDocument] STEP 1/4 OK: JobCardId=${jobCardId}`);
+
+    // ── STEP 1-bis (fallback automatico): createAccessToken ─────────────────
+    // Alcuni ambienti/gateway NON restituiscono l'AccessToken direttamente da createJobCard.
+    // In tal caso lo si ottiene esplicitamente con createAccessToken (riuso del metodo esistente).
+    let accessTokenResult = null; // Traccia l'esito dell'eventuale createAccessToken (per il riepilogo steps)
+    if (!accessToken) {
+      // Log: AccessToken assente nella risposta di createJobCard -> attivazione fallback
+      console.log('[createJobCardAndUploadDocument] STEP 1-bis createAccessToken (AccessToken assente in createJobCard)...');
+      // Riusa la funzione esistente createAccessToken con i campi che le competono
+      accessTokenResult = await createAccessToken({
+        JobCardId: jobCardId, // JobCard appena creata
+        UserName: params.UserName, // Utente richiedente
+        dealerCode: params.dealerCode, // Codice dealer
+        market: params.market, // Mercato
+      });
+      // Estrae l'AccessToken dalla risposta (nomi possibili: AccessToken / accessToken)
+      accessToken = accessTokenResult && (accessTokenResult.AccessToken ?? accessTokenResult.accessToken);
+      // Se anche createAccessToken non restituisce un token utilizzabile, e' un errore upstream
+      if (!accessToken) {
+        throw new Error(`[createJobCardAndUploadDocument] createAccessToken non ha restituito un AccessToken utilizzabile: ${JSON.stringify(accessTokenResult)}`);
+      }
+      // Log esito step 1-bis (MAI il valore del token)
+      console.log('[createJobCardAndUploadDocument] STEP 1-bis OK: AccessToken ottenuto via createAccessToken');
+    }
+
+    // ── STEP 2: getUploadDocURL ────────────────────────────────────────────
+    // Log inizio step 2
+    console.log('[createJobCardAndUploadDocument] STEP 2/4 getUploadDocURL...');
+    // Riusa la funzione esistente getUploadDocURL con il JobCardId e l'AccessToken appena ottenuti
+    const uploadUrlResult = await getUploadDocURL({
+      JobCardId: jobCardId, // JobCard appena creata
+      Filename: params.Filename, // Nome file
+      Size: fileSize, // Dimensione file (dichiarata o calcolata)
+      ContentType: params.ContentType, // MIME type
+      AccessToken: accessToken, // Token ottenuto da createJobCard
+      Filetype: params.Filetype, // Tipo/estensione file
+    });
+    // Estrae il DocumentId dalla risposta (l'upstream puo' usare DocumentId o DocumentID)
+    const documentId = uploadUrlResult && (uploadUrlResult.DocumentId ?? uploadUrlResult.DocumentID ?? uploadUrlResult.documentId);
+    // Estrae la URL pre-firmata dalla risposta (nomi possibili: PresignedUrl / UploadURL / presignedUrl / url)
+    const presignedUrl = uploadUrlResult && (uploadUrlResult.PresignedUrl ?? uploadUrlResult.UploadURL ?? uploadUrlResult.presignedUrl ?? uploadUrlResult.url ?? uploadUrlResult.UploadUrl);
+    // Senza DocumentId non possiamo poi notificare l'upload: errore upstream
+    if (!documentId) {
+      throw new Error(`[createJobCardAndUploadDocument] getUploadDocURL non ha restituito un DocumentId valido: ${JSON.stringify(uploadUrlResult)}`);
+    }
+    // Senza URL pre-firmata non possiamo caricare il binario: errore upstream
+    if (!presignedUrl) {
+      throw new Error(`[createJobCardAndUploadDocument] getUploadDocURL non ha restituito una URL pre-firmata valida: ${JSON.stringify(uploadUrlResult)}`);
+    }
+    // Log esito step 2 (DocumentId; NON logga la URL pre-firmata che contiene la firma S3)
+    console.log(`[createJobCardAndUploadDocument] STEP 2/4 OK: DocumentId=${documentId}`);
+
+    // ── STEP 3: PUT del binario sulla URL pre-firmata (S3) ─────────────────
+    // Log inizio step 3
+    console.log('[createJobCardAndUploadDocument] STEP 3/4 PUT binario su URL pre-firmata (S3)...');
+    // Esegue l'upload effettivo del binario su S3 tramite l'helper dedicato
+    const putResult = await httpsPutBinary(presignedUrl, fileBuffer, params.ContentType);
+    // Log esito step 3 con solo lo status HTTP di S3
+    console.log(`[createJobCardAndUploadDocument] STEP 3/4 OK: upload S3 HTTP ${putResult.statusCode}`);
+
+    // ── STEP 4: uploadedDoc ────────────────────────────────────────────────
+    // Log inizio step 4
+    console.log('[createJobCardAndUploadDocument] STEP 4/4 uploadedDoc...');
+    // Riusa la funzione esistente uploadedDoc per notificare il completamento dell'upload
+    const uploadedResult = await uploadedDoc({
+      JobCardId: jobCardId, // JobCard di riferimento
+      DocumentId: documentId, // Documento appena caricato
+      Action: 'Uploaded', // Azione di notifica completamento (coerente con il flusso esistente)
+      AccessToken: accessToken, // Stesso AccessToken del flusso
+    });
+    // Log esito step 4
+    console.log('[createJobCardAndUploadDocument] STEP 4/4 OK: upload notificato');
+
+    // Restituisce un riepilogo completo dell'operazione accorpata (nessun token/URL firmato nel payload di ritorno)
+    return {
+      success: true, // Esito complessivo positivo
+      JobCardId: jobCardId, // Id job card creata
+      DocumentId: documentId, // Id documento caricato
+      uploadHttpStatus: putResult.statusCode, // Status HTTP dell'upload su S3
+      steps: { // Esiti grezzi dei singoli step upstream (utili al front-end/troubleshooting)
+        createJobCard: jobCardResult, // Risposta di createJobCard
+        createAccessToken: accessTokenResult, // Risposta di createAccessToken (null se l'AccessToken era gia' presente in createJobCard)
+        getUploadDocURL: uploadUrlResult, // Risposta di getUploadDocURL
+        uploadedDoc: uploadedResult, // Risposta di uploadedDoc
+      },
+    };
+  } catch (err) {
+    // Se l'errore ha gia' uno statusCode (es. 400 di validazione), lo rilancia invariato
+    if (err && typeof err.statusCode === 'number') {
+      // Log dell'errore gia' classificato
+      console.error(`[createJobCardAndUploadDocument] Errore [${err.statusCode}]: ${err.message}`);
+      // Rilancia mantenendo il mapping dell'handler
+      throw err;
+    }
+    // Altrimenti e' un errore upstream/imprevisto: viene rilanciato cosi' com'e' (l'handler lo mappa a 502)
+    console.error(`[createJobCardAndUploadDocument] Errore durante il flusso accorpato: ${err && err.message}`);
+    // Rilancia l'errore originale
+    throw err;
+  }
+}
+
 module.exports = {
   createJobCard,
   createAccessToken,
@@ -596,4 +861,5 @@ module.exports = {
   DeleteJobcard,
   getDocumentsDownloadUrl,
   deleteDocumentsByVin, // Espone la nuova azione accorpata per la cancellazione documenti a partire dal VIN
+  createJobCardAndUploadDocument, // NUOVO: azione accorpata createJobCard+getUploadDocURL+PUT S3+uploadedDoc in un'unica chiamata
 };
