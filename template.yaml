@@ -524,6 +524,11 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
+                # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile,
+                # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
+                # "updatenaga") — stessi secret mTLS già usati da AgendaSoaNagaFunction.
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -585,6 +590,18 @@ Resources:
           # (in-process, vedi Makefile) — cache condivisa su TmpCacheTable (v.
           # Resources), sostituisce le precedenti cache basate su file /tmp.
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
+          # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
+          # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
+          # "updatenaga" (sincronizzazione appuntamento NAGA dopo un saveJobcard
+          # riuscito con payload.appointments[] valorizzato), stessi valori usati
+          # da AgendaSoaNagaFunction.
+          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
+          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
+          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
+          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
+          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -598,11 +615,23 @@ Resources:
   # l'azione "saveJobcard" (POST /jobCard) e riusa lo stesso client
   # PingFederate/DGT di jobcard, letto dallo stesso secret condiviso
   # (ServiceUrlsSecretId).
+  # CodeUri: ./ + BuildMethod: makefile (vedi Makefile, build-DjcFunction) perché
+  # djc/index.js::syncAppointmentsToNaga richiede in-process
+  # require('../agendaSoaNaga/index') per l'azione "updatenaga" (sincronizzazione
+  # appuntamento NAGA dopo un saveJobcard riuscito con payload.appointments[]
+  # valorizzato) — stesso identico pattern di JobCardFunction sopra.
   DjcFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-djc"
-      CodeUri: djc/
+      CodeUri: ./
+      Handler: djc/index.handler
+      # Layer AWS Parameters and Secrets Lambda Extension: recupero dei segreti
+      # mTLS di agendaSoaNaga/src/certService.js, stesso layer di AgendaSoaNagaFunction.
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
@@ -620,6 +649,14 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
+        # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile) —
+        # stessi secret mTLS già usati da AgendaSoaNagaFunction/JobCardFunction.
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
       Environment:
         Variables:
           # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
@@ -627,6 +664,16 @@ Resources:
           # sync con jobcard/config.js).
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
+          # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
+          # richiesto da djc/index.js::syncAppointmentsToNaga per l'azione
+          # "updatenaga", stessi valori usati da AgendaSoaNagaFunction/JobCardFunction.
+          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
+          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
+          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
+          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
+          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   DjcFunctionLogGroup:
     Type: AWS::Logs::LogGroup
