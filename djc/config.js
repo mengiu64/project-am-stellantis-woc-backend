@@ -25,35 +25,91 @@ if (fs.existsSync(envFile)) {
     });
 }
 
-// Validate required environment variables
-const REQUIRED_ENV = [
-  'JOBCARD_PING_CLIENT_ID',
-  'JOBCARD_PING_CLIENT_SECRET',
-  'DGT_CLIENT_ID',
-  'DGT_CLIENT_SECRET',
-];
-const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
-  throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
+// Cache della configurazione — persiste tra invocazioni nello stesso container Lambda (warm start)
+let cachedConfig = null;
+
+/**
+ * Costruisce l'oggetto di configurazione a partire dai valori risolti (URL/path
+ * + credenziali) da Secrets Manager se SERVICE_URLS_SECRET_ID è configurata,
+ * altrimenti da variabile d'ambiente/hardcoded default (locale/CLI).
+ */
+function buildConfig(secrets) {
+  return {
+    // PingFederate token endpoint
+    auth: {
+      url: secrets.JOBCARD_PING_URL,
+      grantType: 'client_credentials',
+      scope: 'prd:dgt',
+      clientId: secrets.JOBCARD_PING_CLIENT_ID,
+      clientSecret: secrets.JOBCARD_PING_CLIENT_SECRET,
+    },
+
+    // Stellantis DGT API
+    dgt: {
+      baseUrl: secrets.DGT_BASE_URL,
+      basePath: secrets.DGT_BASE_PATH,
+      clientId: secrets.DGT_CLIENT_ID,
+      clientSecret: secrets.DGT_CLIENT_SECRET,
+    },
+  };
 }
 
-module.exports = {
-  // PingFederate token endpoint — da variabile d'ambiente (diverso in dev/stage/prod,
-  // come clientId/clientSecret), con fallback al valore preprod usato finora.
-  auth: {
-    url: process.env.JOBCARD_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:dgt',
-    clientId: process.env.JOBCARD_PING_CLIENT_ID,
-    clientSecret: process.env.JOBCARD_PING_CLIENT_SECRET,
-  },
+/**
+ * Restituisce l'oggetto di configurazione completo (con cache in memoria).
+ * Le URL/path e le credenziali (PingFederate + DGT) sono lette da AWS Secrets Manager (secret
+ * unico "service urls", v. secretsLoader.js e template.yaml risorsa
+ * ServiceUrlsSecret) quando SERVICE_URLS_SECRET_ID è configurata (Lambda);
+ * altrimenti (locale/CLI, o singola chiave assente dal secret) da variabile
+ * d'ambiente con fallback al valore usato storicamente — nessun cambio di
+ * comportamento se non esplicitamente sovrascritte.
+ * @returns {Promise<object>}
+ */
+async function getConfig() {
+  if (cachedConfig) {
+    return cachedConfig;
+  }
 
-  // Stellantis DGT API — baseUrl da variabile d'ambiente (diverso in dev/stage/prod),
-  // con fallback al valore usato finora.
-  dgt: {
-    baseUrl: process.env.DGT_BASE_URL || 'https://emea-aws.stage.np-api.stellantis.com',
-    basePath: process.env.DGT_BASE_PATH || '/ps-stage/extra/srp/digital-layer/v1',
-    clientId: process.env.DGT_CLIENT_ID,
-    clientSecret: process.env.DGT_CLIENT_SECRET,
-  },
-};
+  let secretUrls = {};
+  if (process.env.SERVICE_URLS_SECRET_ID) {
+    try {
+      const { loadServiceUrls } = require('./secretsLoader');
+      secretUrls = await loadServiceUrls();
+    } catch (err) {
+      // Fallback su env var/default hardcoded se il secret non e' (ancora)
+      // configurato/raggiungibile (es. non ancora creato in un nuovo
+      // ambiente): nessun impatto sul comportamento storico.
+      console.warn(`[config] Impossibile leggere ServiceUrlsSecret, uso env var/default: ${err.message}`);
+    }
+  }
+
+  const secrets = {
+    JOBCARD_PING_URL: secretUrls.JOBCARD_PING_URL || process.env.JOBCARD_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
+    DGT_BASE_URL: secretUrls.DGT_BASE_URL || process.env.DGT_BASE_URL || 'https://emea-aws.stage.np-api.stellantis.com',
+    DGT_BASE_PATH: secretUrls.DGT_BASE_PATH || process.env.DGT_BASE_PATH || '/ps-stage/extra/srp/digital-layer/v1',
+    // Credenziali PingFederate/DGT: non più passate come variabile d'ambiente/
+    // parametro CFN in chiaro sulla Lambda, ma lette dallo stesso secret
+    // condiviso ("service urls") — v. template.yaml/ServiceUrlsSecretId.
+    JOBCARD_PING_CLIENT_ID: secretUrls.JOBCARD_PING_CLIENT_ID || process.env.JOBCARD_PING_CLIENT_ID,
+    JOBCARD_PING_CLIENT_SECRET: secretUrls.JOBCARD_PING_CLIENT_SECRET || process.env.JOBCARD_PING_CLIENT_SECRET,
+    DGT_CLIENT_ID: secretUrls.DGT_CLIENT_ID || process.env.DGT_CLIENT_ID,
+    DGT_CLIENT_SECRET: secretUrls.DGT_CLIENT_SECRET || process.env.DGT_CLIENT_SECRET,
+  };
+
+  const missingCreds = ['JOBCARD_PING_CLIENT_ID', 'JOBCARD_PING_CLIENT_SECRET', 'DGT_CLIENT_ID', 'DGT_CLIENT_SECRET']
+    .filter((k) => !secrets[k]);
+  if (missingCreds.length > 0) {
+    console.warn(`[config] Credenziali mancanti (ne' nel secret ne' in env): ${missingCreds.join(', ')}`);
+  }
+
+  cachedConfig = buildConfig(secrets);
+  return cachedConfig;
+}
+
+/**
+ * Invalida la cache della configurazione. Utile per i test unitari e per forzare un refresh.
+ */
+function invalidateConfig() {
+  cachedConfig = null;
+}
+
+module.exports = { getConfig, invalidateConfig };

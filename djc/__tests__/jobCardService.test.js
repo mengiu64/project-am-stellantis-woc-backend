@@ -1,12 +1,14 @@
 'use strict';
 
 jest.mock('../config', () => ({
-  dgt: {
-    baseUrl: 'https://api.dgt.test',
-    basePath: '/ps-stage/extra/srp/digital-layer/v1',
-    clientId: 'dgt-client-id',
-    clientSecret: 'dgt-client-secret',
-  },
+  getConfig: jest.fn().mockResolvedValue({
+    dgt: {
+      baseUrl: 'https://api.dgt.test',
+      basePath: '/ps-stage/extra/srp/digital-layer/v1',
+      clientId: 'dgt-client-id',
+      clientSecret: 'dgt-client-secret',
+    },
+  }),
 }));
 jest.mock('../httpClient');
 

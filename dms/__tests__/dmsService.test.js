@@ -1,34 +1,36 @@
 'use strict';
 
 jest.mock('../config', () => ({
-  auth: {
-    url: 'https://auth.test/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:dmy',
-    clientId: 'test-client-id',
-    clientSecret: 'test-client-secret',
-  },
-  dml: {
-    baseUrl: 'https://api.dml.test',
-    settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
-    inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
-    companyTypesPath: '/ps-dev/extra/dml/configurations/v1/company-types',
-    customerTitlesPath: '/ps-dev/extra/dml/configurations/v1/customer-titles',
-    ibmClientId: 'ibm-id',
-    ibmClientSecret: 'ibm-secret',
-    xTargetEnv: 'stage',
-  },
-  sender: {
-    componentId:          '1.0.0',
-    dealerNumberId:       '0710736',
-    dealerNumberIdSource: '0710736',
-    dealerCountryCode:    'DE',
-    languageCode:         'de-DE',
-    physicalSiteId:       '00007532',
-    serviceId:            'DE-0710736.D001',
-    currencyId:           'EUR',
-    brand:                'AP',
-  },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: {
+      url: 'https://auth.test/as/token.oauth2',
+      grantType: 'client_credentials',
+      scope: 'prd:dmy',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    },
+    dml: {
+      baseUrl: 'https://api.dml.test',
+      settingsPath: '/ps-dev/extra/dml/dms-settings/v1/settings',
+      inquiryPath: '/ps-dev/extra/dml/aftersales/v1/inquiry',
+      companyTypesPath: '/ps-dev/extra/dml/configurations/v1/company-types',
+      customerTitlesPath: '/ps-dev/extra/dml/configurations/v1/customer-titles',
+      ibmClientId: 'ibm-id',
+      ibmClientSecret: 'ibm-secret',
+      xTargetEnv: 'stage',
+    },
+    sender: {
+      componentId:          '1.0.0',
+      dealerNumberId:       '0710736',
+      dealerNumberIdSource: '0710736',
+      dealerCountryCode:    'DE',
+      languageCode:         'de-DE',
+      physicalSiteId:       '00007532',
+      serviceId:            'DE-0710736.D001',
+      currencyId:           'EUR',
+      brand:                'AP',
+    },
+  }),
 }));
 jest.mock('../httpClient');
 jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));

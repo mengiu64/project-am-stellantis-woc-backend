@@ -31,17 +31,28 @@ Parameters:
     Type: CommaDelimitedList
     Description: Comma-separated list of Security Group IDs
 
-  # ── PingFederate — DMS (dedicated client, scope prd:dmy) ──────────────────
-  DmsPingClientId:
+  # ── ServiceUrlsSecret — URL/path e credenziali condivise (PingFederate +
+  # DMS/DML, JOBCARD/DGT, V360/ASV360) usate da dms/jobcard/djc/v360 (v.
+  # <modulo>/secretsLoader.js + <modulo>/config.js::getConfig). Il secret NON
+  # è creato da questo template (il ruolo di deploy non ha il permesso IAM
+  # secretsmanager:CreateSecret, stesso limite già riscontrato con
+  # TmpCacheTable/DynamoDB): va creato una tantum fuori banda (Console/CLI
+  # AWS) con un JSON { "DMS_PING_URL": "...", "DMS_PING_CLIENT_ID": "...",
+  # "DMS_PING_CLIENT_SECRET": "...", "DML_BASE_URL": "...", ... } (v. README
+  # per l'elenco completo delle chiavi). Se il secret non esiste ancora o non
+  # è raggiungibile, <modulo>/config.js ricade automaticamente sulle variabili
+  # d'ambiente/default storici (nessuna interruzione di servizio). Una volta
+  # creato, aggiornare il suo valore via Console/CLI (UpdateSecret) NON
+  # richiede un nuovo `sam deploy`: un solo posto da modificare/ruotare,
+  # invece di dover cercare la stessa credenziale duplicata in più Lambda —
+  # e nessuna credenziale in chiaro nella configurazione delle Lambda.
+  ServiceUrlsSecretId:
     Type: String
-    NoEcho: false
-  DmsPingClientSecret:
-    Type: String
-    NoEcho: true
-  DmsPingUrl:
-    Type: String
-    Default: https://idfed-preprod.mpsa.com:443/as/token.oauth2
-    Description: PingFederate token endpoint used by dms (environment-specific in prod)
+    Default: sm-np-bsn0027990-dev-service-urls
+    Description: >-
+      Secrets Manager secret id (o ARN) del secret condiviso con URL/path e
+      credenziali di PingFederate e dei servizi upstream usato da
+      dms/jobcard/djc/v360.
 
   # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
   AgendaSoaHost:
@@ -63,32 +74,6 @@ Parameters:
     Default: apicKey
     Description: Secrets Manager secret id della chiave privata mTLS (PEM) per le Lambda AgendaSOA
 
-  # ── DMS (DML API) ─────────────────────────────────────────────────────────
-  DmlIbmClientId:
-    Type: String
-  DmlIbmClientSecret:
-    Type: String
-    NoEcho: true
-  DmlBaseUrl:
-    Type: String
-    Default: https://emea-aws.dev.np-api.stellantis.com
-    Description: Stellantis DML API (IBM API Connect gateway) base URL used by dms (environment-specific in prod)
-  DmlSettingsPath:
-    Type: String
-    Default: /ps-dev/extra/dml/dms-settings/v1/settings
-    Description: DML settings API path (IBM API Connect catalog, environment-specific in prod)
-  DmlInquiryPath:
-    Type: String
-    Default: /ps-dev/extra/dml/aftersales/v1/inquiry
-    Description: DML inquiry API path (IBM API Connect catalog, environment-specific in prod)
-  DmlCompanyTypesPath:
-    Type: String
-    Default: /ps-dev/extra/dml/configurations/v1/company-types
-    Description: DML company-types API path (IBM API Connect catalog, environment-specific in prod)
-  DmlCustomerTitlesPath:
-    Type: String
-    Default: /ps-dev/extra/dml/configurations/v1/customer-titles
-    Description: DML customer-titles API path (IBM API Connect catalog, environment-specific in prod)
   # IBM API Connect target environment for the DML gateway (X-Target-Env header).
   # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
   # of the AWS SAM "Environment" parameter (dev/stage/prod stack). It must NOT be
@@ -99,62 +84,7 @@ Parameters:
     Type: String
     Default: stage
 
-  # ── JobCard (DGT API) ─────────────────────────────────────────────────────
-  DgtClientId:
-    Type: String
-  DgtClientSecret:
-    Type: String
-    NoEcho: true
-  JobcardPingClientId:
-    Type: String
-    Description: PingFederate client id dedicated to jobcard (scope prd:dgt)
-  JobcardPingClientSecret:
-    Type: String
-    NoEcho: true
-    Description: PingFederate client secret dedicated to jobcard (scope prd:dgt)
-  JobcardPingUrl:
-    Type: String
-    Default: https://idfed-preprod.mpsa.com:443/as/token.oauth2
-    Description: PingFederate token endpoint used by jobcard/djc (environment-specific in prod)
-  DgtBaseUrl:
-    Type: String
-    Default: https://emea-aws.stage.np-api.stellantis.com
-    Description: Stellantis DGT API base URL used by jobcard/djc (environment-specific in prod)
-  DgtBasePath:
-    Type: String
-    Default: /ps-stage/extra/srp/digital-layer/v1
-    Description: Stellantis DGT API base path (IBM API Connect catalog, environment-specific in prod) used by jobcard/djc
-
   # ── MoparDoc: credenziali lette a runtime da SSM -> Secrets Manager (nessun parametro CFN) ──
-
-  # ── V360 (ASV API) ────────────────────────────────────────────────────────
-  AsvClientId:
-    Type: String
-  AsvClientSecret:
-    Type: String
-    NoEcho: true
-  AsvGetDetailsClientId:
-    Type: String
-    Description: Default clientId used in getdetails request body when not provided in input (environment-specific)
-  V360PingClientId:
-    Type: String
-    Description: PingFederate client id dedicated to v360 (scope prd:asv)
-  V360PingClientSecret:
-    Type: String
-    NoEcho: true
-    Description: PingFederate client secret dedicated to v360 (scope prd:asv)
-  V360PingUrl:
-    Type: String
-    Default: https://idfed.mpsa.com:443/as/token.oauth2
-    Description: PingFederate token endpoint used by v360 (environment-specific in prod)
-  AsvBaseUrl:
-    Type: String
-    Default: https://emea-aws.api.stellantis.com
-    Description: Stellantis ASV360 API base URL used by v360 (environment-specific in prod)
-  AsvBasePath:
-    Type: String
-    Default: /ps-prod/extra/asv360/vehicle/v1
-    Description: Stellantis ASV360 API base path (IBM API Connect catalog, environment-specific in prod) used by v360
 
   # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
   EperHost:
@@ -486,6 +416,7 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
@@ -506,16 +437,10 @@ Resources:
               Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
-          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DMS_PING_URL: !Ref DmsPingUrl
-          DML_IBM_CLIENT_ID:    !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
-          DML_BASE_URL: !Ref DmlBaseUrl
-          DML_SETTINGS_PATH: !Ref DmlSettingsPath
-          DML_INQUIRY_PATH: !Ref DmlInquiryPath
-          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
-          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
+          # DMS_PING_CLIENT_ID/SECRET, DML_IBM_CLIENT_ID/SECRET: non più
+          # variabili d'ambiente in chiaro, ma lette da dms/config.js::getConfig()
+          # dal secret condiviso SERVICE_URLS_SECRET_ID (v. commento sopra).
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — dmsService.js::buildApplicationArea
           # risolve physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per
@@ -543,16 +468,9 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
           # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          V360_PING_URL: !Ref V360PingUrl
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_BASE_URL: !Ref AsvBaseUrl
-          ASV_BASE_PATH: !Ref AsvBasePath
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
+          # v360/config.js::getConfig() dallo stesso secret condiviso.
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           # session/src/dynamoCache.js + v360/dynamoCache.js (in-process, vedi
           # Makefile) — cache condivisa su TmpCacheTable (v. Resources), sostituisce
@@ -605,11 +523,7 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-                # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile,
-                # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
-                # "updatenaga") — stessi secret mTLS già usati da AgendaSoaNagaFunction.
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -628,25 +542,13 @@ Resources:
               Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
-          JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
-          JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
-          JOBCARD_PING_URL: !Ref JobcardPingUrl
-          DGT_CLIENT_ID:      !Ref DgtClientId
-          DGT_CLIENT_SECRET:  !Ref DgtClientSecret
-          DGT_BASE_URL: !Ref DgtBaseUrl
-          DGT_BASE_PATH: !Ref DgtBasePath
+          # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
+          # da jobcard/config.js::getConfig() dal secret condiviso.
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML usato da
-          # getCartPriceAndAvailability, stessi valori usati da PkManagerFunction/PkFavoriteFunction.
-          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DMS_PING_URL: !Ref DmsPingUrl
-          DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
-          DML_BASE_URL: !Ref DmlBaseUrl
-          DML_SETTINGS_PATH: !Ref DmlSettingsPath
-          DML_INQUIRY_PATH: !Ref DmlInquiryPath
-          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
-          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
+          # getCartPriceAndAvailability. DMS_PING_*/DML_IBM_*: non più variabili
+          # d'ambiente in chiaro, lette da dms/config.js::getConfig() dallo
+          # stesso secret condiviso.
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da dms/dmsService.js
           # ::buildApplicationArea (imbarcato in-process insieme a jobcard), che risolve
@@ -675,33 +577,14 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
           # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          V360_PING_URL: !Ref V360PingUrl
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_BASE_URL: !Ref AsvBaseUrl
-          ASV_BASE_PATH: !Ref AsvBasePath
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
+          # v360/config.js::getConfig() dallo stesso secret condiviso.
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           # jobcard/dynamoCache.js + v360/dynamoCache.js + session/src/dynamoCache.js
           # (in-process, vedi Makefile) — cache condivisa su TmpCacheTable (v.
           # Resources), sostituisce le precedenti cache basate su file /tmp.
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-          # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
-          # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
-          # "updatenaga" (sincronizzazione appuntamento NAGA dopo un saveJobcard
-          # riuscito con payload.appointments[] valorizzato), stessi valori usati
-          # da AgendaSoaNagaFunction.
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
-          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   JobCardFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -713,25 +596,13 @@ Resources:
 
   # DjcFunction: declinazione di JobCardFunction (Digital Job Card). Espone
   # l'azione "saveJobcard" (POST /jobCard) e riusa lo stesso client
-  # PingFederate/DGT di jobcard, quindi condivide gli stessi parametri
-  # JobcardPingClientId/Secret e DgtClientId/Secret.
-  # CodeUri: ./ + BuildMethod: makefile (vedi Makefile, build-DjcFunction) perché
-  # djc/index.js::syncAppointmentsToNaga richiede in-process
-  # require('../agendaSoaNaga/index') per l'azione "updatenaga" (sincronizzazione
-  # appuntamento NAGA dopo un saveJobcard riuscito con payload.appointments[]
-  # valorizzato) — stesso identico pattern di JobCardFunction sopra.
+  # PingFederate/DGT di jobcard, letto dallo stesso secret condiviso
+  # (ServiceUrlsSecretId).
   DjcFunction:
     Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-djc"
-      CodeUri: ./
-      Handler: djc/index.handler
-      # Layer AWS Parameters and Secrets Lambda Extension: recupero dei segreti
-      # mTLS di agendaSoaNaga/src/certService.js, stesso layer di AgendaSoaNagaFunction.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
+      CodeUri: djc/
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
@@ -743,34 +614,19 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
               Resource: !GetAtt TmpCacheTable.Arn
-        # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile) —
-        # stessi secret mTLS già usati da AgendaSoaNagaFunction/JobCardFunction.
+        # djc/config.js::getConfig -> secretsLoader.js — URL/path condivise
+        # (v. ServiceUrlsSecretId in Parameters).
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
       Environment:
         Variables:
-          JOBCARD_PING_CLIENT_ID:     !Ref JobcardPingClientId
-          JOBCARD_PING_CLIENT_SECRET: !Ref JobcardPingClientSecret
-          JOBCARD_PING_URL: !Ref JobcardPingUrl
-          DGT_CLIENT_ID:      !Ref DgtClientId
-          DGT_CLIENT_SECRET:  !Ref DgtClientSecret
-          DGT_BASE_URL: !Ref DgtBaseUrl
-          DGT_BASE_PATH: !Ref DgtBasePath
+          # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
+          # da djc/config.js::getConfig() dal secret condiviso (mantenuto in
+          # sync con jobcard/config.js).
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-          # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
-          # richiesto da djc/index.js::syncAppointmentsToNaga per l'azione
-          # "updatenaga", stessi valori usati da AgendaSoaNagaFunction/JobCardFunction.
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
-          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   DjcFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -841,16 +697,17 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
               Resource: !GetAtt TmpCacheTable.Arn
+        # v360/config.js::getConfig -> secretsLoader.js — URL/path condivise
+        # (v. ServiceUrlsSecretId in Parameters).
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
       Environment:
         Variables:
-          V360_PING_CLIENT_ID:     !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET: !Ref V360PingClientSecret
-          V360_PING_URL: !Ref V360PingUrl
-          ASV_CLIENT_ID:      !Ref AsvClientId
-          ASV_CLIENT_SECRET:  !Ref AsvClientSecret
-          ASV_BASE_URL: !Ref AsvBaseUrl
-          ASV_BASE_PATH: !Ref AsvBasePath
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
+          # v360/config.js::getConfig() dal secret condiviso SERVICE_URLS_SECRET_ID.
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           CONFIG_BUCKET_NAME: !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
@@ -1063,6 +920,7 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # pkDocsoa/functionServiceDb e dbManager/db.js leggono da Aurora tramite
             # Secrets Manager: il secret è cifrato con una chiave KMS gestita dal
             # cliente (non la default aws/secretsmanager), stesso caso già risolto
@@ -1117,16 +975,10 @@ Resources:
           MP_COUNTRY_CODE:              !Ref MpCountryCode
           MP_DEALER_IDENTIFICATION_CODE: !Ref MpDealerIdentificationCode
           MP_MANUFACTURER:              !Ref MpManufacturer
-          DMS_PING_CLIENT_ID:           !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET:       !Ref DmsPingClientSecret
-          DMS_PING_URL: !Ref DmsPingUrl
-          DML_IBM_CLIENT_ID:            !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:        !Ref DmlIbmClientSecret
-          DML_BASE_URL: !Ref DmlBaseUrl
-          DML_SETTINGS_PATH: !Ref DmlSettingsPath
-          DML_INQUIRY_PATH: !Ref DmlInquiryPath
-          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
-          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
+          # DMS_PING_*/DML_IBM_*/V360_PING_*/ASV_*: non più variabili d'ambiente
+          # in chiaro, lette dal secret condiviso SERVICE_URLS_SECRET_ID via
+          # dms/config.js::getConfig() e v360/config.js::getConfig() (in-process).
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
           # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
           # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
@@ -1145,17 +997,6 @@ Resources:
           DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
           DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          V360_PING_URL: !Ref V360PingUrl
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_BASE_URL: !Ref AsvBaseUrl
-          ASV_BASE_PATH: !Ref AsvBasePath
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
 
@@ -1199,6 +1040,7 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1227,17 +1069,10 @@ Resources:
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
           MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
           MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dms (usato dallo stesso flusso, per dms/settings)
-          DMS_PING_CLIENT_ID:       !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET:   !Ref DmsPingClientSecret
-          DMS_PING_URL: !Ref DmsPingUrl
-          DML_IBM_CLIENT_ID:        !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:    !Ref DmlIbmClientSecret
-          DML_BASE_URL: !Ref DmlBaseUrl
-          DML_SETTINGS_PATH: !Ref DmlSettingsPath
-          DML_INQUIRY_PATH: !Ref DmlInquiryPath
-          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
-          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
+          # dms (usato dallo stesso flusso, per dms/settings) — DMS_PING_*/
+          # DML_IBM_*: non più variabili d'ambiente in chiaro, lette dal secret
+          # condiviso via dms/config.js::getConfig() (in-process).
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
           # dmlConfigSync/db.js (in-process, vedi Makefile) — lettura della cache
           # company-types/customer-titles (woc.dml_configurations), popolata dal job
@@ -1351,6 +1186,7 @@ Resources:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1374,17 +1210,9 @@ Resources:
           PKFAVORITE_DB_NAME:      !Ref PkFavoriteDbName
           PKFAVORITE_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML per l'arricchimento
-          # dei preferiti (MessageType LFP), stessi valori usati da PkManagerFunction.
-          DMS_PING_CLIENT_ID:    !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DMS_PING_URL: !Ref DmsPingUrl
-          DML_IBM_CLIENT_ID:     !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET: !Ref DmlIbmClientSecret
-          DML_BASE_URL: !Ref DmlBaseUrl
-          DML_SETTINGS_PATH: !Ref DmlSettingsPath
-          DML_INQUIRY_PATH: !Ref DmlInquiryPath
-          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
-          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
+          # dei preferiti (MessageType LFP). DMS_PING_*/DML_IBM_*: non più
+          # variabili d'ambiente in chiaro, lette dal secret condiviso.
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
           # dbManager/db.js (in-process, vedi Makefile) — richiesto da
           # dms/dmsService.js::buildApplicationArea (bundlato insieme a pkFavorite)
@@ -1413,16 +1241,9 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
           # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields, stessi
-          # valori usati da V360Function.
-          V360_PING_CLIENT_ID:      !Ref V360PingClientId
-          V360_PING_CLIENT_SECRET:  !Ref V360PingClientSecret
-          V360_PING_URL: !Ref V360PingUrl
-          ASV_CLIENT_ID:            !Ref AsvClientId
-          ASV_CLIENT_SECRET:        !Ref AsvClientSecret
-          ASV_BASE_URL: !Ref AsvBaseUrl
-          ASV_BASE_PATH: !Ref AsvBasePath
-          ASV_GETDETAILS_CLIENT_ID: !Ref AsvGetDetailsClientId
+          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
+          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette dal
+          # secret condiviso via v360/config.js::getConfig() (in-process).
           CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
           DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
 
@@ -1517,6 +1338,7 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -1532,17 +1354,9 @@ Resources:
           DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
           # dms/config.js (in-process, vedi Makefile) — gateway DML per company-types/
-          # customer-titles, stessi valori usati da PkManagerFunction/PkFavoriteFunction/SessionFunction.
-          DMS_PING_CLIENT_ID:     !Ref DmsPingClientId
-          DMS_PING_CLIENT_SECRET: !Ref DmsPingClientSecret
-          DMS_PING_URL: !Ref DmsPingUrl
-          DML_IBM_CLIENT_ID:      !Ref DmlIbmClientId
-          DML_IBM_CLIENT_SECRET:  !Ref DmlIbmClientSecret
-          DML_BASE_URL: !Ref DmlBaseUrl
-          DML_SETTINGS_PATH: !Ref DmlSettingsPath
-          DML_INQUIRY_PATH: !Ref DmlInquiryPath
-          DML_COMPANY_TYPES_PATH: !Ref DmlCompanyTypesPath
-          DML_CUSTOMER_TITLES_PATH: !Ref DmlCustomerTitlesPath
+          # customer-titles. DMS_PING_*/DML_IBM_*: non più variabili d'ambiente
+          # in chiaro, lette dal secret condiviso.
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
       Events:
         DailySync:

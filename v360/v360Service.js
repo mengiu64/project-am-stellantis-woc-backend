@@ -4,7 +4,7 @@ const path = require('path');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
-const config = require('./config');
+const { getConfig } = require('./config');
 const { S3ConfigRepository } = require('./s3ConfigRepository');
 const { getCacheItem, setCacheItem } = require('./dynamoCache');
 
@@ -17,12 +17,13 @@ const GETDETAILS_CACHE_TTL_SECONDS = Number(process.env.SESSION_CACHE_TTL_SECOND
 
 /**
  * Builds common HTTPS request options for ASV360 API POST calls.
+ * @param {object} config      - config resolved via getConfig()
  * @param {string} apiPath     - API path (e.g. '/otaCompatibility')
  * @param {string} bearerToken - Bearer token
  * @param {object} body        - JSON body object
  * @returns {{ options: object, bodyStr: string }}
  */
-function buildAsvOptions(apiPath, bearerToken, body) {
+function buildAsvOptions(config, apiPath, bearerToken, body) {
   const base = new URL(config.asv.baseUrl);
   const bodyStr = JSON.stringify(body);
   const options = {
@@ -54,6 +55,7 @@ function buildAsvOptions(apiPath, bearerToken, body) {
  */
 async function otaCompatibility(bearerToken, params = {}) {
   const { vin, includeOtaHistoryData, locale } = params;
+  const config = await getConfig();
   const defaults = config.otaCompatibilityDefaults;
 
   if (!vin) {
@@ -66,7 +68,7 @@ async function otaCompatibility(bearerToken, params = {}) {
     locale: locale || defaults.locale,
   };
 
-  const { options, bodyStr } = buildAsvOptions('/otaCompatibility', bearerToken, body);
+  const { options, bodyStr } = buildAsvOptions(config, '/otaCompatibility', bearerToken, body);
 
   console.log(`[v360] POST https://${options.hostname}${options.path}`);
   console.log(`[v360] Body: ${bodyStr}`);
@@ -156,6 +158,7 @@ async function enrichWithBrandOwnerAndEnergyType(data) {
  */
 async function getDetails(bearerToken, params = {}) {
   const { vin, searchType, countryCode, clientId, offering, languageCode } = params;
+  const config = await getConfig();
   const defaults = config.getDetailsDefaults;
 
   if (!vin) {
@@ -171,7 +174,7 @@ async function getDetails(bearerToken, params = {}) {
     languageCode: languageCode || defaults.languageCode,
   };
 
-  const { options, bodyStr } = buildAsvOptions('/getdetails', bearerToken, body);
+  const { options, bodyStr } = buildAsvOptions(config, '/getdetails', bearerToken, body);
 
   console.log(`[v360] POST https://${options.hostname}${options.path}`);
   console.log(`[v360] Body: ${bodyStr}`);

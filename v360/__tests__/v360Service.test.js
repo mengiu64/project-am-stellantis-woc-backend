@@ -1,29 +1,31 @@
 'use strict';
 
 jest.mock('../config', () => ({
-  auth: {
-    url: 'https://auth.test/as/token.oauth2',
-    grantType: 'client_credentials',
-    scope: 'prd:asv',
-    clientId: 'test-client-id',
-    clientSecret: 'test-client-secret',
-  },
-  asv: {
-    baseUrl: 'https://api.v360.test',
-    basePath: '/ps-prod/extra/asv360/vehicle/v1',
-    clientId: 'asv-client-id',
-    clientSecret: 'asv-client-secret',
-  },
-  getDetailsDefaults: {
-    countryCode: 'FR',
-    languageCode: 'fr',
-    clientId: 'a8bf933a532cc85570a68d9bec7f44c4',
-    offering: 'Vehicle Description, campaign, warranty',
-  },
-  otaCompatibilityDefaults: {
-    includeOtaHistoryData: 'true',
-    locale: 'en_EN',
-  },
+  getConfig: jest.fn().mockResolvedValue({
+    auth: {
+      url: 'https://auth.test/as/token.oauth2',
+      grantType: 'client_credentials',
+      scope: 'prd:asv',
+      clientId: 'test-client-id',
+      clientSecret: 'test-client-secret',
+    },
+    asv: {
+      baseUrl: 'https://api.v360.test',
+      basePath: '/ps-prod/extra/asv360/vehicle/v1',
+      clientId: 'asv-client-id',
+      clientSecret: 'asv-client-secret',
+    },
+    getDetailsDefaults: {
+      countryCode: 'FR',
+      languageCode: 'fr',
+      clientId: 'a8bf933a532cc85570a68d9bec7f44c4',
+      offering: 'Vehicle Description, campaign, warranty',
+    },
+    otaCompatibilityDefaults: {
+      includeOtaHistoryData: 'true',
+      locale: 'en_EN',
+    },
+  }),
 }));
 jest.mock('../httpClient');
 jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
