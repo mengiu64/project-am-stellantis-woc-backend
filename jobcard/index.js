@@ -158,6 +158,15 @@ function toMidnightIso(isoDateTime) {
 }
 
 /**
+ * Converte un ISO 8601 date-time ("2026-09-24T00:00:00.000Z") nel formato
+ * "YYYYMMDD" ("20260924"), richiesto da recepDate/recepDateStr (createnaga).
+ */
+function toYYYYMMDD(isoDateTime) {
+  const datePart = toDateOnly(isoDateTime);
+  return datePart ? datePart.replace(/-/g, '') : null;
+}
+
+/**
  * Estrae l'orario "HHmm" da un ISO 8601 date-time ("2026-09-10T08:15:00.000Z" -> "0815"),
  * richiesto da recepHours/recetHours.
  */
@@ -283,10 +292,12 @@ async function resolveNagaContext(payload, username) {
  * appuntamento NAGA, che verrà poi aggiornato con updatenaga (v.
  * syncAppointmentsToNaga) usando l'appointmentInternalId restituito.
  * I campi sono valorizzati con le stesse fonti dati di buildUpdateNagaPayload
- * (v. resolveNagaContext): startRecep/recepDate/recepHours dalla reception
+ * (v. resolveNagaContext): startRecep/recepHours dalla reception
  * dell'appuntamento (con fallback su payload.appointments[] se assente, v.
- * resolveReceptionDelivery), pdvid/user/locale/brand dalla sessione utente,
- * vehiculeId dal VIN del payload saveJobcard.
+ * resolveReceptionDelivery); recepDate/recepDateStr sono nel formato
+ * "YYYYMMDD" (es. "20260924", v. toYYYYMMDD); user è un valore fisso
+ * ("M0019234"), non derivato dalla sessione; pdvid/locale/brand dalla
+ * sessione utente, vehiculeId dal VIN del payload saveJobcard.
  *
  * @param {object} payload - payload di saveJobcard (jobCardPayload)
  * @param {object} appointment - elemento di payload.appointments[]
@@ -297,11 +308,11 @@ function buildCreateNagaPayload(payload, appointment, { session, vin }) {
 
   return {
     startRecep: reception.receptionServiceAdvisorId ?? null,
-    recepDate: toMidnightIso(reception.receptionDateTime),
-    recepDateStr: toDateOnly(reception.receptionDateTime),
+    recepDate: toYYYYMMDD(reception.receptionDateTime),
+    recepDateStr: toYYYYMMDD(reception.receptionDateTime),
     recepHours: toHoursMinutes(reception.receptionDateTime),
     pdvid: session.pdvId ?? null,
-    user: session.username ?? null,
+    user: 'M0019234',
     locale: session.locale ?? null,
     brand: session.brandvehic_reftech ?? null,
     vehiculeId: vin,
@@ -402,6 +413,10 @@ function extractAppointmentInternalId(lambdaResult) {
  *    warning) per quell'elemento;
  *  - se appointmentInternalId è già valorizzato, si richiama "updatenaga"
  *    direttamente, come in precedenza.
+ * Quando createnaga restituisce un nuovo appointmentInternalId, questo viene
+ * anche scritto (mutazione diretta) sull'elemento di payload.appointments[]
+ * corrispondente, cosi' resta disponibile al chiamante che, dopo questa
+ * funzione, invia lo stesso payload a saveJobCard (v. runSaveJobcard).
  * Best-effort: eventuali errori vengono loggati ma non fanno fallire la
  * risposta di saveJobcard (già persistita con successo sulla DGT).
  *
@@ -432,6 +447,12 @@ async function syncAppointmentsToNaga(payload, username) {
           console.warn('[jobCard] agendaSoaNaga createnaga non ha restituito un appointmentInternalId: updatenaga saltato per questo appuntamento');
           continue;
         }
+
+        // Valorizza appointmentInternalId sull'appuntamento del payload originale
+        // (mutazione diretta, non una copia), cosi' il valore restituito da
+        // createnaga è disponibile anche a chi chiama saveJobCard con questo
+        // stesso payload (v. runSaveJobcard, che invoca prima syncAppointmentsToNaga).
+        appointment.appointmentInternalId = apptId;
       }
 
       const nagaPayload = buildUpdateNagaPayload(payload, { ...appointment, appointmentInternalId: apptId }, context);
@@ -580,8 +601,12 @@ async function runSaveJobcard(payloadJsonFile) {
   console.log('\n=== Save JobCard ===');
   const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
   const token = await getBearerToken();
-  const result = await saveJobCard(token, payload);
+  // syncAppointmentsToNaga viene eseguita prima di saveJobCard: se crea un
+  // nuovo appuntamento NAGA (createnaga), valorizza direttamente
+  // payload.appointments[].appointmentInternalId con l'apptId restituito,
+  // cosi' saveJobCard riceve il payload già aggiornato.
   await syncAppointmentsToNaga(payload);
+  const result = await saveJobCard(token, payload);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
