@@ -26,7 +26,7 @@ jobs:
         working-directory: agendaSoa
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -245,7 +245,7 @@ jobs:
         working-directory: agendaSoaNaga
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -464,7 +464,7 @@ jobs:
         working-directory: dms
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -683,7 +683,7 @@ jobs:
         working-directory: jobcard
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -902,7 +902,7 @@ jobs:
         working-directory: djc
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -1121,7 +1121,7 @@ jobs:
         working-directory: v360
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -1340,7 +1340,7 @@ jobs:
         working-directory: pkEper
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -1559,7 +1559,7 @@ jobs:
         working-directory: pkDocsoa
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -1778,7 +1778,7 @@ jobs:
         working-directory: pkMenupricing
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -1998,7 +1998,7 @@ jobs:
         working-directory: pkManager
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -2217,7 +2217,7 @@ jobs:
         working-directory: translations
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -2437,7 +2437,7 @@ jobs:
         working-directory: session
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -2657,7 +2657,7 @@ jobs:
         working-directory: myPeople
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -2876,7 +2876,7 @@ jobs:
         working-directory: pkFavorite
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -3095,7 +3095,7 @@ jobs:
         working-directory: dbManager
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -3315,7 +3315,7 @@ jobs:
         working-directory: dmlConfigSync
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -3533,7 +3533,7 @@ jobs:
         working-directory: auroraAutoStart
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -3751,7 +3751,7 @@ jobs:
         working-directory: moparDoc
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -3971,7 +3971,7 @@ jobs:
         working-directory: isStellantisBrand
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: "npm"
@@ -4233,7 +4233,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
 
@@ -4354,7 +4354,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
 
@@ -4477,7 +4477,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
 
