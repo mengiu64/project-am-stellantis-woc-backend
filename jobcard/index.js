@@ -385,16 +385,19 @@ function buildUpdateNagaPayload(payload, appointment, { session, vin }) {
  * Estrae l'appointmentInternalId dalla risposta Lambda (già in formato HTTP
  * response, v. agendaSoaNaga/src/handlers/createnaga.js::response) dell'azione
  * "createnaga": il body è una stringa JSON `{ success, data }`, dove `data` è
- * la risposta grezza del servizio NAGA. Cerca il campo sia annidato in `data`
- * sia (fallback) alla radice, per tollerare piccole differenze di forma della
- * risposta upstream. Ritorna null (invece di sollevare un'eccezione) se il
- * body manca/non è parsabile o il campo non è presente — coerente con
- * l'approccio best-effort del resto di questa sincronizzazione.
+ * la risposta grezza del servizio NAGA — es.
+ * `{ isValid, rdvId, smsConsent, panierURL, errorMessage, dossierId, ... }` —
+ * e il campo da usare come appointmentInternalId è `rdvId`. Cerca il campo sia
+ * annidato in `data` sia (fallback) alla radice, per tollerare piccole
+ * differenze di forma della risposta upstream. Ritorna null (invece di
+ * sollevare un'eccezione) se il body manca/non è parsabile o il campo non è
+ * presente — coerente con l'approccio best-effort del resto di questa
+ * sincronizzazione.
  */
 function extractAppointmentInternalId(lambdaResult) {
   try {
     const parsedBody = JSON.parse(lambdaResult?.body ?? '{}');
-    return parsedBody?.data?.appointmentInternalId ?? parsedBody?.appointmentInternalId ?? null;
+    return parsedBody?.data?.rdvId ?? parsedBody?.rdvId ?? null;
   } catch (_) {
     return null;
   }
