@@ -231,7 +231,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-agendaSoa
           path: agendaSoa/coverage/
@@ -450,7 +450,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-agendaSoaNaga
           path: agendaSoaNaga/coverage/
@@ -669,7 +669,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-dms
           path: dms/coverage/
@@ -888,7 +888,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-jobcard
           path: jobcard/coverage/
@@ -1107,7 +1107,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-djc
           path: djc/coverage/
@@ -1326,7 +1326,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-v360
           path: v360/coverage/
@@ -1545,7 +1545,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-pkEper
           path: pkEper/coverage/
@@ -1764,7 +1764,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-pkDocsoa
           path: pkDocsoa/coverage/
@@ -1983,7 +1983,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-pkMenupricing
           path: pkMenupricing/coverage/
@@ -2203,7 +2203,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-pkManager
           path: pkManager/coverage/
@@ -2422,7 +2422,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-translations
           path: translations/coverage/
@@ -2642,7 +2642,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-session
           path: session/coverage/
@@ -2862,7 +2862,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-myPeople
           path: myPeople/coverage/
@@ -3081,7 +3081,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-pkFavorite
           path: pkFavorite/coverage/
@@ -3300,7 +3300,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-dbManager
           path: dbManager/coverage/
@@ -3520,7 +3520,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-dmlConfigSync
           path: dmlConfigSync/coverage/
@@ -3738,7 +3738,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-auroraAutoStart
           path: auroraAutoStart/coverage/
@@ -3956,7 +3956,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-moparDoc
           path: moparDoc/coverage/
@@ -4176,7 +4176,7 @@ jobs:
       - name: Upload coverage report
         if: always()
         continue-on-error: true # non deve mai bloccare i job di deploy a valle (es. quota storage esaurita)
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-isStellantisBrand
           path: isStellantisBrand/coverage/
