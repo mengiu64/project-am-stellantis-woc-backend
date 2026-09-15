@@ -61,14 +61,14 @@ describe('AnagSnowflakesRepository', () => {
 
     it('uses cd_contract_brand_arcad_code directly (uppercased) when brand is already a 2-letter code, with OR on mainSincom/gn_legal_entity', async () => {
       const pool = makePool(async () => ({
-        rows: [{ gn_physical_site_arcad: 'SITE001', cd_sincom_code: '0062230' }],
+        rows: [{ gn_physical_site_arcad: 'SITE001', cd_sincom_code: '0062230', cd_dealer_arcad_code: 'ARC001' }],
       }));
 
       const result = await getPhysicalSiteAndSincom(pool, {
         mainSincom: '0073741', market: '1000', brand: 'ft',
       });
 
-      expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230' });
+      expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230', dealerArcadCode: 'ARC001' });
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('(s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)'),
@@ -84,14 +84,14 @@ describe('AnagSnowflakesRepository', () => {
       const pool = {
         query: jest.fn()
           .mockResolvedValueOnce({ rows: [{ cd_contract_brand_arcad_code: 'FT' }] })
-          .mockResolvedValueOnce({ rows: [{ gn_physical_site_arcad: 'SITE002', cd_sincom_code: '0062231' }] }),
+          .mockResolvedValueOnce({ rows: [{ gn_physical_site_arcad: 'SITE002', cd_sincom_code: '0062231', cd_dealer_arcad_code: 'ARC002' }] }),
       };
 
       const result = await getPhysicalSiteAndSincom(pool, {
         mainSincom: '0073741', market: '1000', brand: '55',
       });
 
-      expect(result).toEqual({ physicalSiteId: 'SITE002', dealerNumberIdSource: '0062231' });
+      expect(result).toEqual({ physicalSiteId: 'SITE002', dealerNumberIdSource: '0062231', dealerArcadCode: 'ARC002' });
       expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenNthCalledWith(
         1,
@@ -112,7 +112,7 @@ describe('AnagSnowflakesRepository', () => {
         mainSincom: '0073741', market: '1000', brand: '999',
       });
 
-      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null });
+      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null });
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('s.cd_contract_brand_webdac_code = $1'),
@@ -127,7 +127,7 @@ describe('AnagSnowflakesRepository', () => {
         mainSincom: '0073741', market: '1000', brand: 'FT',
       });
 
-      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null });
+      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null });
     });
   });
 });

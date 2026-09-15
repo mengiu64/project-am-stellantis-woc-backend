@@ -26,6 +26,7 @@ let _registerDmsSettingsDealer;
 let _getDmlConfiguration;
 let _getBrandLogos;
 let _getCountryIsoCode;
+let _getPhysicalSiteAndSincom;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -136,6 +137,27 @@ function loadGetCountryIsoCode() {
   return _getCountryIsoCode;
 }
 
+// Sito fisico ARCAD (physicalsite <- gn_physical_site_arcad) e codice dealer
+// ARCAD (pdvId <- cd_dealer_arcad_code), letti dalla tabella woc.ang_snowflakes
+// a partire da mainSincom (Attributes.MAINSINCOM)/market (Attributes.MARKETCODE)/
+// brand (il brandReftech gia' risolto sopra) — stessi criteri di
+// dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndSincom, gia' usato
+// da dms/dmsService.js per il Sender dinamico dell'inquiry DMS. Stesso cluster
+// Aurora "wiadvisor", stesso pool/utente applicativo least-privilege di
+// dbManager (gia' impacchettato come cartella sorella di session/, vedi
+// Makefile): nessuna nuova variabile d'ambiente/permesso necessario.
+function loadGetPhysicalSiteAndSincom() {
+  if (!_getPhysicalSiteAndSincom) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
+    const { getPhysicalSiteAndSincom } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
+    _getPhysicalSiteAndSincom = async ({ mainSincom, market, brand }) => {
+      const pool = await getPool();
+      return getPhysicalSiteAndSincom(pool, { mainSincom, market, brand });
+    };
+  }
+  return _getPhysicalSiteAndSincom;
+}
+
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
 // es. "00") verso il codice brand "RefTech" atteso da dms/settings (es. "FT").
 // Tabella fornita dal business (fonte: myPeople -> dms brand mapping).
@@ -216,6 +238,15 @@ const BRAND_CODE_TO_REFTECH = {
  *      il prossimo giro schedulato di dmlConfigSync la sincronizzi (i dati
  *      diventano quindi disponibili al più tardi il giorno successivo per un
  *      dealer mai visto prima).
+ *
+ *      Espone infine `physicalsite` (gn_physical_site_arcad) e `pdvId`
+ *      (cd_dealer_arcad_code), risolti dalla tabella woc.ang_snowflakes a
+ *      partire da mainSincom/market/brand (v. loadGetPhysicalSiteAndSincom,
+ *      stessi criteri di dbManager/AnagSnowflakesRepository.js
+ *      ::getPhysicalSiteAndSincom). Stesso principio fault-tolerant delle
+ *      altre letture DB di questa classe: entrambi `null` se manca
+ *      mainSincom/market/brand, se non esiste una riga corrispondente, o se
+ *      la query fallisce per qualunque motivo.
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({
@@ -225,6 +256,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     getDmlConfigurationFn,
     getBrandLogosFn,
     getCountryIsoCodeFn,
+    getPhysicalSiteAndSincomFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
@@ -233,6 +265,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     this._getDmlConfigurationFn = getDmlConfigurationFn;
     this._getBrandLogosFn = getBrandLogosFn;
     this._getCountryIsoCodeFn = getCountryIsoCodeFn;
+    this._getPhysicalSiteAndSincomFn = getPhysicalSiteAndSincomFn;
   }
 
   /**
@@ -282,6 +315,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const getDmlConfiguration = this._getDmlConfigurationFn || loadGetDmlConfiguration();
     const getBrandLogos = this._getBrandLogosFn || loadGetBrandLogos();
     const getCountryIsoCode = this._getCountryIsoCodeFn || loadGetCountryIsoCode();
+    const getPhysicalSiteAndSincom = this._getPhysicalSiteAndSincomFn || loadGetPhysicalSiteAndSincom();
     const market = attributes.MARKETCODE || null;
 
     // Tutti i codici brand (CSV) usati nell'array oics, deduplicati, per un'unica
@@ -298,7 +332,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // un errore di lettura non deve mai far fallire la sessione: si ritornano i
     // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
     // registra (best-effort) la combinazione per la prossima sync schedulata.
-    const [dmsSettings, dmlConfiguration, brandLogosByCode, marketIso] = await Promise.all([
+    const [dmsSettings, dmlConfiguration, brandLogosByCode, marketIso, physicalSiteAndSincom] = await Promise.all([
       (countryDms && brandReftech && dealer)
         ? getDmsSettingsCache({ country: countryDms, brand: brandReftech, dealer })
           .then(async (cached) => {
@@ -337,6 +371,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return null;
         })
         : Promise.resolve(null),
+      (dealer && market && brandReftech)
+        ? getPhysicalSiteAndSincom({ mainSincom: dealer, market, brand: brandReftech }).catch((err) => {
+          console.error(`[session] lettura physicalSite/pdvId (woc.ang_snowflakes) fallita per mainSincom="${dealer}" market="${market}" brand="${brandReftech}": ${err.message}`);
+          return { physicalSiteId: null, dealerArcadCode: null };
+        })
+        : Promise.resolve({ physicalSiteId: null, dealerArcadCode: null }),
     ]);
 
     const dmsMap = buildDmsSettingsMap(dmsSettings);
@@ -350,8 +390,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       firstname: attributes.FIRSTNAME || null,
       lastname: attributes.LASTNAME || null,
       profile: (wiAdvDlApp && wiAdvDlApp.PROFILE) || null,
-      physicalsite: null,
-      pdvId: null,
+      physicalsite: physicalSiteAndSincom.physicalSiteId ?? null,
+      pdvId: physicalSiteAndSincom.dealerArcadCode ?? null,
       sessionbrand: rawBrandCode,
       inmandate: null,
       language: iso2 ? iso2.toLowerCase() : null,

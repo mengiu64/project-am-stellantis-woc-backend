@@ -10,10 +10,11 @@
  *
  * getPhysicalSiteAndSincom risolve, a partire da mainSincom/market/brand (dati
  * già disponibili da session/jobCardDetails), il sito fisico ARCAD
- * (gn_physical_site_arcad) e il sincom di brand (cd_sincom_code) — usati per
- * completare in modo dinamico il Sender dell'inquiry DMS
- * (physicalSiteId/dealerNumberIdSource), invece dei valori statici configurati
- * via env in dms/config.js.
+ * (gn_physical_site_arcad), il sincom di brand (cd_sincom_code) e il codice
+ * dealer ARCAD (cd_dealer_arcad_code) — usati per completare in modo dinamico
+ * il Sender dell'inquiry DMS (physicalSiteId/dealerNumberIdSource) e i dati
+ * di sessione (physicalsite/pdvId, v. MyPeopleDmsSessionRepository), invece
+ * dei valori statici configurati via env in dms/config.js.
  *
  * Il match su mainSincom e' fatto in OR tra cd_main_sincom_code e
  * gn_legal_entity (stesso dato logico, colonne diverse a seconda della
@@ -78,11 +79,13 @@ async function getCountryIsoCode(pool, { market }) {
 }
 
 /**
- * Risolve physicalSiteId (gn_physical_site_arcad) e dealerNumberIdSource
- * (cd_sincom_code) per il Sender dinamico dell'inquiry DMS, a partire da
- * mainSincom (cd_main_sincom_code/gn_legal_entity, es. session.sincom/
- * MAINSINCOM), market (cd_market_code, es. session.codmarket) e brand
- * (jobCardDetail.roInfo, es. stellantisBrand "FT" o brand "55").
+ * Risolve physicalSiteId (gn_physical_site_arcad), dealerNumberIdSource
+ * (cd_sincom_code) e dealerArcadCode (cd_dealer_arcad_code) per il Sender
+ * dinamico dell'inquiry DMS e per i dati di sessione (physicalsite/pdvId, v.
+ * MyPeopleDmsSessionRepository::getSessionData), a partire da mainSincom
+ * (cd_main_sincom_code/gn_legal_entity, es. session.sincom/MAINSINCOM),
+ * market (cd_market_code, es. session.codmarket) e brand (jobCardDetail.roInfo,
+ * es. stellantisBrand "FT" o brand "55").
  *
  * mainSincom viene cercato in OR tra le colonne cd_main_sincom_code e
  * gn_legal_entity (stesso dato logico, valorizzato in colonne diverse a
@@ -96,8 +99,8 @@ async function getCountryIsoCode(pool, { market }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ mainSincom: string, market: string, brand: string }} params
- * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null }>}
- *          entrambi null se non e' stata trovata alcuna riga corrispondente
+ * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null, dealerArcadCode: string|null }>}
+ *          tutti null se non e' stata trovata alcuna riga corrispondente
  *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD)
  */
 async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}) {
@@ -107,11 +110,11 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
 
   const arcadBrand = await resolveArcadBrandCode(pool, brand);
   if (!arcadBrand) {
-    return { physicalSiteId: null, dealerNumberIdSource: null };
+    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null };
   }
 
   const { rows } = await pool.query(
-    `SELECT s.gn_physical_site_arcad, s.cd_sincom_code
+    `SELECT s.gn_physical_site_arcad, s.cd_sincom_code, s.cd_dealer_arcad_code
        FROM woc.ang_snowflakes s
       WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
@@ -121,12 +124,13 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
   );
 
   if (rows.length === 0) {
-    return { physicalSiteId: null, dealerNumberIdSource: null };
+    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null };
   }
 
   return {
     physicalSiteId: rows[0].gn_physical_site_arcad,
     dealerNumberIdSource: rows[0].cd_sincom_code,
+    dealerArcadCode: rows[0].cd_dealer_arcad_code,
   };
 }
 
