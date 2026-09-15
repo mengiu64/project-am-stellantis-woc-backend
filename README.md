@@ -4,8 +4,6 @@
 
 Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, moparDoc, isStellantisBrand, dmlConfigSync).
 
-![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
-
 ---
 
 ## Indice
