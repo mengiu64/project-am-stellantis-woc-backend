@@ -17,9 +17,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.1083.0",
-    "@aws-sdk/client-secrets-manager": "^3.800.0",
-    "@aws-sdk/lib-dynamodb": "^3.1083.0"
+    "@aws-sdk/client-dynamodb": "^3.1131.0",
+    "@aws-sdk/client-secrets-manager": "^3.1131.0",
+    "@aws-sdk/lib-dynamodb": "^3.1131.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
