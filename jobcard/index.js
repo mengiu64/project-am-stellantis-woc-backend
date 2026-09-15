@@ -140,13 +140,21 @@ function readTmpJsonSafe(fileName) {
 }
 
 /**
+ * Converte un ISO 8601 date-time ("2026-09-10T08:15:00.000Z") nella sola parte
+ * data "YYYY-MM-DD" ("2026-09-10"), richiesta da recepDateStr (createnaga).
+ */
+function toDateOnly(isoDateTime) {
+  if (!isoDateTime) return null;
+  return String(isoDateTime).slice(0, 10);
+}
+
+/**
  * Converte un ISO 8601 date-time ("2026-09-10T08:15:00.000Z") nella data
  * "a mezzanotte" richiesta da recepDate/recetDate ("2026-09-10T00:00:00.000Z").
  */
 function toMidnightIso(isoDateTime) {
-  if (!isoDateTime) return null;
-  const datePart = String(isoDateTime).slice(0, 10);
-  return `${datePart}T00:00:00.000Z`;
+  const datePart = toDateOnly(isoDateTime);
+  return datePart ? `${datePart}T00:00:00.000Z` : null;
 }
 
 /**
@@ -185,42 +193,142 @@ function collectJobDescriptions(payload) {
 }
 
 /**
+ * Cerca il primo valore non-null di `appointments[].<section>.<field>`
+ * (es. section="reception", field="receptionDateTime") scorrendo l'intero
+ * array payload.appointments[], usato come fallback quando lo stesso campo è
+ * assente sull'appuntamento corrente (v. resolveReceptionDelivery).
+ */
+function firstNonNullAppointmentField(appointments, section, field) {
+  for (const item of appointments) {
+    const value = item?.[section]?.[field];
+    if (value != null) return value;
+  }
+  return null;
+}
+
+/**
+ * Risolve reception/delivery da usare per un appuntamento: i singoli campi
+ * (receptionServiceAdvisorId/receptionDateTime, deliveryServiceAdvisorId/
+ * deliveryDateTime) sono presi prioritariamente da appointment.reception/
+ * appointment.delivery; se un campo è assente/null su quell'appuntamento, si
+ * ripiega sul primo valore non-null trovato in payload.appointments[]
+ * (l'intero array del payload saveJobcard, non solo l'appuntamento corrente)
+ * per lo stesso campo — utile quando l'appuntamento in lavorazione (es. un
+ * nuovo appuntamento senza appointmentInternalId, da creare con createnaga)
+ * non porta di per sé i dati di reception/delivery, già presenti altrove nel
+ * payload.
+ *
+ * @param {object} payload - payload di saveJobcard (jobCardPayload)
+ * @param {object} appointment - elemento di payload.appointments[] in lavorazione
+ * @returns {{ reception: object, delivery: object }}
+ */
+function resolveReceptionDelivery(payload, appointment) {
+  const appointments = Array.isArray(payload?.appointments) ? payload.appointments : [];
+
+  const reception = {
+    receptionServiceAdvisorId:
+      appointment?.reception?.receptionServiceAdvisorId
+      ?? firstNonNullAppointmentField(appointments, 'reception', 'receptionServiceAdvisorId'),
+    receptionDateTime:
+      appointment?.reception?.receptionDateTime
+      ?? firstNonNullAppointmentField(appointments, 'reception', 'receptionDateTime'),
+  };
+  const delivery = {
+    deliveryServiceAdvisorId:
+      appointment?.delivery?.deliveryServiceAdvisorId
+      ?? firstNonNullAppointmentField(appointments, 'delivery', 'deliveryServiceAdvisorId'),
+    deliveryDateTime:
+      appointment?.delivery?.deliveryDateTime
+      ?? firstNonNullAppointmentField(appointments, 'delivery', 'deliveryDateTime'),
+  };
+
+  return { reception, delivery };
+}
+
+/**
+ * Risolve in un'unica chiamata i dati usati sia da buildCreateNagaPayload sia
+ * da buildUpdateNagaPayload: i dati di sessione (myPeople, via
+ * session/src/sessionContextCache.js::getCachedSessionData, cache condivisa
+ * DynamoDB TmpCacheTable, chiave `session:context:<username>` — STESSO
+ * meccanismo già usato da jobCardService.js::buildDmsSender per il Sender
+ * dinamico dell'inquiry DMS) e il VIN (da
+ * payload.vehicleInfo.identification.vin, stesso payload di saveJobcard).
+ * Calcolato una sola volta per saveJobcard (non per singolo appuntamento),
+ * cosi' una eventuale sequenza createnaga+updatenaga sullo stesso
+ * appuntamento non richiama due volte myPeople.
+ *
+ * NON viene più letto un file /tmp/session.json o /tmp/VIN.json: quei file
+ * non sono mai stati scritti da nessun modulo del progetto e, anche se lo
+ * fossero stati, /tmp è locale all'istanza del singolo container Lambda e
+ * non è mai condiviso tra funzioni diverse (v. commento in
+ * session/src/dynamoCache.js).
+ *
+ * Interamente best-effort: se `username` è assente o myPeople non è
+ * raggiungibile, getCachedSessionData ritorna null e session vale {} — i soli
+ * campi da essa derivati restano null nei payload create/updatenaga.
+ *
+ * @param {object} payload - payload di saveJobcard (jobCardPayload)
+ * @param {string|null} [username] - username autenticato (authorizer.sub)
+ * @returns {Promise<{ session: object, vin: string|null }>}
+ */
+async function resolveNagaContext(payload, username) {
+  const session = (await getCachedSessionData(username)) ?? {};
+  const vin = payload?.vehicleInfo?.identification?.vin ?? null;
+  return { session, vin };
+}
+
+/**
+ * Costruisce il payload createnaga (azione agendaSoaNaga) per un elemento di
+ * payload.appointments[] privo di appointmentInternalId: crea un nuovo
+ * appuntamento NAGA, che verrà poi aggiornato con updatenaga (v.
+ * syncAppointmentsToNaga) usando l'appointmentInternalId restituito.
+ * I campi sono valorizzati con le stesse fonti dati di buildUpdateNagaPayload
+ * (v. resolveNagaContext): startRecep/recepDate/recepHours dalla reception
+ * dell'appuntamento (con fallback su payload.appointments[] se assente, v.
+ * resolveReceptionDelivery), pdvid/user/locale/brand dalla sessione utente,
+ * vehiculeId dal VIN del payload saveJobcard.
+ *
+ * @param {object} payload - payload di saveJobcard (jobCardPayload)
+ * @param {object} appointment - elemento di payload.appointments[]
+ * @param {{ session: object, vin: string|null }} context - v. resolveNagaContext
+ */
+function buildCreateNagaPayload(payload, appointment, { session, vin }) {
+  const { reception } = resolveReceptionDelivery(payload, appointment);
+
+  return {
+    startRecep: reception.receptionServiceAdvisorId ?? null,
+    recepDate: toMidnightIso(reception.receptionDateTime),
+    recepDateStr: toDateOnly(reception.receptionDateTime),
+    recepHours: toHoursMinutes(reception.receptionDateTime),
+    pdvid: session.pdvId ?? null,
+    user: session.username ?? null,
+    locale: session.locale ?? null,
+    brand: session.brandvehic_reftech ?? null,
+    vehiculeId: vin,
+    source: 'WiAdvisor',
+  };
+}
+
+/**
  * Costruisce il payload updatenaga (azione agendaSoaNaga) a partire da un
  * elemento di payload.appointments[] e dal payload saveJobcard stesso.
- *
- * rdvBrand/pdvid/locale/sfPdvBrand/user/clientLanguage sono risolti da
- * session/src/sessionContextCache.js::getCachedSessionData(username) —
- * STESSO meccanismo (myPeople + cache condivisa DynamoDB TmpCacheTable,
- * chiave `session:context:<username>`) già usato da
- * jobCardService.js::buildDmsSender per il Sender dinamico dell'inquiry DMS.
- * NON viene più letto un file /tmp/session.json: quel file non è mai stato
- * scritto da nessun modulo del progetto e, anche se lo fosse stato, /tmp è
- * locale all'istanza del singolo container Lambda e non è mai condiviso tra
- * funzioni diverse (v. commento in session/src/dynamoCache.js).
- *
- * idVINSF è risolto direttamente da payload.vehicleInfo.identification.vin
- * (stesso payload di saveJobcard, stesso path già usato da
- * jobCardService.js per il VIN del jobCardDetail) invece che da un
- * inesistente /tmp/VIN.json.
  *
  * `username` è SEMPRE quello autenticato (event.requestContext.authorizer.sub,
  * risolto dal chiamante via resolveUsername — mai un valore fornito dal
  * body/payload, stessa convenzione di session/pkFavorite).
  *
- * Interamente best-effort: se `username` è assente o myPeople non è
- * raggiungibile, getCachedSessionData ritorna null e i soli campi da essa
- * derivati restano null nel payload updatenaga.
+ * reception/delivery sono risolti con fallback su payload.appointments[] se
+ * assenti sul singolo appuntamento (v. resolveReceptionDelivery).
  *
  * @param {object} payload - payload di saveJobcard (jobCardPayload)
- * @param {object} appointment - elemento di payload.appointments[]
- * @param {string|null} [username] - username autenticato (authorizer.sub)
+ * @param {object} appointment - elemento di payload.appointments[] (con
+ *                                appointmentInternalId valorizzato: quello
+ *                                originale, o quello appena restituito da
+ *                                createnaga — v. syncAppointmentsToNaga)
+ * @param {{ session: object, vin: string|null }} context - v. resolveNagaContext
  */
-async function buildUpdateNagaPayload(payload, appointment, username) {
-  const session = (await getCachedSessionData(username)) ?? {};
-  const vin = payload?.vehicleInfo?.identification?.vin ?? null;
-
-  const reception = appointment?.reception ?? {};
-  const delivery = appointment?.delivery ?? {};
+function buildUpdateNagaPayload(payload, appointment, { session, vin }) {
+  const { reception, delivery } = resolveReceptionDelivery(payload, appointment);
 
   return {
     rdvBrand: session.brandvehic_reftech ?? null,
@@ -263,33 +371,78 @@ async function buildUpdateNagaPayload(payload, appointment, username) {
 }
 
 /**
- * Se payload.appointments[] contiene un elemento con appointmentInternalId
- * valorizzato, richiama in-process l'azione "updatenaga" della lambda
- * agendaSoaNaga (stesso pattern di require cross-cartella già usato da
- * pkManager/PkManager.js) per sincronizzare l'appuntamento NAGA dopo un
- * saveJobcard riuscito. Best-effort: eventuali errori vengono loggati ma non
- * fanno fallire la risposta di saveJobcard (già persistita con successo sulla DGT).
+ * Estrae l'appointmentInternalId dalla risposta Lambda (già in formato HTTP
+ * response, v. agendaSoaNaga/src/handlers/createnaga.js::response) dell'azione
+ * "createnaga": il body è una stringa JSON `{ success, data }`, dove `data` è
+ * la risposta grezza del servizio NAGA. Cerca il campo sia annidato in `data`
+ * sia (fallback) alla radice, per tollerare piccole differenze di forma della
+ * risposta upstream. Ritorna null (invece di sollevare un'eccezione) se il
+ * body manca/non è parsabile o il campo non è presente — coerente con
+ * l'approccio best-effort del resto di questa sincronizzazione.
+ */
+function extractAppointmentInternalId(lambdaResult) {
+  try {
+    const parsedBody = JSON.parse(lambdaResult?.body ?? '{}');
+    return parsedBody?.data?.appointmentInternalId ?? parsedBody?.appointmentInternalId ?? null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Per ciascun elemento di payload.appointments[], richiama in-process le
+ * azioni "createnaga"/"updatenaga" della lambda agendaSoaNaga (stesso pattern
+ * di require cross-cartella già usato da pkManager/PkManager.js) per
+ * sincronizzare l'appuntamento NAGA dopo un saveJobcard riuscito:
+ *  - se appointmentInternalId è assente/vuoto (null o ""), crea prima un nuovo
+ *    appuntamento NAGA (azione "createnaga", v. buildCreateNagaPayload): solo
+ *    se la risposta contiene un appointmentInternalId (v.
+ *    extractAppointmentInternalId) si procede con "updatenaga" per quello
+ *    stesso appuntamento; altrimenti "updatenaga" viene saltato (loggando un
+ *    warning) per quell'elemento;
+ *  - se appointmentInternalId è già valorizzato, si richiama "updatenaga"
+ *    direttamente, come in precedenza.
+ * Best-effort: eventuali errori vengono loggati ma non fanno fallire la
+ * risposta di saveJobcard (già persistita con successo sulla DGT).
  *
  * @param {object} payload - payload di saveJobcard (jobCardPayload)
- * @param {string|null} [username] - username autenticato (authorizer.sub), v. buildUpdateNagaPayload
+ * @param {string|null} [username] - username autenticato (authorizer.sub), v. resolveNagaContext
  */
 async function syncAppointmentsToNaga(payload, username) {
   const appointments = Array.isArray(payload?.appointments) ? payload.appointments : [];
+  if (!appointments.length) return;
+
+  const context = await resolveNagaContext(payload, username);
 
   for (const appointment of appointments) {
-    if (!appointment?.appointmentInternalId) continue;
-
     try {
       const agendaSoaNaga = require('../agendaSoaNaga/index');
-      const nagaPayload = await buildUpdateNagaPayload(payload, appointment, username);
+      let apptId = appointment?.appointmentInternalId || null;
+
+      if (!apptId) {
+        const createPayload = buildCreateNagaPayload(payload, appointment, context);
+        const createResult = await agendaSoaNaga.handler({
+          action: 'createnaga',
+          body: JSON.stringify(createPayload),
+        });
+        console.log('[jobCard] agendaSoaNaga createnaga result:', createResult?.statusCode);
+
+        apptId = extractAppointmentInternalId(createResult);
+        if (!apptId) {
+          console.warn('[jobCard] agendaSoaNaga createnaga non ha restituito un appointmentInternalId: updatenaga saltato per questo appuntamento');
+          continue;
+        }
+      }
+
+      const nagaPayload = buildUpdateNagaPayload(payload, { ...appointment, appointmentInternalId: apptId }, context);
       const result = await agendaSoaNaga.handler({
         action: 'updatenaga',
-        pathParameters: { apptId: String(appointment.appointmentInternalId) },
+        pathParameters: { apptId: String(apptId) },
         body: JSON.stringify(nagaPayload),
       });
       console.log('[jobCard] agendaSoaNaga updatenaga result:', result?.statusCode);
     } catch (err) {
-      console.error('[jobCard] agendaSoaNaga updatenaga error:', err.message ?? err);
+      console.error('[jobCard] agendaSoaNaga sync error:', err.message ?? err);
     }
   }
 }
