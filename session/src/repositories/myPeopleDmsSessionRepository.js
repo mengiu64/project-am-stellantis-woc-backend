@@ -26,7 +26,7 @@ let _registerDmsSettingsDealer;
 let _getDmlConfiguration;
 let _getBrandLogos;
 let _getCountryIsoCode;
-let _getPhysicalSiteAndSincom;
+let _getPhysicalSiteAndPdvId;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -140,22 +140,21 @@ function loadGetCountryIsoCode() {
 // Sito fisico ARCAD (physicalsite <- gn_physical_site_arcad) e codice dealer
 // ARCAD (pdvId <- cd_dealer_arcad_code), letti dalla tabella woc.ang_snowflakes
 // a partire da mainSincom (Attributes.MAINSINCOM)/market (Attributes.MARKETCODE)/
-// brand (il brandReftech gia' risolto sopra) — stessi criteri di
-// dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndSincom, gia' usato
-// da dms/dmsService.js per il Sender dinamico dell'inquiry DMS. Stesso cluster
-// Aurora "wiadvisor", stesso pool/utente applicativo least-privilege di
+// brand (il brandReftech gia' risolto sopra)/oic (mainOic.CODE) — stessi criteri
+// di dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndPdvId. Stesso
+// cluster Aurora "wiadvisor", stesso pool/utente applicativo least-privilege di
 // dbManager (gia' impacchettato come cartella sorella di session/, vedi
 // Makefile): nessuna nuova variabile d'ambiente/permesso necessario.
-function loadGetPhysicalSiteAndSincom() {
-  if (!_getPhysicalSiteAndSincom) {
+function loadGetPhysicalSiteAndPdvId() {
+  if (!_getPhysicalSiteAndPdvId) {
     const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getPhysicalSiteAndSincom } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
-    _getPhysicalSiteAndSincom = async ({ mainSincom, market, brand }) => {
+    const { getPhysicalSiteAndPdvId } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
+    _getPhysicalSiteAndPdvId = async ({ mainSincom, market, brand, oic }) => {
       const pool = await getPool();
-      return getPhysicalSiteAndSincom(pool, { mainSincom, market, brand });
+      return getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic });
     };
   }
-  return _getPhysicalSiteAndSincom;
+  return _getPhysicalSiteAndPdvId;
 }
 
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
@@ -241,11 +240,11 @@ const BRAND_CODE_TO_REFTECH = {
  *
  *      Espone infine `physicalsite` (gn_physical_site_arcad) e `pdvId`
  *      (cd_dealer_arcad_code), risolti dalla tabella woc.ang_snowflakes a
- *      partire da mainSincom/market/brand (v. loadGetPhysicalSiteAndSincom,
+ *      partire da mainSincom/market/brand/oic (v. loadGetPhysicalSiteAndPdvId,
  *      stessi criteri di dbManager/AnagSnowflakesRepository.js
- *      ::getPhysicalSiteAndSincom). Stesso principio fault-tolerant delle
+ *      ::getPhysicalSiteAndPdvId). Stesso principio fault-tolerant delle
  *      altre letture DB di questa classe: entrambi `null` se manca
- *      mainSincom/market/brand, se non esiste una riga corrispondente, o se
+ *      mainSincom/market/brand/oic, se non esiste una riga corrispondente, o se
  *      la query fallisce per qualunque motivo.
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
@@ -256,7 +255,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     getDmlConfigurationFn,
     getBrandLogosFn,
     getCountryIsoCodeFn,
-    getPhysicalSiteAndSincomFn,
+    getPhysicalSiteAndPdvIdFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
@@ -265,7 +264,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     this._getDmlConfigurationFn = getDmlConfigurationFn;
     this._getBrandLogosFn = getBrandLogosFn;
     this._getCountryIsoCodeFn = getCountryIsoCodeFn;
-    this._getPhysicalSiteAndSincomFn = getPhysicalSiteAndSincomFn;
+    this._getPhysicalSiteAndPdvIdFn = getPhysicalSiteAndPdvIdFn;
   }
 
   /**
@@ -315,8 +314,9 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const getDmlConfiguration = this._getDmlConfigurationFn || loadGetDmlConfiguration();
     const getBrandLogos = this._getBrandLogosFn || loadGetBrandLogos();
     const getCountryIsoCode = this._getCountryIsoCodeFn || loadGetCountryIsoCode();
-    const getPhysicalSiteAndSincom = this._getPhysicalSiteAndSincomFn || loadGetPhysicalSiteAndSincom();
+    const getPhysicalSiteAndPdvId = this._getPhysicalSiteAndPdvIdFn || loadGetPhysicalSiteAndPdvId();
     const market = attributes.MARKETCODE || null;
+    const oic = mainOic.CODE || null;
 
     // Tutti i codici brand (CSV) usati nell'array oics, deduplicati, per un'unica
     // query batch invece di una query per ogni oic.
@@ -371,9 +371,9 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return null;
         })
         : Promise.resolve(null),
-      (dealer && market && brandReftech)
-        ? getPhysicalSiteAndSincom({ mainSincom: dealer, market, brand: brandReftech }).catch((err) => {
-          console.error(`[session] lettura physicalSite/pdvId (woc.ang_snowflakes) fallita per mainSincom="${dealer}" market="${market}" brand="${brandReftech}": ${err.message}`);
+      (dealer && market && brandReftech && oic)
+        ? getPhysicalSiteAndPdvId({ mainSincom: dealer, market, brand: brandReftech, oic }).catch((err) => {
+          console.error(`[session] lettura physicalSite/pdvId (woc.ang_snowflakes) fallita per mainSincom="${dealer}" market="${market}" brand="${brandReftech}" oic="${oic}": ${err.message}`);
           return { physicalSiteId: null, dealerArcadCode: null };
         })
         : Promise.resolve({ physicalSiteId: null, dealerArcadCode: null }),
@@ -385,7 +385,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       username,
       codmarket: attributes.MARKETCODE || null,
       marketIso,
-      oic: mainOic.CODE || null,
+      oic,
       sincom: dealer,
       firstname: attributes.FIRSTNAME || null,
       lastname: attributes.LASTNAME || null,

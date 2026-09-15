@@ -1,6 +1,6 @@
 'use strict';
 
-const { getCountryIsoCode, getPhysicalSiteAndSincom } = require('../AnagSnowflakesRepository');
+const { getCountryIsoCode, getPhysicalSiteAndSincom, getPhysicalSiteAndPdvId } = require('../AnagSnowflakesRepository');
 
 function makePool(queryImpl) {
   return { query: jest.fn(queryImpl) };
@@ -128,6 +128,74 @@ describe('AnagSnowflakesRepository', () => {
       });
 
       expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null });
+    });
+  });
+
+  describe('getPhysicalSiteAndPdvId', () => {
+    it('throws when mainSincom is missing', async () => {
+      const pool = makePool();
+      await expect(getPhysicalSiteAndPdvId(pool, { market: '1000', brand: 'FT', oic: '00007584' }))
+        .rejects.toThrow('"mainSincom" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(getPhysicalSiteAndPdvId(pool, { mainSincom: '0073741', brand: 'FT', oic: '00007584' }))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when brand is missing', async () => {
+      const pool = makePool();
+      await expect(getPhysicalSiteAndPdvId(pool, { mainSincom: '0073741', market: '1000', oic: '00007584' }))
+        .rejects.toThrow('"brand" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when oic is missing', async () => {
+      const pool = makePool();
+      await expect(getPhysicalSiteAndPdvId(pool, { mainSincom: '0073741', market: '1000', brand: 'FT' }))
+        .rejects.toThrow('"oic" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('resolves physicalSiteId/dealerArcadCode filtering also on cd_paired_oic_code', async () => {
+      const pool = makePool(async () => ({
+        rows: [{ physicalsite: 'SITE001', podvinfo: 'ARC001' }],
+      }));
+
+      const result = await getPhysicalSiteAndPdvId(pool, {
+        mainSincom: '0073741', market: '1000', brand: 'ft', oic: '00007584',
+      });
+
+      expect(result).toEqual({ physicalSiteId: 'SITE001', dealerArcadCode: 'ARC001' });
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('AND s.cd_paired_oic_code = $4'),
+        ['0073741', '1000', 'FT', '00007584'],
+      );
+    });
+
+    it('returns nulls without querying the main table when a non-letter brand cannot be resolved to an ARCAD code', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getPhysicalSiteAndPdvId(pool, {
+        mainSincom: '0073741', market: '1000', brand: '999', oic: '00007584',
+      });
+
+      expect(result).toEqual({ physicalSiteId: null, dealerArcadCode: null });
+      expect(pool.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns nulls when no row is found', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getPhysicalSiteAndPdvId(pool, {
+        mainSincom: '0073741', market: '1000', brand: 'FT', oic: '00007584',
+      });
+
+      expect(result).toEqual({ physicalSiteId: null, dealerArcadCode: null });
     });
   });
 });

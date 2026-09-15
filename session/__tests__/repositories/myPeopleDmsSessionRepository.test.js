@@ -80,7 +80,7 @@ function buildRepository(overrides = {}) {
     getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
     getBrandLogosFn: jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE),
     getCountryIsoCodeFn: jest.fn().mockResolvedValue('IT'),
-    getPhysicalSiteAndSincomFn: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerNumberIdSource: '0062219', dealerArcadCode: 'DLR001' }),
+    getPhysicalSiteAndPdvIdFn: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
     ...overrides,
   });
 }
@@ -93,7 +93,7 @@ describe('MyPeopleDmsSessionRepository', () => {
     const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
     const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
     const getCountryIsoCodeFn = jest.fn().mockResolvedValue('IT');
-    const getPhysicalSiteAndSincomFn = jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerNumberIdSource: '0062219', dealerArcadCode: 'DLR001' });
+    const getPhysicalSiteAndPdvIdFn = jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' });
     const repository = buildRepository({
       readUserProfilesFn,
       getDmsSettingsCacheFn,
@@ -101,7 +101,7 @@ describe('MyPeopleDmsSessionRepository', () => {
       getDmlConfigurationFn,
       getBrandLogosFn,
       getCountryIsoCodeFn,
-      getPhysicalSiteAndSincomFn,
+      getPhysicalSiteAndPdvIdFn,
     });
 
     const data = await repository.getSessionData('0073741.d235');
@@ -118,10 +118,11 @@ describe('MyPeopleDmsSessionRepository', () => {
       codes: ['30', '31', '33', '43', '00', '77', '66', '57', '70', '83'],
     });
     expect(getCountryIsoCodeFn).toHaveBeenCalledWith({ market: '1000' });
-    expect(getPhysicalSiteAndSincomFn).toHaveBeenCalledWith({
+    expect(getPhysicalSiteAndPdvIdFn).toHaveBeenCalledWith({
       mainSincom: '0073741',
       market: '1000',
       brand: 'FT',
+      oic: '00007584',
     });
 
     expect(data).toEqual({

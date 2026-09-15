@@ -134,4 +134,65 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
   };
 }
 
-module.exports = { getCountryIsoCode, getPhysicalSiteAndSincom, resolveArcadBrandCode };
+/**
+ * Risolve physicalsite (gn_physical_site_arcad) e pdvId (cd_dealer_arcad_code)
+ * per i dati di sessione (v. MyPeopleDmsSessionRepository::getSessionData), a
+ * partire da mainSincom (cd_main_sincom_code/gn_legal_entity, es.
+ * session.sincom/MAINSINCOM), market (cd_market_code, es. session.codmarket),
+ * brand (jobCardDetail.roInfo, es. stellantisBrand "FT" o brand "55") e oic
+ * (cd_paired_oic_code, es. session.oic).
+ *
+ * mainSincom viene cercato in OR tra le colonne cd_main_sincom_code e
+ * gn_legal_entity (stesso dato logico, valorizzato in colonne diverse a
+ * seconda della sorgente/estrazione).
+ *
+ * Il brand e' sempre cercato tramite un unico criterio uniforme, il codice
+ * ARCAD/RefTech a 2 lettere (cd_contract_brand_arcad_code): se ricevuto in
+ * altro formato (tipicamente numerico WebDAC, es. "55", "00", "83") viene
+ * prima trasformato nel corrispondente codice ARCAD tramite
+ * resolveArcadBrandCode() — vedi sopra.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ mainSincom: string, market: string, brand: string, oic: string }} params
+ * @returns {Promise<{ physicalSiteId: string|null, dealerArcadCode: string|null }>}
+ *          entrambi null se non e' stata trovata alcuna riga corrispondente
+ *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD)
+ */
+async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } = {}) {
+  if (!mainSincom) throw new Error('"mainSincom" is required');
+  if (!market) throw new Error('"market" is required');
+  if (!brand) throw new Error('"brand" is required');
+  if (!oic) throw new Error('"oic" is required');
+
+  const arcadBrand = await resolveArcadBrandCode(pool, brand);
+  if (!arcadBrand) {
+    return { physicalSiteId: null, dealerArcadCode: null };
+  }
+
+  const { rows } = await pool.query(
+    `SELECT s.gn_physical_site_arcad as physicalsite, s.CD_DEALER_ARCAD_CODE as podvInfo 
+       FROM woc.ang_snowflakes s
+      WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
+        AND s.cd_market_code = $2
+        AND s.cd_contract_brand_arcad_code = $3
+        AND s.cd_paired_oic_code = $4
+      LIMIT 1`,
+    [mainSincom, market, arcadBrand, oic],
+  );
+
+  if (rows.length === 0) {
+    return { physicalSiteId: null, dealerArcadCode: null };
+  }
+
+  return {
+    physicalSiteId: rows[0].physicalsite,
+    dealerArcadCode: rows[0].podvinfo,
+  };
+}
+
+module.exports = {
+  getCountryIsoCode,
+  getPhysicalSiteAndSincom,
+  getPhysicalSiteAndPdvId,
+  resolveArcadBrandCode,
+};

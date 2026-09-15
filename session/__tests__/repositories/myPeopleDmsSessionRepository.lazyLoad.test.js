@@ -48,7 +48,7 @@ jest.mock('../../../dbManager/db', () => ({
 
 jest.mock('../../../dbManager/AnagSnowflakesRepository', () => ({
   getCountryIsoCode: jest.fn().mockResolvedValue('IT'),
-  getPhysicalSiteAndSincom: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerNumberIdSource: '0062219', dealerArcadCode: 'DLR001' }),
+  getPhysicalSiteAndPdvId: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
 }));
 
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
@@ -68,14 +68,14 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
 
     expect(myPeopleService.readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
     expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
-    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(2); // loadGetCountryIsoCode + loadGetPhysicalSiteAndSincom
+    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(2); // loadGetCountryIsoCode + loadGetPhysicalSiteAndPdvId
     expect(anagSnowflakesRepository.getCountryIsoCode).toHaveBeenCalledWith(
       { __fakeDbManagerPool: true, query: expect.any(Function) },
       { market: '1000' },
     );
-    expect(anagSnowflakesRepository.getPhysicalSiteAndSincom).toHaveBeenCalledWith(
+    expect(anagSnowflakesRepository.getPhysicalSiteAndPdvId).toHaveBeenCalledWith(
       { __fakeDbManagerPool: true, query: expect.any(Function) },
-      { mainSincom: '0073741', market: '1000', brand: 'FT' },
+      { mainSincom: '0073741', market: '1000', brand: 'FT', oic: '00007584' },
     );
     expect(dmsSettingsRepository.getDmsSettings).toHaveBeenCalledWith(
       { __fakePool: true, query: expect.any(Function) },
