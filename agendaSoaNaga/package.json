@@ -12,9 +12,9 @@
     "test:coverage": "jest --testEnvironment=node --coverage --ci --outputFile=coverage/jest-results.json"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1083.0",
-    "axios": "^1.7.2",
-    "dotenv": "^16.4.5"
+    "@aws-sdk/client-s3": "^3.1131.0",
+    "axios": "^1.20.0",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "jest": "^29.7.0",
