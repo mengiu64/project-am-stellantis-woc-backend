@@ -2,15 +2,11 @@
   "name": "syncro-kafka-events-lambda",
   "version": "1.0.0",
   "description": "AWS Lambda REST API per sincronizzazione eventi Kafka da SRP Digital Layer a sistemi esterni (DJC/GCT)",
-  "main": "src/handlers/index.js",
+  "main": "index.js",
   "scripts": {
-    "test": "jest --coverage",
-    "test:unit": "jest test/unit --coverage",
-    "test:integration": "jest test/integration",
-    "test:watch": "jest --watch",
-    "lint": "eslint src/",
-    "build": "zip -r lambda.zip src node_modules",
-    "dev": "serverless offline start"
+    "test": "jest --coverage --testPathPattern=__tests__",
+    "test:watch": "jest --watch --testPathPattern=__tests__",
+    "lint": "eslint *.js"
   },
   "keywords": [
     "aws-lambda",

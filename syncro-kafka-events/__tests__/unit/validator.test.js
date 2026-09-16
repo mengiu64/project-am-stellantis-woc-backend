@@ -1,7 +1,7 @@
 // test/unit/validator.test.js
 // Test suite per validator.js
 
-const Validator = require('../../src/utils/validator');
+const Validator = require('../../validator');
 const TestDataFactory = require('../utils/factories');
 
 describe('Validator - Validazione Request', () => {

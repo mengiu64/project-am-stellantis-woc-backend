@@ -1,0 +1,21 @@
+{
+  "name": "stellantis-woc-backend",
+  "version": "1.0.0",
+  "description": "Stellantis WOC Backend - AWS Lambda REST APIs",
+  "scripts": {
+    "test": "jest --coverage syncro-kafka-events/__tests__",
+    "test:watch": "jest --watch syncro-kafka-events/__tests__",
+    "test:unit": "jest syncro-kafka-events/__tests__/unit --coverage",
+    "lint": "eslint syncro-kafka-events/*.js",
+    "install:lambda": "cd syncro-kafka-events && npm install && cd .."
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.57.0",
+    "@jest/globals": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
