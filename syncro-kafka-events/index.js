@@ -170,11 +170,30 @@ async function _handlePostSynchStatus(
     // Ottieni header per sistemi esterni
     const headers = await authService.getExternalSystemHeaders();
 
-    // Invia a sistemi esterni (DJC + GCT)
+    // Recupera X-IBM-Client-Secret dalla configurazione (obbligatorio dopo FIX APIC)
+    const xIbmClientSecret = config.getByPath('apic.clientSecret');
+    if (!xIbmClientSecret) {
+      logger.error('X-IBM-Client-Secret non configurato', new Error('Config missing'), {
+        configPath: 'apic.clientSecret'
+      });
+      return this._buildResponse(500, {
+        error: 'Internal Server Error',
+        message: 'Configurazione APIC incompleta - Client Secret mancante',
+        traceId: logger.getTraceId()
+      }, logger.getTraceId());
+    }
+
+    logger.debug('APIC Client Secret loaded', {
+      hasSecret: !!xIbmClientSecret,
+      traceId: logger.getTraceId()
+    });
+
+    // Invia a sistemi esterni (DJC + GCT) con APIC Client Secret
     const sendResults = await externalClient.sendToMultipleSystems(
       events,
       bearerToken,
       config.getByPath('apic.clientId'),
+      xIbmClientSecret,  // AGGIUNTO: Pass X-IBM-Client-Secret
       ['djc', 'gct']
     );
 

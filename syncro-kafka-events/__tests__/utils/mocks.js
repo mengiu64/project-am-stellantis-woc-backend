@@ -81,6 +81,7 @@ class MockedServices {
           'oauth.clientId': 'test-client',
           'oauth.tokenUrl': 'https://ping-dev.local/oauth/token',
           'apic.clientId': 'test-apic-client',
+          'apic.clientSecret': 'test-apic-client-secret',  // AGGIUNTO: X-IBM-Client-Secret
           'externalSystems.djc.endpoint': 'https://djc-dev.local/api',
           'externalSystems.gct.endpoint': 'https://gct-dev.local/api'
         };
