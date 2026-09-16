@@ -1,1573 +1,298 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite) — redeploy trigger
 
+# Template CloudFormation per Lambda syncro-kafka-events
+# Naming convention: aggiungi suffix -dev/-stage al name, nessun suffix per produzione
 
-# ── Parameters ────────────────────────────────────────────────────────────────
-
+Description: |
+  Stellantis WOC - syncro-kafka-events Lambda
+  REST API per sincronizzazione eventi Kafka da SRP Digital Layer a DJC/GCT
 
 Parameters:
-
-  Environment:
+  Env:
     Type: String
+    Description: Environment (dev, stage, produzione)
+    AllowedValues:
+      - dev
+      - stage
+      - produzione
     Default: dev
-    AllowedValues: [dev, stage, prod]
-    Description: Deployment environment (dev | stage | prod)
-
-  TranslationsBucketNameOverride:
-    Type: String
-    Default: ''
-    Description: >-
-      Nome esplicito del bucket S3 Translations. Se vuoto (default), usa
-      "s3-np-bsn0027990-${Environment}-translations". Da valorizzare solo
-      quando il nome auto-generato collide con un bucket già esistente in
-      un altro account AWS (i nomi bucket S3 sono univoci globalmente).
-
-  VpcSubnetIds:
-    Type: CommaDelimitedList
-    Description: Comma-separated list of private Subnet IDs
-
-  VpcSecurityGroupIds:
-    Type: CommaDelimitedList
-    Description: Comma-separated list of Security Group IDs
-
-  # ── ServiceUrlsSecret — URL/path e credenziali condivise (PingFederate +
-  # DMS/DML, JOBCARD/DGT, V360/ASV360) usate da dms/jobcard/djc/v360 (v.
-  # <modulo>/secretsLoader.js + <modulo>/config.js::getConfig). Il secret NON
-  # è creato da questo template (il ruolo di deploy non ha il permesso IAM
-  # secretsmanager:CreateSecret, stesso limite già riscontrato con
-  # TmpCacheTable/DynamoDB): va creato una tantum fuori banda (Console/CLI
-  # AWS) con un JSON { "DMS_PING_URL": "...", "DMS_PING_CLIENT_ID": "...",
-  # "DMS_PING_CLIENT_SECRET": "...", "DML_BASE_URL": "...", ... } (v. README
-  # per l'elenco completo delle chiavi). Se il secret non esiste ancora o non
-  # è raggiungibile, <modulo>/config.js ricade automaticamente sulle variabili
-  # d'ambiente/default storici (nessuna interruzione di servizio). Una volta
-  # creato, aggiornare il suo valore via Console/CLI (UpdateSecret) NON
-  # richiede un nuovo `sam deploy`: un solo posto da modificare/ruotare,
-  # invece di dover cercare la stessa credenziale duplicata in più Lambda —
-  # e nessuna credenziale in chiaro nella configurazione delle Lambda.
-  ServiceUrlsSecretId:
-    Type: String
-    Default: sm-np-bsn0027990-dev-service-urls
-    Description: >-
-      Secrets Manager secret id (o ARN) del secret condiviso con URL/path e
-      credenziali di PingFederate e dei servizi upstream usato da
-      dms/jobcard/djc/v360.
-
-  # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
-  AgendaSoaHost:
-    Type: String
-  AgendaSoaUsername:
-    Type: String
-  AgendaSoaPassword:
-    Type: String
-    NoEcho: true
-  AgendaSoaApiKey:
-    Type: String
-    NoEcho: true
-  AgendaSoaCertSecretId:
-    Type: String
-    Default: apicCert
-    Description: Secrets Manager secret id del certificato client mTLS (PEM) per le Lambda AgendaSOA
-  AgendaSoaKeySecretId:
-    Type: String
-    Default: apicKey
-    Description: Secrets Manager secret id della chiave privata mTLS (PEM) per le Lambda AgendaSOA
-
-  # IBM API Connect target environment for the DML gateway (X-Target-Env header).
-  # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
-  # of the AWS SAM "Environment" parameter (dev/stage/prod stack). It must NOT be
-  # tied to !Ref Environment: the "ps-dev" catalog only authorizes "stage" today,
-  # so wiring it to the AWS dev stack's Environment ("dev") causes DML to reject
-  # the call with "explicit deny in an identity-based policy" (403).
-  DmlXTargetEnv:
-    Type: String
-    Default: stage
-
-  # ── MoparDoc: credenziali lette a runtime da SSM -> Secrets Manager (nessun parametro CFN) ──
-
-  # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
-  EperHost:
-    Type: String
-  EperCoddealer:
-    Type: String
-  EperCodmarket:
-    Type: String
-  EperLingua:
-    Type: String
-    Default: IT
-
-  # ── pkDocsoa (PSA/Stellantis) ─────────────────────────────────────────────
-  DocsoaHost:
-    Type: String
-  DocsoaUsername:
-    Type: String
-  DocsoaPassword:
-    Type: String
-    NoEcho: true
-  DocsoaIbmClientId:
-    Type: String
-    NoEcho: true
-  DocsoaIbmClientSecret:
-    Type: String
-    NoEcho: true
-  DocsoaCodbrand:
-    Type: String
-  DocsoaLangue:
-    Type: String
-  DocsoaPays:
-    Type: String
-  DocsoaCodepdv:
-    Type: String
-
-  # ── pkMenupricing (Opel/Vauxhall SOAP) ────────────────────────────────────
-  MenupricingWsdl:
-    Type: String
-  MenupricingUsr:
-    Type: String
-  MenupricingPws:
-    Type: String
-    NoEcho: true
-  MenupricingUsrReq:
-    Type: String
-  MenupricingPwsReq:
-    Type: String
-    NoEcho: true
-  MpLanguageCode:
-    Type: String
-  MpCountryCode:
-    Type: String
-  MpDealerIdentificationCode:
-    Type: String
-  MpManufacturer:
-    Type: String
-
-  # ── myPeople (IURSMA readUserProfiles — PSA/Stellantis) ──────────────────
-  MyPeopleHost:
-    Type: String
-    Default: https://api-basic-preprod.groupe-psa.com
-  MyPeopleIbmClientId:
-    Type: String
-    NoEcho: true
-  MyPeopleUsername:
-    Type: String
-    NoEcho: true
-  MyPeoplePassword:
-    Type: String
-    NoEcho: true
-  MyPeopleIdentifier:
-    Type: String
-    NoEcho: true
-    Description: Fixed identifier value required by the readUserProfiles API (constant, not a per-call input)
-  MyPeopleCertSecretId:
-    Type: String
-    Default: apicCert
-    Description: Secrets Manager secret id holding the mTLS client certificate (PEM)
-  MyPeopleKeySecretId:
-    Type: String
-    Default: apicKey
-    Description: Secrets Manager secret id holding the mTLS client private key (PEM)
-  MyPeopleExtensionLayerArn:
-    Type: String
-    Default: arn:aws:lambda:eu-west-1:015030872274:layer:AWS-Parameters-and-Secrets-Lambda-Extension:90
-    Description: >-
-      ARN of the AWS Parameters and Secrets Lambda Extension layer (pinned instead of a versionless
-      SSM dynamic reference, because the deploy role lacks ssm:GetParameters on the public parameter).
-      Bump this when AWS publishes a newer version — see
-      https://docs.aws.amazon.com/systems-manager/latest/userguide/ps-integration-lambda-extensions.html#intel
-
-  # ── pkFavorite (pacchetti/forfait preferiti del dealer per VIN — Aurora PostgreSQL) ──
-  PkFavoriteDbHost:
-    Type: String
-    Description: >-
-      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
-      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
-      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
-  PkFavoriteDbPort:
-    Type: String
-    Default: '5432'
-  PkFavoriteDbName:
-    Type: String
-    Default: wiadvisor
-  PkFavoriteDbSecretId:
-    Type: String
-    Default: sm-np-bsn0027990-dev-aurora-app
-    Description: >-
-      Secrets Manager secret id con le credenziali least-privilege (username/password)
-      dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
-      and Secrets Lambda Extension (stesso meccanismo di MyPeopleCertSecretId/MyPeopleKeySecretId)
-
-  # ── pkDocsoa (functionServiceDb — tabella woc.listfunctions su Aurora PostgreSQL) ──
-  DocsoaDbHost:
-    Type: String
-    Description: >-
-      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
-      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
-      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
-  DocsoaDbPort:
-    Type: String
-    Default: '5432'
-  DocsoaDbName:
-    Type: String
-    Default: wiadvisor
-  DocsoaDbSecretId:
-    Type: String
-    Default: sm-np-bsn0027990-dev-aurora-app
-    Description: >-
-      Secrets Manager secret id con le credenziali least-privilege (username/password)
-      dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
-      and Secrets Lambda Extension (stesso meccanismo di PkFavoriteDbSecretId)
-
-# ── Conditions ─────────────────────────────────────────────────────────────────
-
-Conditions:
-  IsProd: !Equals [!Ref Environment, prod]
-  IsStage: !Equals [!Ref Environment, stage]
-  HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
-
-# ── Globals ───────────────────────────────────────────────────────────────────
 
 Globals:
   Function:
-    Runtime: nodejs24.x
-    # 128MB (default AWS) assegna una frazione minima di vCPU: penalizza pesantemente
-    # le operazioni CPU-bound (handshake TLS verso RDS Proxy, PingFederate, gateway
-    # DML/DMS/job-docs — quest'ultime spesso multiple e in parallelo per singola
-    # invocazione). Portato a 1024MB (vCPU quasi intera) per ridurre ulteriormente
-    # le latenze percepite (es. GET pkfavorite con più preferiti, che combina
-    # lettura DB + N chiamate DMS parallele).
-    MemorySize: 1024
+    Runtime: nodejs18.x
     Timeout: 30
+    MemorySize: 512
     Tracing: Active
-    Handler: index.handler
-    VpcConfig:
-      SubnetIds: !Ref VpcSubnetIds
-      SecurityGroupIds: !Ref VpcSecurityGroupIds
-    PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/StlaPermissionBoundary'
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Env
+        LOG_LEVEL: !If [IsProd, 'warn', 'info']
 
-# ── Resources ─────────────────────────────────────────────────────────────────
+Conditions:
+  IsProd: !Equals [!Ref Env, 'produzione']
+  IsStage: !Equals [!Ref Env, 'stage']
+  IsDev: !Equals [!Ref Env, 'dev']
 
 Resources:
-
-  # TmpCacheTable: sostituisce le cache basate su file /tmp (locali all'istanza
-  # Lambda "warm" e quindi perse ad ogni cold start/riciclo del container, non
-  # condivise tra funzioni Lambda diverse) con un item store DynamoDB
-  # condiviso, con scadenza automatica nativa (TTL) sull'attributo `expiresAt`
-  # (epoch seconds). Usata da: v360/v360Service.js (cache getdetails per VIN),
-  # jobcard/jobCardService.js + djc/DjcManager.js (cache jobCardDetails per
-  # jobCardId — sostituisce /tmp/<jobCardId>.json, che essendo su due funzioni
-  # Lambda DISTINTE, JobCardFunction e DjcFunction, non era in realtà mai
-  # realmente condivisibile tra le due tramite /tmp) e
-  # session/src/sessionContextCache.js (cache dati sessione per username).
-  # PAY_PER_REQUEST: carico non prevedibile, evita di dover dimensionare le
-  # capacity unit.
-  #
-  # IMPORTANTE (prerequisito di rete): tutte le Lambda di questo template
-  # girano in VPC (v. Globals.Function.VpcConfig). Perché le funzioni che
-  # usano questa tabella (V360Function, JobCardFunction, DjcFunction,
-  # SessionFunction, PkManagerFunction, PkFavoriteFunction) possano
-  # raggiungere DynamoDB, la VPC deve avere un VPC Gateway Endpoint per
-  # com.amazonaws.<region>.dynamodb (stesso meccanismo, gratuito, di un
-  # eventuale endpoint S3 già presente) oppure un percorso di uscita verso
-  # Internet (NAT Gateway). Verificare con il team infra PRIMA del deploy in
-  # un nuovo ambiente/VPC.
-  TmpCacheTable:
-    Type: AWS::DynamoDB::Table
+  # ==========================================
+  # IAM Role per Lambda (stessi permessi di isStellantisBrand)
+  # ==========================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
-      TableName: !Sub "ddb-np-bsn0027990-${Environment}-tmpcache"
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: cacheKey
-          AttributeType: S
-      KeySchema:
-        - AttributeName: cacheKey
-          KeyType: HASH
-      TimeToLiveSpecification:
-        AttributeName: expiresAt
-        Enabled: true
-
-  AgendaSoaFunction:
-    Type: AWS::Serverless::Function
-    # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
-    # la Lambda riusa quella esistente invece di crearne una in automatico
-    # (evita il conflitto AlreadyExists sul replace del FunctionName).
-    DependsOn: AgendaSoaFunctionLogGroup
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoa"
-      CodeUri: agendaSoa/
-      # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
-      # localhost:2773 per il recupero dei segreti mTLS.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
+      RoleName: !Sub 'stellantis-syncro-kafka-events-role-${Env}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:!Sub '${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
       Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        # Least-privilege (Req 7.1): sola lettura dei segreti cert/key mTLS.
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
-      Environment:
-        Variables:
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          # Id dei segreti mTLS su Secrets Manager (Req 7.3).
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
-          # Porta HTTP della Secrets Extension (localhost:2773).
-          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
+        # Politica: accesso Parameter Store
+        - PolicyName: ParameterStoreAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/stellantis/syncro-kafka-events/*'
+        
+        # Politica: accesso Secrets Manager
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stellantis/syncro-kafka-events/*'
+        
+        # Politica: accesso CloudWatch Logs
+        - PolicyName: CloudWatchLogsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/stellantis-syncro-kafka-events-*'
+        
+        # Politica: accesso X-Ray (per distributed tracing)
+        - PolicyName: XRayAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                Resource: '*'
 
-  AgendaSoaFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
-      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
-      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoa"
-      RetentionInDays: 30
-
-  AgendaSoaNagaFunction:
-    Type: AWS::Serverless::Function
-    # DependsOn sulla LogGroup: la log group va creata PRIMA della Lambda, cosi'
-    # la Lambda riusa quella esistente invece di crearne una in automatico
-    # (evita il conflitto AlreadyExists sul replace del FunctionName).
-    DependsOn: AgendaSoaNagaFunctionLogGroup
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoanaga"
-      CodeUri: agendaSoaNaga/
-      # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
-      # localhost:2773 per il recupero dei segreti mTLS.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        # Least-privilege (Req 7.1): sola lettura dei segreti cert/key mTLS.
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
-      Environment:
-        Variables:
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          # Id dei segreti mTLS su Secrets Manager (Req 7.3).
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
-          # Porta HTTP della Secrets Extension (localhost:2773).
-          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
-
-  AgendaSoaNagaFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
-      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
-      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-agendasoanaga"
-      RetentionInDays: 30
-
-  # CodeUri: ./ + BuildMethod: makefile perché dmsService.js::buildApplicationArea
-  # richiede in-process dbManager/db + dbManager/AnagSnowflakesRepository (stesso
-  # pattern di PkManagerFunction/SessionFunction/PkFavoriteFunction/JobCardFunction,
-  # vedi Makefile) per risolvere physicalSiteId/dealerNumberIdSource da
-  # woc.ang_snowflakes — logica centralizzata qui e condivisa da tutti i chiamanti
-  # di postDmsInquiry (jobcard, pkManager, pkFavorite). Include anche session/,
-  # myPeople/, dmlConfigSync/ e v360/ perché dms/index.js risolve SEMPRE (senza
-  # che il chiamante debba passarlo) il Sender dinamico dell'azione "inquiry"
-  # tramite dmsService.js::resolveDynamicSenderFields (stesso meccanismo usato
-  # da JobCardFunction/PkManagerFunction/PkFavoriteFunction).
-  DmsFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dms"
-      CodeUri: ./
-      Handler: dms/index.handler
-      # dbManager (imbarcato in-process via Makefile) richiede l'estensione Lambda
-      # + il permesso Secrets Manager per leggere lo stesso secret Aurora
-      # "wiadvisor_app" già usato da PkManagerFunction/PkFavoriteFunction/SessionFunction/
-      # JobCardFunction per il proprio dbManager — nessun nuovo parametro CFN necessario.
-      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
-      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
-      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
-      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
-      # dmlConfigSync/v360 già usate da SessionFunction/JobCardFunction/V360Function.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
-            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
-            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
-            # occurred while executing request" (stesso problema già risolto per
-            # PkFavoriteFunction/SessionFunction/PkManagerFunction/JobCardFunction).
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-        # session/src/dynamoCache.js + v360/dynamoCache.js (in-process, vedi
-        # Makefile) — cache condivisa su TmpCacheTable (v. Resources), stesso
-        # pattern già usato da JobCardFunction/SessionFunction/V360Function.
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-      Environment:
-        Variables:
-          # DMS_PING_CLIENT_ID/SECRET, DML_IBM_CLIENT_ID/SECRET: non più
-          # variabili d'ambiente in chiaro, ma lette da dms/config.js::getConfig()
-          # dal secret condiviso SERVICE_URLS_SECRET_ID (v. commento sopra).
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
-          # dbManager/db.js (in-process, vedi Makefile) — dmsService.js::buildApplicationArea
-          # risolve physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per
-          # il Sender dinamico. Riusa lo stesso Aurora/secret di PkManagerFunction
-          # (nessun nuovo parametro CFN necessario).
-          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
-          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
-          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
-          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
-          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
-          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
-          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
-          # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
-          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
-          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
-          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
-          # v360/config.js::getConfig() dallo stesso secret condiviso.
-          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
-          # session/src/dynamoCache.js + v360/dynamoCache.js (in-process, vedi
-          # Makefile) — cache condivisa su TmpCacheTable (v. Resources), sostituisce
-          # le precedenti cache basate su file /tmp.
-          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-
-  DmsFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${DmsFunction}"
-      RetentionInDays: 30
-
-  # CodeUri: ./ + BuildMethod: makefile perché jobCardService.js::getCartPriceAndAvailability
-  # richiede in-process dms/authService + dms/dmsService (stesso pattern di
-  # PkManagerFunction/SessionFunction/PkFavoriteFunction, vedi Makefile) per la
-  # chiamata al gateway DML (prezzo/disponibilità ricambi e manodopera).
-  JobCardFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-jobcard"
-      CodeUri: ./
-      Handler: jobcard/index.handler
-      # dbManager (imbarcato in-process via Makefile, richiesto da dms/dmsService.js
-      # ::buildApplicationArea) richiede l'estensione Lambda + il permesso Secrets
-      # Manager per leggere lo stesso secret Aurora "wiadvisor_app" già usato da
-      # PkManagerFunction/PkFavoriteFunction/SessionFunction/DmsFunction per il
-      # proprio dbManager — nessun nuovo parametro CFN necessario (il lookup
-      # physicalSiteId/dealerNumberIdSource su woc.ang_snowflakes è centralizzato
-      # in dms/dmsService.js, non in jobCardService.js::buildDmsSender).
-      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
-      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
-      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
-      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
-      # dmlConfigSync/v360 già usate da SessionFunction/V360Function.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-                # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile,
-                # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
-                # "updatenaga") — stessi secret mTLS già usati da AgendaSoaNagaFunction.
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
-            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
-            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
-            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
-            # occurred while executing request" (stesso problema già risolto per
-            # PkFavoriteFunction/SessionFunction/PkManagerFunction).
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-        # jobcard/dynamoCache.js — cache jobCardDetails condivisa con DjcFunction
-        # (sostituisce /tmp/<jobCardId>.json, v. TmpCacheTable in Resources).
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-      Environment:
-        Variables:
-          # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
-          # da jobcard/config.js::getConfig() dal secret condiviso.
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          # dms/config.js (in-process, vedi Makefile) — gateway DML usato da
-          # getCartPriceAndAvailability. DMS_PING_*/DML_IBM_*: non più variabili
-          # d'ambiente in chiaro, lette da dms/config.js::getConfig() dallo
-          # stesso secret condiviso.
-          DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
-          # dbManager/db.js (in-process, vedi Makefile) — richiesto da dms/dmsService.js
-          # ::buildApplicationArea (imbarcato in-process insieme a jobcard), che risolve
-          # physicalSiteId/dealerNumberIdSource (tabella woc.ang_snowflakes) per il Sender
-          # dinamico dell'inquiry DMS. Riusa lo stesso Aurora/secret di PkManagerFunction/
-          # DmsFunction (nessun nuovo parametro CFN necessario).
-          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
-          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
-          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
-          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
-          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
-          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
-          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
-          # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
-          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
-          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
-          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
-          # v360/config.js::getConfig() dallo stesso secret condiviso.
-          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
-          # jobcard/dynamoCache.js + v360/dynamoCache.js + session/src/dynamoCache.js
-          # (in-process, vedi Makefile) — cache condivisa su TmpCacheTable (v.
-          # Resources), sostituisce le precedenti cache basate su file /tmp.
-          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-          # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
-          # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
-          # "updatenaga" (sincronizzazione appuntamento NAGA dopo un saveJobcard
-          # riuscito con payload.appointments[] valorizzato), stessi valori usati
-          # da AgendaSoaNagaFunction.
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
-          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
-
-  JobCardFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${JobCardFunction}"
-      RetentionInDays: 30
-
-  # DjcFunction: declinazione di JobCardFunction (Digital Job Card). Espone
-  # l'azione "saveJobcard" (POST /jobCard) e riusa lo stesso client
-  # PingFederate/DGT di jobcard, letto dallo stesso secret condiviso
-  # (ServiceUrlsSecretId).
-  # CodeUri: ./ + BuildMethod: makefile (vedi Makefile, build-DjcFunction) perché
-  # djc/index.js::syncAppointmentsToNaga richiede in-process
-  # require('../agendaSoaNaga/index') per l'azione "updatenaga" (sincronizzazione
-  # appuntamento NAGA dopo un saveJobcard riuscito con payload.appointments[]
-  # valorizzato) — stesso identico pattern di JobCardFunction sopra.
-  DjcFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-djc"
-      CodeUri: ./
-      Handler: djc/index.handler
-      # Layer AWS Parameters and Secrets Lambda Extension: recupero dei segreti
-      # mTLS di agendaSoaNaga/src/certService.js, stesso layer di AgendaSoaNagaFunction.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        # djc/dynamoCache.js — legge la cache jobCardDetails condivisa scritta
-        # da JobCardFunction (v. TmpCacheTable in Resources).
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-        # djc/config.js::getConfig -> secretsLoader.js — URL/path condivise
-        # (v. ServiceUrlsSecretId in Parameters).
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-        # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile) —
-        # stessi secret mTLS già usati da AgendaSoaNagaFunction/JobCardFunction.
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
-      Environment:
-        Variables:
-          # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
-          # da djc/config.js::getConfig() dal secret condiviso (mantenuto in
-          # sync con jobcard/config.js).
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-          # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
-          # richiesto da djc/index.js::syncAppointmentsToNaga per l'azione
-          # "updatenaga", stessi valori usati da AgendaSoaNagaFunction/JobCardFunction.
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
-          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
-
-  DjcFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${DjcFunction}"
-      RetentionInDays: 30
-
-  # MoparDocFunction: gestisce createJobCard/createAccessToken (job-docs
-  # connector PSA), getUploadDocURL e uploadedDoc (MoparDocs Browser API
-  # FCA/Fiat). Usa un client PingFederate dedicato (scope prd:mdo,
-  # credenziali diverse da jobcard/djc) e credenziali IBM API Connect proprie.
-  MoparDocFunction:
+  # ==========================================
+  # Lambda Function
+  # ==========================================
+  SyncroKafkaEventsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-mopardoc"
-      CodeUri: moparDoc/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: ssm:GetParameter
-              Resource:
-                - !Sub
-                  - "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
-                  - ParamPath: !If [IsProd, "/app/BSN0027990/mopardoc_ibm", !Sub "/app/np-BSN0027990-${Environment}/mopardoc_ibm"]
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !If
-                  - IsProd
-                  - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-bsn0027990-mopardoc_ibm-*"
-                  - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-mopardoc_ibm-*"
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
+      # Nome con suffix environment (per naming convention)
+      FunctionName: !If
+        - IsProd
+        - stellantis-syncro-kafka-events
+        - !Sub 'stellantis-syncro-kafka-events-${Env}'
+      
+      # Handler entrypoint
+      CodeUri: .
+      Handler: src/handlers/index.handler
+      
+      # Role IAM
+      Role: !GetAtt LambdaExecutionRole.Arn
+      
+      # Environment variables
       Environment:
         Variables:
-          MOPARDOC_PARAM_NAME: !If
-            - IsProd
-            - /app/BSN0027990/mopardoc_ibm
-            - !Sub /app/np-BSN0027990-${Environment}/mopardoc_ibm
-
-  MoparDocFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${MoparDocFunction}"
-      RetentionInDays: 30
-
-  V360Function:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-v360"
-      CodeUri: v360/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-        # v360/dynamoCache.js — cache getDetails per VIN (v. TmpCacheTable in Resources).
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-        # v360/config.js::getConfig -> secretsLoader.js — URL/path condivise
-        # (v. ServiceUrlsSecretId in Parameters).
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-      Environment:
-        Variables:
-          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette da
-          # v360/config.js::getConfig() dal secret condiviso SERVICE_URLS_SECRET_ID.
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          CONFIG_BUCKET_NAME: !Ref TranslationsBucket
-          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-
-  V360FunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${V360Function}"
-      RetentionInDays: 30
-
-  # ── srpV360Ota (OTA Compatibility BFF — credenziali da SSM/Secrets Manager) ──
-  #
-  # Lambda indipendente dal modulo v360 a livello di codice sorgente.
-  # Le credenziali PingFederate e IBM API Connect sono recuperate a runtime
-  # da Secrets Manager (ARN letto da un parametro SSM), stesso pattern di
-  # isStellantisBrand per il database.
-  SrpV360OtaFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-srpv360ota"
-      CodeUri: srpV360Ota/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: ssm:GetParameter
-              Resource:
-                - !Sub
-                  - "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
-                  - ParamPath: !If [IsProd, "/app/BSN0027990/SRP_V360_OTA", !Sub "/app/np-BSN0027990-${Environment}/SRP_V360_OTA"]
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource: "*"
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-      Environment:
-        Variables:
-          SRP_V360_OTA_SECRET_ARN_PARAM: !If
-            - IsProd
-            - /app/BSN0027990/SRP_V360_OTA
-            - !Sub /app/np-BSN0027990-${Environment}/SRP_V360_OTA
-
-  SrpV360OtaFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${SrpV360OtaFunction}"
-      RetentionInDays: 30
-
-  PkEperFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkeper"
-      CodeUri: pkEper/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-      Environment:
-        Variables:
-          EPER_HOST: !Ref EperHost
-
-  PkEperFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${PkEperFunction}"
-      RetentionInDays: 30
-
-  # Il certificato/chiave mTLS ("apicCert"/"apicKey", gli STESSI usati da myPeople)
-  # sono letti da AWS Secrets Manager tramite la AWS Parameters and Secrets Lambda
-  # Extension (layer), esattamente come in MyPeopleFunction. La funzione gira in
-  # VPC (Globals.Function.VpcConfig): è necessario un endpoint di rete verso
-  # Secrets Manager (VPC Interface Endpoint o NAT Gateway).
-  PkDocsoaFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkdocsoa"
-      CodeUri: pkDocsoa/
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-      Environment:
-        Variables:
-          DOCSOA_HOST:              !Ref DocsoaHost
-          DOCSOA_USERNAME:          !Ref DocsoaUsername
-          DOCSOA_PASSWORD:          !Ref DocsoaPassword
-          DOCSOA_IBM_CLIENT_ID:     !Ref DocsoaIbmClientId
-          DOCSOA_IBM_CLIENT_SECRET: !Ref DocsoaIbmClientSecret
-          DOCSOA_CERT_SECRET_ID:    !Ref MyPeopleCertSecretId
-          DOCSOA_KEY_SECRET_ID:     !Ref MyPeopleKeySecretId
-
-  PkDocsoaFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${PkDocsoaFunction}"
-      RetentionInDays: 30
-
-  PkMenupricingFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkmenupricing"
-      CodeUri: pkMenupricing/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-      Environment:
-        Variables:
-          MENUPRICING_WSDL:    !Ref MenupricingWsdl
-          MENUPRICING_USR:     !Ref MenupricingUsr
-          MENUPRICING_PWS:     !Ref MenupricingPws
-          MENUPRICING_USR_REQ: !Ref MenupricingUsrReq
-          MENUPRICING_PWS_REQ: !Ref MenupricingPwsReq
-
-  PkMenupricingFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${PkMenupricingFunction}"
-      RetentionInDays: 30
-
-  # ── Translations (bucket S3 + Lambda) ──────────────────────────────────────
-
-  TranslationsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !If
-        - HasTranslationsBucketNameOverride
-        - !Ref TranslationsBucketNameOverride
-        - !Sub "s3-np-bsn0027990-${Environment}-translations"
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      VersioningConfiguration:
-        Status: Enabled
-
-  TranslationsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-translations"
-      CodeUri: translations/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-      Environment:
-        Variables:
-          TRANSLATIONS_BUCKET_NAME: !Ref TranslationsBucket
-
-  TranslationsFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${TranslationsFunction}"
-      RetentionInDays: 30
-
-  PkManagerFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkmanager"
-      CodeUri: ./
-      Handler: pkManager/index.handler
-      # pkDocsoa (imbarcato in-process via Makefile) richiede l'estensione Lambda +
-      # il permesso Secrets Manager per il proprio mTLS (certificato/chiave "apicCert"/"apicKey",
-      # gli STESSI usati da myPeople) — vedi PkDocsoaFunction/MyPeopleFunction.
-      # dbManager (anch'esso imbarcato in-process via Makefile) richiede lo stesso
-      # secret Aurora "wiadvisor_app" di pkDocsoa (DocsoaDbSecretId): nessun nuovo
-      # parametro/permesso da aggiungere.
-      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
-      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
-      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
-      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
-      # dmlConfigSync/v360 già usate da SessionFunction/V360Function.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-            # pkDocsoa/functionServiceDb e dbManager/db.js leggono da Aurora tramite
-            # Secrets Manager: il secret è cifrato con una chiave KMS gestita dal
-            # cliente (non la default aws/secretsmanager), stesso caso già risolto
-            # per PkFavoriteFunction.
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-        # v360/dynamoCache.js + session/src/dynamoCache.js (in-process, vedi
-        # Makefile) — cache condivisa su TmpCacheTable (v. Resources).
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-      Environment:
-        Variables:
-          EPER_HOST:                    !Ref EperHost
-          EPER_CODDEALER:               !Ref EperCoddealer
-          EPER_CODMARKET:                !Ref EperCodmarket
-          EPER_LINGUA:                  !Ref EperLingua
-          DOCSOA_HOST:                  !Ref DocsoaHost
-          DOCSOA_USERNAME:              !Ref DocsoaUsername
-          DOCSOA_PASSWORD:              !Ref DocsoaPassword
-          DOCSOA_IBM_CLIENT_ID:         !Ref DocsoaIbmClientId
-          DOCSOA_IBM_CLIENT_SECRET:     !Ref DocsoaIbmClientSecret
-          DOCSOA_CERT_SECRET_ID:        !Ref MyPeopleCertSecretId
-          DOCSOA_KEY_SECRET_ID:         !Ref MyPeopleKeySecretId
-          DOCSOA_CODBRAND:              !Ref DocsoaCodbrand
-          DOCSOA_LANGUE:                !Ref DocsoaLangue
-          # functionServiceDb (pkDocsoa/db.js + config.js) — lettura di woc.listfunctions
-          # da Aurora PostgreSQL "wiadvisor" tramite RDS Proxy, stesso pattern di PkFavoriteFunction.
-          DOCSOA_DB_HOST:               !Ref DocsoaDbHost
-          DOCSOA_DB_PORT:               !Ref DocsoaDbPort
-          DOCSOA_DB_NAME:               !Ref DocsoaDbName
-          DOCSOA_DB_SECRET_ID:          !Ref DocsoaDbSecretId
-          DOCSOA_PAYS:                  !Ref DocsoaPays
-          DOCSOA_CODEPDV:               !Ref DocsoaCodepdv
-          # dbManager/db.js + config.js (in-process, vedi Makefile) — getPkList risolve
-          # pkwstouse leggendo HQ_PKCONFIG dallo STESSO cluster Aurora "wiadvisor"
-          # (stesso RDS Proxy/secret di DOCSOA_DB_*, nessun nuovo parametro necessario).
-          DBMANAGER_DB_HOST:            !Ref DocsoaDbHost
-          DBMANAGER_DB_PORT:            !Ref DocsoaDbPort
-          DBMANAGER_DB_NAME:            !Ref DocsoaDbName
-          DBMANAGER_DB_SECRET_ID:       !Ref DocsoaDbSecretId
-          MENUPRICING_WSDL:             !Ref MenupricingWsdl
-          MENUPRICING_USR:              !Ref MenupricingUsr
-          MENUPRICING_PWS:              !Ref MenupricingPws
-          MENUPRICING_USR_REQ:          !Ref MenupricingUsrReq
-          MENUPRICING_PWS_REQ:          !Ref MenupricingPwsReq
-          MP_LANGUAGE_CODE:             !Ref MpLanguageCode
-          MP_COUNTRY_CODE:              !Ref MpCountryCode
-          MP_DEALER_IDENTIFICATION_CODE: !Ref MpDealerIdentificationCode
-          MP_MANUFACTURER:              !Ref MpManufacturer
-          # DMS_PING_*/DML_IBM_*/V360_PING_*/ASV_*: non più variabili d'ambiente
-          # in chiaro, lette dal secret condiviso SERVICE_URLS_SECRET_ID via
-          # dms/config.js::getConfig() e v360/config.js::getConfig() (in-process).
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DML_X_TARGET_ENV:             !Ref DmlXTargetEnv
-          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
-          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
-          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
-          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
-          # secret di DBMANAGER_DB_*/DOCSOA_DB_* (nessun nuovo parametro CFN necessario).
-          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
-          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
-          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
-          DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
-
-  PkManagerFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${PkManagerFunction}"
-      RetentionInDays: 30
-
-  # SessionFunction impacchetta l'intero repo (CodeUri: ./, BuildMethod: makefile) perché,
-  # oltre al proprio codice, richiede in-process myPeople/myPeopleService e dms/authService +
-  # dms/dmsService (stesso pattern già usato da PkManagerFunction per dms/pkEper/..., vedi
-  # Makefile) per il flusso "evolutivo" username -> myPeople -> dms/settings, oltre a
-  # dbManager/db.js + dbManager/AnagSnowflakesRepository.js per risolvere `marketIso`
-  # (tabella woc.ang_snowflakes).
-  SessionFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-session"
-      CodeUri: ./
-      Handler: session/src/index.handler
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
-            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
-            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
-            # occurred while executing request" (stesso problema già risolto per
-            # PkFavoriteFunction/isStellantisBrand).
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-        # session/src/dynamoCache.js (cache dati sessione per username) — v.
-        # TmpCacheTable in Resources.
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-      Environment:
-        Variables:
-          SESSION_BUCKET_NAME: !Ref TranslationsBucket
-          SESSION_DATA_KEY: session/session_data.json
-          # myPeople (usato dal flusso username -> myPeople -> dms/settings)
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dms (usato dallo stesso flusso, per dms/settings) — DMS_PING_*/
-          # DML_IBM_*: non più variabili d'ambiente in chiaro, lette dal secret
-          # condiviso via dms/config.js::getConfig() (in-process).
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DML_X_TARGET_ENV:         !Ref DmlXTargetEnv
-          # dmlConfigSync/db.js (in-process, vedi Makefile) — lettura della cache
-          # company-types/customer-titles (woc.dml_configurations), popolata dal job
-          # giornaliero DmlConfigSyncFunction. Riusa lo stesso Aurora/secret di
-          # pkFavorite/dbManager (nessun nuovo parametro CFN necessario).
-          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
-          DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
-          # dbManager/db.js (in-process, vedi Makefile) — risoluzione di `marketIso`
-          # (tabella woc.ang_snowflakes) tramite dbManager/AnagSnowflakesRepository.
-          # Riusa lo stesso Aurora/secret di pkFavorite/dmlConfigSync (nessun nuovo
-          # parametro CFN necessario).
-          DBMANAGER_DB_HOST:      !Ref PkFavoriteDbHost
-          DBMANAGER_DB_PORT:      !Ref PkFavoriteDbPort
-          DBMANAGER_DB_NAME:      !Ref PkFavoriteDbName
-          DBMANAGER_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
-          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-
-  SessionFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${SessionFunction}"
-      RetentionInDays: 30
-
-  # ── myPeople (IURSMA readUserProfiles) ────────────────────────────────────
-  #
-  # Il certificato/chiave mTLS ("apicCert"/"apicKey") sono letti da AWS Secrets
-  # Manager tramite la AWS Parameters and Secrets Lambda Extension (layer),
-  # per non dover imbarcare l'SDK e per beneficiare della cache locale
-  # dell'estensione. La funzione gira in VPC (Globals.Function.VpcConfig):
-  # è necessario un endpoint di rete verso Secrets Manager (VPC Interface
-  # Endpoint o NAT Gateway) affinché l'estensione riesca a recuperare i segreti.
-  MyPeopleFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-mypeople"
-      CodeUri: myPeople/
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-      Environment:
-        Variables:
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-
-  MyPeopleFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${MyPeopleFunction}"
-      RetentionInDays: 30
-
-  # ── pkFavorite (pacchetti/forfait preferiti del dealer per VIN) ───────────
-  #
-  # GET  -> elenca i preferiti di un dealer (username, da authorizer.sub) per un VIN,
-  #         arricchiti con i dati DML (Code/PackageDescription/PartsAvailablity/
-  #         TotalPriceInclTax/TotalPriceExclTax) via dms/dmsService::postDmsInquiry
-  #         (MessageType LFP, una chiamata per ciascun codice pacchetto preferito)
-  # POST -> crea il preferito se non esiste, altrimenti lo elimina ("toggle")
-  # Tabella PKFAVORITE su Aurora PostgreSQL "wiadvisor" (vedi sql/create_tables.sql).
-  # Le credenziali dell'utente applicativo Aurora least-privilege ("wiadvisor_app")
-  # sono lette da Secrets Manager tramite la AWS Parameters and Secrets Lambda
-  # Extension (layer), stesso meccanismo già usato da myPeople/pkDocsoa/session.
-  # La funzione gira in VPC (Globals.Function.VpcConfig): il Security Group Lambda
-  # deve avere accesso in ingresso consentito sul Security Group dell'RDS Proxy
-  # (porta 5432), come già configurato per le altre Lambda del progetto.
-  # CodeUri: ./ + BuildMethod: makefile perché index.js richiede in-process
-  # dms/authService + dms/dmsService (stesso pattern di PkManagerFunction/
-  # SessionFunction, vedi Makefile) per la chiamata al gateway DML.
-  PkFavoriteFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-pkfavorite"
-      CodeUri: ./
-      Handler: pkFavorite/index.handler
-      # session/src/sessionContextCache.js + myPeople/v360 (imbarcati in-process via
-      # Makefile, richiesti da dms/dmsService.js::resolveDynamicSenderFields per
-      # risolvere dinamicamente mainSincom/market/lingua/dealerCountryCode dalla
-      # sessione utente e brand da v360) richiedono le stesse variabili MyPeople/
-      # dmlConfigSync/v360 già usate da SessionFunction/V360Function.
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
-            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
-            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
-            # occurred while executing request" (stesso problema già risolto per
-            # isStellantisBrand).
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-        # v360/dynamoCache.js + session/src/dynamoCache.js (in-process, vedi
-        # Makefile) — cache condivisa su TmpCacheTable (v. Resources).
-        - Statement:
-            - Effect: Allow
-              Action:
-                - dynamodb:GetItem
-                - dynamodb:PutItem
-              Resource: !GetAtt TmpCacheTable.Arn
-      Environment:
-        Variables:
-          PKFAVORITE_DB_HOST:      !Ref PkFavoriteDbHost
-          PKFAVORITE_DB_PORT:      !Ref PkFavoriteDbPort
-          PKFAVORITE_DB_NAME:      !Ref PkFavoriteDbName
-          PKFAVORITE_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
-          # dms/config.js (in-process, vedi Makefile) — gateway DML per l'arricchimento
-          # dei preferiti (MessageType LFP). DMS_PING_*/DML_IBM_*: non più
-          # variabili d'ambiente in chiaro, lette dal secret condiviso.
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DML_X_TARGET_ENV:      !Ref DmlXTargetEnv
-          # dbManager/db.js (in-process, vedi Makefile) — richiesto da
-          # dms/dmsService.js::buildApplicationArea (bundlato insieme a pkFavorite)
-          # per risolvere physicalSiteId/dealerNumberIdSource (tabella
-          # woc.ang_snowflakes) del Sender dinamico dell'inquiry DMS. Riusa lo
-          # stesso Aurora/secret di pkFavorite (nessun nuovo parametro CFN necessario).
-          DBMANAGER_DB_HOST:      !Ref PkFavoriteDbHost
-          DBMANAGER_DB_PORT:      !Ref PkFavoriteDbPort
-          DBMANAGER_DB_NAME:      !Ref PkFavoriteDbName
-          DBMANAGER_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
-          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
-          # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
-          # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
-          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
-          # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
-          # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
-          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
-          DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
-          # v360/v360Service.js::getCachedBrand (in-process, vedi Makefile) — risoluzione
-          # del brand dal VIN per dms/dmsService.js::resolveDynamicSenderFields.
-          # V360_PING_*/ASV_*: non più variabili d'ambiente in chiaro, lette dal
-          # secret condiviso via v360/config.js::getConfig() (in-process).
-          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
-          DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
-
-  PkFavoriteFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${PkFavoriteFunction}"
-      RetentionInDays: 30
-
-  # ── dbManager (getPkwstouse — configurazione pacchetti per mercato/brand) ─
-  #
-  # Risolve, per una coppia (codmarket, codbrand), quale web service pacchetti
-  # (eper/docsoa/menupricing) usare, leggendo la tabella HQ_PKCONFIG sullo STESSO
-  # cluster Aurora PostgreSQL "wiadvisor" già usato da pkDocsoa/pkFavorite (match
-  # esatto CODMARKET+CODBRAND, altrimenti fallback su CODMARKET IS NULL). Riusa i
-  # parametri Docsoa* (stesso RDS Proxy/secret) invece di dichiararne di nuovi, per
-  # non richiedere modifiche alla pipeline di deploy esterna (parameter-overrides).
-  # Nessuna dipendenza cross-folder: CodeUri punta direttamente alla cartella del
-  # modulo (niente BuildMethod: makefile).
-  DbManagerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dbmanager"
-      CodeUri: dbManager/
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
-            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
-            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
-            # occurred while executing request" (stesso problema già risolto per
-            # PkFavoriteFunction/isStellantisBrand).
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-      Environment:
-        Variables:
-          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
-          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
-          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
-          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
-
-  DbManagerFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${DbManagerFunction}"
-      RetentionInDays: 30
-
-  # ── dmlConfigSync (sync giornaliera company-types/customer-titles DML) ───
-  #
-  # Triggerata 1 volta al giorno da EventBridge Schedule (Events.DailySync sotto):
-  # per ciascun mercato abilitato (tabella woc.dml_enabled_markets) chiama
-  # dms/getCompanyTypes + dms/getCustomerTitles (stesso bearer token/credenziali IBM
-  # di dms/settings/PkManagerFunction/PkFavoriteFunction/JobCardFunction) e upserta il
-  # risultato nella tabella woc.dml_configurations sullo STESSO cluster Aurora
-  # PostgreSQL "wiadvisor" già usato da pkFavorite/dbManager (riusa i parametri
-  # PkFavorite* invece di dichiararne di nuovi, per non richiedere modifiche alla
-  # pipeline di deploy esterna). SessionFunction legge questa tabella al posto di
-  # chiamare live i due servizi DML (vedi session/src/repositories/
-  # myPeopleDmsSessionRepository.js). CodeUri: ./ + BuildMethod: makefile perché
-  # index.js richiede in-process dms/authService + dms/dmsService (stesso pattern di
-  # PkManagerFunction/SessionFunction/PkFavoriteFunction/JobCardFunction, vedi Makefile).
-  # Timeout più alto del default (30s): il job itera N mercati abilitati, ciascuno con
-  # 2 chiamate HTTP sequenziali al gateway DML più l'upsert su Aurora.
-  DmlConfigSyncFunction:
-    Type: AWS::Serverless::Function
-    Metadata:
-      BuildMethod: makefile
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-dmlconfigsync"
-      CodeUri: ./
-      Handler: dmlConfigSync/index.handler
-      Timeout: 120
-      Layers:
-        - !Ref MyPeopleExtensionLayerArn
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-            # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
-            # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
-            # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
-            # occurred while executing request" (stesso problema già risolto per
-            # PkFavoriteFunction/isStellantisBrand/DbManagerFunction).
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-      Environment:
-        Variables:
-          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
-          DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
-          # dms/config.js (in-process, vedi Makefile) — gateway DML per company-types/
-          # customer-titles. DMS_PING_*/DML_IBM_*: non più variabili d'ambiente
-          # in chiaro, lette dal secret condiviso.
-          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
+          # AWS Region
+          AWS_REGION: !Sub '${AWS::Region}'
+          AWS_PARTITION: !Sub '${AWS::Partition}'
+          
+          # OAuth2 configuration (da Parameter Store)
+          OAUTH_CLIENT_ID: !Sub
+            - '{{resolve:ssm:/stellantis/syncro-kafka-events/oauth-client-id${EnvSuffix}:1}}'
+            - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
+          
+          OAUTH_TOKEN_URL: !Sub
+            - '{{resolve:ssm:/stellantis/syncro-kafka-events/oauth-token-url${EnvSuffix}:1}}'
+            - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
+          
+          # IBM API Connect configuration
+          IBM_APIC_CLIENT_ID: !Sub
+            - '{{resolve:ssm:/stellantis/syncro-kafka-events/apic-client-id${EnvSuffix}:1}}'
+            - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
+          
+          IBM_APIC_URL: !Sub
+            - '{{resolve:ssm:/stellantis/syncro-kafka-events/apic-url${EnvSuffix}:1}}'
+            - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
+          
+          # External systems endpoints
+          DJC_ENDPOINT: !Sub
+            - '{{resolve:ssm:/stellantis/syncro-kafka-events/djc-endpoint${EnvSuffix}:1}}'
+            - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
+          
+          GCT_ENDPOINT: !Sub
+            - '{{resolve:ssm:/stellantis/syncro-kafka-events/gct-endpoint${EnvSuffix}:1}}'
+            - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
+      
+      # CloudWatch Logs
+      LoggingConfig:
+        LogFormat: JSON
+        LogGroup: !Sub '/aws/lambda/stellantis-syncro-kafka-events-${Env}'
+      
+      # Tracing config (X-Ray)
+      TracingConfig:
+        Mode: Active
+      
+      # Reserved concurrent executions
+      ReservedConcurrentExecutions: !If [IsProd, 100, 10]
+      
+      # API Gateway integration
       Events:
-        DailySync:
-          Type: Schedule
+        PostSynchStatus:
+          Type: HttpApi
           Properties:
-            # 08:00 UTC ogni giorno (era 03:00 UTC: spostato più tardi perché il
-            # gateway DML Stellantis sembra non essere disponibile/stabile di notte —
-            # osservato un HTTP 502 "Internal server error" sulla sync delle 03:00 UTC
-            # del 2026-09-02, risolto poche ore dopo. 08:00 UTC = 10:00 CEST / 09:00 CET,
-            # quindi resta comunque fuori dagli orari di punta EMEA per tutto l'anno
-            # (nota: EventBridge Schedule interpreta sempre l'orario in UTC, non in ora
-            # locale). Regolabile senza toccare il codice.
-            Schedule: cron(0 8 * * ? *)
-            Name: !Sub "sch-np-bsn0027990-${Environment}-dmlconfigsync-daily"
-            Description: Sync giornaliera company-types/customer-titles DML per i mercati abilitati
-            Enabled: true
-
-  DmlConfigSyncFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      LogGroupName: !Sub "/aws/lambda/${DmlConfigSyncFunction}"
-      RetentionInDays: 30
-
-  # ── auroraAutoStart (riavvio automatico mattutino del cluster Aurora di stage) ──
-  #
-  # Un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo
-  # repository) spegne ogni sera il cluster Aurora "rds-np-bsn0027990-${Environment}-aurora"
-  # per risparmio costi (tag "stla_scheduler_action" applicato al cluster), ma NON
-  # prevede un riavvio automatico al mattino: verificato via CloudTrail (tutti gli
-  # StartDBCluster storici erano invocazioni manuali di un operatore). Questa Lambda,
-  # triggerata da EventBridge Schedule (Events.WeekdayMorningStart sotto), chiama
-  # rds:StartDBCluster SOLO se lo stato corrente del cluster è "stopped" (idempotente:
-  # nessun errore se già avviato manualmente prima dello scheduling).
-  # Deployata SOLO per l'ambiente stage (Condition: IsStage): l'ambiente dev resta
-  # sempre acceso (nessuno spegnimento automatico osservato), prod non è gestito da
-  # questo scheduler. Nessun nuovo parametro CloudFormation: il nome del cluster segue
-  # la stessa convenzione di naming già in uso ("rds-np-bsn0027990-${Environment}-aurora").
-  AuroraAutoStartFunction:
-    Type: AWS::Serverless::Function
-    Condition: IsStage
-    Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-auroraautostart"
-      CodeUri: auroraAutoStart/
-      Timeout: 30
-      Policies:
-        - Statement:
-            - Effect: Allow
-              Action:
-                - rds:DescribeDBClusters
-                - rds:StartDBCluster
-              Resource: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:rds-np-bsn0027990-${Environment}-aurora"
-      Environment:
-        Variables:
-          AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER: !Sub "rds-np-bsn0027990-${Environment}-aurora"
-      Events:
-        WeekdayMorningStart:
-          Type: Schedule
+            ApiId: !Ref HttpApi
+            Path: /api/synch-status
+            Method: POST
+            Auth:
+              Authorizer: NONE
+        
+        GetSynchStatus:
+          Type: HttpApi
           Properties:
-            # 06:00 UTC nei giorni lavorativi (lun-ven) = 08:00 CEST / 07:00 CET:
-            # con margine rispetto all'orario di lavoro EMEA (~08:00-09:00 locale),
-            # considerando anche i pochi minuti necessari ad Aurora per passare da
-            # "stopped" ad "available". Nessuna esecuzione nel weekend (il cluster
-            # viene comunque rispento la sera dal tool Stellantis se avviato per
-            # errore). Nota: EventBridge Schedule interpreta sempre l'orario in UTC,
-            # non in ora locale — regolabile senza toccare il codice.
-            Schedule: cron(0 6 ? * MON-FRI *)
-            Name: !Sub "sch-np-bsn0027990-${Environment}-auroraautostart-weekday-morning"
-            Description: Avvio automatico mattutino (lun-ven) del cluster Aurora di stage se spento
-            Enabled: true
+            ApiId: !Ref HttpApi
+            Path: /api/synch-status/{requestId}
+            Method: GET
+            Auth:
+              Authorizer: NONE
 
-  AuroraAutoStartFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    Condition: IsStage
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
+  # ==========================================
+  # HTTP API Gateway (API Manager APIC)
+  # ==========================================
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${AuroraAutoStartFunction}"
+      Name: !Sub 'stellantis-syncro-kafka-events-${Env}'
+      ProtocolType: HTTP
+      Description: REST API per sincronizzazione eventi Kafka
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+        AllowHeaders:
+          - '*'
+        MaxAge: 3600
+
+  # Stage per API Gateway
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: !Ref Env
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiLogGroup.Arn
+        Format: '$context.requestId $context.ip $context.requestTime $context.httpMethod $context.routeKey $context.status $context.integrationStatus $context.error.message'
+      ThrottleSettings:
+        BurstLimit: 500
+        RateLimit: 100
+
+  # CloudWatch Log Group per API Gateway
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/apigateway/stellantis-syncro-kafka-events-${Env}'
       RetentionInDays: 30
 
-  # ── isStellantisBrand (Aurora via RDS Proxy) ──────────────────────────────
-
-  IsStellantisBrandFunction:
-    Type: AWS::Serverless::Function
+  # ==========================================
+  # CloudWatch Alarms
+  # ==========================================
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
     Properties:
-      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-isstellantisbrand"
-      CodeUri: isStellantisBrand/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - Statement:
-            - Effect: Allow
-              Action: ssm:GetParameter
-              Resource:
-                - !Sub
-                  - "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
-                  - ParamPath: !If [IsProd, "/app/BSN0027990/DB_SECRET_ARN", !Sub "/app/np-BSN0027990-${Environment}/DB_SECRET_ARN"]
-                - !Sub
-                  - "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
-                  - ParamPath: !If [IsProd, "/app/BSN0027990/RDS_PROXY_ENDPOINT", !Sub "/app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT"]
-            - Effect: Allow
-              Action: secretsmanager:GetSecretValue
-              Resource: "*"
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-      Environment:
-        Variables:
-          DB_SECRET_ARN_PARAM: !If
-            - IsProd
-            - /app/BSN0027990/DB_SECRET_ARN
-            - !Sub /app/np-BSN0027990-${Environment}/DB_SECRET_ARN
-          RDS_PROXY_ENDPOINT_PARAM: !If
-            - IsProd
-            - /app/BSN0027990/RDS_PROXY_ENDPOINT
-            - !Sub /app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT
+      AlarmName: !Sub 'stellantis-syncro-kafka-events-errors-${Env}'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SyncroKafkaEventsFunction
+      TreatMissingData: notBreaching
 
-  IsStellantisBrandFunctionLogGroup:
-    Type: AWS::Logs::LogGroup
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
+  LambdaThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
     Properties:
-      LogGroupName: !Sub "/aws/lambda/${IsStellantisBrandFunction}"
-      RetentionInDays: 30
+      AlarmName: !Sub 'stellantis-syncro-kafka-events-throttles-${Env}'
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SyncroKafkaEventsFunction
+      TreatMissingData: notBreaching
 
-# ── Outputs ───────────────────────────────────────────────────────────────────
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'stellantis-syncro-kafka-events-duration-${Env}'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 25000 # 25 secondi
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SyncroKafkaEventsFunction
+      TreatMissingData: notBreaching
 
 Outputs:
-  AgendaSoaFunctionArn:
-    Value: !GetAtt AgendaSoaFunction.Arn
-  AgendaSoaNagaFunctionArn:
-    Value: !GetAtt AgendaSoaNagaFunction.Arn
-  DmsFunctionArn:
-    Value: !GetAtt DmsFunction.Arn
-  JobCardFunctionArn:
-    Value: !GetAtt JobCardFunction.Arn
-  DjcFunctionArn:
-    Value: !GetAtt DjcFunction.Arn
-  MoparDocFunctionArn:
-    Value: !GetAtt MoparDocFunction.Arn
-  V360FunctionArn:
-    Value: !GetAtt V360Function.Arn
-  SrpV360OtaFunctionArn:
-    Value: !GetAtt SrpV360OtaFunction.Arn
-  PkEperFunctionArn:
-    Value: !GetAtt PkEperFunction.Arn
-  PkDocsoaFunctionArn:
-    Value: !GetAtt PkDocsoaFunction.Arn
-  PkMenupricingFunctionArn:
-    Value: !GetAtt PkMenupricingFunction.Arn
-  PkManagerFunctionArn:
-    Value: !GetAtt PkManagerFunction.Arn
-  TranslationsBucketName:
-    Value: !Ref TranslationsBucket
-  TranslationsFunctionArn:
-    Value: !GetAtt TranslationsFunction.Arn
-  SessionFunctionArn:
-    Value: !GetAtt SessionFunction.Arn
-  MyPeopleFunctionArn:
-    Value: !GetAtt MyPeopleFunction.Arn
-  PkFavoriteFunctionArn:
-    Value: !GetAtt PkFavoriteFunction.Arn
-  DbManagerFunctionArn:
-    Value: !GetAtt DbManagerFunction.Arn
-  IsStellantisBrandFunctionArn:
-    Value: !GetAtt IsStellantisBrandFunction.Arn
+  FunctionName:
+    Description: Nome della Lambda function
+    Value: !Ref SyncroKafkaEventsFunction
+    Export:
+      Name: !Sub 'SyncroKafkaEvents-Function-${Env}'
+
+  FunctionArn:
+    Description: ARN della Lambda function
+    Value: !GetAtt SyncroKafkaEventsFunction.Arn
+    Export:
+      Name: !Sub 'SyncroKafkaEvents-Arn-${Env}'
+
+  ApiEndpoint:
+    Description: Endpoint API Gateway HTTP API
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Env}'
+    Export:
+      Name: !Sub 'SyncroKafkaEvents-Api-${Env}'
+
+  LogGroupName:
+    Description: CloudWatch Log Group
+    Value: !Sub '/aws/lambda/stellantis-syncro-kafka-events-${Env}'
+    Export:
+      Name: !Sub 'SyncroKafkaEvents-LogGroup-${Env}'

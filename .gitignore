@@ -1,47 +1,44 @@
-agendaSoa/node_modules/
-agendaSoa/.env
-agendaSoa/coverage/
-agendaSoaNaga/node_modules/
-agendaSoaNaga/.env
-agendaSoaNaga/coverage/
-dms/node_modules/
-dms/.env
-dms/coverage/
-jobcard/node_modules/
-jobcard/.env
-jobcard/coverage/
-v360/node_modules/
-v360/.env
-v360/coverage/
-cert/
-samconfig.toml
-pkEper/node_modules/
-pkEper/.env
-pkEper/coverage/
-pkDocsoa/node_modules/
-pkDocsoa/.env
-pkDocsoa/coverage/
-pkMenupricing/node_modules/
-pkMenupricing/.env
-pkMenupricing/coverage/
-translations/node_modules/
-translations/.env
-translations/coverage/
-session/node_modules/
-session/.env
-session/coverage/
-myPeople/node_modules/
-myPeople/.env
-myPeople/coverage/
-isStellantisBrand/node_modules/
-scripts/import-ang-snowflakes/node_modules/
-.aws-sam/
-.idea/
-*/.idea/
-.cfn-import/
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Test coverage
 coverage/
-.kiro/
-.nvmrc
-wiadvisor-backend-lambda-examples/
-bashscripts/
-.env.example
+.nyc_output/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs
+dist/
+build/
+*.zip
+
+# AWS SAM
+.aws-sam/
+build/
+samconfig.toml
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+project-am-stellantis-woc-backend/
