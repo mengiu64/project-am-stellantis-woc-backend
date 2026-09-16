@@ -118,4 +118,11 @@ class TestDataFactory {
   }
 }
 
+// Esporta sia la classe che le funzioni di convenienza per i test
 module.exports = TestDataFactory;
+module.exports.createValidApiGatewayPostEvent = TestDataFactory.createApiGatewayPostEvent.bind(TestDataFactory);
+module.exports.createValidApiGatewayGetEvent = TestDataFactory.createApiGatewayGetEvent.bind(TestDataFactory);
+module.exports.createValidKafkaEvent = TestDataFactory.createKafkaEvent.bind(TestDataFactory);
+module.exports.createValidJWT = TestDataFactory.createDecodedToken.bind(TestDataFactory);
+module.exports.createValidOAuthResponse = TestDataFactory.createOAuth2Response.bind(TestDataFactory);
+module.exports.createValidExternalSystemResponse = TestDataFactory.createExternalSystemResponse.bind(TestDataFactory);
