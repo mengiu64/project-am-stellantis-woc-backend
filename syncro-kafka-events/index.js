@@ -1,11 +1,11 @@
 // index.js
 // Lambda handler - orchestrazione autenticazione, validazione, elaborazione
 
-const Logger = require('../utils/logger');
-const Validator = require('../utils/validator');
-const configModule = require('../config/config');
-const AuthService = require('../services/authService');
-const ExternalSystemClient = require('../services/externalSystemClient');
+const Logger = require('./logger');
+const Validator = require('./validator');
+const configModule = require('./config');
+const AuthService = require('./authService');
+const ExternalSystemClient = require('./externalSystemClient');
 
 // Funzione principale Lambda handler
 exports.handler = async (event, context) => {

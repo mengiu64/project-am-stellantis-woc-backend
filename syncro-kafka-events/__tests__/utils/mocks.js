@@ -1,7 +1,7 @@
 // test/utils/mocks.js
 // Mock objects per servizi
 
-const Logger = require('../../src/utils/logger');
+const Logger = require('../../logger');
 
 class MockedServices {
   // Mock logger
