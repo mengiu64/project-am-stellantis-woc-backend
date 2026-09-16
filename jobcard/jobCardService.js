@@ -474,6 +474,13 @@ function sanitizeJobCardDetails(body) {
       if (customer?.contactInfo?.address) {
         customer.contactInfo.address = sanitizeAddress(customer.contactInfo.address);
       }
+      // TODO TEMP: rimuovere questo blocco quando la DGT restituirà una email
+      // valida. Valorizza contactInfo.email con un default fittizio quando è
+      // vuota, per poter testare i flussi a valle che richiedono un'email.
+      if (customer?.contactInfo && customer.contactInfo.email === '') {
+        customer.contactInfo.email = 'test@eng.it';
+      }
+      // FINE TODO TEMP
     }
   }
   enrichJobsWithPackageInfo(body);
