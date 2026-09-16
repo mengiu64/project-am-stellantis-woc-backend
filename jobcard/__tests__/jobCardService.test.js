@@ -967,7 +967,7 @@ describe('jobCardService', () => {
       const jobCardDetail = {
         jobs: [
           {
-            partInfo: [{ partNumber: '735712563', originalPriceExclVat: 1, itemQuantity: 2 }],
+            partInfo: [{ partNumber: '735712563', unitaryPriceExclVat: 50, itemQuantity: 2 }],
             laborInfo: [],
           },
         ],
@@ -987,7 +987,7 @@ describe('jobCardService', () => {
 
       expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
         partNumber: '735712563',
-        originalPriceExclVat: 493.71,
+        originalPriceExclVat: 100, // itemQuantity(2) * unitaryPriceExclVat(50)
         dmsDiscountPercentage: 5,
         QuantityAvailable: 3,
         availability: 'green',
@@ -1060,11 +1060,11 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].partInfo[0].availability).toBeUndefined();
     });
 
-    test('uses ReplacementItem data (including partNumber/partDescription) when the PartsItem has a replacement', () => {
+    test('does not overwrite partNumber/partDescription, but uses ReplacementItem data for discount/availability', () => {
       const jobCardDetail = {
         jobs: [
           {
-            partInfo: [{ partNumber: '1610489680', partDescription: 'original desc', itemQuantity: 1 }],
+            partInfo: [{ partNumber: '1610489680', partDescription: 'original desc', itemQuantity: 1, unitaryPriceExclVat: 40 }],
             laborInfo: [],
           },
         ],
@@ -1097,11 +1097,11 @@ describe('jobCardService', () => {
       applyDataFromDml(jobCardDetail, dmlResponse);
 
       expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
-        partNumber: '12347411',
-        partDescription: 'PR de remplacement',
-        originalPriceExclVat: 80,
-        dmsDiscountPercentage: 0,
-        QuantityAvailable: 0,
+        partNumber: '1610489680',
+        partDescription: 'original desc',
+        originalPriceExclVat: 40, // itemQuantity(1) * unitaryPriceExclVat(40)
+        dmsDiscountPercentage: 0, // da ReplacementItem[0].DiscountPercentage
+        QuantityAvailable: 0, // da ReplacementItem[0].BinLocation[0].QuantityAvailable
         availability: 'red',
       }));
     });
@@ -1136,6 +1136,200 @@ describe('jobCardService', () => {
       }));
     });
 
+    // ── riconciliazione appDiscountPercentage/dmsDiscountPercentage ─────────
+
+    test('wlDiscount=true, appDiscountPercentage!=0: dmsDiscountPercentage = -appDiscountPercentage (appDiscountPercentage invariato)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            discountInPercentage: 10, // sconto a livello di workline
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, appDiscountPercentage: 15 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 20 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].appDiscountPercentage).toBe(15);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(-15);
+    });
+
+    test('wlDiscount=true, appDiscountPercentage=0, sconto DML!=0: appDiscountPercentage = -DiscountPercentage DML', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            discountInAmountOnPriceWithVat: 5,
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, appDiscountPercentage: 0, dmsDiscountPercentage: 0 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 20 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].appDiscountPercentage).toBe(-20);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(0);
+    });
+
+    test('wlDiscount=true, appDiscountPercentage=0, sconto DML=0: nessuna modifica', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            discountInAmountOnPriceWithVat: 5,
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, appDiscountPercentage: 0, dmsDiscountPercentage: 0 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 0 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].appDiscountPercentage).toBe(0);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(0);
+    });
+
+    test('wlDiscount=false, appDiscountPercentage!=0 e dmsDiscountPercentage=0: sottrae lo sconto DML da appDiscountPercentage', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, appDiscountPercentage: 15, dmsDiscountPercentage: 0 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 5 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].appDiscountPercentage).toBe(10); // 15 - 5
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(5);
+    });
+
+    test('wlDiscount=false, appDiscountPercentage!=0 e dmsDiscountPercentage!=0: (appDiscountPercentage+dmsDiscountPercentage) - sconto DML', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, appDiscountPercentage: 15, dmsDiscountPercentage: 5 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 8 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].appDiscountPercentage).toBe(12); // (15+5) - 8
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(8);
+    });
+
+    test('wlDiscount=false, appDiscountPercentage=0: dmsDiscountPercentage = sconto DML', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, appDiscountPercentage: 0 }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 8 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(8);
+    });
+
+    test('la stessa riconciliazione si applica a laborInfo', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [],
+            laborInfo: [{ laborOperationCode: 'OP1', appDiscountPercentage: 15, dmsDiscountPercentage: 0 }],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [], LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 1, UnitaryTimeAmount: 10, DiscountPercentage: 5 }] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      expect(jobCardDetail.jobs[0].laborInfo[0].appDiscountPercentage).toBe(10); // 15 - 5
+      expect(jobCardDetail.jobs[0].laborInfo[0].dmsDiscountPercentage).toBe(5);
+    });
+
+    // ── ricalcolo prezzi (part/labor) ────────────────────────────────────────
+
+    test('ricalcola i prezzi di partInfo considerando la somma di appDiscountPercentage e dmsDiscountPercentage, con IVA', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 2, unitaryPriceExclVat: 100,
+              appDiscountPercentage: 10, dmsDiscountPercentage: 0, vatPercentage: 22,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', DiscountPercentage: 0 }], LaborItems: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      const part = jobCardDetail.jobs[0].partInfo[0];
+      // originalPriceExclVat = 2 * 100 = 200; discount totale = 10 (appDiscountPercentage) + 0 (dmsDiscountPercentage, invariato: appDiscountPercentage!=0 e dmsDiscountPercentage=0 => branch che sottrae 0)
+      expect(part.originalPriceExclVat).toBe(200);
+      expect(part.originalPriceWithVat).toBeCloseTo(244, 5); // 200 * 1.22
+      expect(part.priceExclVatAfterDiscount).toBeCloseTo(180, 5); // 200 * (1 - 10/100)
+      expect(part.priceWithVatAfterDiscount).toBeCloseTo(219.6, 5); // 180 * 1.22
+      expect(part.discountInAmountOnPriceWithVat).toBeCloseTo(24.4, 5); // 244 - 219.6
+    });
+
+    test('ricalcola laborRateAmount/prezzi di laborInfo considerando la somma di appDiscountPercentage e dmsDiscountPercentage, con IVA', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [],
+            laborInfo: [{
+              laborOperationCode: 'OP1', appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 22,
+            }],
+          },
+        ],
+      };
+      const dmlResponse = {
+        WorkLines: [{ PartsItem: [], LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 2, UnitaryTimeAmount: 50, DiscountPercentage: 10 }] }],
+      };
+
+      applyDataFromDml(jobCardDetail, dmlResponse);
+
+      const labor = jobCardDetail.jobs[0].laborInfo[0];
+      // laborRateAmount = tariffa oraria (UnitaryTimeAmount) = 50
+      // originalPriceExclVat = laborDuration(2) * laborRateAmount(50) = 100; discount totale = 0(app) + 10(dms) = 10
+      expect(labor.laborRateAmount).toBe(50);
+      expect(labor.originalPriceExclVat).toBe(100);
+      expect(labor.originalPriceWithVat).toBeCloseTo(122, 5); // 100 * 1.22
+      expect(labor.priceExclVatAfterDiscount).toBeCloseTo(90, 5); // 100 * (1 - 10/100)
+      expect(labor.priceWithVatAfterDiscount).toBeCloseTo(109.8, 5); // 90 * 1.22
+      expect(labor.discountInAmountOnPriceWithVat).toBeCloseTo(12.2, 5); // 122 - 109.8
+    });
+
     test('leaves partInfo/laborInfo untouched when no matching PartNumber/LaborOperationID is found', () => {
       const jobCardDetail = {
         jobs: [
@@ -1166,7 +1360,7 @@ describe('jobCardService', () => {
         vehicleInfo: { identification: { vin: 'VIN1' } },
         jobs: [
           {
-            partInfo: [{ partNumber: 'P1', itemQuantity: 2 }],
+            partInfo: [{ partNumber: 'P1', itemQuantity: 2, unitaryPriceExclVat: 21 }],
             laborInfo: [{ laborOperationCode: 'OP1' }],
           },
         ],
@@ -1183,7 +1377,7 @@ describe('jobCardService', () => {
       const result = await getDataFromDML(jobCardDetail);
 
       expect(result.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
-        originalPriceExclVat: 42,
+        originalPriceExclVat: 42, // itemQuantity(2) * unitaryPriceExclVat(21)
         dmsDiscountPercentage: 1,
         QuantityAvailable: 2,
         availability: 'orange',
@@ -1257,7 +1451,7 @@ describe('jobCardService', () => {
           vehicleInfo: { identification: { vin: 'VIN1' } },
           jobs: [
             {
-              partInfo: [{ partNumber: 'P1', itemQuantity: 2 }],
+              partInfo: [{ partNumber: 'P1', itemQuantity: 2, unitaryPriceExclVat: 21 }],
               laborInfo: [],
             },
           ],
@@ -1280,7 +1474,7 @@ describe('jobCardService', () => {
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
       expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
-        originalPriceExclVat: 42,
+        originalPriceExclVat: 42, // itemQuantity(2) * unitaryPriceExclVat(21)
         dmsDiscountPercentage: 1,
         QuantityAvailable: 2,
       }));

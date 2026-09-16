@@ -659,8 +659,9 @@ async function getCartPriceAndAvailability(jobCardDetail, sessionContext = {}) {
  * @param {object} partsItem - elemento di WorkLines[].PartsItem[]
  * @returns {{ source: object, isReplacement: boolean }} il record dati da
  *          usare (partsItem stesso o il primo ReplacementItem) e un flag che
- *          indica se e un ricambio sostitutivo (per sapere se sovrascrivere
- *          anche partNumber/partDescription)
+ *          indica se e un ricambio sostitutivo (non piu usato per
+ *          sovrascrivere partNumber/partDescription in applyDataFromDml,
+ *          mantenuto per eventuali usi futuri)
  */
 function resolveDmlPartSource(partsItem) {
   const replacement = Array.isArray(partsItem?.ReplacementItem) ? partsItem.ReplacementItem[0] : undefined;
@@ -680,9 +681,16 @@ function resolveDmlPartSource(partsItem) {
  *
  * Per i ricambi (partInfo), se il PartsItem corrispondente porta un
  * ReplacementItem (ricambio sostitutivo proposto dal DMS), i dati vengono
- * letti da li invece che dal PartsItem originale (v. resolveDmlPartSource),
- * e in quel caso vengono sovrascritti anche partNumber/partDescription con
- * quelli del ricambio sostitutivo.
+ * letti da li invece che dal PartsItem originale (v. resolveDmlPartSource).
+ *
+ * Per ciascun job (workline) si determina se lo sconto e' applicato a
+ * livello di workline (wlDiscount, v. hasWorkLineDiscount) in base a
+ * job.discountInAmountOnPriceWithVat/job.discountInPercentage; questo flag
+ * guida la riconciliazione tra sconto applicativo (appDiscountPercentage) e
+ * sconto DMS (dmsDiscountPercentage) di ogni part/labor (v.
+ * reconcileDiscountPercentages). I prezzi di ciascun part/labor vengono poi
+ * ricalcolati (v. computePartPriceFields/computeLaborPriceFields) usando la
+ * somma dei due sconti.
  *
  * @param {object} jobCardDetail - jobCardDetail (jobs[].partInfo[]/laborInfo[]),
  *                                 modificato in place
@@ -712,6 +720,138 @@ function computeAvailability(itemQuantity, quantityAvailable) {
   return 'green';
 }
 
+/**
+ * Determina se, per un job (workline) del jobCardDetail, lo sconto e'
+ * applicato a livello di workline: vero se almeno uno tra
+ * job.discountInAmountOnPriceWithVat e job.discountInPercentage e'
+ * valorizzato (diverso da null/undefined/0). Guida la riconciliazione tra
+ * sconto applicativo e sconto DMS di ciascun part/labor del job (v.
+ * reconcileDiscountPercentages).
+ * @param {object} job - elemento di jobCardDetail.jobs[]
+ * @returns {boolean}
+ */
+function hasWorkLineDiscount(job) {
+  return Boolean(job?.discountInAmountOnPriceWithVat) || Boolean(job?.discountInPercentage);
+}
+
+/**
+ * Riconcilia, in place su `target` (un elemento di partInfo[]/laborInfo[]),
+ * lo sconto applicativo (target.appDiscountPercentage) con lo sconto
+ * ricevuto dal DML (dmsSourceDiscountPercentage, letto da
+ * source.DiscountPercentage per i ricambi o da laborItem.DiscountPercentage
+ * per la manodopera), in base a `wlDiscount` (v. hasWorkLineDiscount):
+ *
+ *  - wlDiscount=true, appDiscountPercentage!=0:
+ *      dmsDiscountPercentage = -appDiscountPercentage (appDiscountPercentage invariato)
+ *  - wlDiscount=true, appDiscountPercentage=0, dmsSourceDiscountPercentage!=0:
+ *      appDiscountPercentage = -dmsSourceDiscountPercentage (dmsDiscountPercentage invariato)
+ *  - wlDiscount=true, appDiscountPercentage=0, dmsSourceDiscountPercentage=0:
+ *      nessuna modifica
+ *  - wlDiscount=false, appDiscountPercentage!=0, dmsDiscountPercentage=0:
+ *      appDiscountPercentage -= dmsSourceDiscountPercentage, dmsDiscountPercentage = dmsSourceDiscountPercentage
+ *  - wlDiscount=false, appDiscountPercentage!=0, dmsDiscountPercentage!=0:
+ *      appDiscountPercentage = (appDiscountPercentage + dmsDiscountPercentage) - dmsSourceDiscountPercentage,
+ *      dmsDiscountPercentage = dmsSourceDiscountPercentage
+ *  - wlDiscount=false, appDiscountPercentage=0:
+ *      dmsDiscountPercentage = dmsSourceDiscountPercentage
+ *
+ * @param {object} target - part o labor (jobs[].partInfo[]/laborInfo[] item), modificato in place
+ * @param {boolean} wlDiscount - v. hasWorkLineDiscount
+ * @param {number} [dmsSourceDiscountPercentage] - sconto restituito dal DML per questo ricambio/manodopera
+ */
+function reconcileDiscountPercentages(target, wlDiscount, dmsSourceDiscountPercentage) {
+  const oldAppDiscount = target.appDiscountPercentage ?? 0;
+  const oldDmsDiscount = target.dmsDiscountPercentage ?? 0;
+  const dmsDiscount = dmsSourceDiscountPercentage ?? 0;
+
+  if (wlDiscount) {
+    if (oldAppDiscount !== 0) {
+      target.dmsDiscountPercentage = -oldAppDiscount;
+    } else if (dmsDiscount !== 0) {
+      target.appDiscountPercentage = -dmsDiscount;
+    }
+    // altrimenti (entrambi 0): nessuna modifica
+  } else if (oldAppDiscount !== 0 && oldDmsDiscount === 0) {
+    target.appDiscountPercentage = oldAppDiscount - dmsDiscount;
+    target.dmsDiscountPercentage = dmsDiscount;
+  } else if (oldAppDiscount !== 0 && oldDmsDiscount !== 0) {
+    target.appDiscountPercentage = (oldAppDiscount + oldDmsDiscount) - dmsDiscount;
+    target.dmsDiscountPercentage = dmsDiscount;
+  } else if (oldAppDiscount === 0) {
+    target.dmsDiscountPercentage = dmsDiscount;
+  }
+}
+
+/**
+ * Calcola i campi di prezzo/sconto di un ricambio (partInfo[]), considerando
+ * come sconto complessivo la somma di appDiscountPercentage e
+ * dmsDiscountPercentage (gia' riconciliati, v. reconcileDiscountPercentages).
+ * @param {number} itemQuantity          - part.itemQuantity
+ * @param {number} unitaryPriceExclVat   - part.unitaryPriceExclVat
+ * @param {number} appDiscountPercentage - part.appDiscountPercentage
+ * @param {number} dmsDiscountPercentage - part.dmsDiscountPercentage
+ * @param {number} vatPercentage         - part.vatPercentage
+ * @returns {{ originalPriceExclVat: number, originalPriceWithVat: number,
+ *             priceExclVatAfterDiscount: number, priceWithVatAfterDiscount: number,
+ *             discountInAmountOnPriceWithVat: number }}
+ */
+function computePartPriceFields(itemQuantity, unitaryPriceExclVat, appDiscountPercentage, dmsDiscountPercentage, vatPercentage) {
+  const quantity = itemQuantity ?? 0;
+  const unitPrice = unitaryPriceExclVat ?? 0;
+  const vat = vatPercentage ?? 0;
+  const discount = (appDiscountPercentage ?? 0) + (dmsDiscountPercentage ?? 0);
+
+  const originalPriceExclVat = quantity * unitPrice;
+  const originalPriceWithVat = originalPriceExclVat * (1 + vat / 100);
+  const priceExclVatAfterDiscount = originalPriceExclVat * (1 - discount / 100);
+  const priceWithVatAfterDiscount = priceExclVatAfterDiscount * (1 + vat / 100);
+  const discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+
+  return {
+    originalPriceExclVat,
+    originalPriceWithVat,
+    priceExclVatAfterDiscount,
+    priceWithVatAfterDiscount,
+    discountInAmountOnPriceWithVat,
+  };
+}
+
+/**
+ * Calcola i campi di prezzo/sconto di una manodopera (laborInfo[]),
+ * considerando come sconto complessivo la somma di appDiscountPercentage e
+ * dmsDiscountPercentage (gia' riconciliati, v. reconcileDiscountPercentages).
+ * @param {number} laborDuration         - labor.laborDuration
+ * @param {number} laborRate             - tariffa oraria (DML: LaborItem.UnitaryTimeAmount)
+ * @param {number} appDiscountPercentage - labor.appDiscountPercentage
+ * @param {number} dmsDiscountPercentage - labor.dmsDiscountPercentage
+ * @param {number} vatPercentage         - labor.vatPercentage
+ * @returns {{ laborRateAmount: number, originalPriceExclVat: number, originalPriceWithVat: number,
+ *             priceExclVatAfterDiscount: number, priceWithVatAfterDiscount: number,
+ *             discountInAmountOnPriceWithVat: number }}
+ */
+function computeLaborPriceFields(laborDuration, laborRate, appDiscountPercentage, dmsDiscountPercentage, vatPercentage) {
+  const duration = laborDuration ?? 0;
+  const rate = laborRate ?? 0;
+  const vat = vatPercentage ?? 0;
+  const discount = (appDiscountPercentage ?? 0) + (dmsDiscountPercentage ?? 0);
+
+  const laborRateAmount = rate;
+  const originalPriceExclVat = duration * rate;
+  const originalPriceWithVat = originalPriceExclVat * (1 + vat / 100);
+  const priceExclVatAfterDiscount = originalPriceExclVat * (1 - discount / 100);
+  const priceWithVatAfterDiscount = priceExclVatAfterDiscount * (1 + vat / 100);
+  const discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+
+  return {
+    laborRateAmount,
+    originalPriceExclVat,
+    originalPriceWithVat,
+    priceExclVatAfterDiscount,
+    priceWithVatAfterDiscount,
+    discountInAmountOnPriceWithVat,
+  };
+}
+
 function applyDataFromDml(jobCardDetail, dmlResponse) {
   const jobs = jobCardDetail?.jobs;
   if (!Array.isArray(jobs)) return jobCardDetail;
@@ -731,20 +871,27 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
   }
 
   for (const job of jobs) {
+    // Sconto a livello di workline: guida reconcileDiscountPercentages per
+    // ciascun part/labor di questo job (v. hasWorkLineDiscount).
+    const wlDiscount = hasWorkLineDiscount(job);
+
     for (const part of job?.partInfo ?? []) {
       const partsItem = partsItemsByPartNumber.get(part?.partNumber);
       if (!partsItem) continue;
 
-      const { source, isReplacement } = resolveDmlPartSource(partsItem);
-      part.originalPriceExclVat = source.OriginalPriceExclVAT;
-      part.dmsDiscountPercentage = source.DiscountPercentage;
+      const { source } = resolveDmlPartSource(partsItem);
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
       part.availability = computeAvailability(part.itemQuantity, part.QuantityAvailable);
 
-      if (isReplacement) {
-        part.partNumber = source.PartNumber;
-        part.partDescription = source.PartNumberDescription;
-      }
+      reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
+
+      Object.assign(part, computePartPriceFields(
+        part.itemQuantity,
+        part.unitaryPriceExclVat,
+        part.appDiscountPercentage,
+        part.dmsDiscountPercentage,
+        part.vatPercentage,
+      ));
     }
 
     for (const labor of job?.laborInfo ?? []) {
@@ -752,8 +899,16 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       if (!laborItem) continue;
 
       labor.laborDuration = laborItem.TimeUnit;
-      labor.dmsDiscountPercentage = laborItem.DiscountPercentage;
-      labor.laborRateAmount = laborItem.UnitaryTimeAmount;
+
+      reconcileDiscountPercentages(labor, wlDiscount, laborItem.DiscountPercentage);
+
+      Object.assign(labor, computeLaborPriceFields(
+        labor.laborDuration,
+        laborItem.UnitaryTimeAmount,
+        labor.appDiscountPercentage,
+        labor.dmsDiscountPercentage,
+        labor.vatPercentage,
+      ));
     }
   }
 
