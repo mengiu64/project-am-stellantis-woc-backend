@@ -20,7 +20,7 @@ permissions:
 jobs:
   test-agendaSoa:
     name: agendaSoa
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: agendaSoa
@@ -239,7 +239,7 @@ jobs:
 
   test-agendaSoaNaga:
     name: agendaSoaNaga
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: agendaSoaNaga
@@ -458,7 +458,7 @@ jobs:
 
   test-dms:
     name: dms
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: dms
@@ -677,7 +677,7 @@ jobs:
 
   test-jobcard:
     name: jobcard
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: jobcard
@@ -896,7 +896,7 @@ jobs:
 
   test-djc:
     name: djc
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: djc
@@ -1115,7 +1115,7 @@ jobs:
 
   test-v360:
     name: v360
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: v360
@@ -1334,7 +1334,7 @@ jobs:
 
   test-pkEper:
     name: pkEper
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: pkEper
@@ -1553,7 +1553,7 @@ jobs:
 
   test-pkDocsoa:
     name: pkDocsoa
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: pkDocsoa
@@ -1772,7 +1772,7 @@ jobs:
 
   test-pkMenupricing:
     name: pkMenupricing
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: pkMenupricing
@@ -1992,7 +1992,7 @@ jobs:
 
   test-pkManager:
     name: pkManager
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: pkManager
@@ -2211,7 +2211,7 @@ jobs:
 
   test-translations:
     name: translations
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: translations
@@ -2431,7 +2431,7 @@ jobs:
 
   test-session:
     name: session
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: session
@@ -2651,7 +2651,7 @@ jobs:
 
   test-myPeople:
     name: myPeople
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: myPeople
@@ -2870,7 +2870,7 @@ jobs:
 
   test-pkFavorite:
     name: pkFavorite
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: pkFavorite
@@ -3089,7 +3089,7 @@ jobs:
 
   test-dbManager:
     name: dbManager
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: dbManager
@@ -3530,7 +3530,7 @@ jobs:
 
   test-dmlConfigSync:
     name: dmlConfigSync
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: dmlConfigSync
@@ -3748,7 +3748,7 @@ jobs:
           retention-days: 7
   test-auroraAutoStart:
     name: auroraAutoStart
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: auroraAutoStart
@@ -3966,7 +3966,7 @@ jobs:
           retention-days: 7
   test-moparDoc:
     name: moparDoc
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: moparDoc
@@ -4186,7 +4186,7 @@ jobs:
 
   test-isStellantisBrand:
     name: isStellantisBrand
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: isStellantisBrand
@@ -4448,7 +4448,7 @@ jobs:
       - test-isStellantisBrand
       - test-auroraAutoStart
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     permissions:
       id-token: write
       contents: read
@@ -4467,6 +4467,8 @@ jobs:
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
 
       - name: Install npm dependencies (all modules)
         run: |
@@ -4490,6 +4492,13 @@ jobs:
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
           (cd auroraAutoStart && npm ci --omit=dev)
+
+      - name: Ensure build tools (make) are available
+        run: |
+          if ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y make
+          fi
 
       - name: SAM Build
         run: sam build --parallel
@@ -4571,7 +4580,7 @@ jobs:
       - test-isStellantisBrand
       - test-auroraAutoStart
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     permissions:
       id-token: write
       contents: read
@@ -4590,6 +4599,8 @@ jobs:
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
 
       - name: Install npm dependencies (all modules)
         run: |
@@ -4613,6 +4624,13 @@ jobs:
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
           (cd auroraAutoStart && npm ci --omit=dev)
+
+      - name: Ensure build tools (make) are available
+        run: |
+          if ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y make
+          fi
 
       - name: SAM Build
         run: sam build --parallel
@@ -4695,7 +4713,7 @@ jobs:
       - test-isStellantisBrand
       - test-auroraAutoStart
     if: github.event_name == 'push' && github.ref == 'refs/heads/production'
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     environment: prod
     permissions:
       id-token: write
@@ -4715,6 +4733,8 @@ jobs:
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
 
       - name: Install npm dependencies (all modules)
         run: |
@@ -4738,6 +4758,13 @@ jobs:
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
           (cd auroraAutoStart && npm ci --omit=dev)
+
+      - name: Ensure build tools (make) are available
+        run: |
+          if ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y make
+          fi
 
       - name: SAM Build
         run: sam build --parallel
