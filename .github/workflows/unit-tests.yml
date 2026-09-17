@@ -4245,6 +4245,8 @@ jobs:
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
 
       - name: Install npm dependencies (all modules)
         run: |
@@ -4366,6 +4368,8 @@ jobs:
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
 
       - name: Install npm dependencies (all modules)
         run: |
@@ -4489,6 +4493,8 @@ jobs:
 
       - name: Install AWS SAM CLI
         uses: aws-actions/setup-sam@v3
+        with:
+          use-installer: true
 
       - name: Install npm dependencies (all modules)
         run: |
