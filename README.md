@@ -1259,7 +1259,7 @@ TRANSLATIONS_KEY_PREFIX=locales     # (opzionale) prefisso key S3 ({prefix}/{lan
 TRANSLATIONS_DEFAULT_LANG=en        # (opzionale) lingua di default quando "lang" non è passato
 ```
 
-> **Nota:** `authService` implementa un meccanismo di cache su file (`.token.cache.json`) per evitare di richiedere un nuovo token ad ogni invocazione. Il token viene rinnovato automaticamente 30 secondi prima della scadenza.
+> **Nota:** `authService` implementa un meccanismo di cache del Bearer token su DynamoDB (tabella `TmpCacheTable`, env `DYNAMO_CACHE_TABLE_NAME` — v. `dynamoCache.js`) per evitare di richiedere un nuovo token ad ogni invocazione, condivisa tra le istanze/funzioni Lambda (a differenza della precedente cache su file `/tmp`, persa ad ogni cold start e mai condivisa tra funzioni diverse). Il token viene rinnovato automaticamente 30 secondi prima della scadenza e viene invalidato se scope/client_id non corrispondono più a quelli configurati.
 
 ### session
 

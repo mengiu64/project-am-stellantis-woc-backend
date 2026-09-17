@@ -712,12 +712,22 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # moparDoc/dynamoCache.js — cache del token OAuth2 PingFederate su
+        # DynamoDB (v. TmpCacheTable in Resources), sostituisce la precedente
+        # cache su file /tmp di moparDoc/authService.js.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           MOPARDOC_PARAM_NAME: !If
             - IsProd
             - /app/BSN0027990/mopardoc_ibm
             - !Sub /app/np-BSN0027990-${Environment}/mopardoc_ibm
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   MoparDocFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -793,12 +803,22 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # srpV360Ota/dynamoCache.js — cache del token OAuth2 PingFederate su
+        # DynamoDB (v. TmpCacheTable in Resources), sostituisce la precedente
+        # cache su file /tmp di srpV360Ota/authService.js.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           SRP_V360_OTA_SECRET_ARN_PARAM: !If
             - IsProd
             - /app/BSN0027990/SRP_V360_OTA
             - !Sub /app/np-BSN0027990-${Environment}/SRP_V360_OTA
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
 
   SrpV360OtaFunctionLogGroup:
     Type: AWS::Logs::LogGroup

@@ -1,55 +1,52 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
 const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
 const { getConfig } = require('./config');
+const { getCacheItem, setCacheItem } = require('./dynamoCache');
 
-// In AWS Lambda il filesystem del pacchetto (__dirname, /var/task) è read-only:
-// solo /tmp è scrivibile. In locale (CLI) continuiamo a usare __dirname.
-const CACHE_DIR = process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : __dirname;
-// Nome file dedicato (non il generico ".token.cache.json" usato da altri authService.js
-// del repo, es. jobcard/djc/moparDoc/v360): dms/ viene impacchettata in-process (vedi
-// Makefile/template.yaml) insieme a funzioni che hanno un proprio authService.js con
-// scope diverso (es. JobCardFunction, scope prd:dgt) e condividono lo stesso /tmp del
-// container Lambda. Un nome generico condiviso causava la lettura del token PingFederate
-// sbagliato (scope errato) da parte di uno dei due moduli.
-const TOKEN_CACHE_FILE = path.join(CACHE_DIR, '.dms.token.cache.json');
+// Cache del Bearer token OAuth2 su DynamoDB (TmpCacheTable, v. dynamoCache.js): sostituisce
+// la precedente cache su file /tmp (".dms.token.cache.json"), non condivisa tra le
+// istanze/funzioni Lambda e potenzialmente sopravvissuta troppo a lungo in un container
+// "warm", servendo token con scope/client_id ormai obsoleti. La chiave è namespaced per
+// modulo per evitare collisioni nella tabella condivisa (dms/ viene anche imbarcata
+// in-process in JobCardFunction/DjcFunction/PkFavoriteFunction, v. Makefile).
+const TOKEN_CACHE_KEY = 'dms:authtoken';
+// Rigenera il token 30 secondi prima della scadenza effettiva
 const EXPIRY_BUFFER_SECONDS = 30;
 
-function readCachedToken() {
-  try {
-    const raw = fs.readFileSync(TOKEN_CACHE_FILE, 'utf8');
-    const { access_token, expires_at } = JSON.parse(raw);
-    const nowMs = Date.now();
-    if (access_token && expires_at && nowMs < expires_at - EXPIRY_BUFFER_SECONDS * 1000) {
-      const remainingSec = Math.round((expires_at - nowMs) / 1000);
-      console.log(`[auth] Token in cache valido (scade tra ${remainingSec}s)`);
-      return access_token;
-    }
-  } catch {
-    // File non presente o corrotto — verrà rigenerato
+async function readCachedToken(expectedScope, expectedClientId) {
+  const cached = await getCacheItem(TOKEN_CACHE_KEY);
+  if (!cached || !cached.access_token) return null;
+
+  // Un token in cache è valido solo se scope e client_id corrispondono a
+  // quelli attualmente configurati: evita di riutilizzare un token con
+  // scope errato/obsoleto rimasto in cache da una configurazione precedente.
+  if (cached.scope !== expectedScope || cached.client_id !== expectedClientId) {
+    console.log('[auth] Token in cache non corrisponde a scope/client_id correnti — richiedo un nuovo token');
+    return null;
   }
-  return null;
+
+  console.log('[auth] Token in cache valido');
+  return cached.access_token;
 }
 
-function writeCachedToken(access_token, expires_in) {
-  const expires_at = Date.now() + expires_in * 1000;
-  fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify({ access_token, expires_at }), 'utf8');
+async function writeCachedToken(access_token, expires_in, scope, clientId) {
+  const ttlSeconds = Math.max(expires_in - EXPIRY_BUFFER_SECONDS, 0);
+  await setCacheItem(TOKEN_CACHE_KEY, { access_token, scope, client_id: clientId }, ttlSeconds);
 }
 
 /**
  * Restituisce un Bearer token PingFederate valido.
- * Controlla prima la cache su file; chiama PingFederate solo se il token
- * è assente o scaduto.
+ * Controlla prima la cache su DynamoDB; chiama PingFederate solo se il token
+ * è assente, scaduto o con scope/client_id non più validi.
  * @returns {Promise<string>} the access_token string
  */
 async function getBearerToken() {
-  const cached = readCachedToken();
-  if (cached) return cached;
-
   const config = await getConfig();
+
+  const cached = await readCachedToken(config.auth.scope, config.auth.clientId);
+  if (cached) return cached;
 
   const endpoint = new URL(config.auth.url);
 
@@ -90,7 +87,7 @@ async function getBearerToken() {
   const expiresIn = response.body.expires_in ?? 3600;
   console.log(`[auth] Nuovo token ottenuto (expires_in: ${expiresIn}s) — salvato in cache`);
 
-  writeCachedToken(token, expiresIn);
+  await writeCachedToken(token, expiresIn, config.auth.scope, config.auth.clientId);
 
   return token;
 }

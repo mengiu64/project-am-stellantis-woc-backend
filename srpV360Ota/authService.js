@@ -1,82 +1,68 @@
 'use strict';
 
 // Servizio di autenticazione PingFederate per la Lambda srpV360Ota.
-// Gestisce l'ottenimento e la cache su file del token OAuth2 (client_credentials).
+// Gestisce l'ottenimento e la cache su DynamoDB del token OAuth2 (client_credentials).
 // Segue lo stesso pattern di djc/authService.js con messaggi e commenti in italiano.
 
-const fs = require('fs');
-const path = require('path');
 const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
 const { getConfig } = require('./config');
+const { getCacheItem, setCacheItem } = require('./dynamoCache');
 
-// In AWS Lambda il filesystem del pacchetto (__dirname, /var/task) è read-only:
-// solo /tmp è scrivibile. In locale (CLI) continuiamo a usare __dirname.
-const CACHE_DIR = process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : __dirname;
-// Percorso del file di cache del token
-const TOKEN_CACHE_FILE = path.join(CACHE_DIR, '.token.cache.json');
+// Cache del token OAuth2 su DynamoDB (TmpCacheTable, v. dynamoCache.js): sostituisce
+// la precedente cache su file /tmp, non condivisa tra le istanze/funzioni Lambda e
+// potenzialmente sopravvissuta troppo a lungo in un container "warm", servendo token
+// con scope/client_id ormai obsoleti. La chiave è namespaced per modulo per evitare
+// collisioni nella tabella condivisa.
+const TOKEN_CACHE_KEY = 'srpv360ota:authtoken';
 // Rigenera il token 30 secondi prima della scadenza effettiva
 const EXPIRY_BUFFER_SECONDS = 30;
 
 /**
- * Legge il token dalla cache su file.
- * Se il token è presente e ancora valido (con margine di 30s), lo restituisce.
+ * Legge il token dalla cache su DynamoDB.
+ * Se il token è presente e ancora valido (con margine di 30s) e con scope/client_id
+ * corrispondenti a quelli attualmente configurati, lo restituisce.
  * Altrimenti restituisce null per forzare una nuova richiesta a PingFederate.
- * @returns {string|null} Token dalla cache, oppure null se assente/scaduto
+ * @returns {Promise<string|null>} Token dalla cache, oppure null se assente/scaduto/non valido
  */
-function readCachedToken(expectedScope, expectedClientId) {
-  try {
-    // Legge il file di cache dal filesystem
-    const raw = fs.readFileSync(TOKEN_CACHE_FILE, 'utf8');
-    // Estrae access_token, expires_at, scope e client_id dal JSON salvato
-    const { access_token, expires_at, scope, client_id } = JSON.parse(raw);
-    // Ottiene il timestamp corrente in millisecondi
-    const nowMs = Date.now();
-    // Verifica che il token sia presente e non scaduto (con buffer di 30s)
-    if (access_token && expires_at && nowMs < expires_at - EXPIRY_BUFFER_SECONDS * 1000) {
-      // Un token in cache è valido solo se scope e client_id corrispondono a
-      // quelli attualmente configurati: evita di riutilizzare un token con
-      // scope errato/obsoleto rimasto in cache da una configurazione precedente.
-      if (scope !== expectedScope || client_id !== expectedClientId) {
-        console.log('[auth] Token in cache non corrisponde a scope/client_id correnti — richiedo un nuovo token');
-        return null;
-      }
-      // Calcola i secondi rimanenti alla scadenza per il log
-      const remainingSec = Math.round((expires_at - nowMs) / 1000);
-      // Log in italiano: token in cache ancora valido
-      console.log(`[auth] Token in cache valido (scade tra ${remainingSec}s)`);
-      return access_token;
-    }
-  } catch {
-    // File non presente o corrotto — verrà rigenerato con una nuova richiesta
+async function readCachedToken(expectedScope, expectedClientId) {
+  // Legge l'item di cache da DynamoDB (TmpCacheTable)
+  const cached = await getCacheItem(TOKEN_CACHE_KEY);
+  if (!cached || !cached.access_token) return null;
+
+  // Un token in cache è valido solo se scope e client_id corrispondono a
+  // quelli attualmente configurati: evita di riutilizzare un token con
+  // scope errato/obsoleto rimasto in cache da una configurazione precedente.
+  if (cached.scope !== expectedScope || cached.client_id !== expectedClientId) {
+    console.log('[auth] Token in cache non corrisponde a scope/client_id correnti — richiedo un nuovo token');
+    return null;
   }
-  // Nessun token valido in cache
-  return null;
+
+  // Log in italiano: token in cache ancora valido
+  console.log('[auth] Token in cache valido');
+  return cached.access_token;
 }
 
 /**
- * Scrive il token ottenuto nel file di cache con la scadenza calcolata.
- * @param {string} access_token - Token Bearer ottenuto da PingFederate
+ * Scrive il token ottenuto nella cache DynamoDB con la scadenza calcolata.
+ * @param {string} access_token - Token Bearer da PingFederate
  * @param {number} expires_in - Durata di validità in secondi
  * @param {string} scope - Scope con cui il token è stato ottenuto
  * @param {string} clientId - client_id con cui il token è stato ottenuto
  */
-function writeCachedToken(access_token, expires_in, scope, clientId) {
-  // Calcola il timestamp di scadenza assoluto (millisecondi)
-  const expires_at = Date.now() + expires_in * 1000;
-  // Salva il token, la scadenza, lo scope e il client_id nel file di cache in formato JSON
-  fs.writeFileSync(
-    TOKEN_CACHE_FILE,
-    JSON.stringify({ access_token, expires_at, scope, client_id: clientId }),
-    'utf8'
-  );
+async function writeCachedToken(access_token, expires_in, scope, clientId) {
+  // Applica il margine di sicurezza al TTL: il token viene rigenerato 30s prima
+  // della scadenza effettiva
+  const ttlSeconds = Math.max(expires_in - EXPIRY_BUFFER_SECONDS, 0);
+  // Salva il token, lo scope e il client_id nella cache DynamoDB
+  await setCacheItem(TOKEN_CACHE_KEY, { access_token, scope, client_id: clientId }, ttlSeconds);
 }
 
 /**
  * Restituisce un Bearer token PingFederate valido.
- * Controlla prima la cache su file; chiama PingFederate solo se il token
- * è assente o scaduto (con margine di 30 secondi).
- * @returns {Promise<string>} Token di accesso Bearer valido
+ * Controlla prima la cache su DynamoDB; chiama PingFederate solo se il token
+ * è assente, scaduto o con scope/client_id non più validi.
+ * @returns {Promise<string>} Token di accesso Bearer
  * @throws {Error} Se PingFederate risponde con status diverso da 200
  * @throws {Error} Se la risposta non contiene il campo access_token
  */
@@ -84,8 +70,8 @@ async function getBearerToken() {
   // Carica la configurazione (asincrona — credenziali da SSM/Secrets Manager)
   const config = await getConfig();
 
-  // Tenta di leggere il token dalla cache locale
-  const cached = readCachedToken(config.auth.scope, config.auth.clientId);
+  // Tenta di leggere il token dalla cache DynamoDB
+  const cached = await readCachedToken(config.auth.scope, config.auth.clientId);
   // Se il token in cache è ancora valido, lo restituisce direttamente
   if (cached) return cached;
 
@@ -139,8 +125,8 @@ async function getBearerToken() {
   // Log in italiano: nuovo token ottenuto e salvato in cache
   console.log(`[auth] Nuovo token ottenuto (expires_in: ${expiresIn}s) — salvato in cache`);
 
-  // Scrive il nuovo token nel file di cache
-  writeCachedToken(token, expiresIn, config.auth.scope, config.auth.clientId);
+  // Scrive il nuovo token nella cache DynamoDB
+  await writeCachedToken(token, expiresIn, config.auth.scope, config.auth.clientId);
 
   // Restituisce il token appena ottenuto
   return token;

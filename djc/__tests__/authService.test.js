@@ -1,6 +1,11 @@
 'use strict';
 
-jest.mock('fs');
+const mockGetCacheItem = jest.fn();
+const mockSetCacheItem = jest.fn();
+jest.mock('../dynamoCache', () => ({
+  getCacheItem: (...args) => mockGetCacheItem(...args),
+  setCacheItem: (...args) => mockSetCacheItem(...args),
+}));
 jest.mock('../config', () => ({
   getConfig: jest.fn().mockResolvedValue({
     auth: {
@@ -14,7 +19,6 @@ jest.mock('../config', () => ({
 }));
 jest.mock('../httpClient');
 
-const fs = require('fs');
 const { httpsRequest } = require('../httpClient');
 const { getBearerToken } = require('../authService');
 
@@ -22,20 +26,17 @@ describe('authService (djc)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
+    mockSetCacheItem.mockImplementation((key, value) => Promise.resolve(value));
   });
 
   afterEach(() => console.log.mockRestore());
 
   test('returns cached token when cache is valid', async () => {
-    const futureExpiry = Date.now() + 3600 * 1000;
-    fs.readFileSync.mockReturnValue(
-      JSON.stringify({
-        access_token: 'cached-jc-token',
-        expires_at: futureExpiry,
-        scope: 'prd:dgt',
-        client_id: 'test-client-id',
-      })
-    );
+    mockGetCacheItem.mockResolvedValue({
+      access_token: 'cached-jc-token',
+      scope: 'prd:dgt',
+      client_id: 'test-client-id',
+    });
 
     const token = await getBearerToken();
     expect(token).toBe('cached-jc-token');
@@ -43,16 +44,11 @@ describe('authService (djc)', () => {
   });
 
   test('requests new token when cached token has a different scope', async () => {
-    const futureExpiry = Date.now() + 3600 * 1000;
-    fs.readFileSync.mockReturnValue(
-      JSON.stringify({
-        access_token: 'stale-wrong-scope-token',
-        expires_at: futureExpiry,
-        scope: 'prd:asv',
-        client_id: 'test-client-id',
-      })
-    );
-    fs.writeFileSync.mockImplementation(() => {});
+    mockGetCacheItem.mockResolvedValue({
+      access_token: 'stale-wrong-scope-token',
+      scope: 'prd:asv',
+      client_id: 'test-client-id',
+    });
     httpsRequest.mockResolvedValue({
       statusCode: 200,
       headers: {},
@@ -65,11 +61,7 @@ describe('authService (djc)', () => {
   });
 
   test('requests new token when cached token has no scope/client_id (legacy cache entry)', async () => {
-    const futureExpiry = Date.now() + 3600 * 1000;
-    fs.readFileSync.mockReturnValue(
-      JSON.stringify({ access_token: 'legacy-cached-token', expires_at: futureExpiry })
-    );
-    fs.writeFileSync.mockImplementation(() => {});
+    mockGetCacheItem.mockResolvedValue({ access_token: 'legacy-cached-token' });
     httpsRequest.mockResolvedValue({
       statusCode: 200,
       headers: {},
@@ -82,8 +74,7 @@ describe('authService (djc)', () => {
   });
 
   test('requests new token when cache is missing', async () => {
-    fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
-    fs.writeFileSync.mockImplementation(() => {});
+    mockGetCacheItem.mockResolvedValue(null);
     httpsRequest.mockResolvedValue({
       statusCode: 200,
       headers: {},
@@ -94,12 +85,8 @@ describe('authService (djc)', () => {
     expect(token).toBe('fresh-jc-token');
   });
 
-  test('requests new token when cached token is expired', async () => {
-    const pastExpiry = Date.now() - 5000;
-    fs.readFileSync.mockReturnValue(
-      JSON.stringify({ access_token: 'expired-token', expires_at: pastExpiry })
-    );
-    fs.writeFileSync.mockImplementation(() => {});
+  test('requests new token when cache item has no access_token', async () => {
+    mockGetCacheItem.mockResolvedValue({});
     httpsRequest.mockResolvedValue({
       statusCode: 200,
       headers: {},
@@ -110,9 +97,8 @@ describe('authService (djc)', () => {
     expect(token).toBe('refreshed-token');
   });
 
-  test('writes new token to cache file', async () => {
-    fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
-    fs.writeFileSync.mockImplementation(() => {});
+  test('writes new token to cache with scope/client_id and a ttl that accounts for the expiry buffer', async () => {
+    mockGetCacheItem.mockResolvedValue(null);
     httpsRequest.mockResolvedValue({
       statusCode: 200,
       headers: {},
@@ -120,30 +106,31 @@ describe('authService (djc)', () => {
     });
 
     await getBearerToken();
-    expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
-    const parsed = JSON.parse(fs.writeFileSync.mock.calls[0][1]);
-    expect(parsed.access_token).toBe('saved-token');
-    expect(parsed.scope).toBe('prd:dgt');
-    expect(parsed.client_id).toBe('test-client-id');
+    expect(mockSetCacheItem).toHaveBeenCalledTimes(1);
+    const [key, value, ttlSeconds] = mockSetCacheItem.mock.calls[0];
+    expect(key).toBe('djc:authtoken');
+    expect(value.access_token).toBe('saved-token');
+    expect(value.scope).toBe('prd:dgt');
+    expect(value.client_id).toBe('test-client-id');
+    expect(ttlSeconds).toBe(1800 - 30);
   });
 
   test('throws when HTTP status is not 200', async () => {
-    fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    mockGetCacheItem.mockResolvedValue(null);
     httpsRequest.mockResolvedValue({ statusCode: 403, headers: {}, body: {} });
 
     await expect(getBearerToken()).rejects.toThrow('Token request failed');
   });
 
   test('throws when access_token is missing', async () => {
-    fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+    mockGetCacheItem.mockResolvedValue(null);
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
     await expect(getBearerToken()).rejects.toThrow('No access_token in response');
   });
 
   test('uses client_credentials grant type in POST body', async () => {
-    fs.readFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
-    fs.writeFileSync.mockImplementation(() => {});
+    mockGetCacheItem.mockResolvedValue(null);
     httpsRequest.mockResolvedValue({
       statusCode: 200,
       headers: {},

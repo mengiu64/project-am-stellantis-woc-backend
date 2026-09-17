@@ -14,8 +14,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1083.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
-    "@aws-sdk/client-ssm": "^3.800.0"
+    "@aws-sdk/client-ssm": "^3.800.0",
+    "@aws-sdk/lib-dynamodb": "^3.1083.0"
   },
   "devDependencies": {
     "fast-check": "^4.1.1",
@@ -32,7 +34,8 @@
       "httpClient.js",
       "otaService.js",
       "config.js",
-      "index.js"
+      "index.js",
+      "dynamoCache.js"
     ],
     "coverageThreshold": {
       "global": {
