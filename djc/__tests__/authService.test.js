@@ -29,12 +29,56 @@ describe('authService (djc)', () => {
   test('returns cached token when cache is valid', async () => {
     const futureExpiry = Date.now() + 3600 * 1000;
     fs.readFileSync.mockReturnValue(
-      JSON.stringify({ access_token: 'cached-jc-token', expires_at: futureExpiry })
+      JSON.stringify({
+        access_token: 'cached-jc-token',
+        expires_at: futureExpiry,
+        scope: 'prd:dgt',
+        client_id: 'test-client-id',
+      })
     );
 
     const token = await getBearerToken();
     expect(token).toBe('cached-jc-token');
     expect(httpsRequest).not.toHaveBeenCalled();
+  });
+
+  test('requests new token when cached token has a different scope', async () => {
+    const futureExpiry = Date.now() + 3600 * 1000;
+    fs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        access_token: 'stale-wrong-scope-token',
+        expires_at: futureExpiry,
+        scope: 'prd:asv',
+        client_id: 'test-client-id',
+      })
+    );
+    fs.writeFileSync.mockImplementation(() => {});
+    httpsRequest.mockResolvedValue({
+      statusCode: 200,
+      headers: {},
+      body: { access_token: 'fresh-jc-token', expires_in: 3600 },
+    });
+
+    const token = await getBearerToken();
+    expect(token).toBe('fresh-jc-token');
+    expect(httpsRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test('requests new token when cached token has no scope/client_id (legacy cache entry)', async () => {
+    const futureExpiry = Date.now() + 3600 * 1000;
+    fs.readFileSync.mockReturnValue(
+      JSON.stringify({ access_token: 'legacy-cached-token', expires_at: futureExpiry })
+    );
+    fs.writeFileSync.mockImplementation(() => {});
+    httpsRequest.mockResolvedValue({
+      statusCode: 200,
+      headers: {},
+      body: { access_token: 'fresh-jc-token', expires_in: 3600 },
+    });
+
+    const token = await getBearerToken();
+    expect(token).toBe('fresh-jc-token');
+    expect(httpsRequest).toHaveBeenCalledTimes(1);
   });
 
   test('requests new token when cache is missing', async () => {
@@ -79,6 +123,8 @@ describe('authService (djc)', () => {
     expect(fs.writeFileSync).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(fs.writeFileSync.mock.calls[0][1]);
     expect(parsed.access_token).toBe('saved-token');
+    expect(parsed.scope).toBe('prd:dgt');
+    expect(parsed.client_id).toBe('test-client-id');
   });
 
   test('throws when HTTP status is not 200', async () => {

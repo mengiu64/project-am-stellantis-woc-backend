@@ -13,12 +13,19 @@ const TOKEN_CACHE_FILE = path.join(CACHE_DIR, '.token.cache.json');
 // Rigenera il token 30 secondi prima della scadenza effettiva
 const EXPIRY_BUFFER_SECONDS = 30;
 
-function readCachedToken() {
+function readCachedToken(expectedScope, expectedClientId) {
   try {
     const raw = fs.readFileSync(TOKEN_CACHE_FILE, 'utf8');
-    const { access_token, expires_at } = JSON.parse(raw);
+    const { access_token, expires_at, scope, client_id } = JSON.parse(raw);
     const nowMs = Date.now();
     if (access_token && expires_at && nowMs < expires_at - EXPIRY_BUFFER_SECONDS * 1000) {
+      // Un token in cache è valido solo se scope e client_id corrispondono a
+      // quelli attualmente configurati: evita di riutilizzare un token con
+      // scope errato/obsoleto rimasto in cache da una configurazione precedente.
+      if (scope !== expectedScope || client_id !== expectedClientId) {
+        console.log('[auth] Token in cache non corrisponde a scope/client_id correnti — richiedo un nuovo token');
+        return null;
+      }
       const remainingSec = Math.round((expires_at - nowMs) / 1000);
       console.log(`[auth] Token in cache valido (scade tra ${remainingSec}s)`);
       return access_token;
@@ -29,9 +36,13 @@ function readCachedToken() {
   return null;
 }
 
-function writeCachedToken(access_token, expires_in) {
+function writeCachedToken(access_token, expires_in, scope, clientId) {
   const expires_at = Date.now() + expires_in * 1000;
-  fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify({ access_token, expires_at }), 'utf8');
+  fs.writeFileSync(
+    TOKEN_CACHE_FILE,
+    JSON.stringify({ access_token, expires_at, scope, client_id: clientId }),
+    'utf8'
+  );
 }
 
 /**
@@ -41,10 +52,10 @@ function writeCachedToken(access_token, expires_in) {
  * @returns {Promise<string>} the access_token string
  */
 async function getBearerToken() {
-  const cached = readCachedToken();
-  if (cached) return cached;
-
   const config = await getConfig();
+
+  const cached = readCachedToken(config.auth.scope, config.auth.clientId);
+  if (cached) return cached;
 
   const endpoint = new URL(config.auth.url);
 
@@ -85,7 +96,7 @@ async function getBearerToken() {
   const expiresIn = response.body.expires_in ?? 3600;
   console.log(`[auth] Nuovo token ottenuto (expires_in: ${expiresIn}s) — salvato in cache`);
 
-  writeCachedToken(token, expiresIn);
+  writeCachedToken(token, expiresIn, config.auth.scope, config.auth.clientId);
 
   return token;
 }

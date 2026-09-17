@@ -29,12 +29,56 @@ describe('authService (v360)', () => {
   test('returns cached token when cache is valid', async () => {
     const futureExpiry = Date.now() + 3600 * 1000;
     fs.readFileSync.mockReturnValue(
-      JSON.stringify({ access_token: 'cached-v360-token', expires_at: futureExpiry })
+      JSON.stringify({
+        access_token: 'cached-v360-token',
+        expires_at: futureExpiry,
+        scope: 'prd:asv',
+        client_id: 'test-client-id',
+      })
     );
 
     const token = await getBearerToken();
     expect(token).toBe('cached-v360-token');
     expect(httpsRequest).not.toHaveBeenCalled();
+  });
+
+  test('requests new token when cached token has a different scope', async () => {
+    const futureExpiry = Date.now() + 3600 * 1000;
+    fs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        access_token: 'stale-wrong-scope-token',
+        expires_at: futureExpiry,
+        scope: 'prd:dgt',
+        client_id: 'test-client-id',
+      })
+    );
+    fs.writeFileSync.mockImplementation(() => {});
+    httpsRequest.mockResolvedValue({
+      statusCode: 200,
+      headers: {},
+      body: { access_token: 'new-v360-token', expires_in: 3600 },
+    });
+
+    const token = await getBearerToken();
+    expect(token).toBe('new-v360-token');
+    expect(httpsRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test('requests new token when cached token has no scope/client_id (legacy cache entry)', async () => {
+    const futureExpiry = Date.now() + 3600 * 1000;
+    fs.readFileSync.mockReturnValue(
+      JSON.stringify({ access_token: 'legacy-cached-token', expires_at: futureExpiry })
+    );
+    fs.writeFileSync.mockImplementation(() => {});
+    httpsRequest.mockResolvedValue({
+      statusCode: 200,
+      headers: {},
+      body: { access_token: 'new-v360-token', expires_in: 3600 },
+    });
+
+    const token = await getBearerToken();
+    expect(token).toBe('new-v360-token');
+    expect(httpsRequest).toHaveBeenCalledTimes(1);
   });
 
   test('requests new token when cache file does not exist', async () => {
@@ -80,6 +124,8 @@ describe('authService (v360)', () => {
     const parsed = JSON.parse(fs.writeFileSync.mock.calls[0][1]);
     expect(parsed.access_token).toBe('stored-token');
     expect(parsed.expires_at).toBeGreaterThan(Date.now());
+    expect(parsed.scope).toBe('prd:asv');
+    expect(parsed.client_id).toBe('test-client-id');
   });
 
   test('throws when HTTP status is not 200', async () => {

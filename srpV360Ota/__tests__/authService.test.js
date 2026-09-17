@@ -40,7 +40,12 @@ describe('authService – getBearerToken', () => {
     it('restituisce il token dalla cache senza chiamare httpsRequest', async () => {
       // Token che scade tra 120 secondi (ben oltre il buffer di 30s)
       const expiresAt = Date.now() + 120_000;
-      const cachedData = JSON.stringify({ access_token: 'cached-token-abc', expires_at: expiresAt });
+      const cachedData = JSON.stringify({
+        access_token: 'cached-token-abc',
+        expires_at: expiresAt,
+        scope: 'prd:asv',
+        client_id: 'test-client-id',
+      });
 
       fs.readFileSync.mockReturnValue(cachedData);
 
@@ -53,7 +58,12 @@ describe('authService – getBearerToken', () => {
 
     it('logga in italiano che il token in cache è valido', async () => {
       const expiresAt = Date.now() + 90_000;
-      const cachedData = JSON.stringify({ access_token: 'cached-token-xyz', expires_at: expiresAt });
+      const cachedData = JSON.stringify({
+        access_token: 'cached-token-xyz',
+        expires_at: expiresAt,
+        scope: 'prd:asv',
+        client_id: 'test-client-id',
+      });
 
       fs.readFileSync.mockReturnValue(cachedData);
 
@@ -63,6 +73,45 @@ describe('authService – getBearerToken', () => {
       expect(consoleLogSpy).toHaveBeenCalledWith(
         expect.stringMatching(/\[auth\] Token in cache valido \(scade tra \d+s\)/)
       );
+    });
+
+    it('richiede un nuovo token quando lo scope in cache non corrisponde a quello configurato', async () => {
+      const expiresAt = Date.now() + 120_000;
+      const cachedData = JSON.stringify({
+        access_token: 'stale-wrong-scope-token',
+        expires_at: expiresAt,
+        scope: 'prd:dgt',
+        client_id: 'test-client-id',
+      });
+      fs.readFileSync.mockReturnValue(cachedData);
+      fs.writeFileSync.mockImplementation(() => {});
+      httpsRequest.mockResolvedValue({
+        statusCode: 200,
+        headers: {},
+        body: { access_token: 'new-scoped-token', expires_in: 3600 },
+      });
+
+      const token = await getBearerToken();
+
+      expect(token).toBe('new-scoped-token');
+      expect(httpsRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('richiede un nuovo token quando il cache non contiene scope/client_id (voce legacy)', async () => {
+      const expiresAt = Date.now() + 120_000;
+      const cachedData = JSON.stringify({ access_token: 'legacy-cached-token', expires_at: expiresAt });
+      fs.readFileSync.mockReturnValue(cachedData);
+      fs.writeFileSync.mockImplementation(() => {});
+      httpsRequest.mockResolvedValue({
+        statusCode: 200,
+        headers: {},
+        body: { access_token: 'new-scoped-token', expires_in: 3600 },
+      });
+
+      const token = await getBearerToken();
+
+      expect(token).toBe('new-scoped-token');
+      expect(httpsRequest).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -219,6 +268,8 @@ describe('authService – getBearerToken', () => {
       const afterMs = Date.now();
       expect(written.expires_at).toBeGreaterThanOrEqual(beforeMs + 7200_000);
       expect(written.expires_at).toBeLessThanOrEqual(afterMs + 7200_000);
+      expect(written.scope).toBe('prd:asv');
+      expect(written.client_id).toBe('test-client-id');
     });
   });
 });

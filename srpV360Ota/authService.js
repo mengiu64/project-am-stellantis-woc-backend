@@ -24,16 +24,23 @@ const EXPIRY_BUFFER_SECONDS = 30;
  * Altrimenti restituisce null per forzare una nuova richiesta a PingFederate.
  * @returns {string|null} Token dalla cache, oppure null se assente/scaduto
  */
-function readCachedToken() {
+function readCachedToken(expectedScope, expectedClientId) {
   try {
     // Legge il file di cache dal filesystem
     const raw = fs.readFileSync(TOKEN_CACHE_FILE, 'utf8');
-    // Estrae access_token e expires_at dal JSON salvato
-    const { access_token, expires_at } = JSON.parse(raw);
+    // Estrae access_token, expires_at, scope e client_id dal JSON salvato
+    const { access_token, expires_at, scope, client_id } = JSON.parse(raw);
     // Ottiene il timestamp corrente in millisecondi
     const nowMs = Date.now();
     // Verifica che il token sia presente e non scaduto (con buffer di 30s)
     if (access_token && expires_at && nowMs < expires_at - EXPIRY_BUFFER_SECONDS * 1000) {
+      // Un token in cache è valido solo se scope e client_id corrispondono a
+      // quelli attualmente configurati: evita di riutilizzare un token con
+      // scope errato/obsoleto rimasto in cache da una configurazione precedente.
+      if (scope !== expectedScope || client_id !== expectedClientId) {
+        console.log('[auth] Token in cache non corrisponde a scope/client_id correnti — richiedo un nuovo token');
+        return null;
+      }
       // Calcola i secondi rimanenti alla scadenza per il log
       const remainingSec = Math.round((expires_at - nowMs) / 1000);
       // Log in italiano: token in cache ancora valido
@@ -51,12 +58,18 @@ function readCachedToken() {
  * Scrive il token ottenuto nel file di cache con la scadenza calcolata.
  * @param {string} access_token - Token Bearer ottenuto da PingFederate
  * @param {number} expires_in - Durata di validità in secondi
+ * @param {string} scope - Scope con cui il token è stato ottenuto
+ * @param {string} clientId - client_id con cui il token è stato ottenuto
  */
-function writeCachedToken(access_token, expires_in) {
+function writeCachedToken(access_token, expires_in, scope, clientId) {
   // Calcola il timestamp di scadenza assoluto (millisecondi)
   const expires_at = Date.now() + expires_in * 1000;
-  // Salva il token e la scadenza nel file di cache in formato JSON
-  fs.writeFileSync(TOKEN_CACHE_FILE, JSON.stringify({ access_token, expires_at }), 'utf8');
+  // Salva il token, la scadenza, lo scope e il client_id nel file di cache in formato JSON
+  fs.writeFileSync(
+    TOKEN_CACHE_FILE,
+    JSON.stringify({ access_token, expires_at, scope, client_id: clientId }),
+    'utf8'
+  );
 }
 
 /**
@@ -68,13 +81,13 @@ function writeCachedToken(access_token, expires_in) {
  * @throws {Error} Se la risposta non contiene il campo access_token
  */
 async function getBearerToken() {
-  // Tenta di leggere il token dalla cache locale
-  const cached = readCachedToken();
-  // Se il token in cache è ancora valido, lo restituisce direttamente
-  if (cached) return cached;
-
   // Carica la configurazione (asincrona — credenziali da SSM/Secrets Manager)
   const config = await getConfig();
+
+  // Tenta di leggere il token dalla cache locale
+  const cached = readCachedToken(config.auth.scope, config.auth.clientId);
+  // Se il token in cache è ancora valido, lo restituisce direttamente
+  if (cached) return cached;
 
   // Costruisce l'URL dell'endpoint PingFederate dalla configurazione
   const endpoint = new URL(config.auth.url);
@@ -127,7 +140,7 @@ async function getBearerToken() {
   console.log(`[auth] Nuovo token ottenuto (expires_in: ${expiresIn}s) — salvato in cache`);
 
   // Scrive il nuovo token nel file di cache
-  writeCachedToken(token, expiresIn);
+  writeCachedToken(token, expiresIn, config.auth.scope, config.auth.clientId);
 
   // Restituisce il token appena ottenuto
   return token;
