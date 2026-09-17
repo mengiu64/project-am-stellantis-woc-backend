@@ -4270,6 +4270,13 @@ jobs:
           (cd isStellantisBrand && npm ci --omit=dev)
           (cd auroraAutoStart && npm ci --omit=dev)
 
+      - name: Ensure build tools (make) are available
+        run: |
+          if ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y make
+          fi
+
       - name: SAM Build
         run: sam build --parallel
 
@@ -4392,6 +4399,13 @@ jobs:
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
           (cd auroraAutoStart && npm ci --omit=dev)
+
+      - name: Ensure build tools (make) are available
+        run: |
+          if ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y make
+          fi
 
       - name: SAM Build
         run: sam build --parallel
@@ -4517,6 +4531,13 @@ jobs:
           (cd moparDoc      && npm ci --omit=dev)
           (cd isStellantisBrand && npm ci --omit=dev)
           (cd auroraAutoStart && npm ci --omit=dev)
+
+      - name: Ensure build tools (make) are available
+        run: |
+          if ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y make
+          fi
 
       - name: SAM Build
         run: sam build --parallel
