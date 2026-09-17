@@ -6,9 +6,9 @@
  * volta.
  *
  * Uso:
- *   node testCartDML.js file   <jobCardDetailJsonFile>
- *   node testCartDML.js tmp    <jobCardId>
- *   node testCartDML.js fetch  <jobCardId>
+ *   node testCartDML.js file   <jobCardDetailJsonFile> [dmlResponseJsonFile]
+ *   node testCartDML.js tmp    <jobCardId>             [dmlResponseJsonFile]
+ *   node testCartDML.js fetch  <jobCardId>             [dmlResponseJsonFile]
  *
  * Modalità:
  *   file  - Carica un jobCardDetail da un file JSON locale. Il file può
@@ -26,19 +26,27 @@
  *           utile per ispezionare il mapping senza dover leggere i log della
  *           lambda dms.
  *
- * Dopo la chiamata a getCartPriceAndAvailability, lo script applica anche
- * applyDataFromDml al jobCardDetail (in place) e ne stampa il risultato, così
- * da poter verificare in un unico passaggio sia la risposta DML grezza sia
- * il jobCardDetail arricchito (originalPriceExclVat/appDiscountPercentage/
- * QuantityAvailable su partInfo, laborDuration/appDiscountPercentage/
- * laborRateAmount su laborInfo).
+ * Se viene passato un secondo argomento (dmlResponseJsonFile), la risposta
+ * DML (WorkLines) viene letta da quel file JSON locale invece di richiamare
+ * davvero getCartPriceAndAvailability/il gateway DML: utile per testare
+ * applyDataFromDml con una risposta DML nota/fissa (es. D02_DML.json), senza
+ * bisogno di dms/.env valorizzato.
+ *
+ * Dopo aver ottenuto dataFromDml (dal DML reale o dal file), lo script
+ * applica applyDataFromDml al jobCardDetail (in place) e ne stampa il
+ * risultato, così da poter verificare in un unico passaggio sia la risposta
+ * DML grezza sia il jobCardDetail arricchito (originalPriceExclVat/
+ * appDiscountPercentage/QuantityAvailable su partInfo, laborDuration/
+ * appDiscountPercentage/laborRateAmount su laborInfo).
  *
  * Richiede jobcard/.env (PING_CLIENT_ID/SECRET, DGT_CLIENT_ID/SECRET, solo
  * per "fetch") e dms/.env (DMS_PING_*, DML_IBM_*) valorizzati, dato che
- * getCartPriceAndAvailability chiama davvero il gateway DML.
+ * getCartPriceAndAvailability chiama davvero il gateway DML — non richiesto
+ * quando si passa dmlResponseJsonFile.
  *
  * Esempi:
  *   node testCartDML.js file  ./jobCardDetail-sample.json
+ *   node testCartDML.js file  ./jobCardDetail-sample.json ./D02_DML.json
  *   node testCartDML.js tmp   79
  *   node testCartDML.js fetch 79
  */
@@ -50,7 +58,7 @@ const path = require('path');
 const { getJobCardDetails, getCartPriceAndAvailability, applyDataFromDml } = require('./jobCardService');
 const { getBearerToken } = require('./authService');
 
-const [, , command, arg1] = process.argv;
+const [, , command, arg1, dmlResponseFile] = process.argv;
 
 function printResult(label, data) {
   console.log('\n' + '═'.repeat(65));
@@ -60,12 +68,15 @@ function printResult(label, data) {
 }
 
 function printUsage() {
-  console.log('\nUso: node testCartDML.js <command> <arg>\n');
+  console.log('\nUso: node testCartDML.js <command> <arg> [dmlResponseJsonFile]\n');
   console.log('  file  <jobCardDetailJsonFile>  Carica jobCardDetail da file locale');
   console.log('  tmp   <jobCardId>              Legge /tmp/<jobCardId>.json (già salvato da una GET precedente)');
   console.log('  fetch <jobCardId>              Esegue una vera GET /jobCardDetails + getCartPriceAndAvailability\n');
+  console.log('  [dmlResponseJsonFile]          Opzionale: legge la risposta DML (WorkLines) da questo file invece');
+  console.log('                                 di richiamare davvero getCartPriceAndAvailability\n');
   console.log('Esempi:');
   console.log('  node testCartDML.js file  ./jobCardDetail-sample.json');
+  console.log('  node testCartDML.js file  ./jobCardDetail-sample.json ./D02_DML.json');
   console.log('  node testCartDML.js tmp   79');
   console.log('  node testCartDML.js fetch 79\n');
 }
@@ -118,7 +129,9 @@ async function main() {
         return;
     }
 
-    const dataFromDml = await getCartPriceAndAvailability(jobCardDetail);
+    const dataFromDml = dmlResponseFile
+      ? JSON.parse(fs.readFileSync(path.resolve(dmlResponseFile), 'utf8'))
+      : await getCartPriceAndAvailability(jobCardDetail);
     printResult('getCartPriceAndAvailability result (risposta DML grezza)', dataFromDml);
 
     applyDataFromDml(jobCardDetail, dataFromDml);

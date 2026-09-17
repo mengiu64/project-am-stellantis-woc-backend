@@ -241,3 +241,19 @@ build-DmsFunction:
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/v360)
+
+# HqManagerFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
+# HqManager.js richiede il codice sorgente di dbManager tramite path relativi
+# (../dbManager/db, ../dbManager/HqRepository) per leggere/scrivere la
+# configurazione di abilitazione WOC/firma digitale (woc.hq_application_enabling,
+# incrociata con woc.ang_snowflakes/woc.addr_snowflakes) — stesso identico
+# motivo/pattern di PkManagerFunction/SessionFunction/DmsFunction sopra.
+build-HqManagerFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/hqManager" "$(ARTIFACTS_DIR)/dbManager"
+	cp -r hqManager/. "$(ARTIFACTS_DIR)/hqManager/"
+	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/hqManager/__tests__ "$(ARTIFACTS_DIR)"/hqManager/coverage "$(ARTIFACTS_DIR)"/hqManager/.env* \
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/hqManager)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)

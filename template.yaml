@@ -1350,6 +1350,55 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${DbManagerFunction}"
       RetentionInDays: 30
 
+  # ── hqManager (abilitazione WOC/firma digitale per mercato/OIC) ───────────
+  #
+  # HqManager.js chiama dbManager/HqRepository.js (getEnablingConfiguration/
+  # setEnablingConfiguration su woc.ang_snowflakes/woc.addr_snowflakes/
+  # woc.hq_application_enabling) tramite path relativi
+  # (require(path.resolve(__dirname, '../dbManager/...'))): stesso identico
+  # motivo/pattern di PkManagerFunction/SessionFunction/PkFavoriteFunction
+  # sopra, quindi CodeUri: ./ + BuildMethod: makefile (vedi Makefile,
+  # build-HqManagerFunction). Riusa lo stesso Aurora/secret di
+  # DbManagerFunction (DBMANAGER_DB_*): nessun nuovo parametro/permesso da
+  # aggiungere.
+  HqManagerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-hqmanager"
+      CodeUri: ./
+      Handler: hqManager/index.handler
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            # Stesso motivo di DbManagerFunction: il secret è cifrato con una
+            # chiave KMS gestita dal cliente (non la default aws/secretsmanager).
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+      Environment:
+        Variables:
+          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
+          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
+          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
+          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+
+  HqManagerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${HqManagerFunction}"
+      RetentionInDays: 30
+
   # ── dmlConfigSync (sync giornaliera company-types/customer-titles DML) ───
   #
   # Triggerata 1 volta al giorno da EventBridge Schedule (Events.DailySync sotto):

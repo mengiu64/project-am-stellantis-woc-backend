@@ -741,12 +741,10 @@ function hasWorkLineDiscount(job) {
  * source.DiscountPercentage per i ricambi o da laborItem.DiscountPercentage
  * per la manodopera), in base a `wlDiscount` (v. hasWorkLineDiscount):
  *
- *  - wlDiscount=true, appDiscountPercentage!=0:
- *      dmsDiscountPercentage = -appDiscountPercentage (appDiscountPercentage invariato)
- *  - wlDiscount=true, appDiscountPercentage=0, dmsSourceDiscountPercentage!=0:
- *      appDiscountPercentage = -dmsSourceDiscountPercentage (dmsDiscountPercentage invariato)
- *  - wlDiscount=true, appDiscountPercentage=0, dmsSourceDiscountPercentage=0:
- *      nessuna modifica
+ *  - wlDiscount=true, dmsSourceDiscountPercentage!=0:
+ *      appDiscountPercentage = -dmsSourceDiscountPercentage, dmsDiscountPercentage = dmsSourceDiscountPercentage
+ *  - wlDiscount=true, dmsSourceDiscountPercentage=0:
+ *      dmsDiscountPercentage = dmsSourceDiscountPercentage (appDiscountPercentage invariato)
  *  - wlDiscount=false, appDiscountPercentage!=0, dmsDiscountPercentage=0:
  *      appDiscountPercentage -= dmsSourceDiscountPercentage, dmsDiscountPercentage = dmsSourceDiscountPercentage
  *  - wlDiscount=false, appDiscountPercentage!=0, dmsDiscountPercentage!=0:
@@ -765,12 +763,12 @@ function reconcileDiscountPercentages(target, wlDiscount, dmsSourceDiscountPerce
   const dmsDiscount = dmsSourceDiscountPercentage ?? 0;
 
   if (wlDiscount) {
-    if (oldAppDiscount !== 0) {
-      target.dmsDiscountPercentage = -oldAppDiscount;
-    } else if (dmsDiscount !== 0) {
+    if (dmsDiscount !== 0) {
       target.appDiscountPercentage = -dmsDiscount;
+      target.dmsDiscountPercentage = dmsDiscount;
+    } else {
+      target.dmsDiscountPercentage = dmsDiscount;
     }
-    // altrimenti (entrambi 0): nessuna modifica
   } else if (oldAppDiscount !== 0 && oldDmsDiscount === 0) {
     target.appDiscountPercentage = oldAppDiscount - dmsDiscount;
     target.dmsDiscountPercentage = dmsDiscount;
@@ -882,6 +880,7 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       const { source } = resolveDmlPartSource(partsItem);
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
       part.availability = computeAvailability(part.itemQuantity, part.QuantityAvailable);
+      part.unitaryPriceExclVat = source.OriginalPriceExclVAT;
 
       reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
 
