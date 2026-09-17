@@ -3309,7 +3309,7 @@ jobs:
 
   test-hqManager:
     name: hqManager
-    runs-on: ubuntu-latest
+    runs-on: linux-m-x86
     defaults:
       run:
         working-directory: hqManager
