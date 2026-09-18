@@ -49,6 +49,12 @@ jest.mock('../../../dbManager/db', () => ({
 jest.mock('../../../dbManager/AnagSnowflakesRepository', () => ({
   getCountryIsoCode: jest.fn().mockResolvedValue('IT'),
   getPhysicalSiteAndPdvId: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
+  getBrandsByOics: jest.fn().mockResolvedValue(new Map()),
+}));
+
+jest.mock('../../../dbManager/HqRepository', () => ({
+  getDisabledOics: jest.fn().mockResolvedValue(new Set()),
+  getAddressByOics: jest.fn().mockResolvedValue(new Map()),
 }));
 
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
@@ -58,6 +64,7 @@ const dmlConfigRepository = require('../../../dmlConfigSync/DmlConfigRepository'
 const dmsSettingsRepository = require('../../../dmlConfigSync/DmsSettingsRepository');
 const dbManagerDb = require('../../../dbManager/db');
 const anagSnowflakesRepository = require('../../../dbManager/AnagSnowflakesRepository');
+const hqRepository = require('../../../dbManager/HqRepository');
 
 describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dmlConfigSync)', () => {
   afterEach(() => jest.clearAllMocks());
@@ -68,7 +75,16 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
 
     expect(myPeopleService.readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
     expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
-    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(2); // loadGetCountryIsoCode + loadGetPhysicalSiteAndPdvId
+    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(4); // loadGetCountryIsoCode + loadGetPhysicalSiteAndPdvId + loadGetBrandsByOics + loadGetAddressByOics (oicPairs vuoto: MARKET assente sull'OIC di test, loadGetDisabledOics non invocata)
+    expect(anagSnowflakesRepository.getBrandsByOics).toHaveBeenCalledWith(
+      { __fakeDbManagerPool: true, query: expect.any(Function) },
+      { oics: ['00007584'] },
+    );
+    expect(hqRepository.getDisabledOics).not.toHaveBeenCalled();
+    expect(hqRepository.getAddressByOics).toHaveBeenCalledWith(
+      { __fakeDbManagerPool: true, query: expect.any(Function) },
+      { oics: ['00007584'] },
+    );
     expect(anagSnowflakesRepository.getCountryIsoCode).toHaveBeenCalledWith(
       { __fakeDbManagerPool: true, query: expect.any(Function) },
       { market: '1000' },
@@ -113,6 +129,9 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
         ],
         main: 'Y',
         djcListParameter: null,
+        address: null,
+        zipcode: null,
+        city: null,
       },
     ]);
   });

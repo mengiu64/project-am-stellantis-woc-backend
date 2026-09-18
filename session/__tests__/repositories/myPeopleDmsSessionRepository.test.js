@@ -81,6 +81,9 @@ function buildRepository(overrides = {}) {
     getBrandLogosFn: jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE),
     getCountryIsoCodeFn: jest.fn().mockResolvedValue('IT'),
     getPhysicalSiteAndPdvIdFn: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
+    getBrandsByOicsFn: jest.fn().mockResolvedValue(new Map()),
+    getDisabledOicsFn: jest.fn().mockResolvedValue(new Set()),
+    getAddressByOicsFn: jest.fn().mockResolvedValue(new Map()),
     ...overrides,
   });
 }
@@ -176,6 +179,9 @@ describe('MyPeopleDmsSessionRepository', () => {
           ],
           main: 'N',
           djcListParameter: '1000_00010925',
+          address: null,
+          zipcode: null,
+          city: null,
         },
         {
           market: '1000',
@@ -187,6 +193,9 @@ describe('MyPeopleDmsSessionRepository', () => {
             'assets/images/logo/brand-stla/ALFAROMEO.png',
           ],
           main: 'Y',
+          address: null,
+          zipcode: null,
+          city: null,
           djcListParameter: '1000_00007584',
         },
       ],
@@ -631,7 +640,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([
-      { market: '1000', code: '00010925', state: 'ACTIVE', brandLogos: [], main: 'N', djcListParameter: '1000_00010925' },
+      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '', brandLogos: [], main: 'N', djcListParameter: '1000_00010925', address: null, zipcode: null, city: null },
     ]);
     // Nessun codice brand da risolvere: non deve nemmeno interrogare il DB.
     expect(getBrandLogosFn).not.toHaveBeenCalled();
@@ -655,9 +664,148 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([
-      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N', djcListParameter: '1000_00010925' },
+      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N', djcListParameter: '1000_00010925', address: null, zipcode: null, city: null },
     ]);
     expect(getBrandLogosFn).toHaveBeenCalledWith({ codes: ['30', '99'] });
+  });
+
+  test('il campo brands di ogni oic viene sovrascritto con l\'elenco letto da woc.ang_snowflakes (getBrandsByOics), invece del CSV di myPeople', async () => {
+    const getBrandsByOicsFn = jest.fn().mockResolvedValue(new Map([
+      ['00010925', ['31']],
+      ['00007584', ['30', '31']],
+    ]));
+    const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
+    const repository = buildRepository({ getBrandsByOicsFn, getBrandLogosFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(getBrandsByOicsFn).toHaveBeenCalledWith({ oics: ['00010925', '00007584'] });
+    // Il batch dei loghi (woc.anag_brand) usa i codici DB, non piu' quelli CSV di myPeople.
+    expect(getBrandLogosFn).toHaveBeenCalledWith({ codes: ['31', '30'] });
+    expect(data.oics[0]).toMatchObject({ code: '00010925', brands: '31' });
+    expect(data.oics[1]).toMatchObject({ code: '00007584', brands: '30,31' });
+  });
+
+  test('il campo brands ricade sul CSV di myPeople quando getBrandsByOics non ha righe per un oic', async () => {
+    const getBrandsByOicsFn = jest.fn().mockResolvedValue(new Map()); // nessuna riga per nessun oic
+    const repository = buildRepository({ getBrandsByOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.oics[0]).toMatchObject({ code: '00010925', brands: '30,31,33,43' });
+    expect(data.oics[1]).toMatchObject({ code: '00007584', brands: '00,77,66,57,70,83' });
+  });
+
+  test('non propaga (mai) errori di lettura di getBrandsByOics: brands ricade sul CSV di myPeople', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const getBrandsByOicsFn = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const repository = buildRepository({ getBrandsByOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.oics[0]).toMatchObject({ code: '00010925', brands: '30,31,33,43' });
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
+  });
+
+  test('un oic con enablewoc=0 in woc.hq_application_enabling viene tolto dall\'elenco oics', async () => {
+    const getDisabledOicsFn = jest.fn().mockResolvedValue(new Set(['1000|00010925']));
+    const repository = buildRepository({ getDisabledOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(getDisabledOicsFn).toHaveBeenCalledWith([
+      { market: '1000', oic: '00010925' },
+      { market: '1000', oic: '00007584' },
+    ]);
+    expect(data.oics).toHaveLength(1);
+    expect(data.oics[0].code).toBe('00007584');
+  });
+
+  test('un oic senza riga in woc.hq_application_enabling resta abilitato di default (opt-out)', async () => {
+    const getDisabledOicsFn = jest.fn().mockResolvedValue(new Set()); // nessun oic disabilitato
+    const repository = buildRepository({ getDisabledOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.oics).toHaveLength(2);
+  });
+
+  test('non propaga (mai) errori di lettura di getDisabledOics: nessun oic viene tolto dalla lista', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const getDisabledOicsFn = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const repository = buildRepository({ getDisabledOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.oics).toHaveLength(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
+  });
+
+  test('getBrandsByOics/getDisabledOics non vengono interrogate quando non ci sono OICs', async () => {
+    const getBrandsByOicsFn = jest.fn();
+    const getDisabledOicsFn = jest.fn();
+    const getAddressByOicsFn = jest.fn();
+    const repository = buildRepository({
+      getBrandsByOicsFn,
+      getDisabledOicsFn,
+      getAddressByOicsFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.oics).toEqual([]);
+    expect(getBrandsByOicsFn).not.toHaveBeenCalled();
+    expect(getDisabledOicsFn).not.toHaveBeenCalled();
+    expect(getAddressByOicsFn).not.toHaveBeenCalled();
+  });
+
+  test('i campi address/zipcode/city di ogni oic vengono sovrascritti con l\'indirizzo letto da woc.addr_snowflakes (getAddressByOics)', async () => {
+    const getAddressByOicsFn = jest.fn().mockResolvedValue(new Map([
+      ['00010925', { address: 'VIA ROMA 1', zipcode: '00100', city: 'ROMA' }],
+      ['00007584', { address: 'VIA AMBRA 41-45', zipcode: '58100', city: 'GROSSETO' }],
+    ]));
+    const repository = buildRepository({ getAddressByOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(getAddressByOicsFn).toHaveBeenCalledWith({ oics: ['00010925', '00007584'] });
+    expect(data.oics[0]).toMatchObject({ code: '00010925', address: 'VIA ROMA 1', zipcode: '00100', city: 'ROMA' });
+    expect(data.oics[1]).toMatchObject({ code: '00007584', address: 'VIA AMBRA 41-45', zipcode: '58100', city: 'GROSSETO' });
+  });
+
+  test('i campi address/zipcode/city ricadono su quelli di myPeople (o su null) quando getAddressByOics non ha righe per un oic', async () => {
+    const getAddressByOicsFn = jest.fn().mockResolvedValue(new Map()); // nessuna riga per nessun oic
+    const repository = buildRepository({ getAddressByOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    // MYPEOPLE_SUCCESS_RESPONSE non fornisce ADDRESS/ZIPCODE/CITY per i suoi OICs: fallback a null.
+    expect(data.oics[0]).toMatchObject({ code: '00010925', address: null, zipcode: null, city: null });
+    expect(data.oics[1]).toMatchObject({ code: '00007584', address: null, zipcode: null, city: null });
+  });
+
+  test('non propaga (mai) errori di lettura di getAddressByOics: address/zipcode/city ricadono su quelli di myPeople (o su null)', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const getAddressByOicsFn = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const repository = buildRepository({ getAddressByOicsFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.oics[0]).toMatchObject({ code: '00010925', address: null, zipcode: null, city: null });
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('connect ECONNREFUSED'));
+    errorSpy.mockRestore();
   });
 
   test('applications riporta l\'intero blocco Applications di myPeople con tutte le chiavi in minuscolo', async () => {

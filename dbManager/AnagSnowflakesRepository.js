@@ -9,12 +9,13 @@
  * cd_dealer_country_iso_code) a partire dal codice mercato (cd_market_code).
  *
  * getPhysicalSiteAndSincom risolve, a partire da mainSincom/market/brand (dati
- * già disponibili da session/jobCardDetails), il sito fisico ARCAD
- * (gn_physical_site_arcad), il sincom di brand (cd_sincom_code) e il codice
- * dealer ARCAD (cd_dealer_arcad_code) — usati per completare in modo dinamico
- * il Sender dell'inquiry DMS (physicalSiteId/dealerNumberIdSource) e i dati
- * di sessione (physicalsite/pdvId, v. MyPeopleDmsSessionRepository), invece
- * dei valori statici configurati via env in dms/config.js.
+ * già disponibili da session/jobCardDetails), il physicalSiteId del Sender
+ * DMS (cd_paired_oic_code, sempre valorizzata — a differenza di
+ * gn_physical_site_arcad che talvolta vale il placeholder "NOT FOUND in
+ * PCOD"), il sincom di brand (cd_sincom_code) e il codice dealer ARCAD
+ * (cd_dealer_arcad_code) — usati per completare in modo dinamico il Sender
+ * dell'inquiry DMS (physicalSiteId/dealerNumberIdSource), invece dei valori
+ * statici configurati via env in dms/config.js.
  *
  * Il match su mainSincom e' fatto in OR tra cd_main_sincom_code e
  * gn_legal_entity (stesso dato logico, colonne diverse a seconda della
@@ -79,13 +80,18 @@ async function getCountryIsoCode(pool, { market }) {
 }
 
 /**
- * Risolve physicalSiteId (gn_physical_site_arcad), dealerNumberIdSource
+ * Risolve physicalSiteId (cd_paired_oic_code), dealerNumberIdSource
  * (cd_sincom_code) e dealerArcadCode (cd_dealer_arcad_code) per il Sender
- * dinamico dell'inquiry DMS e per i dati di sessione (physicalsite/pdvId, v.
- * MyPeopleDmsSessionRepository::getSessionData), a partire da mainSincom
+ * dinamico dell'inquiry DMS, a partire da mainSincom
  * (cd_main_sincom_code/gn_legal_entity, es. session.sincom/MAINSINCOM),
  * market (cd_market_code, es. session.codmarket) e brand (jobCardDetail.roInfo,
  * es. stellantisBrand "FT" o brand "55").
+ *
+ * physicalSiteId era precedentemente mappato su gn_physical_site_arcad: è
+ * stato spostato su cd_paired_oic_code (sempre valorizzata, a differenza di
+ * gn_physical_site_arcad che talvolta contiene il placeholder "NOT FOUND in
+ * PCOD") — cambio richiesto per tutti i chiamanti di postDmsInquiry, dato che
+ * il lookup è centralizzato in dms/dmsService.js::buildApplicationArea.
  *
  * mainSincom viene cercato in OR tra le colonne cd_main_sincom_code e
  * gn_legal_entity (stesso dato logico, valorizzato in colonne diverse a
@@ -114,7 +120,7 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
   }
 
   const { rows } = await pool.query(
-    `SELECT s.gn_physical_site_arcad, s.cd_sincom_code, s.cd_dealer_arcad_code
+    `SELECT s.cd_paired_oic_code, s.cd_sincom_code, s.cd_dealer_arcad_code
        FROM woc.ang_snowflakes s
       WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
@@ -128,7 +134,7 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
   }
 
   return {
-    physicalSiteId: rows[0].gn_physical_site_arcad,
+    physicalSiteId: rows[0].cd_paired_oic_code,
     dealerNumberIdSource: rows[0].cd_sincom_code,
     dealerArcadCode: rows[0].cd_dealer_arcad_code,
   };
@@ -190,9 +196,47 @@ async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } 
   };
 }
 
+/**
+ * Risolve, per un elenco di oic (cd_paired_oic_code, es. il campo CODE di
+ * ciascun elemento di User.OICs di myPeople), l'elenco dei codici brand
+ * WebDAC (cd_contract_brand_webdac_code) effettivamente contrattualizzati
+ * per quel sito, aggregati in un'unica query batch (un solo round-trip per
+ * tutti gli oic dell'utente, invece di una query per oic) — usato da
+ * MyPeopleDmsSessionRepository per sovrascrivere il campo `brands` di
+ * ciascun oic di session (in origine il CSV fornito da myPeople) con
+ * l'elenco effettivo/aggiornato letto da woc.ang_snowflakes.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ oics: string[] }} params - elenco di cd_paired_oic_code da risolvere
+ * @returns {Promise<Map<string, string[]>>} mappa oic -> array di codici brand
+ *          WebDAC distinti (es. ["30", "31"]); un oic senza righe
+ *          corrispondenti in woc.ang_snowflakes non compare nella mappa (il
+ *          chiamante deve gestire il default per gli oic assenti)
+ */
+async function getBrandsByOics(pool, { oics } = {}) {
+  if (!Array.isArray(oics) || oics.length === 0) return new Map();
+
+  const { rows } = await pool.query(
+    `SELECT s.cd_paired_oic_code AS oic
+          , array_agg(DISTINCT s.cd_contract_brand_webdac_code ORDER BY s.cd_contract_brand_webdac_code) AS brands
+       FROM woc.ang_snowflakes s
+      WHERE s.cd_paired_oic_code = ANY($1::varchar[])
+        AND s.cd_contract_brand_webdac_code IS NOT NULL
+      GROUP BY s.cd_paired_oic_code`,
+    [oics],
+  );
+
+  const brandsByOic = new Map();
+  for (const row of rows) {
+    brandsByOic.set(row.oic, Array.isArray(row.brands) ? row.brands : []);
+  }
+  return brandsByOic;
+}
+
 module.exports = {
   getCountryIsoCode,
   getPhysicalSiteAndSincom,
   getPhysicalSiteAndPdvId,
+  getBrandsByOics,
   resolveArcadBrandCode,
 };

@@ -1410,23 +1410,20 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
           DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
-      # API Gateway REST (implicita, gestita da SAM: nessuna risorsa
-      # AWS::Serverless::Api dichiarata altrove in questo template) — {method}
-      # è l'ultimo segmento del path (es. /api/hq/getEnablingConfiguration),
-      # già estratto da index.js::resolveActionAndBody come azione (stesso
-      # meccanismo usato per l'invocazione diretta/CLI, nessuna modifica al
-      # codice necessaria).
-      Events:
-        GetHq:
-          Type: Api
-          Properties:
-            Path: /api/hq/{method}
-            Method: GET
-        PostHq:
-          Type: Api
-          Properties:
-            Path: /api/hq/{method}
-            Method: POST
+      # NESSUN blocco Events qui: come tutte le altre function di questo
+      # template, il routing HTTP (/api/hq/{method}) è gestito dall'API
+      # Gateway REST esterno/preesistente (configurato fuori da questo stack
+      # SAM — v. pattern in jobcard/djc/session/pkManager/index.js, che
+      # gestiscono lo stesso identico evento proxy API Gateway senza mai
+      # dichiarare Events: Type: Api). Aggiungere qui un blocco Events avrebbe
+      # fatto creare a SAM una AWS::ApiGateway::RestApi implicita (prima
+      # nell'intero stack), operazione che il ruolo di deploy CI
+      # (stla-rol-np-bsn0027990-<env>-github-actions) non è autorizzato a
+      # compiere (manca apigateway:POST su /restapis) — causa del fallimento
+      # "SAM Deploy — dev" con rollback dello stack. hqManager/index.js già
+      # gestisce sia l'invocazione diretta sia l'evento API Gateway proxy
+      # (v. resolveActionAndBody), quindi basta collegare la rotta
+      # sull'API Gateway esistente, come per le altre lambda.
 
   HqManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
