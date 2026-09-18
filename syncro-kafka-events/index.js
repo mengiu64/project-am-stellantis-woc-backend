@@ -1,5 +1,6 @@
 // index.js
 // Lambda handler - orchestrazione autenticazione, validazione, elaborazione + database integration
+// CORRETTO: Usa UPDATE per aggiornare record creato da isStellantisBrand, NON INSERT
 
 const { v4: uuidv4 } = require('uuid');
 const Logger = require('./logger');
@@ -136,7 +137,7 @@ exports.handler = async (event, context) => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // 📝 Gestisci POST /api/synch-status
-// Ricevi callback DJC → INSERT/UPDATE in Aurora comunication_asyncro_djc
+// Ricevi callback DJC → AGGIORNA record in Aurora (creato da isStellantisBrand)
 // ──────────────────────────────────────────────────────────────────────────────
 async function _handlePostSynchStatus(
   event,
@@ -167,11 +168,9 @@ async function _handlePostSynchStatus(
     }
 
     const { events } = validation.data;
-    const responseId = exports._generateRequestId(); // 🆔 UUID unico per questa risposta DJC
     const pushTimestamp = new Date();
 
     logger.info('Validazione superata', {
-      responseId,
       eventCount: events.length,
       timestamp: pushTimestamp.toISOString()
     });
@@ -202,7 +201,7 @@ async function _handlePostSynchStatus(
     // Usa pattern isStellantisBrand: pool riutilizzato tra invocazioni (warm start)
     // ─────────────────────────────────────────────────────────────────────
     pool = await getPool();
-    logger.info('Connessione Aurora PostgreSQL acquisita', { responseId });
+    logger.info('Connessione Aurora PostgreSQL acquisita');
 
     // ─────────────────────────────────────────────────────────────────────
     // 2️⃣  ESTRAI job_card_id DAL PRIMO EVENTO (obbligatorio per tracciamento)
@@ -211,7 +210,7 @@ async function _handlePostSynchStatus(
     const jobCardId = firstEvent?.job_card_id || firstEvent?.jobCardId || null;
 
     if (!jobCardId) {
-      logger.warn('job_card_id mancante nel primo evento', { responseId });
+      logger.warn('job_card_id mancante nel primo evento');
       return exports._buildResponse(400, {
         error: 'Bad Request',
         message: 'job_card_id obbligatorio nel payload',
@@ -219,76 +218,57 @@ async function _handlePostSynchStatus(
       }, logger.getTraceId());
     }
 
-    logger.info('Job Card ID estratto dal payload', { responseId, jobCardId });
+    logger.info('Job Card ID estratto dal payload', { jobCardId });
 
     // ─────────────────────────────────────────────────────────────────────
-    // 3️⃣  INSERT record in woc.comunication_asyncro_djc
-    // Status iniziale: PENDING
-    // Unique key (job_card_id, push_timestamp) garantisce idempotency
-    // ON CONFLICT DO UPDATE: se la stessa richiesta viene inviata due volte
+    // 3️⃣  UPDATE record in woc.comunication_asyncro_djc
+    // CORRETTO: UPDATE il record creato da isStellantisBrand (non INSERT!)
+    // Il record deve essere stato creato da isStellantisBrand con status PENDING
+    // Se non esiste: 404 Not Found
     // ─────────────────────────────────────────────────────────────────────
-    const insertQuery = `
-      INSERT INTO woc.comunication_asyncro_djc (
-        response_id,
-        job_card_id,
-        push_timestamp,
-        djc_sync_status,
-        json_payload,
-        json_modified,
-        retry_count,
-        error_code,
-        error_message,
-        source_system,
-        created_by,
-        created_at,
-        updated_at,
-        version
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-      )
-      ON CONFLICT (job_card_id, push_timestamp) 
-      DO UPDATE SET 
-        json_modified = $6,
-        djc_sync_status = $4,
-        retry_count = 0,
-        updated_at = $13,
+    const updateQuery = `
+      UPDATE woc.comunication_asyncro_djc
+      SET 
+        djc_sync_status = $1,
+        json_modified = $2,
+        updated_at = $3,
         version = version + 1
+      WHERE job_card_id = $4 
+        AND push_timestamp = $5
       RETURNING response_id, djc_sync_status, version
     `;
 
-    const insertValues = [
-      responseId,                                    // $1: response_id (UUID pk)
-      jobCardId,                                     // $2: job_card_id (unique key)
-      pushTimestamp,                                 // $3: push_timestamp (unique key)
-      'PENDING',                                     // $4: djc_sync_status (initial state)
-      JSON.stringify({ events }),                    // $5: json_payload (evento DJC completo)
-      JSON.stringify({ events, receivedAt: new Date().toISOString() }), // $6: json_modified
-      0,                                             // $7: retry_count (iniziale = 0)
-      null,                                          // $8: error_code (null initially)
-      null,                                          // $9: error_message (null initially)
-      'DJC',                                         // $10: source_system (DJC callbacks)
-      'syncro-kafka-events-lambda',                  // $11: created_by (audit trail)
-      pushTimestamp,                                 // $12: created_at (timestamp)
-      pushTimestamp,                                 // $13: updated_at (timestamp)
-      1                                              // $14: version (optimistic locking = 1)
+    const updateValues = [
+      'RECEIVED_FROM_DJC',                           // $1: djc_sync_status (callback ricevuto)
+      JSON.stringify({ events, receivedAt: new Date().toISOString() }), // $2: json_modified
+      new Date(),                                    // $3: updated_at
+      jobCardId,                                     // $4: job_card_id (WHERE clause)
+      pushTimestamp                                  // $5: push_timestamp (WHERE clause)
     ];
 
-    const insertResult = await pool.query({
-      text: insertQuery,
-      values: insertValues,
-      statement_timeout: 5000  // ⏱️ Timeout 5 secondi per questa query
+    const updateResult = await pool.query({
+      text: updateQuery,
+      values: updateValues,
+      statement_timeout: 5000
     });
 
-    if (!insertResult.rows || insertResult.rows.length === 0) {
-      throw new Error('INSERT into comunication_asyncro_djc failed: no record returned');
+    // ⚠️ Se nessun record trovato: errore 404
+    if (!updateResult.rows || updateResult.rows.length === 0) {
+      logger.error('Record non trovato in Aurora', { jobCardId });
+      return exports._buildResponse(404, {
+        error: 'Not Found',
+        message: 'Comunicazione non trovata. isStellantisBrand non ha ancora inviato a DJC?',
+        jobCardId,
+        traceId: logger.getTraceId()
+      }, logger.getTraceId());
     }
 
-    const insertedRecord = insertResult.rows[0];
-    logger.info('✅ Record inserito in woc.comunication_asyncro_djc', {
-      responseId,
+    const updatedRecord = updateResult.rows[0];
+    logger.info('✅ Record aggiornato in woc.comunication_asyncro_djc', {
+      responseId: updatedRecord.response_id,
       jobCardId,
-      status: insertedRecord.djc_sync_status,
-      version: insertedRecord.version
+      status: updatedRecord.djc_sync_status,
+      version: updatedRecord.version
     });
 
     // Invia a sistemi esterni (DJC + GCT) con APIC Client Secret
@@ -301,7 +281,6 @@ async function _handlePostSynchStatus(
     );
 
     logger.info('Invio a sistemi esterni completato', {
-      responseId,
       jobCardId,
       successful: sendResults.successful.length,
       failed: sendResults.failed.length
@@ -311,46 +290,41 @@ async function _handlePostSynchStatus(
     // 4️⃣  AGGIORNA STATO A SUCCESS SE ALMENO UN SISTEMA HA SUCCESSO
     // ─────────────────────────────────────────────────────────────────────
     if (sendResults.successful.length > 0) {
-      const updateQuery = `
+      const updateSuccessQuery = `
         UPDATE woc.comunication_asyncro_djc
         SET 
           djc_sync_status = 'SUCCESS',
           json_modified = json_modified || $1::jsonb,
           updated_at = $2,
           version = version + 1
-        WHERE response_id = $3
+        WHERE job_card_id = $3
         RETURNING response_id, version
       `;
 
-      const updateValues = [
+      const updateSuccessValues = [
         JSON.stringify({ 
           sentAt: new Date().toISOString(),
           systems: sendResults.successful.map(s => s.system)
         }),
         new Date(),
-        responseId
+        jobCardId
       ];
 
-      const updateResult = await pool.query({
-        text: updateQuery,
-        values: updateValues,
+      const updateSuccessResult = await pool.query({
+        text: updateSuccessQuery,
+        values: updateSuccessValues,
         statement_timeout: 5000
       });
 
       logger.info('✅ Stato aggiornato a SUCCESS in Aurora', {
-        responseId,
         jobCardId,
-        updatedRows: updateResult.rows.length,
-        version: updateResult.rows[0]?.version
+        updatedRows: updateSuccessResult.rows.length
       });
-    }
 
-    // Se anche un sistema ha successo, ritorna 200
-    if (sendResults.successful.length > 0) {
       return exports._buildResponse(200, {
-        responseId,
+        responseId: updatedRecord.response_id,
         jobCardId,
-        message: 'Eventi inviati con successo e registrati in Aurora',
+        message: 'Callback DJC elaborato con successo',
         results: {
           successful: sendResults.successful.length,
           failed: sendResults.failed.length
@@ -361,10 +335,9 @@ async function _handlePostSynchStatus(
 
     // ─────────────────────────────────────────────────────────────────────
     // 5️⃣  AGGIORNA STATO A FAILURE SE TUTTI I SISTEMI FALLISCONO
-    // Salva error_code e error_message per debugging
     // ─────────────────────────────────────────────────────────────────────
     const firstError = sendResults.failed[0];
-    const updateErrorQuery = `
+    const updateFailureQuery = `
       UPDATE woc.comunication_asyncro_djc
       SET 
         djc_sync_status = 'FAILURE',
@@ -373,11 +346,11 @@ async function _handlePostSynchStatus(
         json_modified = json_modified || $3::jsonb,
         updated_at = $4,
         version = version + 1
-      WHERE response_id = $5
+      WHERE job_card_id = $5
       RETURNING response_id, version
     `;
 
-    const updateErrorValues = [
+    const updateFailureValues = [
       firstError?.statusCode || 'UNKNOWN_ERROR',
       firstError?.message || 'Errore durante invio a sistemi esterni',
       JSON.stringify({ 
@@ -385,27 +358,25 @@ async function _handlePostSynchStatus(
         failedAt: new Date().toISOString()
       }),
       new Date(),
-      responseId
+      jobCardId
     ];
 
-    const updateErrorResult = await pool.query({
-      text: updateErrorQuery,
-      values: updateErrorValues,
+    const updateFailureResult = await pool.query({
+      text: updateFailureQuery,
+      values: updateFailureValues,
       statement_timeout: 5000
     });
 
     logger.warn('❌ Stato aggiornato a FAILURE in Aurora', {
-      responseId,
       jobCardId,
-      errorCode: firstError?.statusCode,
-      version: updateErrorResult.rows[0]?.version
+      errorCode: firstError?.statusCode
     });
 
     return exports._buildResponse(firstError.statusCode || 502, {
-      responseId,
+      responseId: updatedRecord.response_id,
       jobCardId,
       error: 'External System Error',
-      message: 'Errore invio a sistemi esterni (registrato in Aurora)',
+      message: 'Callback DJC ricevuto ma errore nel forwarding a sistemi esterni',
       systems: sendResults.failed,
       traceId: logger.getTraceId()
     }, logger.getTraceId());
@@ -414,47 +385,34 @@ async function _handlePostSynchStatus(
     logger.error('Errore handler POST /synch-status', error);
 
     // ─────────────────────────────────────────────────────────────────────
-    // 6️⃣  REGISTRA ERRORE LAMBDA IN AURORA (se connessione disponibile)
-    // Status: ERROR, error_code: LAMBDA_EXCEPTION
+    // 6️⃣  AGGIORNA STATO A ERROR SE LAMBDA FALLISCE (nel catch block)
+    // CORRETTO: UPDATE, non INSERT!
     // ─────────────────────────────────────────────────────────────────────
     if (pool) {
       try {
-        const errorQuery = `
-          INSERT INTO woc.comunication_asyncro_djc (
-            response_id, job_card_id, push_timestamp,
-            djc_sync_status, error_code, error_message,
-            source_system, created_by, created_at, updated_at, version
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-          ON CONFLICT (job_card_id, push_timestamp) 
-          DO UPDATE SET 
-            djc_sync_status = 'ERROR',
-            error_code = 'LAMBDA_EXCEPTION',
-            error_message = $6,
-            updated_at = $10,
-            version = version + 1
-        `;
+        const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
+        const jobCardId = body?.events?.[0]?.job_card_id;
+        
+        if (jobCardId) {
+          const errorUpdateQuery = `
+            UPDATE woc.comunication_asyncro_djc
+            SET 
+              djc_sync_status = 'ERROR',
+              error_code = 'LAMBDA_EXCEPTION',
+              error_message = $1,
+              updated_at = $2,
+              version = version + 1
+            WHERE job_card_id = $3
+          `;
 
-        const errorValues = [
-          exports._generateRequestId(),
-          event.body?.events?.[0]?.job_card_id || 'UNKNOWN',
-          new Date(),
-          'ERROR',
-          'LAMBDA_EXCEPTION',
-          error.message,
-          'DJC',
-          'syncro-kafka-events-lambda',
-          new Date(),
-          new Date(),
-          1
-        ];
+          await pool.query({
+            text: errorUpdateQuery,
+            values: [error.message, new Date(), jobCardId],
+            statement_timeout: 5000
+          });
 
-        await pool.query({
-          text: errorQuery,
-          values: errorValues,
-          statement_timeout: 5000
-        });
-
-        logger.info('⚠️  Errore lambda registrato in Aurora', { errorCode: 'LAMBDA_EXCEPTION' });
+          logger.info('⚠️  Errore lambda registrato in Aurora', { jobCardId, errorCode: 'LAMBDA_EXCEPTION' });
+        }
       } catch (dbErr) {
         logger.error('Impossibile registrare errore in Aurora', dbErr);
       }
@@ -544,7 +502,7 @@ async function _handleGetSynchStatus(event, logger) {
 
     // ─────────────────────────────────────────────────────────────────────
     // 3️⃣  RITORNA STATO DEL RECORD
-    // Status: PENDING, SUCCESS, FAILURE, ERROR
+    // Status: PENDING, RECEIVED_FROM_DJC, SUCCESS, FAILURE, ERROR
     // ─────────────────────────────────────────────────────────────────────
     if (selectResult.rows && selectResult.rows.length > 0) {
       const record = selectResult.rows[0];
@@ -558,7 +516,7 @@ async function _handleGetSynchStatus(event, logger) {
       return exports._buildResponse(200, {
         requestId,
         jobCardId: record.job_card_id,
-        status: record.djc_sync_status, // PENDING, SUCCESS, FAILURE, ERROR
+        status: record.djc_sync_status,
         pushTimestamp: record.push_timestamp,
         createdAt: record.created_at,
         updatedAt: record.updated_at,
@@ -596,7 +554,6 @@ async function _handleGetSynchStatus(event, logger) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Costruisci risposta HTTP nel formato API Gateway Proxy Response
-// Includi sempre X-Trace-Id header per distributed tracing
 function _buildResponse(statusCode, body, traceId) {
   return {
     statusCode,
@@ -609,7 +566,7 @@ function _buildResponse(statusCode, body, traceId) {
   };
 }
 
-// Genera UUID unico per response_id (tracciamento end-to-end di ogni comunicazione)
+// Genera UUID unico per response_id
 function _generateRequestId() {
   return uuidv4();
 }
