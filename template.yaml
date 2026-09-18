@@ -1410,6 +1410,23 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
           DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+      # API Gateway REST (implicita, gestita da SAM: nessuna risorsa
+      # AWS::Serverless::Api dichiarata altrove in questo template) — {method}
+      # è l'ultimo segmento del path (es. /api/hq/getEnablingConfiguration),
+      # già estratto da index.js::resolveActionAndBody come azione (stesso
+      # meccanismo usato per l'invocazione diretta/CLI, nessuna modifica al
+      # codice necessaria).
+      Events:
+        GetHq:
+          Type: Api
+          Properties:
+            Path: /api/hq/{method}
+            Method: GET
+        PostHq:
+          Type: Api
+          Properties:
+            Path: /api/hq/{method}
+            Method: POST
 
   HqManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
