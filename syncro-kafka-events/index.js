@@ -56,6 +56,8 @@ exports.handler = async (event, context) => {
       } catch (parseError) {
         logger.error('❌ Errore parsing JSON body', parseError);
         return exports._buildResponse(400, {
+          statusCode: 400,
+          success: false,
           error: 'Bad Request',
           message: 'Body non è valido JSON',
           traceId: logger.getTraceId()
@@ -76,6 +78,8 @@ exports.handler = async (event, context) => {
         traceId: logger.getTraceId()
       });
       return exports._buildResponse(400, {
+        statusCode: 400,
+        success: false,
         error: 'Bad Request',
         message: 'Validazione payload fallita',
         details: validation.errors,
@@ -109,6 +113,8 @@ exports.handler = async (event, context) => {
     } catch (dbConnectError) {
       logger.error('❌ Errore connessione Aurora', dbConnectError);
       return exports._buildResponse(503, {
+        statusCode: 503,
+        success: false,
         error: 'Service Unavailable',
         message: 'Impossibile connettersi al database Aurora',
         traceId: logger.getTraceId()
@@ -131,6 +137,8 @@ exports.handler = async (event, context) => {
           traceId: logger.getTraceId()
         });
         return exports._buildResponse(400, {
+          statusCode: 400,
+          success: false,
           error: 'Bad Request',
           message: 'Flag djc non valido - deve essere Y o N',
           traceId: logger.getTraceId()
@@ -279,18 +287,20 @@ exports.handler = async (event, context) => {
         traceId: logger.getTraceId()
       });
 
+      // 🔴 MODIFICATO: Struttura risposta allineata con swagger
       return exports._buildResponse(200, {
+        statusCode: 200,
+        success: true,
         message: 'Evento aggiornato con successo in Aurora',
-        data: {
+        response: {
           responseId: updatedRecord.response_id,
           jobCardId,
+          eventType,
+          status: updatedRecord.djc_sync_status,
           timestamp,
-          djcFlag,
-          ambito,
-          djcSyncStatus: updatedRecord.djc_sync_status,
-          version: updatedRecord.version,
-          traceId: logger.getTraceId()
-        }
+          version: updatedRecord.version
+        },
+        traceId: logger.getTraceId()
       }, logger.getTraceId());
     } catch (upsertError) {
       // 🔴 MODIFICATO: Gestione errori per UPDATE-ONLY
@@ -314,6 +324,8 @@ exports.handler = async (event, context) => {
         });
         
         return exports._buildResponse(404, {
+          statusCode: 404,
+          success: false,
           error: 'Not Found',
           message: 'Record non trovato in woc.comunication_asyncro_djc',
           details: {
@@ -344,6 +356,8 @@ exports.handler = async (event, context) => {
           traceId: logger.getTraceId()
         });
         return exports._buildResponse(503, {
+          statusCode: 503,
+          success: false,
           error: 'Service Unavailable',
           message: 'Errore connessione al database Aurora',
           traceId: logger.getTraceId()
@@ -358,6 +372,8 @@ exports.handler = async (event, context) => {
           traceId: logger.getTraceId()
         });
         return exports._buildResponse(504, {
+          statusCode: 504,
+          success: false,
           error: 'Gateway Timeout',
           message: 'Query database ha superato il timeout',
           traceId: logger.getTraceId()
@@ -372,6 +388,8 @@ exports.handler = async (event, context) => {
           traceId: logger.getTraceId()
         });
         return exports._buildResponse(500, {
+          statusCode: 500,
+          success: false,
           error: 'Internal Server Error',
           message: 'Errore durante aggiornamento in database',
           traceId: logger.getTraceId()
@@ -381,6 +399,8 @@ exports.handler = async (event, context) => {
   } catch (handlerError) {
     logger.error('❌ Errore non gestito in handler', handlerError);
     return exports._buildResponse(500, {
+      statusCode: 500,
+      success: false,
       error: 'Internal Server Error',
       message: 'Errore non gestito',
       traceId: logger.getTraceId()
