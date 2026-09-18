@@ -1,6 +1,6 @@
 'use strict';
 
-const { getCountryIsoCode, getPhysicalSiteAndSincom, getPhysicalSiteAndPdvId } = require('../AnagSnowflakesRepository');
+const { getCountryIsoCode, getPhysicalSiteAndSincom, getPhysicalSiteAndPdvId, getBrandsByOics } = require('../AnagSnowflakesRepository');
 
 function makePool(queryImpl) {
   return { query: jest.fn(queryImpl) };
@@ -196,6 +196,57 @@ describe('AnagSnowflakesRepository', () => {
       });
 
       expect(result).toEqual({ physicalSiteId: null, dealerArcadCode: null });
+    });
+  });
+
+  describe('getBrandsByOics', () => {
+    it('returns an empty map without querying when oics is missing/empty', async () => {
+      const pool = makePool();
+
+      expect(await getBrandsByOics(pool, {})).toEqual(new Map());
+      expect(await getBrandsByOics(pool, { oics: [] })).toEqual(new Map());
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns a map of oic -> distinct brand codes read from woc.ang_snowflakes', async () => {
+      const pool = makePool(async () => ({
+        rows: [
+          { oic: '00010925', brands: ['31'] },
+          { oic: '00007584', brands: ['30', '31'] },
+        ],
+      }));
+
+      const result = await getBrandsByOics(pool, { oics: ['00010925', '00007584'] });
+
+      expect(result).toEqual(new Map([
+        ['00010925', ['31']],
+        ['00007584', ['30', '31']],
+      ]));
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('array_agg(DISTINCT s.cd_contract_brand_webdac_code'),
+        [['00010925', '00007584']],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('GROUP BY s.cd_paired_oic_code'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('s.cd_paired_oic_code = ANY($1::varchar[])'));
+    });
+
+    it('omits an oic from the map when its brands column is not an array', async () => {
+      const pool = makePool(async () => ({
+        rows: [{ oic: '00010925', brands: null }],
+      }));
+
+      const result = await getBrandsByOics(pool, { oics: ['00010925'] });
+
+      expect(result).toEqual(new Map([['00010925', []]]));
+    });
+
+    it('returns an empty map when no row is found', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getBrandsByOics(pool, { oics: ['00099999'] });
+
+      expect(result).toEqual(new Map());
     });
   });
 });

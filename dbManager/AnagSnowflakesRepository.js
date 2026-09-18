@@ -196,9 +196,47 @@ async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } 
   };
 }
 
+/**
+ * Risolve, per un elenco di oic (cd_paired_oic_code, es. il campo CODE di
+ * ciascun elemento di User.OICs di myPeople), l'elenco dei codici brand
+ * WebDAC (cd_contract_brand_webdac_code) effettivamente contrattualizzati
+ * per quel sito, aggregati in un'unica query batch (un solo round-trip per
+ * tutti gli oic dell'utente, invece di una query per oic) — usato da
+ * MyPeopleDmsSessionRepository per sovrascrivere il campo `brands` di
+ * ciascun oic di session (in origine il CSV fornito da myPeople) con
+ * l'elenco effettivo/aggiornato letto da woc.ang_snowflakes.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ oics: string[] }} params - elenco di cd_paired_oic_code da risolvere
+ * @returns {Promise<Map<string, string[]>>} mappa oic -> array di codici brand
+ *          WebDAC distinti (es. ["30", "31"]); un oic senza righe
+ *          corrispondenti in woc.ang_snowflakes non compare nella mappa (il
+ *          chiamante deve gestire il default per gli oic assenti)
+ */
+async function getBrandsByOics(pool, { oics } = {}) {
+  if (!Array.isArray(oics) || oics.length === 0) return new Map();
+
+  const { rows } = await pool.query(
+    `SELECT s.cd_paired_oic_code AS oic
+          , array_agg(DISTINCT s.cd_contract_brand_webdac_code ORDER BY s.cd_contract_brand_webdac_code) AS brands
+       FROM woc.ang_snowflakes s
+      WHERE s.cd_paired_oic_code = ANY($1::varchar[])
+        AND s.cd_contract_brand_webdac_code IS NOT NULL
+      GROUP BY s.cd_paired_oic_code`,
+    [oics],
+  );
+
+  const brandsByOic = new Map();
+  for (const row of rows) {
+    brandsByOic.set(row.oic, Array.isArray(row.brands) ? row.brands : []);
+  }
+  return brandsByOic;
+}
+
 module.exports = {
   getCountryIsoCode,
   getPhysicalSiteAndSincom,
   getPhysicalSiteAndPdvId,
+  getBrandsByOics,
   resolveArcadBrandCode,
 };

@@ -19,6 +19,15 @@
  * fallisce per violazione della chiave primaria (record gia' esistente), si
  * esegue un UPDATE dei soli campi enablewoc/enablesignature per la riga
  * (market, oic) gia' presente.
+ *
+ * getDisabledOics(pairs) risolve, per un elenco di coppie (market, oic), gli
+ * OIC esplicitamente disabilitati per WOC (enablewoc = 0), usata da session
+ * (MyPeopleDmsSessionRepository) per togliere dall'elenco `oics` quelli non
+ * abilitati. A differenza di getEnablingConfiguration() (usata dall'endpoint
+ * admin, che ritorna enableWOC=0 quando manca la riga di configurazione),
+ * qui una coppia (market, oic) SENZA riga in hq_application_enabling e'
+ * considerata abilitata di default (opt-out): un oic viene escluso dalla
+ * sessione SOLO se esiste esplicitamente una riga con enablewoc = 0.
  */
 
 /** Codice errore Postgres per violazione di unique/primary key ("unique_violation"). */
@@ -84,4 +93,30 @@ async function setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableS
   }
 }
 
-module.exports = { getEnablingConfiguration, setEnablingConfiguration };
+/**
+ * @param {import('pg').Pool} pool
+ * @param {{ market: string, oic: string }[]} pairs - coppie (market, oic) da verificare
+ * @returns {Promise<Set<string>>} set di chiavi "market|oic" esplicitamente
+ *          disabilitate (enablewoc = 0); le coppie assenti dal set sono da
+ *          considerarsi abilitate (default opt-out, v. sopra)
+ */
+async function getDisabledOics(pool, pairs) {
+  if (!Array.isArray(pairs) || pairs.length === 0) return new Set();
+
+  const markets = pairs.map((p) => p.market);
+  const oics = pairs.map((p) => p.oic);
+
+  const { rows } = await pool.query(
+    `SELECT pairs.market, pairs.oic
+       FROM unnest($1::varchar[], $2::varchar[]) AS pairs(market, oic)
+       JOIN woc.hq_application_enabling hae
+         ON hae.market = pairs.market
+        AND hae.oic = pairs.oic
+      WHERE hae.enablewoc = 0`,
+    [markets, oics],
+  );
+
+  return new Set(rows.map((row) => `${row.market}|${row.oic}`));
+}
+
+module.exports = { getEnablingConfiguration, setEnablingConfiguration, getDisabledOics };
