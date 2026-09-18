@@ -9,6 +9,10 @@ const {
   handler,
   runGetEnablingConfiguration,
   runSetEnablingConfiguration,
+  runGetVehicleInspection,
+  runSetVehicleInspectionVisible,
+  runDeletetVehicleInspectionVisible,
+  runInsertVehicleInspection,
   main,
 } = require('../index');
 
@@ -16,6 +20,10 @@ function makeManagerInstance(overrides = {}) {
   const instance = {
     getEnablingConfiguration: jest.fn(),
     setEnablingConfiguration: jest.fn(),
+    getVehicleInspection: jest.fn(),
+    setVehicleInspectionVisible: jest.fn(),
+    deletetVehicleInspectionVisible: jest.fn(),
+    insertVehicleInspection: jest.fn(),
     ...overrides,
   };
   HqManager.mockImplementation(() => instance);
@@ -61,6 +69,57 @@ describe('hqManager/index.js', () => {
       expect(instance.setEnablingConfiguration).toHaveBeenCalledWith('1000', '00006821', 1, 0);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 });
+    });
+
+    it('dispatches getVehicleInspection (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        getVehicleInspection: jest.fn().mockResolvedValue([{ id: 1 }]),
+      });
+
+      const res = await handler({ action: 'getVehicleInspection', body: { market: '1000', type: 'EXTERIOR' } });
+
+      expect(instance.getVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', type: 'EXTERIOR', vehicleInspections: [{ id: 1 }] });
+    });
+
+    it('dispatches setVehicleInspectionVisible (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        setVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({ action: 'setVehicleInspectionVisible', body: { id: 1, value: 1 } });
+
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, id: 1, value: 1 });
+    });
+
+    it('dispatches deletetVehicleInspectionVisible (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        deletetVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({ action: 'deletetVehicleInspectionVisible', body: { id: 1, value: 1 } });
+
+      expect(instance.deletetVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, id: 1, value: 1 });
+    });
+
+    it('dispatches insertVehicleInspection (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        insertVehicleInspection: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({
+        action: 'insertVehicleInspection',
+        body: { market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria' },
+      });
+
+      expect(instance.insertVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR', 'Controllo carrozzeria');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria' });
     });
 
     it('ignores an unparseable JSON body (parseBody catch branch) and falls back to path-derived action', async () => {
@@ -182,6 +241,50 @@ describe('hqManager/index.js', () => {
       expect(instance.setEnablingConfiguration).toHaveBeenCalledWith('1000', '00006821', 1, 0);
       expect(result).toEqual({ success: true, codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 });
     });
+
+    it('runGetVehicleInspection delegates to HqManager and returns the result', async () => {
+      const instance = makeManagerInstance({
+        getVehicleInspection: jest.fn().mockResolvedValue([{ id: 1 }]),
+      });
+
+      const result = await runGetVehicleInspection('1000', 'EXTERIOR');
+
+      expect(instance.getVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR');
+      expect(result).toEqual([{ id: 1 }]);
+    });
+
+    it('runSetVehicleInspectionVisible delegates to HqManager and returns a summary', async () => {
+      const instance = makeManagerInstance({
+        setVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const result = await runSetVehicleInspectionVisible(1, 1);
+
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(result).toEqual({ success: true, id: 1, value: 1 });
+    });
+
+    it('runDeletetVehicleInspectionVisible delegates to HqManager and returns a summary', async () => {
+      const instance = makeManagerInstance({
+        deletetVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const result = await runDeletetVehicleInspectionVisible(1, 1);
+
+      expect(instance.deletetVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(result).toEqual({ success: true, id: 1, value: 1 });
+    });
+
+    it('runInsertVehicleInspection delegates to HqManager and returns a summary', async () => {
+      const instance = makeManagerInstance({
+        insertVehicleInspection: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const result = await runInsertVehicleInspection('1000', 'EXTERIOR', 'Controllo carrozzeria');
+
+      expect(instance.insertVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR', 'Controllo carrozzeria');
+      expect(result).toEqual({ success: true, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria' });
+    });
   });
 
   describe('main (CLI dispatcher)', () => {
@@ -253,6 +356,78 @@ describe('hqManager/index.js', () => {
       await main();
 
       expect(instance.setEnablingConfiguration).toHaveBeenCalledWith('1000', '00006821', 1, 0);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('exits 1 when getVehicleInspection is called without market/type', async () => {
+      process.argv = ['node', 'index.js', 'getVehicleInspection', '1000'];
+      await main();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('runs getVehicleInspection via CLI', async () => {
+      const instance = makeManagerInstance({
+        getVehicleInspection: jest.fn().mockResolvedValue([]),
+      });
+      process.argv = ['node', 'index.js', 'getVehicleInspection', '1000', 'EXTERIOR'];
+
+      await main();
+
+      expect(instance.getVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR');
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('exits 1 when setVehicleInspectionVisible is called with missing args', async () => {
+      process.argv = ['node', 'index.js', 'setVehicleInspectionVisible', '1'];
+      await main();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('runs setVehicleInspectionVisible via CLI', async () => {
+      const instance = makeManagerInstance({
+        setVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+      });
+      process.argv = ['node', 'index.js', 'setVehicleInspectionVisible', '1', '1'];
+
+      await main();
+
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('exits 1 when deletetVehicleInspectionVisible is called with missing args', async () => {
+      process.argv = ['node', 'index.js', 'deletetVehicleInspectionVisible', '1'];
+      await main();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('runs deletetVehicleInspectionVisible via CLI', async () => {
+      const instance = makeManagerInstance({
+        deletetVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+      });
+      process.argv = ['node', 'index.js', 'deletetVehicleInspectionVisible', '1', '1'];
+
+      await main();
+
+      expect(instance.deletetVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it('exits 1 when insertVehicleInspection is called with missing args', async () => {
+      process.argv = ['node', 'index.js', 'insertVehicleInspection', '1000', 'EXTERIOR'];
+      await main();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it('runs insertVehicleInspection via CLI', async () => {
+      const instance = makeManagerInstance({
+        insertVehicleInspection: jest.fn().mockResolvedValue(undefined),
+      });
+      process.argv = ['node', 'index.js', 'insertVehicleInspection', '1000', 'EXTERIOR', 'Controllo carrozzeria'];
+
+      await main();
+
+      expect(instance.insertVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR', 'Controllo carrozzeria');
       expect(exitSpy).not.toHaveBeenCalled();
     });
 

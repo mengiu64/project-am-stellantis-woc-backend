@@ -8,10 +8,21 @@ jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
 jest.mock('../../dbManager/HqRepository', () => ({
   getEnablingConfiguration: jest.fn(),
   setEnablingConfiguration: jest.fn(),
+  getVehicleInspection: jest.fn(),
+  setVehicleInspectionVisible: jest.fn(),
+  deletetVehicleInspectionVisible: jest.fn(),
+  insertVehicleInspection: jest.fn(),
 }));
 
 const { getPool } = require('../../dbManager/db');
-const { getEnablingConfiguration, setEnablingConfiguration } = require('../../dbManager/HqRepository');
+const {
+  getEnablingConfiguration,
+  setEnablingConfiguration,
+  getVehicleInspection,
+  setVehicleInspectionVisible,
+  deletetVehicleInspectionVisible,
+  insertVehicleInspection,
+} = require('../../dbManager/HqRepository');
 const { HqManager } = require('../HqManager');
 
 describe('HqManager', () => {
@@ -47,6 +58,52 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setEnablingConfiguration).toHaveBeenCalledWith(fakePool, '1000', '00006821', 1, 0);
+    });
+  });
+
+  describe('getVehicleInspection', () => {
+    it('resolves the pool and delegates to HqRepository.getVehicleInspection', async () => {
+      const rows = [{ id: 1, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria', visible: 1, deleted: 0 }];
+      getVehicleInspection.mockResolvedValue(rows);
+
+      const result = await manager.getVehicleInspection('1000', 'EXTERIOR');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(getVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR');
+      expect(result).toBe(rows);
+    });
+  });
+
+  describe('setVehicleInspectionVisible', () => {
+    it('resolves the pool and delegates to HqRepository.setVehicleInspectionVisible', async () => {
+      setVehicleInspectionVisible.mockResolvedValue(undefined);
+
+      await manager.setVehicleInspectionVisible(1, 1);
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1);
+    });
+  });
+
+  describe('deletetVehicleInspectionVisible', () => {
+    it('resolves the pool and delegates to HqRepository.deletetVehicleInspectionVisible', async () => {
+      deletetVehicleInspectionVisible.mockResolvedValue(undefined);
+
+      await manager.deletetVehicleInspectionVisible(1, 1);
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(deletetVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1);
+    });
+  });
+
+  describe('insertVehicleInspection', () => {
+    it('resolves the pool and delegates to HqRepository.insertVehicleInspection', async () => {
+      insertVehicleInspection.mockResolvedValue(undefined);
+
+      await manager.insertVehicleInspection('1000', 'EXTERIOR', 'Controllo carrozzeria');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria');
     });
   });
 });

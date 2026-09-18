@@ -1,6 +1,13 @@
 'use strict';
 
-const { getEnablingConfiguration, setEnablingConfiguration } = require('../HqRepository');
+const {
+  getEnablingConfiguration,
+  setEnablingConfiguration,
+  getVehicleInspection,
+  setVehicleInspectionVisible,
+  deletetVehicleInspectionVisible,
+  insertVehicleInspection,
+} = require('../HqRepository');
 
 function makePool(queryImpl) {
   return { query: jest.fn(queryImpl) };
@@ -115,6 +122,111 @@ describe('HqRepository', () => {
       await expect(setEnablingConfiguration(pool, '1000', '00006821', 1, 0))
         .rejects.toThrow('connection lost');
       expect(pool.query).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getVehicleInspection', () => {
+    it('throws when type is missing', async () => {
+      const pool = makePool();
+      await expect(getVehicleInspection(pool, '1000', undefined))
+        .rejects.toThrow('"type" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns the rows from the query', async () => {
+      const rows = [
+        { id: 1, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria', visible: 1, deleted: 0 },
+      ];
+      const pool = makePool(async () => ({ rows }));
+
+      const result = await getVehicleInspection(pool, '1000', 'EXTERIOR');
+
+      expect(result).toBe(rows);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM woc.hq_vehicle_inspection t'),
+        ['1000', 'EXTERIOR'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('PARTITION BY descr, type'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ORDER BY id'));
+    });
+
+    it('returns an empty array when no rows are found', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getVehicleInspection(pool, '1000', 'EXTERIOR');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('setVehicleInspectionVisible', () => {
+    it('throws when id is missing', async () => {
+      const pool = makePool();
+      await expect(setVehicleInspectionVisible(pool, undefined, 1))
+        .rejects.toThrow('"id" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE with the given id/value', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setVehicleInspectionVisible(pool, 1, 1);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('SET visible = $2'),
+        [1, 1],
+      );
+    });
+  });
+
+  describe('deletetVehicleInspectionVisible', () => {
+    it('throws when id is missing', async () => {
+      const pool = makePool();
+      await expect(deletetVehicleInspectionVisible(pool, undefined, 1))
+        .rejects.toThrow('"id" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE with the given id/value', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await deletetVehicleInspectionVisible(pool, 1, 1);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('SET deleted = $2'),
+        [1, 1],
+      );
+    });
+  });
+
+  describe('insertVehicleInspection', () => {
+    it('throws when type is missing', async () => {
+      const pool = makePool();
+      await expect(insertVehicleInspection(pool, '1000', undefined, 'Controllo carrozzeria'))
+        .rejects.toThrow('"type" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when descr is missing', async () => {
+      const pool = makePool();
+      await expect(insertVehicleInspection(pool, '1000', 'EXTERIOR', undefined))
+        .rejects.toThrow('"descr" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the INSERT with the given market/type/descr', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await insertVehicleInspection(pool, '1000', 'EXTERIOR', 'Controllo carrozzeria');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_vehicle_inspection'),
+        ['1000', 'EXTERIOR', 'Controllo carrozzeria'],
+      );
     });
   });
 });

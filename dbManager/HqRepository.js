@@ -19,6 +19,21 @@
  * fallisce per violazione della chiave primaria (record gia' esistente), si
  * esegue un UPDATE dei soli campi enablewoc/enablesignature per la riga
  * (market, oic) gia' presente.
+ *
+ * getVehicleInspection(market, type) legge da woc.hq_vehicle_inspection le
+ * voci di controllo veicolo non cancellate per il "type" richiesto, con
+ * priorita' alla riga specifica del mercato ("market") su quella comune
+ * (market NULL): per ogni coppia (descr, type) viene tenuta una sola riga
+ * (ROW_NUMBER() PARTITION BY descr, type) scegliendo, in ordine, il match sul
+ * mercato, poi la riga condivisa (market NULL), scartando eventuali righe di
+ * altri mercati.
+ *
+ * setVehicleInspectionVisible(id, value) e
+ * deletetVehicleInspectionVisible(id, value) aggiornano rispettivamente i
+ * flag "visible" e "deleted" della riga con il dato "id".
+ *
+ * insertVehicleInspection(market, type, descr) inserisce una nuova voce di
+ * controllo veicolo.
  */
 
 /** Codice errore Postgres per violazione di unique/primary key ("unique_violation"). */
@@ -84,4 +99,98 @@ async function setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableS
   }
 }
 
-module.exports = { getEnablingConfiguration, setEnablingConfiguration };
+/**
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} type
+ * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
+ */
+async function getVehicleInspection(pool, market, type) {
+  if (!type) throw new Error('"type" is required');
+
+  const { rows } = await pool.query(
+    `SELECT id,
+            market,
+            type,
+            descr,
+            visible,
+            deleted
+       FROM (
+         SELECT t.*,
+                ROW_NUMBER() OVER (
+                    PARTITION BY descr, type
+                    ORDER BY CASE
+                               WHEN market = $1 THEN 1
+                               WHEN market IS NULL THEN 2
+                               ELSE 3
+                             END
+                ) rn
+           FROM woc.hq_vehicle_inspection t
+          WHERE t.type = $2
+            AND t.deleted = 0
+            AND (t.market = $1 OR t.market IS NULL)
+       ) x
+      WHERE rn = 1
+      ORDER BY id`,
+    [market, type],
+  );
+
+  return rows;
+}
+
+/**
+ * @param {import('pg').Pool} pool
+ * @param {number} id
+ * @param {number} value
+ * @returns {Promise<void>}
+ */
+async function setVehicleInspectionVisible(pool, id, value) {
+  if (id === undefined || id === null) throw new Error('"id" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_vehicle_inspection SET visible = $2 WHERE id = $1`,
+    [id, value],
+  );
+}
+
+/**
+ * @param {import('pg').Pool} pool
+ * @param {number} id
+ * @param {number} value
+ * @returns {Promise<void>}
+ */
+async function deletetVehicleInspectionVisible(pool, id, value) {
+  if (id === undefined || id === null) throw new Error('"id" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_vehicle_inspection SET deleted = $2 WHERE id = $1`,
+    [id, value],
+  );
+}
+
+/**
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} type
+ * @param {string} descr
+ * @returns {Promise<void>}
+ */
+async function insertVehicleInspection(pool, market, type, descr) {
+  if (!type) throw new Error('"type" is required');
+  if (!descr) throw new Error('"descr" is required');
+
+  await pool.query(
+    `INSERT INTO woc.hq_vehicle_inspection (market, type, descr)
+     VALUES ($1, $2, $3)`,
+    [market, type, descr],
+  );
+}
+
+module.exports = {
+  getEnablingConfiguration,
+  setEnablingConfiguration,
+  getVehicleInspection,
+  setVehicleInspectionVisible,
+  deletetVehicleInspectionVisible,
+  insertVehicleInspection,
+};

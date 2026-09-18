@@ -20,6 +20,11 @@ const path = require('path');
  * setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature)
  * crea/aggiorna (upsert) la riga di configurazione per la coppia
  * (codmarket, oic).
+ *
+ * getVehicleInspection(market, type), setVehicleInspectionVisible(id, value),
+ * deletetVehicleInspectionVisible(id, value) e
+ * insertVehicleInspection(market, type, descr) espongono la gestione delle
+ * voci di controllo veicolo (woc.hq_vehicle_inspection).
  */
 class HqManager {
   /**
@@ -47,6 +52,59 @@ class HqManager {
 
     const pool = await getPool();
     return setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
+  }
+
+  /**
+   * @param {string} market
+   * @param {string} type
+   * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
+   */
+  async getVehicleInspection(market, type) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { getVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return getVehicleInspection(pool, market, type);
+  }
+
+  /**
+   * @param {number} id
+   * @param {number} value
+   * @returns {Promise<void>}
+   */
+  async setVehicleInspectionVisible(id, value) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return setVehicleInspectionVisible(pool, id, value);
+  }
+
+  /**
+   * @param {number} id
+   * @param {number} value
+   * @returns {Promise<void>}
+   */
+  async deletetVehicleInspectionVisible(id, value) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { deletetVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return deletetVehicleInspectionVisible(pool, id, value);
+  }
+
+  /**
+   * @param {string} market
+   * @param {string} type
+   * @param {string} descr
+   * @returns {Promise<void>}
+   */
+  async insertVehicleInspection(market, type, descr) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { insertVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return insertVehicleInspection(pool, market, type, descr);
   }
 }
 
