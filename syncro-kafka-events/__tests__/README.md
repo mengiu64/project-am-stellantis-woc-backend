@@ -61,6 +61,8 @@ CREATE TABLE woc.comunication_asyncro_djc (
   job_card_id VARCHAR(50) NOT NULL,         -- jobCardSrpId dal payload
   push_timestamp TIMESTAMP NOT NULL,        -- timestamp dal payload
   djc_sync_status woc.djc_sync_status NOT NULL, -- ENUM: PENDING, SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE
+  djc VARCHAR(1) NOT NULL DEFAULT 'Y',         -- Flag Y/N per abilitare sincronizzazione
+  ambito VARCHAR(100) NOT NULL,               -- Ambito/contesto dell'evento
   json_payload JSONB,                       -- Payload originale ricevuto da DJC
   json_modified JSONB,                      -- Metadati: receivedAt, eventType, additionalFields
   retry_count INTEGER DEFAULT 0,            -- Per future retry logic

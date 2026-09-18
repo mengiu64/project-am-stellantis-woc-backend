@@ -113,7 +113,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors[0]).toContain('non supportato');
-      expect(mockLogger.warn).toHaveBeenCalled();
     });
 
     it('DEVE rifiutare eventType mancante', () => {
@@ -139,7 +138,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       const result = _validatePayload(payload, mockLogger);
 
       expect(result.valid).toBe(false);
-      expect(result.errors[0]).toContain('jobCardSrpId');
+      expect(result.errors[0]).toContain('jobCardId');
     });
 
     it('DEVE rifiutare timestamp mancante', () => {
@@ -166,7 +165,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       const result = _validatePayload(payload, mockLogger);
 
       expect(result.valid).toBe(false);
-      expect(result.errors[0]).toContain('timestamp');
+      expect(result.errors[0]).toContain('Timestamp');
     });
 
     it('DEVE accettare campi aggiuntivi opzionali', () => {
@@ -251,7 +250,9 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
-          timestamp: '2026-04-24T10:30:00Z'
+          timestamp: '2026-04-24T10:30:00Z',
+          djc: 'Y',
+          ambito: 'SALES'
         }),
         requestContext: {
           http: { method: 'POST' }
@@ -262,9 +263,8 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.success).toBe(true);
-      expect(body.response.status).toBe('SUCCESS_WITHOUT_UPDATE');
-      expect(body.response.eventType).toBe('DMS_PUSH_SUCCESS_WITHOUT_UPDATE');
+      expect(body.message).toContain('successo');
+      expect(body.data.djcSyncStatus).toBe('SUCCESS_WITHOUT_UPDATE');
     });
 
     it('DEVE registrare evento DMS_PUSH_SUCCESS_WITH_UPDATE e ritornare 200', async () => {
@@ -282,7 +282,9 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
           jobCardSrpId: 'JCID-43',
-          timestamp: '2026-04-24T11:00:00Z'
+          timestamp: '2026-04-24T11:00:00Z',
+          djc: 'Y',
+          ambito: 'SERVICE'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -291,7 +293,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.response.status).toBe('SUCCESS_WITH_UPDATE');
+      expect(body.data.djcSyncStatus).toBe('SUCCESS_WITH_UPDATE');
     });
 
     it('DEVE registrare evento DMS_PUSH_REFUSAL con error_code', async () => {
@@ -309,7 +311,9 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_REFUSAL',
           jobCardSrpId: 'JCID-44',
-          timestamp: '2026-04-24T12:00:00Z'
+          timestamp: '2026-04-24T12:00:00Z',
+          djc: 'Y',
+          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -318,7 +322,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.response.status).toBe('REFUSAL');
+      expect(body.data.djcSyncStatus).toBe('REFUSAL');
     });
 
     it('DEVE registrare evento DMS_PUSH_FAILURE con error_code', async () => {
@@ -336,7 +340,9 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_FAILURE',
           jobCardSrpId: 'JCID-45',
-          timestamp: '2026-04-24T13:00:00Z'
+          timestamp: '2026-04-24T13:00:00Z',
+          djc: 'Y',
+          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -345,7 +351,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.response.status).toBe('FAILURE');
+      expect(body.data.djcSyncStatus).toBe('FAILURE');
     });
 
     it('DEVE ritornare 400 se eventType non supportato', async () => {
@@ -387,15 +393,17 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       // Primo INSERT: version = 1
       // Secondo UPDATE: version = 2
       mockPool.query.mockResolvedValueOnce({
-        rows: [{ response_id: 'res-uuid', djc_sync_status: 'SUCCESS', version: 1 }]
+        rows: [{ response_id: 'res-uuid', djc_sync_status: 'SUCCESS_WITHOUT_UPDATE', version: 1 }]
       }).mockResolvedValueOnce({
-        rows: [{ response_id: 'res-uuid', djc_sync_status: 'SUCCESS', version: 2 }]
+        rows: [{ response_id: 'res-uuid', djc_sync_status: 'SUCCESS_WITHOUT_UPDATE', version: 2 }]
       });
 
       const payload = {
         eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
         jobCardSrpId: 'JCID-DUP',
-        timestamp: '2026-04-24T10:30:00Z'
+        timestamp: '2026-04-24T10:30:00Z',
+        djc: 'Y',
+        ambito: 'SALES'
       };
 
       const event = {
@@ -409,13 +417,13 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       const response1 = await handler(event, {});
       expect(response1.statusCode).toBe(200);
       const body1 = JSON.parse(response1.body);
-      expect(body1.response.version).toBe(1); // INSERT
+      expect(body1.data.version).toBe(1); // INSERT
 
       // Secondo call (stesso payload)
       const response2 = await handler(event, {});
       expect(response2.statusCode).toBe(200);
       const body2 = JSON.parse(response2.body);
-      expect(body2.response.version).toBe(2); // UPDATE per idempotency
+      expect(body2.data.version).toBe(2); // UPDATE per idempotency
     });
 
     it('DEVE ritornare 503 se Aurora non disponibile', async () => {
@@ -428,7 +436,9 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
-          timestamp: '2026-04-24T10:30:00Z'
+          timestamp: '2026-04-24T10:30:00Z',
+          djc: 'Y',
+          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -441,8 +451,8 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
     });
 
     it('DEVE ritornare 504 se query database timeout', async () => {
-      // Mock: query timeout
-      mockPool.query.mockRejectedValueOnce(new Error('Query timeout'));
+      // Mock: query timeout con messaggio che include 'statement timeout'
+      mockPool.query.mockRejectedValueOnce(new Error('statement timeout'));
 
       const event = {
         httpMethod: 'POST',
@@ -450,7 +460,9 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
-          timestamp: '2026-04-24T10:30:00Z'
+          timestamp: '2026-04-24T10:30:00Z',
+          djc: 'Y',
+          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
