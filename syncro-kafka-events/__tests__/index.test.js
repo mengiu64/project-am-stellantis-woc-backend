@@ -474,8 +474,8 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       expect(body.error).toBe('Gateway Timeout');
     });
 
-    it('DEVE ritornare 500 se UPSERT non ritorna righe', async () => {
-      // Mock: UPSERT fallisce (nessuna riga)
+    it('DEVE ritornare 404 se record non trovato in UPDATE', async () => {
+      // Mock: UPDATE fallisce (nessuna riga perché il record non esiste)
       mockPool.query.mockResolvedValue({ rows: [] });
 
       const event = {
@@ -484,14 +484,19 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         body: JSON.stringify({
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
-          timestamp: '2026-04-24T10:30:00Z'
+          timestamp: '2026-04-24T10:30:00Z',
+          djc: 'Y',
+          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
 
       const response = await handler(event, {});
 
-      expect(response.statusCode).toBe(500);
+      expect(response.statusCode).toBe(404);
+      const body = JSON.parse(response.body);
+      expect(body.error).toBe('Not Found');
+      expect(body.message).toContain('Record non trovato');
     });
   });
 
