@@ -291,14 +291,15 @@ Esempio di log:
 - **UPDATE-only pattern**: La lambda NON crea record, solo li aggiorna
 - **Record deve preesistere**: Il record deve essere creato da un'altra lambda (es. `isStellantisBrand`) PRIMA di essere aggiornato
 - **Idempotency**: Stessa richiesta due volte incrementa il `version` del record nel database (ma non nella risposta)
-- **🔴 IMPORTANTE - Campi NON modificati**:
+- **🔴 IMPORTANTE - Campi NON modificati da `syncro-kafka-events`**:
   - `ambito`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
   - `json_payload`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
   - `json_modified`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
+  - `updated_at`: Gestito da trigger PostgreSQL (BEFORE UPDATE trigger)
   - Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
 - **Coerente con tabella `woc.comunication_asyncro_djc`**: 
-  - Aggiorna SOLO: `djc_sync_status`, `djc`, `updated_at`, `version` (DB trigger)
-  - Non aggiorna mai: `response_id`, `job_card_id`, `push_timestamp`, `ambito`, `json_payload`, `json_modified`, `created_at`, `created_by`
+  - Aggiorna SOLO: `djc_sync_status`, `djc`, `version` (DB trigger)
+  - Non aggiorna mai: `response_id`, `job_card_id`, `push_timestamp`, `ambito`, `json_payload`, `json_modified`, `created_at`, `created_by`, `updated_at` (trigger DB)
 
 ---
 

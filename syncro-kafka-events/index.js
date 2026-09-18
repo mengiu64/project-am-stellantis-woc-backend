@@ -143,6 +143,7 @@ exports.handler = async (event, context) => {
         -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
         -- 🔴 IMPORTANTE: ambito, json_payload e json_modified NON sono mai modificati
         --                Questi campi sono riempiti SOLO dalla lambda xxx che fa il push iniziale verso DJC
+        -- 🔴 IMPORTANTE: updated_at è gestito da un trigger PostgreSQL, non dalla lambda
         UPDATE woc.comunication_asyncro_djc
         SET
           -- 🔴 MODIFICATO: NON aggiornare response_id - è la PK e deve rimanere invariato
@@ -152,26 +153,24 @@ exports.handler = async (event, context) => {
           djc_sync_status = $1,
           -- Aggiorna flag djc (sempre Y dalla lambda)
           djc = $2,
-          -- Aggiorna timestamp aggiornamento
-          updated_at = $3,
           -- Incrementa version per optimistic locking
           version = version + 1
         WHERE
           -- Chiave primaria: job_card_id
-          job_card_id = $4 AND
+          job_card_id = $3 AND
           -- Chiave primaria: push_timestamp (chiave UNIQUE)
-          push_timestamp = $5
+          push_timestamp = $4
         RETURNING response_id, djc_sync_status, version;
       `;
 
-      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (5 parametri)
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (4 parametri)
       // ambito, json_payload, json_modified NON sono mai modificati
+      // updated_at è gestito dal trigger PostgreSQL
       const updateValues = [
         djcSyncStatus,                                 // $1: djc_sync_status - stato sincronizzazione aggiornato
         djcFlag,                                       // $2: djc (sempre 'Y') - flag abilitazione
-        new Date(),                                    // $3: updated_at - timestamp aggiornamento
-        jobCardId,                                     // $4: job_card_id - chiave WHERE
-        new Date(timestamp)                            // $5: push_timestamp - chiave WHERE
+        jobCardId,                                     // $3: job_card_id - chiave WHERE
+        new Date(timestamp)                            // $4: push_timestamp - chiave WHERE
       ];
 
       // 🔴 MODIFICATO: Esegui UPDATE-ONLY senza INSERT
