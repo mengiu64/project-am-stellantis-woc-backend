@@ -29,6 +29,7 @@ let _getCountryIsoCode;
 let _getPhysicalSiteAndPdvId;
 let _getBrandsByOics;
 let _getDisabledOics;
+let _getAddressByOics;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -195,6 +196,24 @@ function loadGetDisabledOics() {
   return _getDisabledOics;
 }
 
+// Indirizzo del sito (address/zipcode/city) per oic (woc.addr_snowflakes,
+// join con woc.ang_snowflakes su cd_paired_oic_code, v.
+// dbManager/HqRepository.js::getAddressByOics): sovrascrive gli stessi campi
+// di ciascun oic di session con l'indirizzo effettivo/aggiornato in DB.
+// Stesso cluster Aurora "wiadvisor", stesso pool/modulo dbManager gia'
+// impacchettato come cartella sorella di session/ (vedi Makefile).
+function loadGetAddressByOics() {
+  if (!_getAddressByOics) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
+    const { getAddressByOics } = require(path.resolve(__dirname, '../../../dbManager/HqRepository'));
+    _getAddressByOics = async ({ oics }) => {
+      const pool = await getPool();
+      return getAddressByOics(pool, { oics });
+    };
+  }
+  return _getAddressByOics;
+}
+
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
 // es. "00") verso il codice brand "RefTech" atteso da dms/settings (es. "FT").
 // Tabella fornita dal business (fonte: myPeople -> dms brand mapping).
@@ -255,6 +274,12 @@ const BRAND_CODE_TO_REFTECH = {
  *         letto da woc.ang_snowflakes per quell'oic (v.
  *         dbManager/AnagSnowflakesRepository.js::getBrandsByOics), con
  *         fallback al CSV originale di myPeople se l'oic non ha righe
+ *         corrispondenti in DB o se la query fallisce;
+ *       - i campi `address`/`zipcode`/`city` di ciascun oic vengono
+ *         sovrascritti con l'indirizzo del sito (rispettivamente
+ *         gn_address_1/cd_zip_code/gn_town) letto da woc.addr_snowflakes per
+ *         quell'oic (v. dbManager/HqRepository.js::getAddressByOics), con
+ *         fallback ai campi originali di myPeople se l'oic non ha righe
  *         corrispondenti in DB o se la query fallisce.
  *      Ogni elemento di `oics` espone inoltre `brandLogos`: array di logo_s3_key
  *      (tabella woc.anag_brand, stessa usata dalla lambda isStellantisBrand)
@@ -312,6 +337,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     getPhysicalSiteAndPdvIdFn,
     getBrandsByOicsFn,
     getDisabledOicsFn,
+    getAddressByOicsFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
@@ -323,6 +349,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     this._getPhysicalSiteAndPdvIdFn = getPhysicalSiteAndPdvIdFn;
     this._getBrandsByOicsFn = getBrandsByOicsFn;
     this._getDisabledOicsFn = getDisabledOicsFn;
+    this._getAddressByOicsFn = getAddressByOicsFn;
   }
 
   /**
@@ -375,6 +402,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const getPhysicalSiteAndPdvId = this._getPhysicalSiteAndPdvIdFn || loadGetPhysicalSiteAndPdvId();
     const getBrandsByOics = this._getBrandsByOicsFn || loadGetBrandsByOics();
     const getDisabledOics = this._getDisabledOicsFn || loadGetDisabledOics();
+    const getAddressByOics = this._getAddressByOicsFn || loadGetAddressByOics();
     const market = attributes.MARKETCODE || null;
     const oic = mainOic.CODE || null;
 
@@ -398,7 +426,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // un errore di lettura non deve mai far fallire la sessione: si ritornano i
     // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
     // registra (best-effort) la combinazione per la prossima sync schedulata.
-    const [dmsSettings, dmlConfiguration, marketIso, physicalSiteAndSincom, brandsByOic, disabledOicKeys] = await Promise.all([
+    const [dmsSettings, dmlConfiguration, marketIso, physicalSiteAndSincom, brandsByOic, disabledOicKeys, addressByOic] = await Promise.all([
       (countryDms && brandReftech && dealer)
         ? getDmsSettingsCache({ country: countryDms, brand: brandReftech, dealer })
           .then(async (cached) => {
@@ -449,6 +477,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return new Set();
         })
         : Promise.resolve(new Set()),
+      oicCodes.length > 0
+        ? getAddressByOics({ oics: oicCodes }).catch((err) => {
+          console.error(`[session] lettura indirizzo per oic (woc.addr_snowflakes) fallita: ${err.message}`);
+          return new Map();
+        })
+        : Promise.resolve(new Map()),
     ]);
 
     // Oic esplicitamente disabilitati (enablewoc = 0 in
@@ -471,6 +505,18 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       enabledOics
         .filter((o) => o && o.CODE != null)
         .map((o) => [o.CODE, resolveBrandsCsv(o, brandsByOic)]),
+    );
+
+    // Indirizzo del sito (address/zipcode/city) per ciascun oic abilitato:
+    // sovrascrive gli stessi campi eventualmente forniti da myPeople con
+    // l'indirizzo effettivo letto da woc.addr_snowflakes (addressByOic,
+    // mappa oic.CODE -> {address, zipcode, city} risolta via join su
+    // woc.ang_snowflakes.cd_paired_oic_code); fallback ai campi originali di
+    // myPeople se l'oic non ha righe corrispondenti in DB.
+    const addressByOicCode = new Map(
+      enabledOics
+        .filter((o) => o && o.CODE != null)
+        .map((o) => [o.CODE, resolveAddressFields(o, addressByOic)]),
     );
 
     // Tutti i codici brand (deduplicati) effettivamente usati dagli oics
@@ -530,7 +576,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       pcystellantis3: null,
       maxdiscountperc: null,
       maxdiscountval: null,
-      oics: enabledOics.map((oic) => buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvByOicCode.get(oic.CODE))),
+      oics: enabledOics.map((oic) => buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvByOicCode.get(oic.CODE), addressByOicCode.get(oic.CODE))),
       applications: applications.map(lowercaseKeys),
       companytypes: Array.isArray(dmlConfiguration && dmlConfiguration.companyTypes)
         ? dmlConfiguration.companyTypes
@@ -561,18 +607,26 @@ function lowercaseKeys(obj) {
  * se l'override non e' disponibile), inserendo subito dopo `brandLogos`
  * (array di logo_s3_key risolti a partire dal CSV di codici brand,
  * `brandLogosByCode`: mappa codbrand -> logo_s3_key già letta da
- * woc.anag_brand).
+ * woc.anag_brand). Sovrascrive inoltre `address`/`zipcode`/`city` con
+ * `addressOverride` (v. resolveAddressFields/getAddressByOics — gia' con
+ * fallback ai campi originali di myPeople se l'oic non ha righe in DB),
+ * inserendoli anche se assenti nell'oic originale.
  */
-function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride) {
+function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride, addressOverride) {
   const lowered = lowercaseKeys(oic);
   const result = {};
   let brandsInserted = false;
+  const addressKeys = new Set(['address', 'zipcode', 'city']);
   for (const [key, value] of Object.entries(lowered)) {
     if (key === 'brands') {
       const brandsCsv = brandsCsvOverride != null ? brandsCsvOverride : value;
       result.brands = brandsCsv;
       result.brandLogos = resolveBrandLogos(brandsCsv, brandLogosByCode);
       brandsInserted = true;
+      continue;
+    }
+    if (addressKeys.has(key)) {
+      result[key] = addressOverride ? addressOverride[key] : value;
       continue;
     }
     result[key] = value;
@@ -584,6 +638,11 @@ function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride) {
     const brandsCsv = brandsCsvOverride != null ? brandsCsvOverride : '';
     result.brands = brandsCsv;
     result.brandLogos = resolveBrandLogos(brandsCsv, brandLogosByCode);
+  }
+  if (addressOverride) {
+    for (const key of addressKeys) {
+      if (!(key in result)) result[key] = addressOverride[key];
+    }
   }
   if (!('djcListParameter' in result)) {
     result.djcListParameter = builddjcListParameter(lowered.market, lowered.code);
@@ -621,6 +680,23 @@ function resolveBrandsCsv(oic, brandsByOic) {
   const dbBrands = brandsByOic.get(oic.CODE);
   if (Array.isArray(dbBrands) && dbBrands.length > 0) return dbBrands.join(',');
   return oic.BRANDS || '';
+}
+
+/**
+ * Indirizzo del sito (address/zipcode/city) per un oic: usa l'indirizzo
+ * letto da woc.addr_snowflakes (addressByOic, mappa oic.CODE -> {address,
+ * zipcode, city}, v. dbManager/HqRepository.js::getAddressByOics) se
+ * presente, altrimenti ricade sui campi originali forniti da myPeople
+ * (oic.ADDRESS/oic.ZIPCODE/oic.CITY) — mai `undefined`, `null` se nessuna
+ * delle due fonti ha il dato.
+ */
+function resolveAddressFields(oic, addressByOic) {
+  const dbAddress = (oic && oic.CODE != null) ? addressByOic.get(oic.CODE) : undefined;
+  return {
+    address: (dbAddress && dbAddress.address) || (oic && oic.ADDRESS) || null,
+    zipcode: (dbAddress && dbAddress.zipcode) || (oic && oic.ZIPCODE) || null,
+    city: (dbAddress && dbAddress.city) || (oic && oic.CITY) || null,
+  };
 }
 
 /** Costruisce una Map(key minuscolo -> valore coerentemente tipizzato) dall'array data di dms/settings. */

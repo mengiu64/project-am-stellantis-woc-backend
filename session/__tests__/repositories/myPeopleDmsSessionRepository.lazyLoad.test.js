@@ -54,6 +54,7 @@ jest.mock('../../../dbManager/AnagSnowflakesRepository', () => ({
 
 jest.mock('../../../dbManager/HqRepository', () => ({
   getDisabledOics: jest.fn().mockResolvedValue(new Set()),
+  getAddressByOics: jest.fn().mockResolvedValue(new Map()),
 }));
 
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
@@ -74,12 +75,16 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
 
     expect(myPeopleService.readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
     expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
-    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(3); // loadGetCountryIsoCode + loadGetPhysicalSiteAndPdvId + loadGetBrandsByOics (oicPairs vuoto: MARKET assente sull'OIC di test, loadGetDisabledOics non invocata)
+    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(4); // loadGetCountryIsoCode + loadGetPhysicalSiteAndPdvId + loadGetBrandsByOics + loadGetAddressByOics (oicPairs vuoto: MARKET assente sull'OIC di test, loadGetDisabledOics non invocata)
     expect(anagSnowflakesRepository.getBrandsByOics).toHaveBeenCalledWith(
       { __fakeDbManagerPool: true, query: expect.any(Function) },
       { oics: ['00007584'] },
     );
     expect(hqRepository.getDisabledOics).not.toHaveBeenCalled();
+    expect(hqRepository.getAddressByOics).toHaveBeenCalledWith(
+      { __fakeDbManagerPool: true, query: expect.any(Function) },
+      { oics: ['00007584'] },
+    );
     expect(anagSnowflakesRepository.getCountryIsoCode).toHaveBeenCalledWith(
       { __fakeDbManagerPool: true, query: expect.any(Function) },
       { market: '1000' },
@@ -124,6 +129,9 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
         ],
         main: 'Y',
         djcListParameter: null,
+        address: null,
+        zipcode: null,
+        city: null,
       },
     ]);
   });

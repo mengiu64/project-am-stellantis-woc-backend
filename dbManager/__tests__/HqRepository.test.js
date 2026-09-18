@@ -1,6 +1,6 @@
 'use strict';
 
-const { getEnablingConfiguration, setEnablingConfiguration, getDisabledOics } = require('../HqRepository');
+const { getEnablingConfiguration, setEnablingConfiguration, getDisabledOics, getAddressByOics } = require('../HqRepository');
 
 function makePool(queryImpl) {
   return { query: jest.fn(queryImpl) };
@@ -152,6 +152,53 @@ describe('HqRepository', () => {
       const result = await getDisabledOics(pool, [{ market: '1000', oic: '00010925' }]);
 
       expect(result).toEqual(new Set());
+    });
+  });
+
+  describe('getAddressByOics', () => {
+    it('returns an empty map without querying when oics is missing/empty', async () => {
+      const pool = makePool();
+
+      expect(await getAddressByOics(pool, { oics: [] })).toEqual(new Map());
+      expect(await getAddressByOics(pool, {})).toEqual(new Map());
+      expect(await getAddressByOics(pool, undefined)).toEqual(new Map());
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns a map oic -> {address, zipcode, city} letto da woc.addr_snowflakes', async () => {
+      const pool = makePool(async () => ({
+        rows: [
+          { oic: '00010925', address: 'VIA ROMA 1', zipcode: '00100', city: 'ROMA' },
+          { oic: '00007584', address: 'VIA AMBRA 41-45', zipcode: '58100', city: 'GROSSETO' },
+        ],
+      }));
+
+      const result = await getAddressByOics(pool, { oics: ['00010925', '00007584'] });
+
+      expect(result).toEqual(new Map([
+        ['00010925', { address: 'VIA ROMA 1', zipcode: '00100', city: 'ROMA' }],
+        ['00007584', { address: 'VIA AMBRA 41-45', zipcode: '58100', city: 'GROSSETO' }],
+      ]));
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('JOIN woc.addr_snowflakes'),
+        [['00010925', '00007584']],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SELECT DISTINCT'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('s.cd_paired_oic_code = ANY($1::varchar[])'));
+    });
+
+    it('normalizes missing address fields to null and returns an empty map when there are no rows', async () => {
+      const pool = makePool(async () => ({ rows: [{ oic: '00010925', address: null, zipcode: undefined, city: null }] }));
+
+      const result = await getAddressByOics(pool, { oics: ['00010925'] });
+
+      expect(result).toEqual(new Map([
+        ['00010925', { address: null, zipcode: null, city: null }],
+      ]));
+
+      const poolNoRows = makePool(async () => ({ rows: [] }));
+      expect(await getAddressByOics(poolNoRows, { oics: ['00099999'] })).toEqual(new Map());
     });
   });
 });

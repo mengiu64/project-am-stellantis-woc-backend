@@ -28,6 +28,13 @@
  * qui una coppia (market, oic) SENZA riga in hq_application_enabling e'
  * considerata abilitata di default (opt-out): un oic viene escluso dalla
  * sessione SOLO se esiste esplicitamente una riga con enablewoc = 0.
+ *
+ * getAddressByOics(oics) risolve, per un elenco di oic (cd_paired_oic_code),
+ * l'indirizzo del sito letto da woc.addr_snowflakes (stesso join
+ * ang_snowflakes/addr_snowflakes di getEnablingConfiguration), in un'unica
+ * query batch: address <- gn_address_1, zipcode <- cd_zip_code, city <-
+ * gn_town. Usata da session (MyPeopleDmsSessionRepository) per sovrascrivere
+ * address/zipcode/city di ciascun oic.
  */
 
 /** Codice errore Postgres per violazione di unique/primary key ("unique_violation"). */
@@ -119,4 +126,39 @@ async function getDisabledOics(pool, pairs) {
   return new Set(rows.map((row) => `${row.market}|${row.oic}`));
 }
 
-module.exports = { getEnablingConfiguration, setEnablingConfiguration, getDisabledOics };
+/**
+ * @param {import('pg').Pool} pool
+ * @param {{ oics: string[] }} params - elenco di cd_paired_oic_code da risolvere
+ * @returns {Promise<Map<string, { address: string|null, zipcode: string|null, city: string|null }>>}
+ *          mappa oic -> indirizzo del sito; un oic senza riga corrispondente
+ *          in woc.ang_snowflakes/woc.addr_snowflakes non compare nella mappa
+ *          (il chiamante deve gestire il default per gli oic assenti)
+ */
+async function getAddressByOics(pool, { oics } = {}) {
+  if (!Array.isArray(oics) || oics.length === 0) return new Map();
+
+  const { rows } = await pool.query(
+    `SELECT DISTINCT s.cd_paired_oic_code AS oic
+                    , a.gn_address_1 AS address
+                    , a.cd_zip_code AS zipcode
+                    , a.gn_town AS city
+       FROM woc.ang_snowflakes s
+       JOIN woc.addr_snowflakes a ON s.cd_unique_site_code = a.cd_site_identification_code
+      WHERE s.cd_paired_oic_code = ANY($1::varchar[])`,
+    [oics],
+  );
+
+  const addressByOic = new Map();
+  for (const row of rows) {
+    addressByOic.set(row.oic, {
+      address: row.address ?? null,
+      zipcode: row.zipcode ?? null,
+      city: row.city ?? null,
+    });
+  }
+  return addressByOic;
+}
+
+module.exports = {
+  getEnablingConfiguration, setEnablingConfiguration, getDisabledOics, getAddressByOics,
+};
