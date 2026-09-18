@@ -1,6 +1,15 @@
 'use strict';
 
-const { getEnablingConfiguration, setEnablingConfiguration, getDisabledOics, getAddressByOics } = require('../HqRepository');
+const {
+  getEnablingConfiguration,
+  setEnablingConfiguration,
+  getVehicleInspection,
+  setVehicleInspectionVisible,
+  deletetVehicleInspectionVisible,
+  insertVehicleInspection,
+  getDisabledOics,
+  getAddressByOics,
+} = require('../HqRepository');
 
 function makePool(queryImpl) {
   return { query: jest.fn(queryImpl) };

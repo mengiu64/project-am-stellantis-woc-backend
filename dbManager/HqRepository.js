@@ -202,14 +202,6 @@ async function insertVehicleInspection(pool, market, type, descr) {
   );
 }
 
-module.exports = {
-  getEnablingConfiguration,
-  setEnablingConfiguration,
-  getVehicleInspection,
-  setVehicleInspectionVisible,
-  deletetVehicleInspectionVisible,
-  insertVehicleInspection,
-};
 /**
  * @param {import('pg').Pool} pool
  * @param {{ market: string, oic: string }[]} pairs - coppie (market, oic) da verificare
@@ -270,5 +262,12 @@ async function getAddressByOics(pool, { oics } = {}) {
 }
 
 module.exports = {
-  getEnablingConfiguration, setEnablingConfiguration, getDisabledOics, getAddressByOics,
+  getEnablingConfiguration,
+  setEnablingConfiguration,
+  getVehicleInspection,
+  setVehicleInspectionVisible,
+  deletetVehicleInspectionVisible,
+  insertVehicleInspection,
+  getDisabledOics,
+  getAddressByOics,
 };
