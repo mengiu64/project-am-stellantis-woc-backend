@@ -268,8 +268,7 @@ exports.handler = async (event, context) => {
           jobCardId,
           eventType,
           status: updatedRecord.djc_sync_status,
-          timestamp,
-          version: updatedRecord.version
+          timestamp
         }
       };
       

@@ -137,7 +137,6 @@ CREATE TABLE woc.comunication_asyncro_djc (
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-04-24T10:30:00Z",
-    "version": 1
   }
 }
 ```

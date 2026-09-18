@@ -407,13 +407,15 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       const response1 = await handler(event, {});
       expect(response1.statusCode).toBe(200);
       const body1 = JSON.parse(response1.body);
-      expect(body1.response.version).toBe(1); // INSERT
+      // 🔴 MODIFICATO: Rimosso version dalla response
+      expect(body1.response.responseId).toBeDefined();
 
       // Secondo call (stesso payload)
       const response2 = await handler(event, {});
       expect(response2.statusCode).toBe(200);
       const body2 = JSON.parse(response2.body);
-      expect(body2.response.version).toBe(2); // UPDATE per idempotency
+      // 🔴 MODIFICATO: Rimosso version dalla response - ora verifichiamo solo responseId
+      expect(body2.response.responseId).toBeDefined();
     });
 
     it('DEVE ritornare 503 se Aurora non disponibile', async () => {

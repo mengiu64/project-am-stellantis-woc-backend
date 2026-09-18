@@ -39,7 +39,6 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-09-18T12:00:00Z",
-    "version": 2
   }
 }
 ```
@@ -72,7 +71,6 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "eventType": "DMS_PUSH_SUCCESS_WITH_UPDATE",
     "status": "SUCCESS_WITH_UPDATE",
     "timestamp": "2026-09-18T12:05:00Z",
-    "version": 2
   }
 }
 ```
@@ -105,7 +103,6 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "eventType": "DMS_PUSH_REFUSAL",
     "status": "REFUSAL",
     "timestamp": "2026-09-18T12:10:00Z",
-    "version": 2
   }
 }
 ```
@@ -138,7 +135,6 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "eventType": "DMS_PUSH_FAILURE",
     "status": "FAILURE",
     "timestamp": "2026-09-18T12:15:00Z",
-    "version": 2
   }
 }
 ```
@@ -247,7 +243,6 @@ Esempio di log:
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-09-18T12:00:00Z",
-    "version": 2
   }
 }
 ```
