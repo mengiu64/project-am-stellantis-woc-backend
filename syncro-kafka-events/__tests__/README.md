@@ -47,11 +47,20 @@ Lambda `syncro-kafka-events` riceve **SOLTANTO 4 eventi specifici** da DJC e li 
 ## 📊 Schema Tabella Aurora
 
 ```sql
+-- ENUM type: Gli 5 stati possibili della sincronizzazione asincrona con DJC
+CREATE TYPE woc.djc_sync_status AS ENUM (
+  'PENDING',                -- Una lambda ha pushato dei dati modificati verso DJC
+  'SUCCESS_WITHOUT_UPDATE', -- DMS ha completato senza modificare dati
+  'SUCCESS_WITH_UPDATE',    -- DMS ha completato e modificato dati
+  'REFUSAL',                -- DMS ha rifiutato il push
+  'FAILURE'                 -- DMS ha segnalato un fallimento
+);
+
 CREATE TABLE woc.comunication_asyncro_djc (
   response_id UUID PRIMARY KEY,
   job_card_id VARCHAR(50) NOT NULL,         -- jobCardSrpId dal payload
   push_timestamp TIMESTAMP NOT NULL,        -- timestamp dal payload
-  djc_sync_status VARCHAR(50) NOT NULL,     -- SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE
+  djc_sync_status woc.djc_sync_status NOT NULL, -- ENUM: PENDING, SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE
   json_payload JSONB,                       -- Payload originale ricevuto da DJC
   json_modified JSONB,                      -- Metadati: receivedAt, eventType, additionalFields
   retry_count INTEGER DEFAULT 0,            -- Per future retry logic
@@ -65,6 +74,11 @@ CREATE TABLE woc.comunication_asyncro_djc (
   UNIQUE (job_card_id, push_timestamp)      -- Idempotency: stessa richiesta → ON CONFLICT DO UPDATE
 );
 ```
+
+### 🔄 Stato PENDING
+- **Creato da:** Altre lambda (es. `isStellantisBrand`) quando pushano dati verso DJC
+- **Aggiornato da:** `syncro-kafka-events` quando riceve la risposta finale da DJC
+- **Transizioni:** `PENDING` → uno dei 4 stati finali (`SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE`)
 
 ---
 

@@ -18,6 +18,9 @@ const { getPool } = require('./shared/dbClient'); // Pool Aurora PostgreSQL (pat
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Enum dei 4 tipi di evento supportati dalla specifica SRP DL KAFKA
+// Nota: Questi eventi mappano agli stati finali dell'ENUM woc.djc_sync_status in Aurora
+// PENDING è gestito da altre lambda (es. isStellantisBrand), syncro-kafka-events lo trasforma
+// in uno dei 4 stati finali sottostanti
 const SUPPORTED_EVENT_TYPES = {
   DMS_PUSH_SUCCESS_WITHOUT_UPDATE: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
   DMS_PUSH_SUCCESS_WITH_UPDATE: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
@@ -25,7 +28,9 @@ const SUPPORTED_EVENT_TYPES = {
   DMS_PUSH_FAILURE: 'DMS_PUSH_FAILURE'
 };
 
-// Mappa dei tipi evento ai stati database
+// Mappa dei tipi evento ai valori dell'ENUM woc.djc_sync_status
+// Valori ENUM Aurora: PENDING, SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE
+// Syncro-kafka-events trasforma i 4 eventi Kafka nei relativi stati finali
 const EVENT_TYPE_TO_DB_STATUS = {
   [SUPPORTED_EVENT_TYPES.DMS_PUSH_SUCCESS_WITHOUT_UPDATE]: 'SUCCESS_WITHOUT_UPDATE',
   [SUPPORTED_EVENT_TYPES.DMS_PUSH_SUCCESS_WITH_UPDATE]: 'SUCCESS_WITH_UPDATE',
