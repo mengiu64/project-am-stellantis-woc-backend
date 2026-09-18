@@ -100,9 +100,10 @@ exports.handler = async (event, context) => {
       hasAdditionalData: Object.keys(additionalData).length > 0
     });
 
-    // 🔴 NUOVO: djc e ambito sono sempre gestiti internamente (non da input)
+    // 🔴 MODIFICATO: djc è sempre gestito internamente (non da input)
+    // 🔴 IMPORTANTE: ambito, json_payload, json_modified NON sono mai modificati da questa lambda
+    //               Questi campi sono riempiti SOLO dalla lambda che fa il push iniziale verso DJC
     const djcFlag = 'Y'; // Sempre enabled
-    const ambito = 'DJC_SYNC'; // Default interno
 
     // ─────────────────────────────────────────────────────────────────────
     // 4️⃣  CONNETTITI AL DATABASE AURORA PostgreSQL
@@ -140,6 +141,8 @@ exports.handler = async (event, context) => {
         -- 🔴 MODIFICATO: Cambio da UPSERT a UPDATE-ONLY
         -- La lambda NON inserisce mai record, solo aggiorna record esistenti
         -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
+        -- 🔴 IMPORTANTE: ambito, json_payload e json_modified NON sono mai modificati
+        --                Questi campi sono riempiti SOLO dalla lambda xxx che fa il push iniziale verso DJC
         UPDATE woc.comunication_asyncro_djc
         SET
           -- 🔴 MODIFICATO: NON aggiornare response_id - è la PK e deve rimanere invariato
@@ -149,40 +152,26 @@ exports.handler = async (event, context) => {
           djc_sync_status = $1,
           -- Aggiorna flag djc (sempre Y dalla lambda)
           djc = $2,
-          -- Aggiorna ambito/contesto evento (sempre 'DJC_SYNC' dalla lambda)
-          ambito = $3,
-          -- 🔴 NUOVO: Salva il payload JSON originale ricevuto da DJC
-          json_payload = $4,
-          -- Aggiorna metadati dell'evento
-          json_modified = $5,
           -- Aggiorna timestamp aggiornamento
-          updated_at = $6,
+          updated_at = $3,
           -- Incrementa version per optimistic locking
           version = version + 1
         WHERE
           -- Chiave primaria: job_card_id
-          job_card_id = $7 AND
+          job_card_id = $4 AND
           -- Chiave primaria: push_timestamp (chiave UNIQUE)
-          push_timestamp = $8
+          push_timestamp = $5
         RETURNING response_id, djc_sync_status, version;
       `;
 
-      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (8 parametri)
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (5 parametri)
+      // ambito, json_payload, json_modified NON sono mai modificati
       const updateValues = [
-        djcSyncStatus,                                 // $1: djc_sync_status
-        djcFlag,                                       // $2: djc (sempre 'Y')
-        ambito,                                        // $3: ambito (sempre 'DJC_SYNC')
-        JSON.stringify(payload),                        // $4: json_payload - payload originale da DJC
-        JSON.stringify({
-          eventType,
-          receivedAt: new Date().toISOString(),
-          djcFlag,
-          ambito,
-          additionalFields: Object.keys(additionalData)
-        }),                                            // $5: json_modified - metadati aggiuntivi
-        new Date(),                                    // $6: updated_at - timestamp aggiornamento
-        jobCardId,                                     // $7: job_card_id - chiave WHERE
-        new Date(timestamp)                            // $8: push_timestamp - chiave WHERE
+        djcSyncStatus,                                 // $1: djc_sync_status - stato sincronizzazione aggiornato
+        djcFlag,                                       // $2: djc (sempre 'Y') - flag abilitazione
+        new Date(),                                    // $3: updated_at - timestamp aggiornamento
+        jobCardId,                                     // $4: job_card_id - chiave WHERE
+        new Date(timestamp)                            // $5: push_timestamp - chiave WHERE
       ];
 
       // 🔴 MODIFICATO: Esegui UPDATE-ONLY senza INSERT
@@ -190,7 +179,6 @@ exports.handler = async (event, context) => {
         jobCardId,
         timestamp,
         djcFlag,
-        ambito,
         traceId: logger.getTraceId()
       });
 

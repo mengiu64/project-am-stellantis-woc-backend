@@ -82,6 +82,12 @@ CREATE TABLE woc.comunication_asyncro_djc (
 - **Aggiornato da:** `syncro-kafka-events` quando riceve la risposta finale da DJC
 - **Transizioni:** `PENDING` → uno dei 4 stati finali (`SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE`)
 
+### 🔴 IMPORTANTE - Campi NON modificati da `syncro-kafka-events`
+- **`ambito`**: Riempito SOLO dalla lambda che crea il record iniziale (es. `isStellantisBrand`)
+- **`json_payload`**: Riempito SOLO dalla lambda che crea il record iniziale
+- **`json_modified`**: Riempito SOLO dalla lambda che crea il record iniziale
+- Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
+
 ---
 
 ## 🔄 Flusso di Elaborazione

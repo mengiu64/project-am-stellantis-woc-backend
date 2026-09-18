@@ -283,18 +283,22 @@ Esempio di log:
 
 ## ℹ️ Informazioni Importanti
 
-- **Nessun input di djc/ambito**: djc e ambito sono gestiti internamente dalla lambda
+- **Nessun input di djc/ambito**: djc è gestito internamente dalla lambda
   - `djc` è sempre `'Y'` internamente
-  - `ambito` è sempre `'DJC_SYNC'` internamente
 - **Nessun traceId nella risposta**: traceId è disponibile solo nei log AWS CloudWatch
 - **Nessun version nella risposta**: version è gestito internamente nel database
 - **responseId**: È l'ID univoco del record, creato da `isStellantisBrand` lambda e ritornato dalla query
 - **UPDATE-only pattern**: La lambda NON crea record, solo li aggiorna
 - **Record deve preesistere**: Il record deve essere creato da un'altra lambda (es. `isStellantisBrand`) PRIMA di essere aggiornato
 - **Idempotency**: Stessa richiesta due volte incrementa il `version` del record nel database (ma non nella risposta)
+- **🔴 IMPORTANTE - Campi NON modificati**:
+  - `ambito`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
+  - `json_payload`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
+  - `json_modified`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
+  - Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
 - **Coerente con tabella `woc.comunication_asyncro_djc`**: 
-  - Aggiorna: `djc_sync_status`, `djc`, `ambito`, `json_payload`, `json_modified`, `updated_at`, `version`
-  - Non aggiorna: `response_id`, `job_card_id`, `push_timestamp`, `created_at`, `created_by`
+  - Aggiorna SOLO: `djc_sync_status`, `djc`, `updated_at`, `version` (DB trigger)
+  - Non aggiorna mai: `response_id`, `job_card_id`, `push_timestamp`, `ambito`, `json_payload`, `json_modified`, `created_at`, `created_by`
 
 ---
 
