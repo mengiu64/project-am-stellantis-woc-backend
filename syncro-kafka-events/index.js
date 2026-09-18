@@ -127,8 +127,6 @@ exports.handler = async (event, context) => {
     // ─────────────────────────────────────────────────────────────────────
 
     try {
-      const responseId = uuidv4();
-      
       // 🔴 MODIFICATO: djcFlag è sempre 'Y' (non ricevuto da input)
       // Calcola djc_sync_status in base al flag djc (sempre Y)
       // djc_sync_status = uno dei 4 stati enum (evento processato)
@@ -144,14 +142,17 @@ exports.handler = async (event, context) => {
         -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
         UPDATE woc.comunication_asyncro_djc
         SET
-          -- Aggiorna response_id con UUID univoco
-          response_id = $1,
+          -- 🔴 MODIFICATO: NON aggiornare response_id - è la PK e deve rimanere invariato
+          -- response_id rimane quello originale inserito da isStellantisBrand
+          
           -- Aggiorna stato sincronizzazione DJC
-          djc_sync_status = $2,
-          -- Aggiorna flag djc (Y/N)
-          djc = $3,
-          -- Aggiorna ambito/contesto evento
-          ambito = $4,
+          djc_sync_status = $1,
+          -- Aggiorna flag djc (sempre Y dalla lambda)
+          djc = $2,
+          -- Aggiorna ambito/contesto evento (sempre 'DJC_SYNC' dalla lambda)
+          ambito = $3,
+          -- 🔴 NUOVO: Salva il payload JSON originale ricevuto da DJC
+          json_payload = $4,
           -- Aggiorna metadati dell'evento
           json_modified = $5,
           -- Aggiorna timestamp aggiornamento
@@ -166,12 +167,12 @@ exports.handler = async (event, context) => {
         RETURNING response_id, djc_sync_status, version;
       `;
 
-      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (8 parametri invece di 16)
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (8 parametri)
       const updateValues = [
-        responseId,                                    // $1: response_id - UUID univoco risposta
-        djcSyncStatus,                                 // $2: djc_sync_status (NULL se djc='N')
-        djcFlag,                                       // $3: djc (flag Y/N)
-        ambito,                                        // $4: ambito (campo obbligatorio)
+        djcSyncStatus,                                 // $1: djc_sync_status
+        djcFlag,                                       // $2: djc (sempre 'Y')
+        ambito,                                        // $3: ambito (sempre 'DJC_SYNC')
+        JSON.stringify(payload),                        // $4: json_payload - payload originale da DJC
         JSON.stringify({
           eventType,
           receivedAt: new Date().toISOString(),
@@ -235,7 +236,6 @@ exports.handler = async (event, context) => {
           
           // Informazioni tecniche della query
           technical: {
-            responseId,
             djcFlag,
             djcSyncStatus,
             queryType: 'UPDATE-ONLY',

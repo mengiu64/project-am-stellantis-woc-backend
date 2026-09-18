@@ -210,12 +210,11 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 | `statusCode` | Integer | HTTP status code (200 per successo) |
 | `success` | Boolean | Indica se la richiesta è andata a buon fine |
 | `message` | String | Messaggio descrittivo del risultato |
-| `response.responseId` | UUID | ID univoco della risposta generato dalla lambda |
+| `response.responseId` | UUID | ID univoco del record nel database (generato da isStellantisBrand lambda) |
 | `response.jobCardId` | String | Job card identifier (da payload) |
 | `response.eventType` | String | Tipo di evento ricevuto (uno dei 4 supportati) |
 | `response.status` | ENUM | Stato della sincronizzazione: `SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE` |
 | `response.timestamp` | ISO 8601 | Timestamp dell'evento (da payload) |
-| `response.version` | Integer | Numero versione del record (incrementato ad ogni UPDATE) |
 
 ---
 
@@ -285,10 +284,17 @@ Esempio di log:
 ## ℹ️ Informazioni Importanti
 
 - **Nessun input di djc/ambito**: djc e ambito sono gestiti internamente dalla lambda
+  - `djc` è sempre `'Y'` internamente
+  - `ambito` è sempre `'DJC_SYNC'` internamente
 - **Nessun traceId nella risposta**: traceId è disponibile solo nei log AWS CloudWatch
+- **Nessun version nella risposta**: version è gestito internamente nel database
+- **responseId**: È l'ID univoco del record, creato da `isStellantisBrand` lambda e ritornato dalla query
 - **UPDATE-only pattern**: La lambda NON crea record, solo li aggiorna
 - **Record deve preesistere**: Il record deve essere creato da un'altra lambda (es. `isStellantisBrand`) PRIMA di essere aggiornato
-- **Idempotency**: Stessa richiesta due volte incrementa il `version` del record
+- **Idempotency**: Stessa richiesta due volte incrementa il `version` del record nel database (ma non nella risposta)
+- **Coerente con tabella `woc.comunication_asyncro_djc`**: 
+  - Aggiorna: `djc_sync_status`, `djc`, `ambito`, `json_payload`, `json_modified`, `updated_at`, `version`
+  - Non aggiorna: `response_id`, `job_card_id`, `push_timestamp`, `created_at`, `created_by`
 
 ---
 
