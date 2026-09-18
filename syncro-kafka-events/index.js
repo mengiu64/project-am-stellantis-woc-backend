@@ -153,145 +153,230 @@ exports.handler = async (event, context) => {
         });
       }
 
-      const upsertQuery = `
-        INSERT INTO woc.comunication_asyncro_djc (
-          response_id,
-          job_card_id,
-          push_timestamp,
-          djc_sync_status,
-          djc,
-          ambito,
-          json_payload,
-          json_modified,
-          retry_count,
-          error_code,
-          error_message,
-          source_system,
-          created_by,
-          created_at,
-          updated_at,
-          version
-        ) VALUES (
-          $1,     -- response_id: ID univoco della risposta
-          $2,     -- job_card_id: job card identifier dal payload
-          $3,     -- push_timestamp: timestamp dell'evento Kafka
-          $4,     -- djc_sync_status: NULL se djc='N', altrimenti uno dei 4 stati enum
-          $5,     -- djc: flag Y/N per abilitare sincronizzazione (default Y)
-          $6,     -- ambito: ambito/contesto dell'evento
-          $7,     -- json_payload: payload originale ricevuto da DJC
-          $8,     -- json_modified: metadati aggiuntivi
-          $9,     -- retry_count: iniziale 0
-          $10,    -- error_code: null o codice errore
-          $11,    -- error_message: null o messaggio errore
-          $12,    -- source_system: sempre 'DJC'
-          $13,    -- created_by: identità del chiamante
-          $14,    -- created_at: timestamp di creazione
-          $15,    -- updated_at: timestamp di aggiornamento
-          $16     -- version: numero versione per optimistic locking (iniziale 1)
-        )
-        ON CONFLICT (job_card_id, push_timestamp)
-        DO UPDATE SET
+      const updateQuery = `
+        -- 🔴 MODIFICATO: Cambio da UPSERT a UPDATE-ONLY
+        -- La lambda NON inserisce mai record, solo aggiorna record esistenti
+        -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
+        UPDATE woc.comunication_asyncro_djc
+        SET
+          -- Aggiorna response_id con UUID univoco
           response_id = $1,
-          djc_sync_status = $4,
-          djc = $5,
-          ambito = $6,
-          json_modified = $8,
-          updated_at = $15,
+          -- Aggiorna stato sincronizzazione DJC
+          djc_sync_status = $2,
+          -- Aggiorna flag djc (Y/N)
+          djc = $3,
+          -- Aggiorna ambito/contesto evento
+          ambito = $4,
+          -- Aggiorna metadati dell'evento
+          json_modified = $5,
+          -- Aggiorna timestamp aggiornamento
+          updated_at = $6,
+          -- Incrementa version per optimistic locking
           version = version + 1
-        RETURNING response_id, djc_sync_status, version
+        WHERE
+          -- Chiave primaria: job_card_id
+          job_card_id = $7 AND
+          -- Chiave primaria: push_timestamp (chiave UNIQUE)
+          push_timestamp = $8
+        RETURNING response_id, djc_sync_status, version;
       `;
 
-      const upsertValues = [
-        responseId,                                    // $1: response_id
-        jobCardId,                                     // $2: job_card_id
-        new Date(timestamp),                           // $3: push_timestamp
-        djcSyncStatus,                                 // $4: djc_sync_status (NULL se djc='N')
-        djcFlag,                                       // $5: djc (flag Y/N)
-        ambito,                                        // $6: ambito (nuovo campo obbligatorio)
-        JSON.stringify(payload),                       // $7: json_payload
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (8 parametri invece di 16)
+      const updateValues = [
+        responseId,                                    // $1: response_id - UUID univoco risposta
+        djcSyncStatus,                                 // $2: djc_sync_status (NULL se djc='N')
+        djcFlag,                                       // $3: djc (flag Y/N)
+        ambito,                                        // $4: ambito (campo obbligatorio)
         JSON.stringify({
           eventType,
           receivedAt: new Date().toISOString(),
           djcFlag,
           ambito,
           additionalFields: Object.keys(additionalData)
-        }),                                            // $8: json_modified
-        0,                                             // $9: retry_count
-        _getErrorCode(eventType),                      // $10: error_code
-        _getErrorMessage(eventType),                   // $11: error_message
-        'DJC',                                         // $12: source_system
-        'djc-system',                                  // $13: created_by
-        new Date(),                                    // $14: created_at
-        new Date(),                                    // $15: updated_at
-        1                                              // $16: version
+        }),                                            // $5: json_modified - metadati aggiuntivi
+        new Date(),                                    // $6: updated_at - timestamp aggiornamento
+        jobCardId,                                     // $7: job_card_id - chiave WHERE
+        new Date(timestamp)                            // $8: push_timestamp - chiave WHERE
       ];
 
+      // 🔴 MODIFICATO: Esegui UPDATE-ONLY senza INSERT
+      logger.info('📝 Esecuzione query UPDATE-ONLY su woc.comunication_asyncro_djc', {
+        jobCardId,
+        timestamp,
+        djcFlag,
+        ambito,
+        traceId: logger.getTraceId()
+      });
+
       const result = await pool.query({
-        text: upsertQuery,
-        values: upsertValues,
+        text: updateQuery,
+        values: updateValues,
         statement_timeout: 5000
       });
 
+      // 🔴 MODIFICATO: Verifica che il record sia stato trovato e aggiornato
+      // Se nessuna riga ritornata → il record non esiste → errore 404
       if (!result.rows || result.rows.length === 0) {
-        logger.error('❌ UPSERT non ha ritornato righe', {
-          jobCardId,
-          traceId: logger.getTraceId()
+        // 🔴 NUOVO: Genera eccezione quando il record non viene trovato
+        const recordNotFoundError = new Error('RECORD_NOT_FOUND');
+        // Imposta status code 404 (Not Found)
+        recordNotFoundError.statusCode = 404;
+        // Flag per identificare l'errore di record non trovato
+        recordNotFoundError.isRecordNotFound = true;
+        
+        // 🔴 NUOVO: Log completo dell'eccezione con TUTTI i dati ricevuti da DJC
+        logger.error('❌ ERRORE CRITICO: Record non trovato in woc.comunication_asyncro_djc', {
+          // Informazioni sull'errore
+          errorType: 'RECORD_NOT_FOUND',
+          message: 'La lambda NON ha trovato il record per aggiornarlo',
+          description: 'Il record deve essere creato da un\'altra lambda (e.g., isStellantisBrand) PRIMA di essere aggiornato da syncro-kafka-events',
+          
+          // Chiavi di ricerca utilizzate nella query WHERE
+          searchKeys: {
+            job_card_id: jobCardId,
+            push_timestamp: timestamp
+          },
+          
+          // Dati completi ricevuti da DJC nel payload
+          receivedFromDJC: {
+            eventType,
+            jobCardId,
+            timestamp,
+            djc,
+            ambito,
+            additionalData
+          },
+          
+          // Payload originale completo inviato da DJC
+          originalPayload: JSON.stringify(payload),
+          
+          // Informazioni tecniche della query
+          technical: {
+            responseId,
+            djcFlag,
+            djcSyncStatus,
+            queryType: 'UPDATE-ONLY',
+            queryTimeout: 5000,
+            parametersCount: updateValues.length,
+            traceId: logger.getTraceId()
+          }
         });
-        return exports._buildResponse(500, {
-          error: 'Internal Server Error',
-          message: 'Database UPSERT non ha ritornato risultati',
-          traceId: logger.getTraceId()
-        }, logger.getTraceId());
+        
+        // Lancia l'eccezione per la gestione nel catch block
+        throw recordNotFoundError;
       }
 
-      const upsertedRecord = result.rows[0];
-      logger.info('✅ Evento registrato in Aurora', {
-        responseId: upsertedRecord.response_id,
-        djcSyncStatus: upsertedRecord.djc_sync_status,
-        version: upsertedRecord.version,
+      const updatedRecord = result.rows[0];
+      // 🔴 MODIFICATO: Log di successo per UPDATE
+      logger.info('✅ Evento aggiornato con successo in Aurora', {
+        responseId: updatedRecord.response_id,
+        djcSyncStatus: updatedRecord.djc_sync_status,
+        version: updatedRecord.version,
+        jobCardId,
+        timestamp,
+        djcFlag,
+        ambito,
         traceId: logger.getTraceId()
       });
 
       return exports._buildResponse(200, {
-        message: 'Evento registrato con successo in Aurora',
+        message: 'Evento aggiornato con successo in Aurora',
         data: {
-          responseId: upsertedRecord.response_id,
+          responseId: updatedRecord.response_id,
           jobCardId,
           timestamp,
           djcFlag,
           ambito,
-          djcSyncStatus: upsertedRecord.djc_sync_status,
-          version: upsertedRecord.version,
+          djcSyncStatus: updatedRecord.djc_sync_status,
+          version: updatedRecord.version,
           traceId: logger.getTraceId()
         }
       }, logger.getTraceId());
     } catch (upsertError) {
-      logger.error('❌ Errore durante UPSERT in Aurora', upsertError, {
+      // 🔴 MODIFICATO: Gestione errori per UPDATE-ONLY
+      
+      // Se è l'errore "record non trovato" da noi creato
+      if (upsertError.isRecordNotFound) {
+        // 🔴 NUOVO: Gestione specifica per record non trovato
+        logger.error('❌ ERRORE CRITICO: Record non trovato per UPDATE', {
+          statusCode: 404,
+          jobCardId,
+          timestamp,
+          eventType,
+          // Include il payload completo per debugging
+          payload,
+          // Include tutte le informazioni tecniche
+          technical: {
+            errorMessage: upsertError.message,
+            errorStack: upsertError.stack,
+            traceId: logger.getTraceId()
+          }
+        });
+        
+        return exports._buildResponse(404, {
+          error: 'Not Found',
+          message: 'Record non trovato in woc.comunication_asyncro_djc',
+          details: {
+            jobCardId,
+            timestamp,
+            suggestion: 'Il record deve essere creato da un\'altra lambda prima di essere aggiornato'
+          },
+          traceId: logger.getTraceId()
+        }, logger.getTraceId());
+      }
+      
+      // 🔴 MODIFICATO: Log generico di errore durante UPDATE
+      logger.error('❌ Errore durante UPDATE in Aurora', upsertError, {
         jobCardId,
+        timestamp,
         errorCode: upsertError.code,
         errorMessage: upsertError.message,
+        errorStack: upsertError.stack,
         traceId: logger.getTraceId()
       });
 
+      // Gestione errore connessione database
       if (upsertError.code === 'ECONNREFUSED' || upsertError.code === 'ETIMEDOUT') {
+        logger.error('❌ Errore connessione al database Aurora', {
+          errorCode: upsertError.code,
+          jobCardId,
+          timestamp,
+          traceId: logger.getTraceId()
+        });
         return exports._buildResponse(503, {
           error: 'Service Unavailable',
           message: 'Errore connessione al database Aurora',
           traceId: logger.getTraceId()
         }, logger.getTraceId());
-      } else if (upsertError.message && upsertError.message.includes('statement timeout')) {
+      } 
+      // Gestione errore timeout query
+      else if (upsertError.message && upsertError.message.includes('statement timeout')) {
+        logger.error('❌ Errore timeout query database', {
+          message: upsertError.message,
+          jobCardId,
+          timestamp,
+          traceId: logger.getTraceId()
+        });
         return exports._buildResponse(504, {
           error: 'Gateway Timeout',
           message: 'Query database ha superato il timeout',
           traceId: logger.getTraceId()
         }, logger.getTraceId());
       }
-
-      return exports._buildResponse(500, {
-        error: 'Internal Server Error',
-        message: 'Errore durante salvataggio in database',
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
+      // Errore generico durante UPDATE
+      else {
+        logger.error('❌ Errore generico durante UPDATE in Aurora', {
+          errorMessage: upsertError.message,
+          jobCardId,
+          timestamp,
+          traceId: logger.getTraceId()
+        });
+        return exports._buildResponse(500, {
+          error: 'Internal Server Error',
+          message: 'Errore durante aggiornamento in database',
+          traceId: logger.getTraceId()
+        }, logger.getTraceId());
+      }
     }
   } catch (handlerError) {
     logger.error('❌ Errore non gestito in handler', handlerError);
