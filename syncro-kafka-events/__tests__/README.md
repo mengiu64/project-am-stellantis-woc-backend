@@ -101,6 +101,8 @@ CREATE TABLE woc.comunication_asyncro_djc (
 }
 ```
 
+**Nota**: `djc` e `ambito` sono gestiti internamente dalla lambda, non ricevuti da input
+
 ### 2️⃣ **Validazione**
 - ✅ `eventType` obbligatorio e ∈ [4 supportati]
 - ✅ `jobCardSrpId` obbligatorio
@@ -128,7 +130,7 @@ CREATE TABLE woc.comunication_asyncro_djc (
 {
   "statusCode": 200,
   "success": true,
-  "message": "Evento DMS_PUSH_SUCCESS_WITHOUT_UPDATE registrato con successo",
+  "message": "Evento aggiornato con successo",
   "response": {
     "responseId": "uuid-1234",
     "jobCardId": "JCID-42",
@@ -136,8 +138,7 @@ CREATE TABLE woc.comunication_asyncro_djc (
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-04-24T10:30:00Z",
     "version": 1
-  },
-  "traceId": "trace-12345"
+  }
 }
 ```
 

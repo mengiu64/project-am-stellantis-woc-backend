@@ -23,9 +23,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   -d '{
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "jobCardSrpId": "JC-20260918-001",
-    "timestamp": "2026-09-18T12:00:00Z",
-    "djc": "Y",
-    "ambito": "SALES"
+    "timestamp": "2026-09-18T12:00:00Z"
   }' | jq .
 ```
 
@@ -42,8 +40,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-09-18T12:00:00Z",
     "version": 2
-  },
-  "traceId": "..."
+  }
 }
 ```
 
@@ -59,9 +56,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   -d '{
     "eventType": "DMS_PUSH_SUCCESS_WITH_UPDATE",
     "jobCardSrpId": "JC-20260918-002",
-    "timestamp": "2026-09-18T12:05:00Z",
-    "djc": "Y",
-    "ambito": "SERVICE"
+    "timestamp": "2026-09-18T12:05:00Z"
   }' | jq .
 ```
 
@@ -78,8 +73,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "status": "SUCCESS_WITH_UPDATE",
     "timestamp": "2026-09-18T12:05:00Z",
     "version": 2
-  },
-  "traceId": "..."
+  }
 }
 ```
 
@@ -95,9 +89,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   -d '{
     "eventType": "DMS_PUSH_REFUSAL",
     "jobCardSrpId": "JC-20260918-003",
-    "timestamp": "2026-09-18T12:10:00Z",
-    "djc": "Y",
-    "ambito": "SALES"
+    "timestamp": "2026-09-18T12:10:00Z"
   }' | jq .
 ```
 
@@ -114,8 +106,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "status": "REFUSAL",
     "timestamp": "2026-09-18T12:10:00Z",
     "version": 2
-  },
-  "traceId": "..."
+  }
 }
 ```
 
@@ -131,9 +122,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   -d '{
     "eventType": "DMS_PUSH_FAILURE",
     "jobCardSrpId": "JC-20260918-004",
-    "timestamp": "2026-09-18T12:15:00Z",
-    "djc": "Y",
-    "ambito": "SERVICE"
+    "timestamp": "2026-09-18T12:15:00Z"
   }' | jq .
 ```
 
@@ -150,48 +139,13 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "status": "FAILURE",
     "timestamp": "2026-09-18T12:15:00Z",
     "version": 2
-  },
-  "traceId": "..."
+  }
 }
 ```
 
 ---
 
 ## 🧪 TEST CASES AGGIUNTIVI
-
-### Test con djc="N" (djc_sync_status sarà NULL)
-
-```bash
-curl -X POST "https://your-api-gateway.com/api/synch-status" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
-    "jobCardSrpId": "JC-20260918-005",
-    "timestamp": "2026-09-18T12:20:00Z",
-    "djc": "N",
-    "ambito": "SALES"
-  }' | jq .
-```
-
-**Risultato**: status sarà `null` nella risposta (evento non sincronizzato con DJC)
-```json
-{
-  "statusCode": 200,
-  "success": true,
-  "message": "Evento aggiornato con successo in Aurora",
-  "response": {
-    "responseId": "uuid-univoco",
-    "jobCardId": "JC-20260918-005",
-    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
-    "status": null,
-    "timestamp": "2026-09-18T12:20:00Z",
-    "version": 2
-  },
-  "traceId": "..."
-}
-```
-
----
 
 ### Test con payload incompleto (❌ 400 Bad Request)
 
@@ -215,9 +169,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   -d '{
     "eventType": "INVALID_EVENT_TYPE",
     "jobCardSrpId": "JC-20260918-006",
-    "timestamp": "2026-09-18T12:25:00Z",
-    "djc": "Y",
-    "ambito": "SALES"
+    "timestamp": "2026-09-18T12:25:00Z"
   }' | jq .
 ```
 
@@ -233,9 +185,7 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   -d '{
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "jobCardSrpId": "JC-NONEXISTENT",
-    "timestamp": "2026-09-18T12:30:00Z",
-    "djc": "Y",
-    "ambito": "SALES"
+    "timestamp": "2026-09-18T12:30:00Z"
   }' | jq .
 ```
 
@@ -251,33 +201,13 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
     "jobCardId": "JC-NONEXISTENT",
     "timestamp": "2026-09-18T12:30:00Z",
     "suggestion": "Il record deve essere creato da un'altra lambda prima di essere aggiornato"
-  },
-  "traceId": "..."
+  }
 }
 ```
 
 ---
 
-## 📊 Risposta Completa (200 OK)
-
-```json
-{
-  "statusCode": 200,
-  "success": true,
-  "message": "Evento aggiornato con successo in Aurora",
-  "response": {
-    "responseId": "550e8400-e29b-41d4-a716-446655440000",
-    "jobCardId": "JC-20260918-001",
-    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
-    "status": "SUCCESS_WITHOUT_UPDATE",
-    "timestamp": "2026-09-18T12:00:00Z",
-    "version": 2
-  },
-  "traceId": "trace-xxx-yyy-zzz"
-}
-```
-
-### Campi risposta
+## 📊 Campi Risposta
 
 | Campo | Tipo | Descrizione |
 |-------|------|-------------|
@@ -290,59 +220,83 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 | `response.status` | ENUM | Stato della sincronizzazione: `SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE` |
 | `response.timestamp` | ISO 8601 | Timestamp dell'evento (da payload) |
 | `response.version` | Integer | Numero versione del record (incrementato ad ogni UPDATE) |
-| `traceId` | String | ID univoco della traccia per debugging |
+
+---
+
+## 📝 Logging
+
+La lambda logga:
+1. **Request ricevuta da DJC** - all'inizio del processing
+2. **Response inviata a DJC** - dopo l'aggiornamento in Aurora
+
+Esempio di log:
+```
+📥 REQUEST DA DJC RICEVUTA: {
+  "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+  "jobCardSrpId": "JC-20260918-001",
+  "timestamp": "2026-09-18T12:00:00Z"
+}
+
+📤 RESPONSE INVIATA A DJC: {
+  "statusCode": 200,
+  "success": true,
+  "message": "Evento aggiornato con successo in Aurora",
+  "response": {
+    "responseId": "550e8400-e29b-41d4-a716-446655440000",
+    "jobCardId": "JC-20260918-001",
+    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+    "status": "SUCCESS_WITHOUT_UPDATE",
+    "timestamp": "2026-09-18T12:00:00Z",
+    "version": 2
+  }
+}
+```
 
 ---
 
 ## 🔄 Flusso Completo
 
-1. **Lambda `isStellantisBrand`** → **INSERT** record in `woc.comunication_asyncro_djc`
-   - Crea il record con stato iniziale
-   - `created_at` impostato da trigger
-
-2. **DJC** → invia uno dei 4 eventi Kafka
-
-3. **Lambda `syncro-kafka-events`** → **UPDATE** record
-   - Ricerca il record per `job_card_id + push_timestamp`
-   - Aggiorna `djc_sync_status` in base all'evento ricevuto
-   - Incrementa `version` per optimistic locking
-   - `updated_at` impostato da trigger
-
----
-
-## 🛠️ Troubleshooting
-
-### ❌ 404 Not Found
-- **Causa**: Record non esiste in `woc.comunication_asyncro_djc`
-- **Soluzione**: Verificare che `isStellantisBrand` lambda abbia creato il record PRIMA
-- **Check**: 
-  ```sql
-  SELECT * FROM woc.comunication_asyncro_djc 
-  WHERE job_card_id = 'JC-20260918-001' 
-  AND push_timestamp = '2026-09-18T12:00:00Z';
-  ```
-
-### ❌ 400 Bad Request
-- **Causa**: Payload incompleto o malformato
-- **Soluzione**: Verificare che siano presenti:
-  - `eventType` (uno dei 4 supportati)
-  - `jobCardSrpId`
-  - `timestamp` (ISO 8601)
-  - `ambito`
-
-### ❌ 503 Service Unavailable
-- **Causa**: Errore connessione Aurora
-- **Soluzione**: Verificare che Aurora sia accessible e credenziali corrette
-
-### ❌ 504 Gateway Timeout
-- **Causa**: Query database ha superato timeout (5 secondi)
-- **Soluzione**: Verificare che Aurora sia responsive
+```
+┌────────────────────────────┐
+│   DJC (Sistema Esterno)   │
+│ Invia 1 dei 4 eventi      │
+└─────────────┬──────────────┘
+              │ POST /api/synch-status
+              │ Content-Type: application/json
+              │ {eventType, jobCardSrpId, timestamp}
+              ▼
+┌────────────────────────────────────────────┐
+│    syncro-kafka-events Lambda              │
+│    (Node.js 24.x, 512MB, timeout 30s)     │
+│                                            │
+│  1. Parse e Valida payload                │
+│  2. Verifica eventType ∈ [4 supportati]  │
+│  3. Converte eventType → DB Status        │
+│  4. Connette Aurora PostgreSQL            │
+│  5. UPDATE in woc.comunication_asyncro_djc│
+│  6. Ritorna 200 OK o errore HTTP          │
+└─────────────┬──────────────────────────────┘
+              │ INSERT/UPDATE
+              ▼
+┌────────────────────────────────────────┐
+│  Aurora PostgreSQL                     │
+│  Tabella: woc.comunication_asyncro_djc │
+│  Chiave: (job_card_id, push_timestamp) │
+└────────────────────────────────────────┘
+```
 
 ---
 
-## 📝 Note
+## ℹ️ Informazioni Importanti
 
-- Tutti i timestamp devono essere in formato ISO 8601 (e.g., `2026-09-18T12:00:00Z`)
-- `djc` default è `Y` se omesso
-- `ambito` è campo obbligatorio
-- La lambda è **STATELESS** e riprova automaticamente in caso di errore transitorio
+- **Nessun input di djc/ambito**: djc e ambito sono gestiti internamente dalla lambda
+- **Nessun traceId nella risposta**: traceId è disponibile solo nei log AWS CloudWatch
+- **UPDATE-only pattern**: La lambda NON crea record, solo li aggiorna
+- **Record deve preesistere**: Il record deve essere creato da un'altra lambda (es. `isStellantisBrand`) PRIMA di essere aggiornato
+- **Idempotency**: Stessa richiesta due volte incrementa il `version` del record
+
+---
+
+**Versione**: 1.1 (Senza djc, ambito, traceId)  
+**Status**: ✅ Pronto per deployment  
+**Ultimo aggiornamento**: 2026-09-18

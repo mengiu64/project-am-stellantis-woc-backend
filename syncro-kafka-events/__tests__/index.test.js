@@ -251,8 +251,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
           timestamp: '2026-04-24T10:30:00Z',
-          djc: 'Y',
-          ambito: 'SALES'
         }),
         requestContext: {
           http: { method: 'POST' }
@@ -283,8 +281,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
           jobCardSrpId: 'JCID-43',
           timestamp: '2026-04-24T11:00:00Z',
-          djc: 'Y',
-          ambito: 'SERVICE'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -312,8 +308,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_REFUSAL',
           jobCardSrpId: 'JCID-44',
           timestamp: '2026-04-24T12:00:00Z',
-          djc: 'Y',
-          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -341,8 +335,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_FAILURE',
           jobCardSrpId: 'JCID-45',
           timestamp: '2026-04-24T13:00:00Z',
-          djc: 'Y',
-          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -402,8 +394,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
         eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
         jobCardSrpId: 'JCID-DUP',
         timestamp: '2026-04-24T10:30:00Z',
-        djc: 'Y',
-        ambito: 'SALES'
       };
 
       const event = {
@@ -437,8 +427,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
           timestamp: '2026-04-24T10:30:00Z',
-          djc: 'Y',
-          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -461,8 +449,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
           timestamp: '2026-04-24T10:30:00Z',
-          djc: 'Y',
-          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
@@ -485,8 +471,6 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
           eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
           jobCardSrpId: 'JCID-42',
           timestamp: '2026-04-24T10:30:00Z',
-          djc: 'Y',
-          ambito: 'SALES'
         }),
         requestContext: { http: { method: 'POST' } }
       };
