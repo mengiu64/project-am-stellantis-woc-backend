@@ -86,6 +86,7 @@ CREATE TABLE woc.comunication_asyncro_djc (
 - **`ambito`**: Riempito SOLO dalla lambda che crea il record iniziale (es. `isStellantisBrand`)
 - **`json_payload`**: Riempito SOLO dalla lambda che crea il record iniziale
 - **`json_modified`**: Riempito SOLO dalla lambda che crea il record iniziale
+- **`djc`**: Impostato SOLO dalla lambda che crea il record iniziale (NON mai modificato da syncro-kafka-events)
 - **`updated_at`**: Gestito da trigger PostgreSQL (BEFORE UPDATE trigger)
 - Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
 

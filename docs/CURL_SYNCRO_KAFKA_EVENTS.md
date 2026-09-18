@@ -295,11 +295,12 @@ Esempio di log:
   - `ambito`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
   - `json_payload`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
   - `json_modified`: Riempito SOLO dalla lambda che fa il push iniziale verso DJC
+  - `djc`: Impostato SOLO dalla lambda che fa il push iniziale verso DJC (NON mai modificato da syncro-kafka-events)
   - `updated_at`: Gestito da trigger PostgreSQL (BEFORE UPDATE trigger)
   - Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
 - **Coerente con tabella `woc.comunication_asyncro_djc`**: 
-  - Aggiorna SOLO: `djc_sync_status`, `djc`, `version` (DB trigger)
-  - Non aggiorna mai: `response_id`, `job_card_id`, `push_timestamp`, `ambito`, `json_payload`, `json_modified`, `created_at`, `created_by`, `updated_at` (trigger DB)
+  - Aggiorna SOLO: `djc_sync_status`, `version` (DB trigger)
+  - Non aggiorna mai: `response_id`, `job_card_id`, `push_timestamp`, `ambito`, `json_payload`, `json_modified`, `djc`, `created_at`, `created_by`, `updated_at` (trigger DB)
 
 ---
 

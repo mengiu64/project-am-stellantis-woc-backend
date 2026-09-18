@@ -100,11 +100,6 @@ exports.handler = async (event, context) => {
       hasAdditionalData: Object.keys(additionalData).length > 0
     });
 
-    // 🔴 MODIFICATO: djc è sempre gestito internamente (non da input)
-    // 🔴 IMPORTANTE: ambito, json_payload, json_modified NON sono mai modificati da questa lambda
-    //               Questi campi sono riempiti SOLO dalla lambda che fa il push iniziale verso DJC
-    const djcFlag = 'Y'; // Sempre enabled
-
     // ─────────────────────────────────────────────────────────────────────
     // 4️⃣  CONNETTITI AL DATABASE AURORA PostgreSQL
     // ─────────────────────────────────────────────────────────────────────
@@ -141,8 +136,8 @@ exports.handler = async (event, context) => {
         -- 🔴 MODIFICATO: Cambio da UPSERT a UPDATE-ONLY
         -- La lambda NON inserisce mai record, solo aggiorna record esistenti
         -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
-        -- 🔴 IMPORTANTE: ambito, json_payload e json_modified NON sono mai modificati
-        --                Questi campi sono riempiti SOLO dalla lambda xxx che fa il push iniziale verso DJC
+        -- 🔴 IMPORTANTE: ambito, json_payload, json_modified, djc NON sono mai modificati
+        --                Questi campi sono riempiti SOLO dalla lambda che fa il push iniziale verso DJC
         -- 🔴 IMPORTANTE: updated_at è gestito da un trigger PostgreSQL, non dalla lambda
         UPDATE woc.comunication_asyncro_djc
         SET
@@ -151,33 +146,29 @@ exports.handler = async (event, context) => {
           
           -- Aggiorna stato sincronizzazione DJC
           djc_sync_status = $1,
-          -- Aggiorna flag djc (sempre Y dalla lambda)
-          djc = $2,
           -- Incrementa version per optimistic locking
           version = version + 1
         WHERE
           -- Chiave primaria: job_card_id
-          job_card_id = $3 AND
+          job_card_id = $2 AND
           -- Chiave primaria: push_timestamp (chiave UNIQUE)
-          push_timestamp = $4
+          push_timestamp = $3
         RETURNING response_id, djc_sync_status, version;
       `;
 
-      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (4 parametri)
-      // ambito, json_payload, json_modified NON sono mai modificati
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (3 parametri)
+      // ambito, json_payload, json_modified, djc NON sono mai modificati
       // updated_at è gestito dal trigger PostgreSQL
       const updateValues = [
         djcSyncStatus,                                 // $1: djc_sync_status - stato sincronizzazione aggiornato
-        djcFlag,                                       // $2: djc (sempre 'Y') - flag abilitazione
-        jobCardId,                                     // $3: job_card_id - chiave WHERE
-        new Date(timestamp)                            // $4: push_timestamp - chiave WHERE
+        jobCardId,                                     // $2: job_card_id - chiave WHERE
+        new Date(timestamp)                            // $3: push_timestamp - chiave WHERE
       ];
 
       // 🔴 MODIFICATO: Esegui UPDATE-ONLY senza INSERT
       logger.info('📝 Esecuzione query UPDATE-ONLY su woc.comunication_asyncro_djc', {
         jobCardId,
         timestamp,
-        djcFlag,
         traceId: logger.getTraceId()
       });
 
@@ -223,7 +214,6 @@ exports.handler = async (event, context) => {
           
           // Informazioni tecniche della query
           technical: {
-            djcFlag,
             djcSyncStatus,
             queryType: 'UPDATE-ONLY',
             queryTimeout: 5000,
