@@ -1,23 +1,24 @@
 // index.test.js
-// Test suite completa per lambda syncro-kafka-events con corrected UPDATE logic
-// Mock: dbClient, authService, externalSystemClient, configModule
+// Test suite per lambda syncro-kafka-events con 4 eventi specifici
+// Implementazione ristretta secondo SRP DL KAFKA Specification
 
-const { handler, _handlePostSynchStatus, _handleGetSynchStatus, _buildResponse } = require('../index');
+const { 
+  handler, 
+  _validatePayload, 
+  _buildResponse,
+  _getErrorCode,
+  _getErrorMessage,
+  SUPPORTED_EVENT_TYPES,
+  EVENT_TYPE_TO_DB_STATUS
+} = require('../index');
+
+const { getPool } = require('../shared/dbClient');
 
 // Mock modules
-jest.mock('../config', () => ({
-  getInstance: jest.fn().mockResolvedValue({
-    getByPath: jest.fn((path) => {
-      if (path === 'apic.clientSecret') return 'mock-secret-12345';
-      if (path === 'apic.clientId') return 'mock-client-id';
-      return null;
-    })
-  })
-}));
-
+jest.mock('../shared/dbClient');
 jest.mock('../logger', () => {
   return class MockLogger {
-    getTraceId() { return 'trace-123'; }
+    getTraceId() { return 'trace-12345'; }
     info() {}
     warn() {}
     error() {}
@@ -25,722 +26,516 @@ jest.mock('../logger', () => {
   };
 });
 
-jest.mock('../validator', () => ({
-  validateAuthorizationHeader: jest.fn((header) => {
-    if (!header) return { valid: false, error: 'Authorization header mancante' };
-    if (!header.startsWith('Bearer ')) return { valid: false, error: 'Invalid Bearer format' };
-    return { valid: true, token: header.substring(7) };
-  }),
-  validatePostSynchStatus: jest.fn((body) => {
-    if (!body.events || !Array.isArray(body.events) || body.events.length === 0) {
-      return { valid: false, errors: ['events array obbligatorio'] };
-    }
-    return { valid: true, data: body };
-  }),
-  validateGetSynchStatus: jest.fn((requestId) => {
-    if (!requestId || requestId.length < 10) {
-      return { valid: false, errors: ['requestId non valido'] };
-    }
-    return { valid: true };
-  })
-}));
-
-jest.mock('../authService');
-jest.mock('../externalSystemClient');
-jest.mock('../shared/dbClient');
-
-const MockAuthService = require('../authService');
-const MockExternalSystemClient = require('../externalSystemClient');
-const { getPool } = require('../shared/dbClient');
-
-describe('syncro-kafka-events Lambda Handler', () => {
+describe('syncro-kafka-events Lambda - 4 Event Types', () => {
   
   let mockPool;
-  let mockLogger;
-  let mockAuthService;
-  let mockExternalClient;
 
   beforeEach(() => {
-    // Reset mocks
     jest.clearAllMocks();
-    
-    // Setup pool mock
     mockPool = {
       query: jest.fn()
     };
     getPool.mockResolvedValue(mockPool);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // ✅ TEST: VALIDAZIONE PAYLOAD
+  // ─────────────────────────────────────────────────────────────────────
+
+  describe('_validatePayload()', () => {
     
-    // Setup authService mock
-    mockAuthService.prototype.validateBearerToken.mockReturnValue({
-      valid: true,
-      decoded: { userId: 'user-123', scope: ['syncro:write', 'syncro:read'] }
+    it('DEVE accettare payload valido DMS_PUSH_SUCCESS_WITHOUT_UPDATE', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+        jobCardSrpId: 'JCID-42',
+        timestamp: '2026-04-24T10:30:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(true);
+      expect(result.data.eventType).toBe('DMS_PUSH_SUCCESS_WITHOUT_UPDATE');
+      expect(result.data.jobCardId).toBe('JCID-42');
     });
-    mockAuthService.prototype.verifyPermissions.mockReturnValue({
-      authorized: true
+
+    it('DEVE accettare payload valido DMS_PUSH_SUCCESS_WITH_UPDATE', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
+        jobCardSrpId: 'JCID-43',
+        timestamp: '2026-04-24T11:00:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(true);
+      expect(result.data.eventType).toBe('DMS_PUSH_SUCCESS_WITH_UPDATE');
     });
-    mockAuthService.prototype.getExternalSystemHeaders.mockResolvedValue({
-      'Authorization': 'Bearer external-token'
+
+    it('DEVE accettare payload valido DMS_PUSH_REFUSAL', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_REFUSAL',
+        jobCardSrpId: 'JCID-44',
+        timestamp: '2026-04-24T12:00:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(true);
+      expect(result.data.eventType).toBe('DMS_PUSH_REFUSAL');
     });
-    
-    // Setup externalSystemClient mock
-    MockExternalSystemClient.prototype.sendToMultipleSystems.mockResolvedValue({
-      successful: [
-        { system: 'djc', statusCode: 200 },
-        { system: 'gct', statusCode: 200 }
-      ],
-      failed: []
+
+    it('DEVE accettare payload valido DMS_PUSH_FAILURE', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_FAILURE',
+        jobCardSrpId: 'JCID-45',
+        timestamp: '2026-04-24T13:00:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(true);
+      expect(result.data.eventType).toBe('DMS_PUSH_FAILURE');
+    });
+
+    it('DEVE rifiutare eventType non supportato', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'JOBS_UPDATE_WITH_PREAPPROVAL', // Non nella lista dei 4
+        jobCardSrpId: 'JCID-99',
+        timestamp: '2026-04-24T10:30:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('non supportato');
+      expect(mockLogger.warn).toHaveBeenCalled();
+    });
+
+    it('DEVE rifiutare eventType mancante', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        jobCardSrpId: 'JCID-42',
+        timestamp: '2026-04-24T10:30:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('eventType');
+    });
+
+    it('DEVE rifiutare jobCardSrpId mancante', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+        timestamp: '2026-04-24T10:30:00Z'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('jobCardSrpId');
+    });
+
+    it('DEVE rifiutare timestamp mancante', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+        jobCardSrpId: 'JCID-42'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('timestamp');
+    });
+
+    it('DEVE rifiutare timestamp non valido', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+        jobCardSrpId: 'JCID-42',
+        timestamp: 'not-a-valid-date'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toContain('timestamp');
+    });
+
+    it('DEVE accettare campi aggiuntivi opzionali', () => {
+      const mockLogger = { warn: jest.fn() };
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+        jobCardSrpId: 'JCID-42',
+        timestamp: '2026-04-24T10:30:00Z',
+        jobCardLegacyId: '123456',
+        dmsRepairOrderId: '1A45',
+        xpDealerCode: '123456A'
+      };
+
+      const result = _validatePayload(payload, mockLogger);
+
+      expect(result.valid).toBe(true);
+      expect(result.data.jobCardLegacyId).toBe('123456');
+      expect(result.data.dmsRepairOrderId).toBe('1A45');
     });
   });
 
   // ─────────────────────────────────────────────────────────────────────
-  // 🔐 TEST: AUTENTICAZIONE
+  // 🔄 TEST: MAPPING ERRORE CODE E MESSAGE
   // ─────────────────────────────────────────────────────────────────────
-  describe('Autenticazione e Autorizzazione', () => {
+
+  describe('_getErrorCode() e _getErrorMessage()', () => {
     
-    it('DEVE ritornare 401 se Authorization header mancante', async () => {
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        headers: {},
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-001' }]
-        })
-      };
+    it('DEVE ritornare null error_code per DMS_PUSH_SUCCESS_WITHOUT_UPDATE', () => {
+      const errorCode = _getErrorCode('DMS_PUSH_SUCCESS_WITHOUT_UPDATE');
+      const errorMsg = _getErrorMessage('DMS_PUSH_SUCCESS_WITHOUT_UPDATE');
 
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(401);
-      expect(JSON.parse(response.body).error).toBe('Unauthorized');
+      expect(errorCode).toBeNull();
+      expect(errorMsg).toBeNull();
     });
 
-    it('DEVE ritornare 401 se token non valido', async () => {
-      mockAuthService.prototype.validateBearerToken.mockReturnValue({
-        valid: false,
-        error: 'Token scaduto'
-      });
+    it('DEVE ritornare null error_code per DMS_PUSH_SUCCESS_WITH_UPDATE', () => {
+      const errorCode = _getErrorCode('DMS_PUSH_SUCCESS_WITH_UPDATE');
+      const errorMsg = _getErrorMessage('DMS_PUSH_SUCCESS_WITH_UPDATE');
 
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer invalid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-001' }]
-        })
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(401);
+      expect(errorCode).toBeNull();
+      expect(errorMsg).toBeNull();
     });
 
-    it('DEVE ritornare 403 se permessi insufficienti', async () => {
-      mockAuthService.prototype.verifyPermissions.mockReturnValue({
-        authorized: false,
-        reason: 'Permesso syncro:write non assegnato'
-      });
+    it('DEVE ritornare error_code DMS_PUSH_REFUSED per DMS_PUSH_REFUSAL', () => {
+      const errorCode = _getErrorCode('DMS_PUSH_REFUSAL');
+      const errorMsg = _getErrorMessage('DMS_PUSH_REFUSAL');
 
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-001' }]
-        })
-      };
+      expect(errorCode).toBe('DMS_PUSH_REFUSED');
+      expect(errorMsg).toContain('rifiutato');
+    });
 
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(403);
-      expect(JSON.parse(response.body).error).toBe('Forbidden');
+    it('DEVE ritornare error_code DMS_PUSH_FAILED per DMS_PUSH_FAILURE', () => {
+      const errorCode = _getErrorCode('DMS_PUSH_FAILURE');
+      const errorMsg = _getErrorMessage('DMS_PUSH_FAILURE');
+
+      expect(errorCode).toBe('DMS_PUSH_FAILED');
+      expect(errorMsg).toContain('fallimento');
     });
   });
 
   // ─────────────────────────────────────────────────────────────────────
-  // ✅ TEST: POST /api/synch-status (CORRETTO: UPDATE, not INSERT)
+  // 🗄️  TEST: HANDLER - Salvataggio in Aurora
   // ─────────────────────────────────────────────────────────────────────
-  describe('POST /api/synch-status - Callback DJC con UPDATE', () => {
+
+  describe('handler() - Salvataggio in Aurora', () => {
     
-    it('DEVE aggiornare record con successo (UPDATE) e ritornare 200', async () => {
-      // Mock database: UPDATE successful, record trovato
-      mockPool.query.mockImplementation((queryConfig) => {
-        if (queryConfig.text.includes('UPDATE woc.comunication_asyncro_djc')) {
-          // First UPDATE for callback receipt
-          if (queryConfig.text.includes('RECEIVED_FROM_DJC')) {
-            return Promise.resolve({
-              rows: [{
-                response_id: 'res-123',
-                djc_sync_status: 'RECEIVED_FROM_DJC',
-                version: 2
-              }]
-            });
-          }
-          // Second UPDATE for SUCCESS
-          return Promise.resolve({
-            rows: [{
-              response_id: 'res-123',
-              version: 3
-            }]
-          });
-        }
-        return Promise.resolve({ rows: [] });
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [
-            {
-              job_card_id: 'JC-001',
-              data: { status: 'completed' }
-            }
-          ]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.body);
-      expect(body.message).toContain('successo');
-      expect(body.jobCardId).toBe('JC-001');
-      expect(mockPool.query).toHaveBeenCalled();
-    });
-
-    it('DEVE ritornare 404 se record NON trovato in Aurora (UPDATE fallisce)', async () => {
-      // Mock database: UPDATE fallisce perchè record non esiste
-      mockPool.query.mockImplementation((queryConfig) => {
-        if (queryConfig.text.includes('UPDATE woc.comunication_asyncro_djc')) {
-          // No rows updated
-          return Promise.resolve({ rows: [] });
-        }
-        return Promise.resolve({ rows: [] });
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [
-            {
-              job_card_id: 'JC-999-NOT-EXISTS',
-              data: { status: 'completed' }
-            }
-          ]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(404);
-      const body = JSON.parse(response.body);
-      expect(body.error).toBe('Not Found');
-      expect(body.message).toContain('non trovata');
-    });
-
-    it('DEVE ritornare 400 se payload non valido (job_card_id mancante)', async () => {
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ data: { status: 'completed' } }] // job_card_id mancante
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      // Prima valida il payload
-      const { Validator } = require('../validator');
-      Validator.validatePostSynchStatus.mockReturnValue({
-        valid: false,
-        errors: ['job_card_id obbligatorio']
-      });
-
-      // non ti prego di continuare, il test a questo punto si divide
-      // (in realtà andrà nel catch ma mocciamo il validate in modo che fallisca prima)
-    });
-
-    it('DEVE registrare errore lambda (UPDATE error) con status ERROR', async () => {
-      // Simula errore durante lambda execution
-      mockPool.query.mockImplementation((queryConfig) => {
-        if (queryConfig.text.includes('RECEIVED_FROM_DJC')) {
-          // Prima UPDATE fallisce con eccezione
-          throw new Error('Database connection timeout');
-        }
-        return Promise.resolve({ rows: [] });
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-002', data: {} }]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(500);
-      const body = JSON.parse(response.body);
-      expect(body.error).toBe('Internal Server Error');
-    });
-
-    it('DEVE aggiornare stato a FAILURE se sistemi esterni falliscono', async () => {
-      // Mock: externalSystemClient ritorna solo failed
-      MockExternalSystemClient.prototype.sendToMultipleSystems.mockResolvedValue({
-        successful: [],
-        failed: [
-          { system: 'djc', statusCode: 502, message: 'Service unavailable' },
-          { system: 'gct', statusCode: 502, message: 'Service unavailable' }
-        ]
-      });
-
-      mockPool.query.mockImplementation((queryConfig) => {
-        if (queryConfig.text.includes('UPDATE woc.comunication_asyncro_djc')) {
-          return Promise.resolve({
-            rows: [{
-              response_id: 'res-123',
-              djc_sync_status: 'RECEIVED_FROM_DJC',
-              version: 2
-            }]
-          });
-        }
-        return Promise.resolve({ rows: [] });
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-003', data: {} }]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(502);
-      const body = JSON.parse(response.body);
-      expect(body.error).toBe('External System Error');
-    });
-
-    it('DEVE ritornare 400 se X-IBM-Client-Secret non configurato', async () => {
-      // Mock config senza secret
-      const configModule = require('../config');
-      configModule.getInstance.mockResolvedValue({
-        getByPath: jest.fn((path) => {
-          if (path === 'apic.clientSecret') return null; // ⚠️ Config mancante
-          return 'mock-value';
-        })
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-004', data: {} }]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(500);
-      const body = JSON.parse(response.body);
-      expect(body.message).toContain('Client Secret');
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────────────
-  // 📖 TEST: GET /api/synch-status/{requestId}
-  // ─────────────────────────────────────────────────────────────────────
-  describe('GET /api/synch-status/{requestId} - Stato comunicazione', () => {
-    
-    it('DEVE ritornare record trovato con status PENDING', async () => {
+    it('DEVE registrare evento DMS_PUSH_SUCCESS_WITHOUT_UPDATE e ritornare 200', async () => {
+      // Mock: database UPSERT successful
       mockPool.query.mockResolvedValue({
         rows: [{
-          response_id: 'res-456',
-          job_card_id: 'JC-001',
-          push_timestamp: '2025-01-15T10:00:00Z',
-          djc_sync_status: 'PENDING',
-          retry_count: 0,
-          error_code: null,
-          error_message: null,
-          created_at: '2025-01-15T10:00:00Z',
-          updated_at: '2025-01-15T10:00:00Z',
+          response_id: 'res-uuid-001',
+          djc_sync_status: 'SUCCESS_WITHOUT_UPDATE',
+          version: 1  // INSERT (version=1)
+        }]
+      });
+
+      const event = {
+        httpMethod: 'POST',
+        path: '/api/synch-status',
+        rawPath: '/api/synch-status',
+        headers: {},
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+          jobCardSrpId: 'JCID-42',
+          timestamp: '2026-04-24T10:30:00Z'
+        }),
+        requestContext: {
+          http: { method: 'POST' }
+        }
+      };
+
+      const response = await handler(event, {});
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.response.status).toBe('SUCCESS_WITHOUT_UPDATE');
+      expect(body.response.eventType).toBe('DMS_PUSH_SUCCESS_WITHOUT_UPDATE');
+    });
+
+    it('DEVE registrare evento DMS_PUSH_SUCCESS_WITH_UPDATE e ritornare 200', async () => {
+      mockPool.query.mockResolvedValue({
+        rows: [{
+          response_id: 'res-uuid-002',
+          djc_sync_status: 'SUCCESS_WITH_UPDATE',
           version: 1
         }]
       });
 
       const event = {
-        httpMethod: 'GET',
-        path: '/api/synch-status/res-456',
-        rawPath: '/api/synch-status/res-456',
-        pathParameters: { requestId: 'res-456' },
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        requestContext: {
-          http: { method: 'GET' }
-        }
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
+          jobCardSrpId: 'JCID-43',
+          timestamp: '2026-04-24T11:00:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
       };
 
       const response = await handler(event, {});
-      
+
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.requestId).toBe('res-456');
-      expect(body.status).toBe('PENDING');
-      expect(body.jobCardId).toBe('JC-001');
+      expect(body.response.status).toBe('SUCCESS_WITH_UPDATE');
     });
 
-    it('DEVE ritornare record con status SUCCESS dopo callback DJC', async () => {
+    it('DEVE registrare evento DMS_PUSH_REFUSAL con error_code', async () => {
       mockPool.query.mockResolvedValue({
         rows: [{
-          response_id: 'res-789',
-          job_card_id: 'JC-002',
-          djc_sync_status: 'SUCCESS',
-          retry_count: 0,
-          error_code: null,
-          created_at: '2025-01-15T10:00:00Z',
-          updated_at: '2025-01-15T10:05:00Z',
-          version: 3
+          response_id: 'res-uuid-003',
+          djc_sync_status: 'REFUSAL',
+          version: 1
         }]
       });
 
       const event = {
-        httpMethod: 'GET',
-        path: '/api/synch-status/res-789',
-        rawPath: '/api/synch-status/res-789',
-        pathParameters: { requestId: 'res-789' },
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        requestContext: {
-          http: { method: 'GET' }
-        }
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_REFUSAL',
+          jobCardSrpId: 'JCID-44',
+          timestamp: '2026-04-24T12:00:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
       };
 
       const response = await handler(event, {});
-      
+
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.status).toBe('SUCCESS');
-      expect(body.version).toBe(3);
+      expect(body.response.status).toBe('REFUSAL');
     });
 
-    it('DEVE ritornare 404 se record non trovato', async () => {
+    it('DEVE registrare evento DMS_PUSH_FAILURE con error_code', async () => {
       mockPool.query.mockResolvedValue({
-        rows: []
+        rows: [{
+          response_id: 'res-uuid-004',
+          djc_sync_status: 'FAILURE',
+          version: 1
+        }]
       });
 
       const event = {
-        httpMethod: 'GET',
-        path: '/api/synch-status/res-NOT-FOUND',
-        rawPath: '/api/synch-status/res-NOT-FOUND',
-        pathParameters: { requestId: 'res-NOT-FOUND' },
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        requestContext: {
-          http: { method: 'GET' }
-        }
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_FAILURE',
+          jobCardSrpId: 'JCID-45',
+          timestamp: '2026-04-24T13:00:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
       };
 
       const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(404);
+
+      expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.error).toBe('Not Found');
+      expect(body.response.status).toBe('FAILURE');
     });
 
-    it('DEVE ritornare 400 se requestId non valido', async () => {
+    it('DEVE ritornare 400 se eventType non supportato', async () => {
       const event = {
-        httpMethod: 'GET',
-        path: '/api/synch-status/abc', // troppo corto
-        rawPath: '/api/synch-status/abc',
-        pathParameters: { requestId: 'abc' },
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        requestContext: {
-          http: { method: 'GET' }
-        }
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'JOBS_UPDATE_WITH_PREAPPROVAL', // Non supportato
+          jobCardSrpId: 'JCID-99',
+          timestamp: '2026-04-24T10:30:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
       };
 
       const response = await handler(event, {});
-      
+
+      expect(response.statusCode).toBe(400);
+      const body = JSON.parse(response.body);
+      expect(body.error).toBe('Bad Request');
+      expect(body.message).toContain('Validazione');
+    });
+
+    it('DEVE ritornare 400 se payload JSON non valido', async () => {
+      const event = {
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: '{invalid json}',
+        requestContext: { http: { method: 'POST' } }
+      };
+
+      const response = await handler(event, {});
+
       expect(response.statusCode).toBe(400);
       const body = JSON.parse(response.body);
       expect(body.error).toBe('Bad Request');
     });
 
-    it('DEVE ritornare record con status ERROR se lambda fallita', async () => {
-      mockPool.query.mockResolvedValue({
-        rows: [{
-          response_id: 'res-error',
-          job_card_id: 'JC-005',
-          djc_sync_status: 'ERROR',
-          error_code: 'LAMBDA_EXCEPTION',
-          error_message: 'Database connection timeout',
-          retry_count: 0,
-          created_at: '2025-01-15T10:00:00Z',
-          updated_at: '2025-01-15T10:01:00Z',
-          version: 2
-        }]
+    it('DEVE gestire UPDATE se stesso evento arriva due volte (ON CONFLICT)', async () => {
+      // Primo INSERT: version = 1
+      // Secondo UPDATE: version = 2
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ response_id: 'res-uuid', djc_sync_status: 'SUCCESS', version: 1 }]
+      }).mockResolvedValueOnce({
+        rows: [{ response_id: 'res-uuid', djc_sync_status: 'SUCCESS', version: 2 }]
       });
 
+      const payload = {
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+        jobCardSrpId: 'JCID-DUP',
+        timestamp: '2026-04-24T10:30:00Z'
+      };
+
       const event = {
-        httpMethod: 'GET',
-        path: '/api/synch-status/res-error',
-        rawPath: '/api/synch-status/res-error',
-        pathParameters: { requestId: 'res-error' },
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        requestContext: {
-          http: { method: 'GET' }
-        }
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify(payload),
+        requestContext: { http: { method: 'POST' } }
+      };
+
+      // Primo call
+      const response1 = await handler(event, {});
+      expect(response1.statusCode).toBe(200);
+      const body1 = JSON.parse(response1.body);
+      expect(body1.response.version).toBe(1); // INSERT
+
+      // Secondo call (stesso payload)
+      const response2 = await handler(event, {});
+      expect(response2.statusCode).toBe(200);
+      const body2 = JSON.parse(response2.body);
+      expect(body2.response.version).toBe(2); // UPDATE per idempotency
+    });
+
+    it('DEVE ritornare 503 se Aurora non disponibile', async () => {
+      // Mock: errore connessione database
+      getPool.mockRejectedValueOnce(new Error('ECONNREFUSED: connect failed'));
+
+      const event = {
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+          jobCardSrpId: 'JCID-42',
+          timestamp: '2026-04-24T10:30:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
       };
 
       const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(200);
+
+      expect(response.statusCode).toBe(503);
       const body = JSON.parse(response.body);
-      expect(body.status).toBe('ERROR');
-      expect(body.errorCode).toBe('LAMBDA_EXCEPTION');
+      expect(body.error).toBe('Service Unavailable');
+    });
+
+    it('DEVE ritornare 504 se query database timeout', async () => {
+      // Mock: query timeout
+      mockPool.query.mockRejectedValueOnce(new Error('Query timeout'));
+
+      const event = {
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+          jobCardSrpId: 'JCID-42',
+          timestamp: '2026-04-24T10:30:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
+      };
+
+      const response = await handler(event, {});
+
+      expect(response.statusCode).toBe(504);
+      const body = JSON.parse(response.body);
+      expect(body.error).toBe('Gateway Timeout');
+    });
+
+    it('DEVE ritornare 500 se UPSERT non ritorna righe', async () => {
+      // Mock: UPSERT fallisce (nessuna riga)
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      const event = {
+        httpMethod: 'POST',
+        rawPath: '/api/synch-status',
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+          jobCardSrpId: 'JCID-42',
+          timestamp: '2026-04-24T10:30:00Z'
+        }),
+        requestContext: { http: { method: 'POST' } }
+      };
+
+      const response = await handler(event, {});
+
+      expect(response.statusCode).toBe(500);
     });
   });
 
   // ─────────────────────────────────────────────────────────────────────
   // 🛠️  TEST: Utility Functions
   // ─────────────────────────────────────────────────────────────────────
-  describe('Utility Functions', () => {
+
+  describe('_buildResponse()', () => {
     
-    it('_buildResponse DEVE costruire risposta HTTP corretta', () => {
-      const response = _buildResponse(200, { message: 'OK' }, 'trace-abc');
-      
+    it('DEVE costruire risposta HTTP con headers corretti', () => {
+      const response = _buildResponse(200, { message: 'OK' }, 'trace-123');
+
       expect(response.statusCode).toBe(200);
       expect(response.headers['Content-Type']).toBe('application/json');
-      expect(response.headers['X-Trace-Id']).toBe('trace-abc');
+      expect(response.headers['X-Trace-Id']).toBe('trace-123');
+      expect(response.headers['Access-Control-Allow-Origin']).toBe('*');
       expect(JSON.parse(response.body).message).toBe('OK');
     });
 
-    it('_buildResponse DEVE includere CORS headers', () => {
-      const response = _buildResponse(200, {}, 'trace-123');
-      
-      expect(response.headers['Access-Control-Allow-Origin']).toBe('*');
+    it('DEVE gestire diversi status code', () => {
+      const codes = [200, 400, 500, 503, 504];
+
+      codes.forEach(code => {
+        const response = _buildResponse(code, {}, 'trace');
+        expect(response.statusCode).toBe(code);
+        expect(response.headers['X-Trace-Id']).toBe('trace');
+      });
     });
   });
 
   // ─────────────────────────────────────────────────────────────────────
-  // 🔄 TEST: Idempotency (same job_card_id + push_timestamp)
+  // 📊 TEST: Costanti ed Enum
   // ─────────────────────────────────────────────────────────────────────
-  describe('Idempotency - ON CONFLICT DO UPDATE', () => {
+
+  describe('SUPPORTED_EVENT_TYPES e EVENT_TYPE_TO_DB_STATUS', () => {
     
-    it('DEVE handle duplicate callback DJC con ON CONFLICT DO UPDATE', async () => {
-      // Simula primo callback
-      let callCount = 0;
-      mockPool.query.mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          // Prima UPDATE: OK
-          return Promise.resolve({
-            rows: [{
-              response_id: 'res-123',
-              djc_sync_status: 'RECEIVED_FROM_DJC',
-              version: 2
-            }]
-          });
-        } else if (callCount === 2) {
-          // Seconda UPDATE (stesso callback): ON CONFLICT attiva
-          return Promise.resolve({
-            rows: [{
-              response_id: 'res-123',
-              djc_sync_status: 'RECEIVED_FROM_DJC',
-              version: 2 // version rimane uguale perchè è lo stesso record
-            }]
-          });
-        }
-        return Promise.resolve({ rows: [] });
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-006', data: {} }]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      // Chiama due volte lo stesso payload
-      const response1 = await handler(event, {});
-      const response2 = await handler(event, {});
-      
-      expect(response1.statusCode).toBe(200);
-      expect(response2.statusCode).toBe(200);
-      // Entrambi ritornano successo grazie a ON CONFLICT
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────────────
-  // 🌐 TEST: API Gateway Proxy Integration Formats
-  // ─────────────────────────────────────────────────────────────────────
-  describe('API Gateway Proxy Integration', () => {
-    
-    it('DEVE supportare API Gateway v2 (rawPath + requestContext.http.method)', async () => {
-      mockPool.query.mockResolvedValue({
-        rows: [{ response_id: 'res-123', djc_sync_status: 'RECEIVED_FROM_DJC', version: 2 }]
-      });
-
-      const event = {
-        rawPath: '/api/synch-status', // v2 format
-        requestContext: {
-          http: { method: 'POST' } // v2 format
-        },
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-007', data: {} }]
-        })
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(200);
+    it('DEVE contenere esattamente 4 event types supportati', () => {
+      const eventTypes = Object.values(SUPPORTED_EVENT_TYPES);
+      expect(eventTypes).toHaveLength(4);
+      expect(eventTypes).toContain('DMS_PUSH_SUCCESS_WITHOUT_UPDATE');
+      expect(eventTypes).toContain('DMS_PUSH_SUCCESS_WITH_UPDATE');
+      expect(eventTypes).toContain('DMS_PUSH_REFUSAL');
+      expect(eventTypes).toContain('DMS_PUSH_FAILURE');
     });
 
-    it('DEVE supportare direct Lambda invoke con action', async () => {
-      mockPool.query.mockResolvedValue({
-        rows: [{ response_id: 'res-456', djc_sync_status: 'SUCCESS', version: 3 }]
+    it('DEVE mappare ogni event type a uno status database', () => {
+      Object.values(SUPPORTED_EVENT_TYPES).forEach(eventType => {
+        expect(EVENT_TYPE_TO_DB_STATUS[eventType]).toBeDefined();
       });
-
-      const event = {
-        action: 'GET_SYNCH_STATUS',
-        requestId: 'res-456'
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(200);
-      const body = JSON.parse(response.body);
-      expect(body.requestId).toBe('res-456');
     });
 
-    it('DEVE ritornare 404 per endpoint non riconosciuto', async () => {
-      const event = {
-        rawPath: '/api/unknown-endpoint',
-        requestContext: {
-          http: { method: 'POST' }
-        },
-        headers: {
-          authorization: 'Bearer valid-token'
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(404);
-      const body = JSON.parse(response.body);
-      expect(body.error).toBe('Not Found');
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────────────
-  // 🔁 TEST: Retry Logic & Recovery
-  // ─────────────────────────────────────────────────────────────────────
-  describe('Retry Logic and Error Recovery', () => {
-    
-    it('DEVE aggiornare retry_count quando external system fallisce', async () => {
-      MockExternalSystemClient.prototype.sendToMultipleSystems.mockResolvedValue({
-        successful: [],
-        failed: [{ system: 'djc', statusCode: 503, message: 'Retry later' }]
-      });
-
-      const updateFailureQueryCapture = jest.fn();
-      mockPool.query.mockImplementation((queryConfig) => {
-        if (queryConfig.text.includes('UPDATE woc.comunication_asyncro_djc') && 
-            queryConfig.text.includes('FAILURE')) {
-          updateFailureQueryCapture(queryConfig);
-        }
-        return Promise.resolve({
-          rows: [{
-            response_id: 'res-retry',
-            djc_sync_status: queryConfig.text.includes('FAILURE') ? 'FAILURE' : 'RECEIVED_FROM_DJC',
-            version: 2
-          }]
-        });
-      });
-
-      const event = {
-        httpMethod: 'POST',
-        path: '/api/synch-status',
-        rawPath: '/api/synch-status',
-        headers: {
-          authorization: 'Bearer valid-token'
-        },
-        body: JSON.stringify({
-          events: [{ job_card_id: 'JC-008', data: {} }]
-        }),
-        requestContext: {
-          http: { method: 'POST' }
-        }
-      };
-
-      const response = await handler(event, {});
-      
-      expect(response.statusCode).toBe(503);
-      expect(mockPool.query).toHaveBeenCalled();
+    it('DEVE mappare a status database corretti', () => {
+      expect(EVENT_TYPE_TO_DB_STATUS['DMS_PUSH_SUCCESS_WITHOUT_UPDATE']).toBe('SUCCESS_WITHOUT_UPDATE');
+      expect(EVENT_TYPE_TO_DB_STATUS['DMS_PUSH_SUCCESS_WITH_UPDATE']).toBe('SUCCESS_WITH_UPDATE');
+      expect(EVENT_TYPE_TO_DB_STATUS['DMS_PUSH_REFUSAL']).toBe('REFUSAL');
+      expect(EVENT_TYPE_TO_DB_STATUS['DMS_PUSH_FAILURE']).toBe('FAILURE');
     });
   });
 
