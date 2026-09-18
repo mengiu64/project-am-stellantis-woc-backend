@@ -6,10 +6,29 @@
 2. **Record deve esistere** in `woc.comunication_asyncro_djc` con stessa `job_card_id + push_timestamp`
    - La lambda NON crea record, solo li AGGIORNA
    - Il record deve essere creato da `isStellantisBrand` lambda PRIMA
+   - Lo stato iniziale del record deve essere `PENDING` o `NOT_PENDING`
+   - La lambda aggiorna il record ai 4 stati finali: `SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE`
 3. **Sostituisci**:
    - `https://your-api-gateway.com/api/synch-status` → endpoint reale
    - `jobCardSrpId` → valori reali che esistono nel DB
    - `timestamp` → timestamp attuali (ISO 8601 format)
+
+---
+
+## 🔴 IMPORTANTE - Stati ENUM Utilizzati
+
+La lambda `syncro-kafka-events` usa **SOLO 4 dei 6 stati dell'ENUM** `woc.djc_sync_status`:
+
+| Stato Enum | Evento ricevuto | Descrizione |
+|---|---|---|
+| `SUCCESS_WITHOUT_UPDATE` | DMS_PUSH_SUCCESS_WITHOUT_UPDATE | DMS ha processato senza modifiche |
+| `SUCCESS_WITH_UPDATE` | DMS_PUSH_SUCCESS_WITH_UPDATE | DMS ha processato con modifiche |
+| `REFUSAL` | DMS_PUSH_REFUSAL | DMS ha rifiutato il push |
+| `FAILURE` | DMS_PUSH_FAILURE | DMS ha segnalato fallimento |
+
+**Stati NON usati da questa lambda:**
+- `PENDING` - Creato da `isStellantisBrand` quando pushano dati verso DJC
+- `NOT_PENDING` - Usato da altre lambda per dati non pushati verso DJC
 
 ---
 
