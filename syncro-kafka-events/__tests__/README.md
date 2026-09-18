@@ -82,6 +82,14 @@ CREATE TABLE woc.comunication_asyncro_djc (
 - **Aggiornato da:** `syncro-kafka-events` quando riceve la risposta finale da DJC
 - **Transizioni:** `PENDING` → uno dei 4 stati finali (`SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE`)
 
+### 🔴 IMPORTANTE - Campi NON modificati da `syncro-kafka-events`
+- **`ambito`**: Riempito SOLO dalla lambda che crea il record iniziale (es. `isStellantisBrand`)
+- **`json_payload`**: Riempito SOLO dalla lambda che crea il record iniziale
+- **`json_modified`**: Riempito SOLO dalla lambda che crea il record iniziale
+- **`djc`**: Impostato SOLO dalla lambda che crea il record iniziale (NON mai modificato da syncro-kafka-events)
+- **`updated_at`**: Gestito da trigger PostgreSQL (BEFORE UPDATE trigger)
+- Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
+
 ---
 
 ## 🔄 Flusso di Elaborazione
@@ -100,6 +108,8 @@ CREATE TABLE woc.comunication_asyncro_djc (
   "marketCode": "1000"                      // Opzionale
 }
 ```
+
+**Nota**: `djc` e `ambito` sono gestiti internamente dalla lambda, non ricevuti da input
 
 ### 2️⃣ **Validazione**
 - ✅ `eventType` obbligatorio e ∈ [4 supportati]
@@ -128,16 +138,14 @@ CREATE TABLE woc.comunication_asyncro_djc (
 {
   "statusCode": 200,
   "success": true,
-  "message": "Evento DMS_PUSH_SUCCESS_WITHOUT_UPDATE registrato con successo",
+  "message": "Evento aggiornato con successo",
   "response": {
     "responseId": "uuid-1234",
     "jobCardId": "JCID-42",
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-04-24T10:30:00Z",
-    "version": 1
-  },
-  "traceId": "trace-12345"
+  }
 }
 ```
 

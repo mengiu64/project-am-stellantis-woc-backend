@@ -59,13 +59,13 @@ exports.handler = async (event, context) => {
           statusCode: 400,
           success: false,
           error: 'Bad Request',
-          message: 'Body non è valido JSON',
-          traceId: logger.getTraceId()
+          message: 'Body non è valido JSON'
         }, logger.getTraceId());
       }
     }
 
-    logger.info('📋 Payload ricevuto:', { payload });
+    // 🔴 NUOVO: Log della request ricevuta da DJC
+    logger.info('📥 REQUEST DA DJC RICEVUTA:', JSON.stringify(payload, null, 2));
 
     // ─────────────────────────────────────────────────────────────────────
     // 2️⃣  VALIDAZIONE DEL PAYLOAD
@@ -82,8 +82,7 @@ exports.handler = async (event, context) => {
         success: false,
         error: 'Bad Request',
         message: 'Validazione payload fallita',
-        details: validation.errors,
-        traceId: logger.getTraceId()
+        details: validation.errors
       }, logger.getTraceId());
     }
 
@@ -91,14 +90,13 @@ exports.handler = async (event, context) => {
     // 3️⃣  ESTRAI DATI DAL PAYLOAD VALIDATO
     // ─────────────────────────────────────────────────────────────────────
 
-    const { eventType, jobCardId, timestamp, djc, ambito, ...additionalData } = validation.data;
+    // 🔴 MODIFICATO: Rimuovi djc e ambito dall'input - saranno sempre Y e determinati internamente
+    const { eventType, jobCardId, timestamp, ...additionalData } = validation.data;
 
     logger.info('✅ Payload validato', {
       eventType,
       jobCardId,
       timestamp,
-      djc: djc || 'Y (default)',
-      ambito,
       hasAdditionalData: Object.keys(additionalData).length > 0
     });
 
@@ -117,102 +115,60 @@ exports.handler = async (event, context) => {
         success: false,
         error: 'Service Unavailable',
         message: 'Impossibile connettersi al database Aurora',
-        traceId: logger.getTraceId()
       }, logger.getTraceId());
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // 5️⃣  SALVA L'EVENTO IN AURORA - INSERT O UPDATE A SECONDA DEL CASO
+    // 5️⃣  SALVA L'EVENTO IN AURORA - UPDATE RECORD ESISTENTE
     // ─────────────────────────────────────────────────────────────────────
 
     try {
-      const responseId = uuidv4();
-      
-      // Valida e normalizza il flag djc (default: 'Y')
-      const djcFlag = djc ? djc.toUpperCase() : 'Y';
-      if (!['Y', 'N'].includes(djcFlag)) {
-        logger.warn('⚠️  Flag djc non valido', {
-          providedDjc: djc,
-          validValues: ['Y', 'N'],
-          traceId: logger.getTraceId()
-        });
-        return exports._buildResponse(400, {
-          statusCode: 400,
-          success: false,
-          error: 'Bad Request',
-          message: 'Flag djc non valido - deve essere Y o N',
-          traceId: logger.getTraceId()
-        }, logger.getTraceId());
-      }
-
-      // LOGICA: Calcola djc_sync_status in base al flag djc
-      // - Se djc='N' → djc_sync_status=NULL (evento non processato per sincronizzazione)
-      // - Se djc='Y' → djc_sync_status=uno dei 4 stati enum (evento processato)
-      let djcSyncStatus;
-      if (djcFlag === 'N') {
-        djcSyncStatus = null;
-        logger.info('🔴 Flag djc=N: djc_sync_status sarà NULL', { traceId: logger.getTraceId() });
-      } else {
-        djcSyncStatus = EVENT_TYPE_TO_DB_STATUS[eventType];
-        logger.info('🟢 Flag djc=Y: djc_sync_status verrà impostato', {
-          eventType,
-          djcSyncStatus,
-          traceId: logger.getTraceId()
-        });
-      }
+      // 🔴 MODIFICATO: djcFlag è sempre 'Y' (non ricevuto da input)
+      // Calcola djc_sync_status in base al flag djc (sempre Y)
+      // djc_sync_status = uno dei 4 stati enum (evento processato)
+      const djcSyncStatus = EVENT_TYPE_TO_DB_STATUS[eventType];
+      logger.info('🟢 djc=Y: djc_sync_status mappato', {
+        eventType,
+        djcSyncStatus
+      });
 
       const updateQuery = `
         -- 🔴 MODIFICATO: Cambio da UPSERT a UPDATE-ONLY
         -- La lambda NON inserisce mai record, solo aggiorna record esistenti
         -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
+        -- 🔴 IMPORTANTE: ambito, json_payload, json_modified, djc NON sono mai modificati
+        --                Questi campi sono riempiti SOLO dalla lambda che fa il push iniziale verso DJC
+        -- 🔴 IMPORTANTE: updated_at è gestito da un trigger PostgreSQL, non dalla lambda
         UPDATE woc.comunication_asyncro_djc
         SET
-          -- Aggiorna response_id con UUID univoco
-          response_id = $1,
+          -- 🔴 MODIFICATO: NON aggiornare response_id - è la PK e deve rimanere invariato
+          -- response_id rimane quello originale inserito da isStellantisBrand
+          
           -- Aggiorna stato sincronizzazione DJC
-          djc_sync_status = $2,
-          -- Aggiorna flag djc (Y/N)
-          djc = $3,
-          -- Aggiorna ambito/contesto evento
-          ambito = $4,
-          -- Aggiorna metadati dell'evento
-          json_modified = $5,
-          -- Aggiorna timestamp aggiornamento
-          updated_at = $6,
+          djc_sync_status = $1,
           -- Incrementa version per optimistic locking
           version = version + 1
         WHERE
           -- Chiave primaria: job_card_id
-          job_card_id = $7 AND
+          job_card_id = $2 AND
           -- Chiave primaria: push_timestamp (chiave UNIQUE)
-          push_timestamp = $8
+          push_timestamp = $3
         RETURNING response_id, djc_sync_status, version;
       `;
 
-      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (8 parametri invece di 16)
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (3 parametri)
+      // ambito, json_payload, json_modified, djc NON sono mai modificati
+      // updated_at è gestito dal trigger PostgreSQL
       const updateValues = [
-        responseId,                                    // $1: response_id - UUID univoco risposta
-        djcSyncStatus,                                 // $2: djc_sync_status (NULL se djc='N')
-        djcFlag,                                       // $3: djc (flag Y/N)
-        ambito,                                        // $4: ambito (campo obbligatorio)
-        JSON.stringify({
-          eventType,
-          receivedAt: new Date().toISOString(),
-          djcFlag,
-          ambito,
-          additionalFields: Object.keys(additionalData)
-        }),                                            // $5: json_modified - metadati aggiuntivi
-        new Date(),                                    // $6: updated_at - timestamp aggiornamento
-        jobCardId,                                     // $7: job_card_id - chiave WHERE
-        new Date(timestamp)                            // $8: push_timestamp - chiave WHERE
+        djcSyncStatus,                                 // $1: djc_sync_status - stato sincronizzazione aggiornato
+        jobCardId,                                     // $2: job_card_id - chiave WHERE
+        new Date(timestamp)                            // $3: push_timestamp - chiave WHERE
       ];
 
       // 🔴 MODIFICATO: Esegui UPDATE-ONLY senza INSERT
       logger.info('📝 Esecuzione query UPDATE-ONLY su woc.comunication_asyncro_djc', {
         jobCardId,
         timestamp,
-        djcFlag,
-        ambito,
         traceId: logger.getTraceId()
       });
 
@@ -250,8 +206,6 @@ exports.handler = async (event, context) => {
             eventType,
             jobCardId,
             timestamp,
-            djc,
-            ambito,
             additionalData
           },
           
@@ -260,13 +214,10 @@ exports.handler = async (event, context) => {
           
           // Informazioni tecniche della query
           technical: {
-            responseId,
-            djcFlag,
             djcSyncStatus,
             queryType: 'UPDATE-ONLY',
             queryTimeout: 5000,
-            parametersCount: updateValues.length,
-            traceId: logger.getTraceId()
+            parametersCount: updateValues.length
           }
         });
         
@@ -281,14 +232,11 @@ exports.handler = async (event, context) => {
         djcSyncStatus: updatedRecord.djc_sync_status,
         version: updatedRecord.version,
         jobCardId,
-        timestamp,
-        djcFlag,
-        ambito,
-        traceId: logger.getTraceId()
+        timestamp
       });
 
       // 🔴 MODIFICATO: Struttura risposta allineata con swagger
-      return exports._buildResponse(200, {
+      const responseBody = {
         statusCode: 200,
         success: true,
         message: 'Evento aggiornato con successo in Aurora',
@@ -297,11 +245,14 @@ exports.handler = async (event, context) => {
           jobCardId,
           eventType,
           status: updatedRecord.djc_sync_status,
-          timestamp,
-          version: updatedRecord.version
-        },
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
+          timestamp
+        }
+      };
+      
+      // 🔴 NUOVO: Log della risposta inviata a DJC
+      logger.info('📤 RESPONSE INVIATA A DJC:', JSON.stringify(responseBody, null, 2));
+      
+      return exports._buildResponse(200, responseBody, logger.getTraceId());
     } catch (upsertError) {
       // 🔴 MODIFICATO: Gestione errori per UPDATE-ONLY
       
@@ -323,7 +274,7 @@ exports.handler = async (event, context) => {
           }
         });
         
-        return exports._buildResponse(404, {
+        const errorResponse = {
           statusCode: 404,
           success: false,
           error: 'Not Found',
@@ -332,9 +283,13 @@ exports.handler = async (event, context) => {
             jobCardId,
             timestamp,
             suggestion: 'Il record deve essere creato da un\'altra lambda prima di essere aggiornato'
-          },
-          traceId: logger.getTraceId()
-        }, logger.getTraceId());
+          }
+        };
+        
+        // 🔴 NUOVO: Log della risposta di errore
+        logger.info('📤 RESPONSE INVIATA A DJC (404):', JSON.stringify(errorResponse, null, 2));
+        
+        return exports._buildResponse(404, errorResponse, logger.getTraceId());
       }
       
       // 🔴 MODIFICATO: Log generico di errore durante UPDATE
@@ -360,7 +315,6 @@ exports.handler = async (event, context) => {
           success: false,
           error: 'Service Unavailable',
           message: 'Errore connessione al database Aurora',
-          traceId: logger.getTraceId()
         }, logger.getTraceId());
       } 
       // Gestione errore timeout query
@@ -376,7 +330,6 @@ exports.handler = async (event, context) => {
           success: false,
           error: 'Gateway Timeout',
           message: 'Query database ha superato il timeout',
-          traceId: logger.getTraceId()
         }, logger.getTraceId());
       }
       // Errore generico durante UPDATE
@@ -392,7 +345,6 @@ exports.handler = async (event, context) => {
           success: false,
           error: 'Internal Server Error',
           message: 'Errore durante aggiornamento in database',
-          traceId: logger.getTraceId()
         }, logger.getTraceId());
       }
     }
@@ -403,7 +355,6 @@ exports.handler = async (event, context) => {
       success: false,
       error: 'Internal Server Error',
       message: 'Errore non gestito',
-      traceId: logger.getTraceId()
     }, logger.getTraceId());
   }
 };
