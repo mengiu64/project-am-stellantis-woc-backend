@@ -61,7 +61,7 @@ describe('AnagSnowflakesRepository', () => {
 
     it('uses cd_contract_brand_arcad_code directly (uppercased) when brand is already a 2-letter code, with OR on mainSincom/gn_legal_entity', async () => {
       const pool = makePool(async () => ({
-        rows: [{ gn_physical_site_arcad: 'SITE001', cd_sincom_code: '0062230', cd_dealer_arcad_code: 'ARC001' }],
+        rows: [{ cd_paired_oic_code: 'SITE001', cd_sincom_code: '0062230', cd_dealer_arcad_code: 'ARC001' }],
       }));
 
       const result = await getPhysicalSiteAndSincom(pool, {
@@ -84,7 +84,7 @@ describe('AnagSnowflakesRepository', () => {
       const pool = {
         query: jest.fn()
           .mockResolvedValueOnce({ rows: [{ cd_contract_brand_arcad_code: 'FT' }] })
-          .mockResolvedValueOnce({ rows: [{ gn_physical_site_arcad: 'SITE002', cd_sincom_code: '0062231', cd_dealer_arcad_code: 'ARC002' }] }),
+          .mockResolvedValueOnce({ rows: [{ cd_paired_oic_code: 'SITE002', cd_sincom_code: '0062231', cd_dealer_arcad_code: 'ARC002' }] }),
       };
 
       const result = await getPhysicalSiteAndSincom(pool, {
