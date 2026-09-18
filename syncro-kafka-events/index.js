@@ -1,578 +1,450 @@
 // index.js
-// Lambda handler - orchestrazione autenticazione, validazione, elaborazione + database integration
-// CORRETTO: Usa UPDATE per aggiornare record creato da isStellantisBrand, NON INSERT
+// Lambda handler - Riceve 4 eventi Kafka specifici da DJC e registra in Aurora
+// Implementazione RISTRETTA secondo SRP DL KAFKA Specification
+// 4 eventi supportati: DMS_PUSH_SUCCESS_WITHOUT_UPDATE, DMS_PUSH_SUCCESS_WITH_UPDATE, DMS_PUSH_REFUSAL, DMS_PUSH_FAILURE
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 📦 IMPORTS
+// ─────────────────────────────────────────────────────────────────────────────
 
 const { v4: uuidv4 } = require('uuid');
 const Logger = require('./logger');
 const Validator = require('./validator');
 const configModule = require('./config');
-const AuthService = require('./authService');
-const ExternalSystemClient = require('./externalSystemClient');
-const { getPool } = require('./shared/dbClient'); // 📦 Importa pool da shared directory (isStellantisBrand pattern)
+const { getPool } = require('./shared/dbClient'); // Pool Aurora PostgreSQL (pattern isStellantisBrand)
 
-// Funzione principale Lambda handler
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔧 COSTANTI - Definisci i 4 eventi supportati
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Enum dei 4 tipi di evento supportati dalla specifica SRP DL KAFKA
+const SUPPORTED_EVENT_TYPES = {
+  DMS_PUSH_SUCCESS_WITHOUT_UPDATE: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
+  DMS_PUSH_SUCCESS_WITH_UPDATE: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
+  DMS_PUSH_REFUSAL: 'DMS_PUSH_REFUSAL',
+  DMS_PUSH_FAILURE: 'DMS_PUSH_FAILURE'
+};
+
+// Mappa dei tipi evento ai stati database
+const EVENT_TYPE_TO_DB_STATUS = {
+  [SUPPORTED_EVENT_TYPES.DMS_PUSH_SUCCESS_WITHOUT_UPDATE]: 'SUCCESS_WITHOUT_UPDATE',
+  [SUPPORTED_EVENT_TYPES.DMS_PUSH_SUCCESS_WITH_UPDATE]: 'SUCCESS_WITH_UPDATE',
+  [SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL]: 'REFUSAL',
+  [SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE]: 'FAILURE'
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🚀 HANDLER PRINCIPALE - Entry point Lambda
+// ─────────────────────────────────────────────────────────────────────────────
+
 exports.handler = async (event, context) => {
-  // Crea logger con trace ID per questa richiesta
+  // Crea istanza logger con trace ID per correlazione
   const logger = new Logger();
   
   try {
-    logger.info('Lambda invocata', {
-      eventSource: event.source || 'api-gateway',
+    // Log: evento ricevuto
+    logger.info('🔔 Lambda syncro-kafka-events invocata', {
       httpMethod: event.httpMethod || event.requestContext?.http?.method,
-      path: event.path || event.rawPath
+      path: event.path || event.rawPath,
+      traceId: logger.getTraceId()
     });
 
-    // Inizializza config (singleton)
-    const config = await configModule.getInstance();
-    
-    // Crea servizi
-    const authService = new AuthService(config, logger);
-    const externalClient = new ExternalSystemClient(config, logger);
+    // ─────────────────────────────────────────────────────────────────────
+    // 1️⃣  PARSING DEL PAYLOAD
+    // ─────────────────────────────────────────────────────────────────────
 
-    // Estrai Authorization header
-    const authHeader = event.headers?.authorization || event.headers?.Authorization;
-    const authValidation = Validator.validateAuthorizationHeader(authHeader);
+    // Estrai il body dalle diverse fonti (API Gateway v1/v2 o direct invoke)
+    let payload = event.body;
+    if (typeof payload === 'string') {
+      // API Gateway invia body come string, parse necessario
+      try {
+        payload = JSON.parse(payload);
+      } catch (parseError) {
+        logger.error('❌ Errore parsing JSON body', parseError);
+        return exports._buildResponse(400, {
+          error: 'Bad Request',
+          message: 'Body non è valido JSON',
+          traceId: logger.getTraceId()
+        }, logger.getTraceId());
+      }
+    }
 
-    if (!authValidation.valid) {
-      logger.warn('Authorization fallita', { error: authValidation.error });
-      return exports._buildResponse(401, {
-        error: 'Unauthorized',
-        message: authValidation.error,
+    logger.info('📋 Payload ricevuto:', { payload });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 2️⃣  VALIDAZIONE DEL PAYLOAD
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Valida che payload contiene i 3 campi obbligatori
+    const validation = _validatePayload(payload, logger);
+    if (!validation.valid) {
+      logger.warn('⚠️  Validazione payload fallita', {
+        errors: validation.errors,
+        traceId: logger.getTraceId()
+      });
+      return exports._buildResponse(400, {
+        error: 'Bad Request',
+        message: 'Validazione payload fallita',
+        details: validation.errors,
         traceId: logger.getTraceId()
       }, logger.getTraceId());
     }
 
-    // Valida bearer token
-    const tokenValidation = authService.validateBearerToken(authValidation.token);
-    if (!tokenValidation.valid) {
-      logger.warn('Token validation fallita', { error: tokenValidation.error });
-      return exports._buildResponse(401, {
-        error: 'Unauthorized',
-        message: 'Bearer token non valido',
+    // ─────────────────────────────────────────────────────────────────────
+    // 3️⃣  ESTRAI DATI DAL PAYLOAD VALIDATO
+    // ─────────────────────────────────────────────────────────────────────
+
+    const { eventType, jobCardId, timestamp, ...additionalData } = validation.data;
+
+    logger.info('✅ Payload validato', {
+      eventType,
+      jobCardId,
+      timestamp,
+      hasAdditionalData: Object.keys(additionalData).length > 0
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 4️⃣  CONNETTITI AL DATABASE AURORA PostgreSQL
+    // ─────────────────────────────────────────────────────────────────────
+
+    let pool = null;
+    try {
+      // Ottieni pool da shared/dbClient (pattern isStellantisBrand)
+      pool = await getPool();
+      logger.info('🔗 Connessione Aurora PostgreSQL acquisita');
+    } catch (dbConnectError) {
+      logger.error('❌ Errore connessione Aurora', dbConnectError);
+      return exports._buildResponse(503, {
+        error: 'Service Unavailable',
+        message: 'Impossibile connettersi al database Aurora',
         traceId: logger.getTraceId()
       }, logger.getTraceId());
     }
 
-    // Verifica permessi
-    const permCheck = authService.verifyPermissions(tokenValidation.decoded, []);
-    if (!permCheck.authorized) {
-      logger.warn('Permission denied', { reason: permCheck.reason });
-      return exports._buildResponse(403, {
-        error: 'Forbidden',
-        message: permCheck.reason,
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // 5️⃣  SALVA L'EVENTO IN AURORA - INSERT O UPDATE A SECONDA DEL CASO
+    // ─────────────────────────────────────────────────────────────────────
 
-    // Determina se API Gateway Proxy o direct invoke
-    const isApiGateway = event.rawPath || event.resource;
-    const isApiGatewayHttpApi = event.requestContext?.http?.method;
+    try {
+      // Genera response_id univoco per questo evento
+      const responseId = uuidv4();
+      
+      // Converti eventType nel status database corrispondente
+      const dbStatus = EVENT_TYPE_TO_DB_STATUS[eventType];
 
-    if (isApiGateway || isApiGatewayHttpApi) {
-      // API Gateway Proxy integration
-      const method = event.requestContext?.http?.method || event.httpMethod;
-      const path = event.rawPath || event.path;
+      // Query: INSERT con ON CONFLICT DO UPDATE per idempotency
+      // Se (job_card_id, push_timestamp) esiste già, aggiorna; altrimenti inserisce
+      const upsertQuery = `
+        INSERT INTO woc.comunication_asyncro_djc (
+          response_id,
+          job_card_id,
+          push_timestamp,
+          djc_sync_status,
+          json_payload,
+          json_modified,
+          retry_count,
+          error_code,
+          error_message,
+          source_system,
+          created_by,
+          created_at,
+          updated_at,
+          version
+        ) VALUES (
+          $1,     -- response_id: ID univoco della risposta
+          $2,     -- job_card_id: job card identifier dal payload
+          $3,     -- push_timestamp: timestamp dell'evento Kafka
+          $4,     -- djc_sync_status: stato dell'evento (SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE)
+          $5,     -- json_payload: payload originale ricevuto da DJC
+          $6,     -- json_modified: metadati aggiuntivi (timestamp ricezione, event type, etc.)
+          $7,     -- retry_count: iniziale 0 (per future retry logic)
+          $8,     -- error_code: null (se successo) o codice errore (se failure)
+          $9,     -- error_message: null (se successo) o messaggio errore
+          $10,    -- source_system: 'DJC' (sistema che ha inviato l'evento)
+          $11,    -- created_by: identità del chiamante (Bearer token user, o 'djc-system')
+          $12,    -- created_at: timestamp di creazione del record
+          $13,    -- updated_at: timestamp di ultimo aggiornamento
+          $14     -- version: numero versione per optimistic locking (iniziale 1)
+        )
+        ON CONFLICT (job_card_id, push_timestamp)
+        DO UPDATE SET
+          response_id = $1,
+          djc_sync_status = $4,
+          json_modified = $6,
+          updated_at = $12,
+          version = version + 1
+        RETURNING response_id, djc_sync_status, version
+      `;
 
-      logger.info('API Gateway request', {
-        method,
-        path,
-        pathParameters: event.pathParameters
+      // Parametri della query
+      const upsertValues = [
+        responseId,                                    // $1: response_id
+        jobCardId,                                     // $2: job_card_id
+        new Date(timestamp),                           // $3: push_timestamp (converte a Date PostgreSQL)
+        dbStatus,                                      // $4: djc_sync_status (stato evento)
+        JSON.stringify(payload),                       // $5: json_payload (payload originale)
+        JSON.stringify({
+          eventType,                                   // Tipo evento ricevuto
+          receivedAt: new Date().toISOString(),        // Quando è stato ricevuto dalla lambda
+          additionalFields: Object.keys(additionalData) // Quali campi aggiuntivi erano presenti
+        }),                                            // $6: json_modified
+        0,                                             // $7: retry_count (iniziale 0)
+        _getErrorCode(eventType),                      // $8: error_code (null per success, codice per failure)
+        _getErrorMessage(eventType),                   // $9: error_message (null per success, messaggio per failure)
+        'DJC',                                         // $10: source_system (sempre DJC)
+        'djc-system',                                  // $11: created_by (sistema DJC, eventualmente user da token)
+        new Date(),                                    // $12: created_at
+        new Date(),                                    // $13: updated_at
+        1                                              // $14: version (iniziale 1)
+      ];
+
+      // Esegui l'UPSERT (INSERT con ON CONFLICT DO UPDATE)
+      const result = await pool.query({
+        text: upsertQuery,
+        values: upsertValues,
+        statement_timeout: 5000  // Timeout 5 secondi per query database
       });
 
-      if (method === 'POST' && path.includes('/synch-status')) {
-        return await exports._handlePostSynchStatus(
-          event,
-          authValidation.token,
-          config,
-          authService,
-          externalClient,
-          logger
-        );
-      } else if (method === 'GET' && path.includes('/synch-status')) {
-        return await exports._handleGetSynchStatus(
-          event,
-          logger
-        );
+      // Verifica che l'operazione sia andata a buon fine
+      if (!result.rows || result.rows.length === 0) {
+        logger.error('❌ UPSERT fallito: nessuna riga ritornata', {
+          jobCardId,
+          eventType
+        });
+        return exports._buildResponse(500, {
+          error: 'Internal Server Error',
+          message: 'Errore durante salvataggio evento in Aurora',
+          traceId: logger.getTraceId()
+        }, logger.getTraceId());
       }
-    } else if (event.action) {
-      // Direct Lambda invoke con action
-      logger.info('Direct Lambda invoke', { action: event.action });
 
-      if (event.action === 'POST_SYNCH_STATUS') {
-        return await exports._handlePostSynchStatus(
-          event,
-          authValidation.token,
-          config,
-          authService,
-          externalClient,
-          logger
-        );
-      } else if (event.action === 'GET_SYNCH_STATUS') {
-        return await exports._handleGetSynchStatus(event, logger);
+      // Estrai risultato dell'UPSERT
+      const upsertedRecord = result.rows[0];
+      
+      logger.info('✅ Evento registrato in Aurora', {
+        responseId: upsertedRecord.response_id,
+        jobCardId,
+        eventType,
+        dbStatus: upsertedRecord.djc_sync_status,
+        version: upsertedRecord.version,
+        isInsert: upsertedRecord.version === 1,  // version=1 significa INSERT, >1 significa UPDATE
+        isUpdate: upsertedRecord.version > 1
+      });
+
+      // ─────────────────────────────────────────────────────────────────────
+      // 6️⃣  COSTRUISCI E RITORNA RISPOSTA DI SUCCESSO
+      // ─────────────────────────────────────────────────────────────────────
+
+      // Risposta HTTP 200 OK con dettagli dell'evento registrato
+      return exports._buildResponse(200, {
+        statusCode: 200,
+        success: true,
+        message: `Evento ${eventType} registrato con successo`,
+        response: {
+          responseId: upsertedRecord.response_id,
+          jobCardId,
+          eventType,
+          status: upsertedRecord.djc_sync_status,
+          timestamp: new Date().toISOString(),
+          version: upsertedRecord.version
+        },
+        traceId: logger.getTraceId()
+      }, logger.getTraceId());
+
+    } catch (dbError) {
+      // ─────────────────────────────────────────────────────────────────────
+      // 🛑 GESTIONE ERRORE DATABASE
+      // ─────────────────────────────────────────────────────────────────────
+
+      logger.error('❌ Errore durante UPSERT in Aurora', dbError, {
+        jobCardId,
+        eventType,
+        errorCode: dbError.code,
+        errorMessage: dbError.message
+      });
+
+      // Se l'errore è di timeout del database
+      if (dbError.message.includes('timeout')) {
+        return exports._buildResponse(504, {
+          error: 'Gateway Timeout',
+          message: 'Query database superato il timeout',
+          traceId: logger.getTraceId()
+        }, logger.getTraceId());
       }
+
+      // Se l'errore è di connessione
+      if (dbError.message.includes('connect') || dbError.message.includes('ECONNREFUSED')) {
+        return exports._buildResponse(503, {
+          error: 'Service Unavailable',
+          message: 'Connessione database non disponibile',
+          traceId: logger.getTraceId()
+        }, logger.getTraceId());
+      }
+
+      // Errore generico database
+      return exports._buildResponse(500, {
+        error: 'Internal Server Error',
+        message: 'Errore durante salvataggio in Aurora',
+        traceId: logger.getTraceId()
+      }, logger.getTraceId());
     }
 
-    // Path non riconosciuto
-    logger.warn('Endpoint non trovato', {
-      path: event.rawPath || event.path,
-      method: event.httpMethod
-    });
-
-    return exports._buildResponse(404, {
-      error: 'Not Found',
-      message: 'Endpoint non trovato',
-      traceId: logger.getTraceId()
-    }, logger.getTraceId());
-
   } catch (error) {
-    logger.error('Errore non gestito in handler', error);
-    
+    // ─────────────────────────────────────────────────────────────────────
+    // 🔴 ERRORE NON GESTITO - Catch-all handler
+    // ─────────────────────────────────────────────────────────────────────
+
+    logger.error('🔴 Errore non gestito nel handler', error);
+
+    // Ritorna 500 Internal Server Error
     return exports._buildResponse(500, {
       error: 'Internal Server Error',
-      message: 'Errore interno del server',
+      message: error.message || 'Errore interno del server',
       traceId: logger.getTraceId()
     }, logger.getTraceId());
   }
 };
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 📝 Gestisci POST /api/synch-status
-// Ricevi callback DJC → AGGIORNA record in Aurora (creato da isStellantisBrand)
-// ──────────────────────────────────────────────────────────────────────────────
-async function _handlePostSynchStatus(
-  event,
-  bearerToken,
-  config,
-  authService,
-  externalClient,
-  logger
-) {
-  let pool = null;
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔍 VALIDAZIONE PAYLOAD
+// ─────────────────────────────────────────────────────────────────────────────
 
-  try {
-    // Valida payload
-    const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-    const validation = Validator.validatePostSynchStatus(body);
-
-    if (!validation.valid) {
-      logger.warn('Validazione payload fallita', {
-        errors: validation.errors
-      });
-
-      return exports._buildResponse(400, {
-        error: 'Bad Request',
-        message: 'Validazione fallita',
-        details: validation.errors,
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    const { events } = validation.data;
-    const pushTimestamp = new Date();
-
-    logger.info('Validazione superata', {
-      eventCount: events.length,
-      timestamp: pushTimestamp.toISOString()
-    });
-
-    // Ottieni header per sistemi esterni
-    const headers = await authService.getExternalSystemHeaders();
-
-    // Recupera X-IBM-Client-Secret dalla configurazione (obbligatorio dopo FIX APIC)
-    const xIbmClientSecret = config.getByPath('apic.clientSecret');
-    if (!xIbmClientSecret) {
-      logger.error('X-IBM-Client-Secret non configurato', new Error('Config missing'), {
-        configPath: 'apic.clientSecret'
-      });
-      return exports._buildResponse(500, {
-        error: 'Internal Server Error',
-        message: 'Configurazione APIC incompleta - Client Secret mancante',
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    logger.debug('APIC Client Secret loaded', {
-      hasSecret: !!xIbmClientSecret,
-      traceId: logger.getTraceId()
-    });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 1️⃣  CONNETTITI AL DATABASE AURORA PostgreSQL
-    // Usa pattern isStellantisBrand: pool riutilizzato tra invocazioni (warm start)
-    // ─────────────────────────────────────────────────────────────────────
-    pool = await getPool();
-    logger.info('Connessione Aurora PostgreSQL acquisita');
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 2️⃣  ESTRAI job_card_id DAL PRIMO EVENTO (obbligatorio per tracciamento)
-    // ─────────────────────────────────────────────────────────────────────
-    const firstEvent = events[0];
-    const jobCardId = firstEvent?.job_card_id || firstEvent?.jobCardId || null;
-
-    if (!jobCardId) {
-      logger.warn('job_card_id mancante nel primo evento');
-      return exports._buildResponse(400, {
-        error: 'Bad Request',
-        message: 'job_card_id obbligatorio nel payload',
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    logger.info('Job Card ID estratto dal payload', { jobCardId });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 3️⃣  UPDATE record in woc.comunication_asyncro_djc
-    // CORRETTO: UPDATE il record creato da isStellantisBrand (non INSERT!)
-    // Il record deve essere stato creato da isStellantisBrand con status PENDING
-    // Se non esiste: 404 Not Found
-    // ─────────────────────────────────────────────────────────────────────
-    const updateQuery = `
-      UPDATE woc.comunication_asyncro_djc
-      SET 
-        djc_sync_status = $1,
-        json_modified = $2,
-        updated_at = $3,
-        version = version + 1
-      WHERE job_card_id = $4 
-        AND push_timestamp = $5
-      RETURNING response_id, djc_sync_status, version
-    `;
-
-    const updateValues = [
-      'RECEIVED_FROM_DJC',                           // $1: djc_sync_status (callback ricevuto)
-      JSON.stringify({ events, receivedAt: new Date().toISOString() }), // $2: json_modified
-      new Date(),                                    // $3: updated_at
-      jobCardId,                                     // $4: job_card_id (WHERE clause)
-      pushTimestamp                                  // $5: push_timestamp (WHERE clause)
-    ];
-
-    const updateResult = await pool.query({
-      text: updateQuery,
-      values: updateValues,
-      statement_timeout: 5000
-    });
-
-    // ⚠️ Se nessun record trovato: errore 404
-    if (!updateResult.rows || updateResult.rows.length === 0) {
-      logger.error('Record non trovato in Aurora', { jobCardId });
-      return exports._buildResponse(404, {
-        error: 'Not Found',
-        message: 'Comunicazione non trovata. isStellantisBrand non ha ancora inviato a DJC?',
-        jobCardId,
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    const updatedRecord = updateResult.rows[0];
-    logger.info('✅ Record aggiornato in woc.comunication_asyncro_djc', {
-      responseId: updatedRecord.response_id,
-      jobCardId,
-      status: updatedRecord.djc_sync_status,
-      version: updatedRecord.version
-    });
-
-    // Invia a sistemi esterni (DJC + GCT) con APIC Client Secret
-    const sendResults = await externalClient.sendToMultipleSystems(
-      events,
-      bearerToken,
-      config.getByPath('apic.clientId'),
-      xIbmClientSecret,
-      ['djc', 'gct']
-    );
-
-    logger.info('Invio a sistemi esterni completato', {
-      jobCardId,
-      successful: sendResults.successful.length,
-      failed: sendResults.failed.length
-    });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 4️⃣  AGGIORNA STATO A SUCCESS SE ALMENO UN SISTEMA HA SUCCESSO
-    // ─────────────────────────────────────────────────────────────────────
-    if (sendResults.successful.length > 0) {
-      const updateSuccessQuery = `
-        UPDATE woc.comunication_asyncro_djc
-        SET 
-          djc_sync_status = 'SUCCESS',
-          json_modified = json_modified || $1::jsonb,
-          updated_at = $2,
-          version = version + 1
-        WHERE job_card_id = $3
-        RETURNING response_id, version
-      `;
-
-      const updateSuccessValues = [
-        JSON.stringify({ 
-          sentAt: new Date().toISOString(),
-          systems: sendResults.successful.map(s => s.system)
-        }),
-        new Date(),
-        jobCardId
-      ];
-
-      const updateSuccessResult = await pool.query({
-        text: updateSuccessQuery,
-        values: updateSuccessValues,
-        statement_timeout: 5000
-      });
-
-      logger.info('✅ Stato aggiornato a SUCCESS in Aurora', {
-        jobCardId,
-        updatedRows: updateSuccessResult.rows.length
-      });
-
-      return exports._buildResponse(200, {
-        responseId: updatedRecord.response_id,
-        jobCardId,
-        message: 'Callback DJC elaborato con successo',
-        results: {
-          successful: sendResults.successful.length,
-          failed: sendResults.failed.length
-        },
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 5️⃣  AGGIORNA STATO A FAILURE SE TUTTI I SISTEMI FALLISCONO
-    // ─────────────────────────────────────────────────────────────────────
-    const firstError = sendResults.failed[0];
-    const updateFailureQuery = `
-      UPDATE woc.comunication_asyncro_djc
-      SET 
-        djc_sync_status = 'FAILURE',
-        error_code = $1,
-        error_message = $2,
-        json_modified = json_modified || $3::jsonb,
-        updated_at = $4,
-        version = version + 1
-      WHERE job_card_id = $5
-      RETURNING response_id, version
-    `;
-
-    const updateFailureValues = [
-      firstError?.statusCode || 'UNKNOWN_ERROR',
-      firstError?.message || 'Errore durante invio a sistemi esterni',
-      JSON.stringify({ 
-        errors: sendResults.failed,
-        failedAt: new Date().toISOString()
-      }),
-      new Date(),
-      jobCardId
-    ];
-
-    const updateFailureResult = await pool.query({
-      text: updateFailureQuery,
-      values: updateFailureValues,
-      statement_timeout: 5000
-    });
-
-    logger.warn('❌ Stato aggiornato a FAILURE in Aurora', {
-      jobCardId,
-      errorCode: firstError?.statusCode
-    });
-
-    return exports._buildResponse(firstError.statusCode || 502, {
-      responseId: updatedRecord.response_id,
-      jobCardId,
-      error: 'External System Error',
-      message: 'Callback DJC ricevuto ma errore nel forwarding a sistemi esterni',
-      systems: sendResults.failed,
-      traceId: logger.getTraceId()
-    }, logger.getTraceId());
-
-  } catch (error) {
-    logger.error('Errore handler POST /synch-status', error);
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 6️⃣  AGGIORNA STATO A ERROR SE LAMBDA FALLISCE (nel catch block)
-    // CORRETTO: UPDATE, non INSERT!
-    // ─────────────────────────────────────────────────────────────────────
-    if (pool) {
-      try {
-        const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-        const jobCardId = body?.events?.[0]?.job_card_id;
-        
-        if (jobCardId) {
-          const errorUpdateQuery = `
-            UPDATE woc.comunication_asyncro_djc
-            SET 
-              djc_sync_status = 'ERROR',
-              error_code = 'LAMBDA_EXCEPTION',
-              error_message = $1,
-              updated_at = $2,
-              version = version + 1
-            WHERE job_card_id = $3
-          `;
-
-          await pool.query({
-            text: errorUpdateQuery,
-            values: [error.message, new Date(), jobCardId],
-            statement_timeout: 5000
-          });
-
-          logger.info('⚠️  Errore lambda registrato in Aurora', { jobCardId, errorCode: 'LAMBDA_EXCEPTION' });
-        }
-      } catch (dbErr) {
-        logger.error('Impossibile registrare errore in Aurora', dbErr);
-      }
-    }
-
-    // Se errore ha statusCode mappato, usa quello
-    if (error.statusCode) {
-      return exports._buildResponse(error.statusCode, {
-        error: 'Error',
-        message: error.message,
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    return exports._buildResponse(500, {
-      error: 'Internal Server Error',
-      message: error.message,
-      traceId: logger.getTraceId()
-    }, logger.getTraceId());
+function _validatePayload(payload, logger) {
+  // Valida che payload sia un oggetto
+  if (!payload || typeof payload !== 'object') {
+    return {
+      valid: false,
+      errors: ['Payload deve essere un oggetto JSON']
+    };
   }
-}
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 📖 Gestisci GET /api/synch-status/{requestId}
-// Leggi stato di una comunicazione da Aurora comunication_asyncro_djc
-// ──────────────────────────────────────────────────────────────────────────────
-async function _handleGetSynchStatus(event, logger) {
-  let pool = null;
-
-  try {
-    // Estrai requestId da path
-    const requestId = event.pathParameters?.requestId || 
-                      event.requestId ||
-                      (event.rawPath?.split('/').pop());
-
-    const validation = Validator.validateGetSynchStatus(requestId);
-
-    if (!validation.valid) {
-      logger.warn('Validazione GET fallita', {
-        errors: validation.errors
-      });
-
-      return exports._buildResponse(400, {
-        error: 'Bad Request',
-        message: 'requestId non valido',
-        details: validation.errors,
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    logger.info('GET /synch-status richiesto', { requestId });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 1️⃣  CONNETTITI AL DATABASE AURORA
-    // ─────────────────────────────────────────────────────────────────────
-    pool = await getPool();
-    logger.info('Connessione Aurora acquisita per GET', { requestId });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 2️⃣  SELECT RECORD DA woc.comunication_asyncro_djc
-    // Query con indice PK su response_id → molto veloce
-    // ─────────────────────────────────────────────────────────────────────
-    const selectQuery = `
-      SELECT 
-        response_id,
-        job_card_id,
-        push_timestamp,
-        djc_sync_status,
-        json_payload,
-        json_modified,
-        retry_count,
-        error_code,
-        error_message,
-        created_at,
-        updated_at,
-        version
-      FROM woc.comunication_asyncro_djc
-      WHERE response_id = $1
-      LIMIT 1
-    `;
-
-    const selectResult = await pool.query({
-      text: selectQuery,
-      values: [requestId],
-      statement_timeout: 5000
-    });
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 3️⃣  RITORNA STATO DEL RECORD
-    // Status: PENDING, RECEIVED_FROM_DJC, SUCCESS, FAILURE, ERROR
-    // ─────────────────────────────────────────────────────────────────────
-    if (selectResult.rows && selectResult.rows.length > 0) {
-      const record = selectResult.rows[0];
-
-      logger.info('✅ Record trovato in Aurora', {
-        requestId,
-        jobCardId: record.job_card_id,
-        status: record.djc_sync_status
-      });
-
-      return exports._buildResponse(200, {
-        requestId,
-        jobCardId: record.job_card_id,
-        status: record.djc_sync_status,
-        pushTimestamp: record.push_timestamp,
-        createdAt: record.created_at,
-        updatedAt: record.updated_at,
-        retryCount: record.retry_count,
-        errorCode: record.error_code,
-        errorMessage: record.error_message,
-        version: record.version,
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-    }
-
-    // Record non trovato in Aurora
-    logger.warn('❌ Record non trovato in Aurora', { requestId });
-
-    return exports._buildResponse(404, {
-      requestId,
-      error: 'Not Found',
-      message: 'Comunicazione non trovata in Aurora',
-      traceId: logger.getTraceId()
-    }, logger.getTraceId());
-
-  } catch (error) {
-    logger.error('Errore handler GET /synch-status', error);
-
-    return exports._buildResponse(500, {
-      error: 'Internal Server Error',
-      message: error.message,
-      traceId: logger.getTraceId()
-    }, logger.getTraceId());
+  // Valida eventType (obbligatorio e deve essere uno dei 4 supportati)
+  if (!payload.eventType) {
+    return {
+      valid: false,
+      errors: ['eventType è obbligatorio']
+    };
   }
-}
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 🛠️  Funzioni Utilità
-// ──────────────────────────────────────────────────────────────────────────────
+  // Controlla che eventType sia uno dei 4 supportati
+  if (!Object.values(SUPPORTED_EVENT_TYPES).includes(payload.eventType)) {
+    const supportedList = Object.values(SUPPORTED_EVENT_TYPES).join(', ');
+    logger.warn('⚠️  eventType non supportato', {
+      receivedEventType: payload.eventType,
+      supportedEventTypes: supportedList
+    });
+    return {
+      valid: false,
+      errors: [
+        `eventType '${payload.eventType}' non supportato. Supportati: ${supportedList}`
+      ]
+    };
+  }
 
-// Costruisci risposta HTTP nel formato API Gateway Proxy Response
-function _buildResponse(statusCode, body, traceId) {
+  // Valida jobCardSrpId (obbligatorio - è la chiave insieme a timestamp)
+  if (!payload.jobCardSrpId) {
+    return {
+      valid: false,
+      errors: ['jobCardSrpId è obbligatorio (Job Card Identifier)']
+    };
+  }
+
+  // Valida timestamp (obbligatorio - deve essere valido ISO 8601 o numero)
+  if (!payload.timestamp) {
+    return {
+      valid: false,
+      errors: ['timestamp è obbligatorio (formato ISO 8601: 2026-04-24T10:30:00Z)']
+    };
+  }
+
+  // Valida che timestamp sia convertibile a Date
+  const timestampDate = new Date(payload.timestamp);
+  if (isNaN(timestampDate.getTime())) {
+    return {
+      valid: false,
+      errors: [`timestamp '${payload.timestamp}' non è valido (ISO 8601: 2026-04-24T10:30:00Z)`]
+    };
+  }
+
+  // Validazione passata: ritorna dati estratti
   return {
-    statusCode,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Trace-Id': traceId,
-      'Access-Control-Allow-Origin': '*'
-    },
-    body: JSON.stringify(body)
+    valid: true,
+    data: {
+      eventType: payload.eventType,
+      jobCardId: payload.jobCardSrpId,  // Rinomina per coerenza nel codice
+      timestamp: payload.timestamp,
+      // Tutti gli altri campi sono opzionali (jobCardLegacyId, dmsRepairOrderId, xpDealerCode, etc.)
+      ...payload
+    }
   };
 }
 
-// Genera UUID unico per response_id
-function _generateRequestId() {
-  return uuidv4();
+// ─────────────────────────────────────────────────────────────────────────────
+// 📊 MAPPING STATO DB DA EVENT TYPE
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _getErrorCode(eventType) {
+  // Ritorna error_code a seconda del tipo evento
+  // Per SUCCESS: null (nessun errore)
+  // Per FAILURE e REFUSAL: codice errore
+  
+  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE) {
+    // DMS_PUSH_FAILURE: errore durante push
+    return 'DMS_PUSH_FAILED';
+  }
+  
+  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL) {
+    // DMS_PUSH_REFUSAL: rifiutato dal sistema esterno
+    return 'DMS_PUSH_REFUSED';
+  }
+
+  // SUCCESS_WITHOUT_UPDATE e SUCCESS_WITH_UPDATE: nessun errore
+  return null;
 }
 
-// Rendi funzioni accessibili per export e test unitari
-exports._handlePostSynchStatus = _handlePostSynchStatus;
-exports._handleGetSynchStatus = _handleGetSynchStatus;
+function _getErrorMessage(eventType) {
+  // Ritorna messaggio errore a seconda del tipo evento
+  // Per SUCCESS: null
+  // Per FAILURE e REFUSAL: messaggio descrittivo
+  
+  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE) {
+    return 'DMS ha riportato un fallimento durante il push del job card';
+  }
+  
+  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL) {
+    return 'DMS ha rifiutato il push del job card (validazione fallita)';
+  }
+
+  // SUCCESS events: nessun messaggio errore
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🛠️  COSTRUZIONE RISPOSTA HTTP
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _buildResponse(statusCode, body, traceId) {
+  // Costruisce risposta HTTP nel formato API Gateway Proxy (statusCode, headers, body)
+  
+  return {
+    statusCode,                                 // Codice HTTP: 200, 400, 500, etc.
+    headers: {
+      'Content-Type': 'application/json',      // Risposta sempre JSON
+      'X-Trace-Id': traceId,                   // Trace ID per correlazione log
+      'Access-Control-Allow-Origin': '*'       // CORS permissivo (eventualmente limitare)
+    },
+    body: JSON.stringify(body)                  // Body come JSON string
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 📦 EXPORT PER TEST E INTEGRAZIONE
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Esponi funzioni ausiliarie per unit test
+exports._validatePayload = _validatePayload;
 exports._buildResponse = _buildResponse;
-exports._generateRequestId = _generateRequestId;
+exports._getErrorCode = _getErrorCode;
+exports._getErrorMessage = _getErrorMessage;
+exports.SUPPORTED_EVENT_TYPES = SUPPORTED_EVENT_TYPES;
+exports.EVENT_TYPE_TO_DB_STATUS = EVENT_TYPE_TO_DB_STATUS;

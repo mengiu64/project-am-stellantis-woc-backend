@@ -1,326 +1,292 @@
-# Syncro-Kafka-Events: Test Suite Completa
+# Syncro-Kafka-Events Lambda - SRP DL KAFKA Integration
 
 ## 📋 Sommario
 
-Questa suite di test copre **completamente** la lambda `syncro-kafka-events` con il **codice corretto** che usa **UPDATE** (non INSERT) per aggiornare record in Aurora creati da `isStellantisBrand`.
+Lambda `syncro-kafka-events` riceve **SOLTANTO 4 eventi specifici** da DJC e li registra in Aurora PostgreSQL secondo la specifica **SRP DL KAFKA Specification.md**.
 
-### Correzi chiave:
-- ✅ **UPDATE** al posto di INSERT (righe critiche corrette)
-- ✅ **404 Not Found** se il record non esiste in Aurora
-- ✅ **ON CONFLICT DO UPDATE** per idempotency (duplicated callback)
-- ✅ **Errori lambda registrati** in Aurora come status ERROR
+### I 4 Eventi Supportati:
+1. **DMS_PUSH_SUCCESS_WITHOUT_UPDATE** → Status DB: `SUCCESS_WITHOUT_UPDATE` (nessun errore)
+2. **DMS_PUSH_SUCCESS_WITH_UPDATE** → Status DB: `SUCCESS_WITH_UPDATE` (nessun errore)
+3. **DMS_PUSH_REFUSAL** → Status DB: `REFUSAL` (error_code: `DMS_PUSH_REFUSED`)
+4. **DMS_PUSH_FAILURE** → Status DB: `FAILURE` (error_code: `DMS_PUSH_FAILED`)
 
 ---
 
-## 📁 Struttura Test
+## 🏗️ Architettura
 
 ```
-__tests__/
-├── index.test.js                      # Test handler principale (1000+ linee)
-├── dbClient.integration.test.js       # Test operazioni database Aurora
-├── externalSystemClient.test.js       # Test invii a DJC + GCT
-├── validator.test.js                  # Test validazione input
-├── integration.e2e.test.js            # Test end-to-end flow
-├── jest.config.js                     # Configurazione Jest
-└── README.md                          # Questo file
+┌────────────────────────────┐
+│   DJC (Sistema Esterno)   │
+│ Invia 1 dei 4 eventi      │
+└─────────────┬──────────────┘
+              │ POST /api/synch-status
+              │ Content-Type: application/json
+              ▼
+┌────────────────────────────────────────────┐
+│    syncro-kafka-events Lambda              │
+│    (Node.js 24.x, 512MB, timeout 30s)     │
+│                                            │
+│  1. Parse e Valida payload                │
+│  2. Verifica eventType ∈ [4 supportati]  │
+│  3. Converte eventType → DB Status        │
+│  4. Connette Aurora PostgreSQL            │
+│  5. UPSERT in woc.comunication_asyncro_djc
+│  6. Ritorna 200 OK o errore HTTP          │
+└─────────────┬──────────────────────────────┘
+              │ INSERT/UPDATE
+              ▼
+┌────────────────────────────────────────┐
+│  Aurora PostgreSQL                     │
+│  Tabella: woc.comunication_asyncro_djc │
+│  Chiave: (job_card_id, push_timestamp) │
+└────────────────────────────────────────┘
 ```
 
 ---
 
-## 🧪 Categorie di Test
+## 📊 Schema Tabella Aurora
 
-### 1️⃣ **index.test.js** (~500 test case) - Handler principale
-
-#### Autenticazione e Autorizzazione (5 test)
-- ✅ 401 se Authorization header mancante
-- ✅ 401 se token non valido
-- ✅ 403 se permessi insufficienti
-- ✅ Estrazione corretta del Bearer token
-- ✅ Validazione permessi
-
-#### POST /api/synch-status (12 test) - **CORRETTO: UPDATE logic**
-- ✅ UPDATE record con successo (404 if not found) ⭐
-- ✅ Ritorna 404 se record NON esiste (UPDATE fallisce) ⭐
-- ✅ Registra errore lambda con status ERROR ⭐
-- ✅ Ritorna 400 se payload non valido
-- ✅ Aggiorna stato a SUCCESS se sistemi esterni OK
-- ✅ Aggiorna stato a FAILURE se sistemi esterni falliscono
-- ✅ Ritorna 500 se X-IBM-Client-Secret non configurato
-- ✅ Supporta API Gateway v1 e v2
-- ✅ Supporta direct Lambda invoke con action
-- ✅ Riporta errori con trace ID
-
-#### GET /api/synch-status/{requestId} (5 test)
-- ✅ Ritorna record con status PENDING
-- ✅ Ritorna record con status SUCCESS dopo callback
-- ✅ Ritorna 404 se record non trovato
-- ✅ Ritorna 400 se requestId non valido
-- ✅ Ritorna record con status ERROR e error details
-
-#### Utility Functions (2 test)
-- ✅ _buildResponse costruisce risposta HTTP corretta
-- ✅ Response include CORS headers
-
-#### Idempotency - ON CONFLICT DO UPDATE (1 test) ⭐
-- ✅ Handle duplicate callback con ON CONFLICT DO UPDATE
-- ✅ Garantisce nessun duplicato di record
-
-#### API Gateway Integration (3 test)
-- ✅ Supporta API Gateway v2 (rawPath + requestContext.http.method)
-- ✅ Supporta direct Lambda invoke con action
-- ✅ Ritorna 404 per endpoint non riconosciuto
-
-#### Retry Logic & Recovery (1 test)
-- ✅ Aggiorna retry_count quando external system fallisce
+```sql
+CREATE TABLE woc.comunication_asyncro_djc (
+  response_id UUID PRIMARY KEY,
+  job_card_id VARCHAR(50) NOT NULL,         -- jobCardSrpId dal payload
+  push_timestamp TIMESTAMP NOT NULL,        -- timestamp dal payload
+  djc_sync_status VARCHAR(50) NOT NULL,     -- SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE
+  json_payload JSONB,                       -- Payload originale ricevuto da DJC
+  json_modified JSONB,                      -- Metadati: receivedAt, eventType, additionalFields
+  retry_count INTEGER DEFAULT 0,            -- Per future retry logic
+  error_code VARCHAR(50),                   -- null per SUCCESS, 'DMS_PUSH_REFUSED' o 'DMS_PUSH_FAILED'
+  error_message TEXT,                       -- Descrizione errore (se fallita)
+  source_system VARCHAR(50) DEFAULT 'DJC',  -- Sistema che invia l'evento
+  created_by VARCHAR(100) DEFAULT 'djc-system',
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW(),
+  version INTEGER DEFAULT 1,                -- Per optimistic locking
+  UNIQUE (job_card_id, push_timestamp)      -- Idempotency: stessa richiesta → ON CONFLICT DO UPDATE
+);
+```
 
 ---
 
-### 2️⃣ **dbClient.integration.test.js** (~400 linee) - Aurora Database
+## 🔄 Flusso di Elaborazione
 
-#### UPDATE record - Callback DJC (3 test)
-- ✅ UPDATE record con campi corretti (status RECEIVED_FROM_DJC)
-- ✅ Ritorna 0 rows se record non trovato (404 scenario) ⭐
-- ✅ Incrementa version ad ogni UPDATE
+### 1️⃣ **Ricezione Payload**
+```json
+{
+  "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+  "jobCardSrpId": "JCID-42",
+  "timestamp": "2026-04-24T10:30:00Z",
+  "jobCardLegacyId": "123456",              // Opzionale
+  "dmsRepairOrderId": "1A45",               // Opzionale
+  "xpDealerCode": "123456A",                // Opzionale
+  "xfDealerCode": "987456",                 // Opzionale
+  "pairedOicCode": "1478566994",            // Opzionale
+  "marketCode": "1000"                      // Opzionale
+}
+```
 
-#### ON CONFLICT DO UPDATE - Idempotency (2 test)
-- ✅ Aggiorna record se (job_card_id, push_timestamp) duplicate
-- ✅ Preserva idempotency senza duplicare record
+### 2️⃣ **Validazione**
+- ✅ `eventType` obbligatorio e ∈ [4 supportati]
+- ✅ `jobCardSrpId` obbligatorio
+- ✅ `timestamp` obbligatorio (ISO 8601)
+- ❌ Se validazione fallisce: **400 Bad Request**
 
-#### SELECT record - GET /api/synch-status (3 test)
-- ✅ SELECT record con tutti i campi necessari
-- ✅ Ritorna empty set se record non trovato
-- ✅ SELECT record con status ERROR e error details
+### 3️⃣ **Mapping Event Type → Status Database**
 
-#### Query Performance & Timeouts (2 test)
-- ✅ Esegue query con statement_timeout = 5000ms
-- ✅ Usa indice su response_id per SELECT veloce
+| Event Type | DB Status | error_code | error_message |
+|---|---|---|---|
+| `DMS_PUSH_SUCCESS_WITHOUT_UPDATE` | `SUCCESS_WITHOUT_UPDATE` | `null` | `null` |
+| `DMS_PUSH_SUCCESS_WITH_UPDATE` | `SUCCESS_WITH_UPDATE` | `null` | `null` |
+| `DMS_PUSH_REFUSAL` | `REFUSAL` | `DMS_PUSH_REFUSED` | "DMS ha rifiutato il push..." |
+| `DMS_PUSH_FAILURE` | `FAILURE` | `DMS_PUSH_FAILED` | "DMS ha riportato fallimento..." |
 
-#### Data Integrity & Constraints (3 test)
-- ✅ Garantisce unique key (job_card_id, push_timestamp)
-- ✅ Ritorna version number per optimistic locking
-- ✅ Serializza JSON payload in json_payload
+### 4️⃣ **UPSERT in Aurora**
+- **Chiave di conflitto**: `(job_card_id, push_timestamp)`
+- **Se nuovo**: INSERT (version = 1)
+- **Se duplicato**: UPDATE (version += 1, idempotency garantita)
 
----
+### 5️⃣ **Risposta HTTP**
 
-### 3️⃣ **externalSystemClient.test.js** (~550 linee) - DJC + GCT
+#### ✅ Successo (200 OK)
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Evento DMS_PUSH_SUCCESS_WITHOUT_UPDATE registrato con successo",
+  "response": {
+    "responseId": "uuid-1234",
+    "jobCardId": "JCID-42",
+    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+    "status": "SUCCESS_WITHOUT_UPDATE",
+    "timestamp": "2026-04-24T10:30:00Z",
+    "version": 1
+  },
+  "traceId": "trace-12345"
+}
+```
 
-#### sendToMultipleSystems() (5 test)
-- ✅ Invia a DJC e GCT con successo
-- ✅ Includere APIC headers nel request
-- ✅ Ritorna failed array se DJC ritorna 5xx
-- ✅ Ritorna tutti failed se nessun sistema risponde
-- ✅ Gestisce partial failure (DJC OK, GCT fallisce)
+#### ❌ Errori
 
-#### Retry Logic (2 test)
-- ✅ Ritenta su errore 5xx temporaneo
-- ✅ Non ritenta su errore 4xx (client error)
-
-#### System-Specific Endpoints (2 test)
-- ✅ Invia a DJC endpoint corretto
-- ✅ Invia a GCT endpoint corretto
-
-#### Request Payload (2 test)
-- ✅ Serializza events array in JSON body
-- ✅ Includere timestamp nel body
-
-#### Timeout Management (1 test)
-- ✅ Applica timeout configurato (5000ms)
-
-#### Response Parsing & Status (2 test)
-- ✅ Interpreta 2xx come successo
-- ✅ Interpreta 3xx/4xx/5xx come errore
-
----
-
-### 4️⃣ **validator.test.js** (~700 linee) - Input Validation
-
-#### validateAuthorizationHeader() (7 test)
-- ✅ Accetta Bearer token valido
-- ✅ Rifiuta header mancante
-- ✅ Rifiuta header vuoto
-- ✅ Rifiuta formato non Bearer
-- ✅ Rifiuta Bearer senza token
-- ✅ Estrae token correttamente
-- ✅ Tollera spazi extra
-
-#### validatePostSynchStatus() (13 test)
-- ✅ Accetta payload valido con events array
-- ✅ Accetta multiple events
-- ✅ Rifiuta payload senza events
-- ✅ Rifiuta events non array
-- ✅ Rifiuta array vuoto
-- ✅ Rifiuta events senza job_card_id
-- ✅ Accetta event con solo job_card_id
-- ✅ Rifiuta payload nullo/undefined
-- ✅ Valida job_card_id format (alphanumeric + dash)
-- ✅ Accetta json_payload opzionale
-- ✅ Rifiuta payload troppo grande
-- ✅ Accetta reasonevolmente grandi payload
-- ✅ Valida lunghezza job_card_id
-
-#### validateGetSynchStatus() (8 test)
-- ✅ Accetta requestId valido (UUID)
-- ✅ Accetta requestId alfanumerico corto
-- ✅ Rifiuta requestId troppo corto
-- ✅ Rifiuta requestId nullo/undefined/vuoto
-- ✅ Rifiuta requestId con caratteri speciali pericolosi
-- ✅ Accetta requestId con numeri e lettere
-
-#### Security & Input Sanitization (3 test)
-- ✅ Rifiuta job_card_id con SQL injection attempt
-- ✅ Rifiuta payload con XSS attempt
-- ✅ Rifiuta token con lunghezza sospetta
+| HTTP Code | Motivo |
+|---|---|
+| **400** | Payload non valido (JSON, eventType, campi obbligatori) |
+| **503** | Aurora non disponibile / Connessione fallita |
+| **504** | Query database timeout (> 5s) |
+| **500** | Errore generico database |
 
 ---
 
-### 5️⃣ **integration.e2e.test.js** (~700 linee) - End-to-End
+## 🧪 Test Suite
 
-#### Complete Flow: isStellantisBrand → DJC → syncro-kafka-events (3 test) ⭐
-- ✅ Completa flow end-to-end con successo
-- ✅ Fallisce e ritorna 404 se record non esiste (isStellantisBrand not called)
-- ✅ Aggiorna stato correttamente attraverso flow (PENDING → RECEIVED → SUCCESS)
+### Comandi
 
-#### GET /api/synch-status after POST (2 test)
-- ✅ Ritorna stato SUCCESS dopo POST flow completo
-- ✅ Ritorna stato FAILURE se POST fallisce
-
-#### Retry Scenarios (2 test)
-- ✅ Gestisce DJC callback timeout e permette retry
-- ✅ Accumula retry_count su fallimenti ripetuti
-
-#### Version Tracking & Optimistic Locking (1 test)
-- ✅ Incrementa version ad ogni UPDATE
-
-#### Multiple Events in Callback (1 test)
-- ✅ Processa callback con multipli events
-
----
-
-## 🚀 Eseguire i Test
-
-### Installare dipendenze
 ```bash
-cd /home/studio/workspace/Stellantis-lambda/syncro-kafka-events
-npm install --save-dev jest
+# Esegui tutti i test
+npm test
+
+# Esegui test specifico
+npm test -- index.test.js --verbose
+
+# Coverage report
+npm test -- --coverage
 ```
 
-### Eseguire tutti i test
+### Test Cases Implementati
+
+#### ✅ Validazione Payload (10 test)
+- Accettazione dei 4 event types supportati
+- Rifiuto di event types non supportati
+- Campi obbligatori: eventType, jobCardSrpId, timestamp
+- Validazione timestamp (ISO 8601)
+- Campi opzionali accettati
+
+#### ✅ Mapping Errore (4 test)
+- error_code null per SUCCESS events
+- error_code `DMS_PUSH_REFUSED` per REFUSAL
+- error_code `DMS_PUSH_FAILED` per FAILURE
+- error_message coerenti
+
+#### ✅ Handler - Salvataggio Aurora (10 test)
+- Registrazione dei 4 eventi
+- Idempotency: stesso evento due volte → UPDATE con version++
+- Gestione ON CONFLICT DO UPDATE
+- Error handling: connessione, timeout, UPSERT fail
+
+#### ✅ Error Handling (5 test)
+- 400 Bad Request: payload non valido
+- 503 Service Unavailable: Aurora offline
+- 504 Gateway Timeout: query lenta
+- 500 Internal Error: errore generico
+
+#### ✅ Utility Functions (3 test)
+- _buildResponse() con headers corretti
+- SUPPORTED_EVENT_TYPES enum
+- EVENT_TYPE_TO_DB_STATUS mapping
+
+**Totale: 32 test cases** (Target coverage > 85%)
+
+---
+
+## 📝 Logging Strutturato
+
+La lambda log a ogni step con traccia ID per correlazione:
+
+```javascript
+logger.info('🔔 Lambda syncro-kafka-events invocata', { traceId, method, path });
+logger.info('📋 Payload ricevuto:', { payload });
+logger.info('✅ Payload validato', { eventType, jobCardId, timestamp });
+logger.info('🔗 Connessione Aurora PostgreSQL acquisita');
+logger.info('✅ Evento registrato in Aurora', { responseId, jobCardId, eventType, version });
+
+// Errori
+logger.error('❌ Errore parsing JSON body', error);
+logger.error('❌ Errore connessione Aurora', error);
+logger.warn('⚠️  eventType non supportato', { received, supported });
+```
+
+---
+
+## 🛡️ Gestione Errori
+
+| Scenario | Handling |
+|---|---|
+| **Payload JSON invalido** | 400 Bad Request, log dettagliato |
+| **eventType mancante/non supportato** | 400 Bad Request, elenco supportati in risposta |
+| **Campi obbligatori mancanti** | 400 Bad Request, elenco campi richiesti |
+| **Timestamp non ISO 8601** | 400 Bad Request, formato richiesto nella risposta |
+| **Aurora connessione fallita** | 503 Service Unavailable, retry consigliato |
+| **Query timeout (> 5s)** | 504 Gateway Timeout, retry consigliato |
+| **UPSERT fallisce (nessuna riga)** | 500 Internal Server Error, indagare DB |
+| **Eccezione non gestita** | 500 Internal Server Error, full stack trace in log |
+
+---
+
+## 🔐 Sicurezza & Idempotency
+
+### Idempotency via Unique Constraint
+```sql
+UNIQUE (job_card_id, push_timestamp)
+```
+
+Se DJC invia lo stesso evento due volte:
+1. **Prima richiesta**: INSERT (version = 1)
+2. **Seconda richiesta**: ON CONFLICT → UPDATE (version = 2), nessun duplicato
+
+### Chiavi Composte
+- **Primary Key**: `response_id` (UUID univoco per ogni risposta lambda)
+- **Unique Key**: `(job_card_id, push_timestamp)` (idempotency per richieste DJC duplicate)
+
+---
+
+## 🚀 Esecuzione
+
+### Locale (con mock Aurora)
 ```bash
 npm test
 ```
 
-### Eseguire test specifico
+### Su AWS Lambda
+1. Fare il deploy del codice
+2. Configurare environment variables (Aurora connection string in Secrets Manager)
+3. Configurare trigger API Gateway o ALB
+4. Testare con curl:
+
 ```bash
-npm test -- index.test.js                    # Handler principale
-npm test -- dbClient.integration.test.js     # Database
-npm test -- externalSystemClient.test.js     # External systems
-npm test -- validator.test.js                # Validation
-npm test -- integration.e2e.test.js          # End-to-end
+curl -X POST https://api.example.com/api/synch-status \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+    "jobCardSrpId": "JCID-42",
+    "timestamp": "2026-04-24T10:30:00Z"
+  }'
 ```
-
-### Coverage
-```bash
-npm test -- --coverage
-```
-
----
-
-## ✨ Correzioni Implementate
-
-### 🔴 PRIMA (Bug):
-```javascript
-// ❌ SBAGLIATO: Due INSERT statements
-const insertQuery = `
-  INSERT INTO woc.comunication_asyncro_djc (...) VALUES (...)
-  ON CONFLICT (...) DO UPDATE SET ...
-`;
-
-// ❌ SBAGLIATO: Error block ha INSERT anziché UPDATE
-const errorQuery = `
-  INSERT INTO woc.comunication_asyncro_djc (...) VALUES (...)
-  ON CONFLICT (...) DO UPDATE SET ...
-`;
-```
-
-### 🟢 DOPO (Corretto):
-```javascript
-// ✅ CORRETTO: UPDATE (non INSERT)
-const updateQuery = `
-  UPDATE woc.comunication_asyncro_djc
-  SET djc_sync_status = $1, json_modified = $2, ...
-  WHERE job_card_id = $4 AND push_timestamp = $5
-  RETURNING response_id, djc_sync_status, version
-`;
-
-// ✅ CORRETTO: UPDATE nel error block
-const errorUpdateQuery = `
-  UPDATE woc.comunication_asyncro_djc
-  SET djc_sync_status = 'ERROR', error_code = 'LAMBDA_EXCEPTION', ...
-  WHERE job_card_id = $3
-`;
-
-// ✅ CORRETTO: 404 se UPDATE non trova il record
-if (!updateResult.rows || updateResult.rows.length === 0) {
-  return exports._buildResponse(404, {
-    error: 'Not Found',
-    message: 'Comunicazione non trovata. isStellantisBrand non ha ancora inviato a DJC?',
-    jobCardId
-  });
-}
-```
-
----
-
-## 📊 Test Coverage Summary
-
-| File | Lines | Branches | Functions | Statements | Status |
-|------|-------|----------|-----------|------------|--------|
-| index.js | ~500+ | ~250 | ~50 | ~500+ | ✅ Completo |
-| Totali | **2500+** | **1200+** | **100+** | **2500+** | ✅ Completo |
-
----
-
-## 🎯 Checklist Pre-Commit
-
-Prima di fare commit del codice corretto:
-
-- [ ] ✅ Tutti i test passano: `npm test`
-- [ ] ✅ Coverage > 75%: `npm test -- --coverage`
-- [ ] ✅ UPDATE al posto di INSERT in index.js
-- [ ] ✅ 404 se record non trovato in Aurora
-- [ ] ✅ Version incrementato ad ogni UPDATE
-- [ ] ✅ Errori lambda registrati con status ERROR
-- [ ] ✅ ON CONFLICT DO UPDATE per idempotency
-- [ ] ✅ APIC headers (X-IBM-Client-Id, X-IBM-Client-Secret) inclusi
-- [ ] ✅ Mocks corretti in tutti i test
-- [ ] ✅ Test e2e copre flow completo isStellantisBrand → DJC → syncro-kafka-events
 
 ---
 
 ## 📚 Riferimenti
 
-- **Lambda**: `syncro-kafka-events/index.js`
-- **Database**: `shared/dbClient.js` (Aurora PostgreSQL)
-- **External Systems**: `externalSystemClient.js` (DJC + GCT)
-- **Validation**: `validator.js`
-- **Template**: `isStellantisBrand/index.js` (pattern di riferimento)
+- **Specifica**: [SRP DL KAFKA Specification.md](/docs/srp-dl-kafka-specification)
+- **Walden Requirements**: [Walden Spec - syncro-kafka-events](/docs/walden-syncro-kafka-events-requirements)
+- **Design**: [Design Document](/docs/design-syncro-kafka-events)
+- **Database**: `shared/dbClient.js` (Pattern Aurora PostgreSQL)
 
 ---
 
-## 💬 Note Importanti
+## ✅ Checklist Pre-Commit
 
-1. **UPDATE Non INSERT**: Il record deve essere creato da `isStellantisBrand` con status PENDING. Syncro-kafka-events lo aggiorna, non lo crea.
-
-2. **404 on Not Found**: Se `isStellantisBrand` non ha creato il record, syncro-kafka-events ritorna 404 (non INSERT).
-
-3. **Idempotency**: Se DJC invia lo stesso callback due volte, il database non crea duplicati grazie a unique constraint (job_card_id, push_timestamp).
-
-4. **Error Tracking**: Se lambda fallisce durante update, registra l'errore in Aurora con status ERROR e error_code LAMBDA_EXCEPTION.
-
-5. **Version Number**: Ad ogni UPDATE, il campo version viene incrementato (+1) per supportare optimistic locking e tracking dei cambiamenti.
+- [ ] Tutti i 32 test passano: `npm test`
+- [ ] Coverage > 85%: `npm test -- --coverage`
+- [ ] Supportati SOLO i 4 eventi da specifica
+- [ ] Commenti in italiano su ogni riga critica
+- [ ] Log ovunque necessario (parse, validazione, DB, errori)
+- [ ] Error handling completo (400, 503, 504, 500)
+- [ ] Idempotency via ON CONFLICT DO UPDATE
+- [ ] Traccia ID incluso in tutti i log e response headers
+- [ ] Version incrementato su ogni UPDATE
+- [ ] JSON payload e json_modified salvati correttamente
 
 ---
 
-**Test Suite Version**: 1.0 (Corrected UPDATE Logic)
-**Last Updated**: 2025-01-15
-**Status**: ✅ Pronto per commit
+**Versione**: 1.0 (SRP DL KAFKA Specification Compliant)  
+**Status**: ✅ Pronto per deployment  
+**Ultimo aggiornamento**: 2026-09-18
