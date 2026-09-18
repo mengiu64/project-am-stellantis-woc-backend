@@ -32,17 +32,18 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 **Risposta attesa** (200 OK):
 ```json
 {
+  "statusCode": 200,
+  "success": true,
   "message": "Evento aggiornato con successo in Aurora",
-  "data": {
+  "response": {
     "responseId": "uuid-univoco",
     "jobCardId": "JC-20260918-001",
+    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+    "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-09-18T12:00:00Z",
-    "djcFlag": "Y",
-    "ambito": "SALES",
-    "djcSyncStatus": "SUCCESS_WITHOUT_UPDATE",
-    "version": 2,
-    "traceId": "..."
-  }
+    "version": 2
+  },
+  "traceId": "..."
 }
 ```
 
@@ -67,14 +68,18 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 **Risposta attesa** (200 OK):
 ```json
 {
+  "statusCode": 200,
+  "success": true,
   "message": "Evento aggiornato con successo in Aurora",
-  "data": {
+  "response": {
     "responseId": "uuid-univoco",
     "jobCardId": "JC-20260918-002",
-    "djcSyncStatus": "SUCCESS_WITH_UPDATE",
-    "version": 2,
-    ...
-  }
+    "eventType": "DMS_PUSH_SUCCESS_WITH_UPDATE",
+    "status": "SUCCESS_WITH_UPDATE",
+    "timestamp": "2026-09-18T12:05:00Z",
+    "version": 2
+  },
+  "traceId": "..."
 }
 ```
 
@@ -99,13 +104,18 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 **Risposta attesa** (200 OK):
 ```json
 {
+  "statusCode": 200,
+  "success": true,
   "message": "Evento aggiornato con successo in Aurora",
-  "data": {
+  "response": {
     "responseId": "uuid-univoco",
-    "djcSyncStatus": "REFUSAL",
-    "version": 2,
-    ...
-  }
+    "jobCardId": "JC-20260918-003",
+    "eventType": "DMS_PUSH_REFUSAL",
+    "status": "REFUSAL",
+    "timestamp": "2026-09-18T12:10:00Z",
+    "version": 2
+  },
+  "traceId": "..."
 }
 ```
 
@@ -130,13 +140,18 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 **Risposta attesa** (200 OK):
 ```json
 {
+  "statusCode": 200,
+  "success": true,
   "message": "Evento aggiornato con successo in Aurora",
-  "data": {
+  "response": {
     "responseId": "uuid-univoco",
-    "djcSyncStatus": "FAILURE",
-    "version": 2,
-    ...
-  }
+    "jobCardId": "JC-20260918-004",
+    "eventType": "DMS_PUSH_FAILURE",
+    "status": "FAILURE",
+    "timestamp": "2026-09-18T12:15:00Z",
+    "version": 2
+  },
+  "traceId": "..."
 }
 ```
 
@@ -158,7 +173,23 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
   }' | jq .
 ```
 
-**Risultato**: `djcSyncStatus: null` (evento non sincronizzato con DJC)
+**Risultato**: status sarà `null` nella risposta (evento non sincronizzato con DJC)
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Evento aggiornato con successo in Aurora",
+  "response": {
+    "responseId": "uuid-univoco",
+    "jobCardId": "JC-20260918-005",
+    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+    "status": null,
+    "timestamp": "2026-09-18T12:20:00Z",
+    "version": 2
+  },
+  "traceId": "..."
+}
+```
 
 ---
 
@@ -212,8 +243,10 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 
 ```json
 {
+  "statusCode": 404,
+  "success": false,
   "error": "Not Found",
-  "message": "Record non trovato in woc.comunication_asyncro_djc - verificare che il record sia stato creato precedentemente",
+  "message": "Record non trovato in woc.comunication_asyncro_djc",
   "details": {
     "jobCardId": "JC-NONEXISTENT",
     "timestamp": "2026-09-18T12:30:00Z",
@@ -229,17 +262,18 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 
 ```json
 {
+  "statusCode": 200,
+  "success": true,
   "message": "Evento aggiornato con successo in Aurora",
-  "data": {
+  "response": {
     "responseId": "550e8400-e29b-41d4-a716-446655440000",
     "jobCardId": "JC-20260918-001",
+    "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
+    "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-09-18T12:00:00Z",
-    "djcFlag": "Y",
-    "ambito": "SALES",
-    "djcSyncStatus": "SUCCESS_WITHOUT_UPDATE",
-    "version": 2,
-    "traceId": "trace-xxx-yyy-zzz"
-  }
+    "version": 2
+  },
+  "traceId": "trace-xxx-yyy-zzz"
 }
 ```
 
@@ -247,13 +281,15 @@ curl -X POST "https://your-api-gateway.com/api/synch-status" \
 
 | Campo | Tipo | Descrizione |
 |-------|------|-------------|
-| `responseId` | UUID | ID univoco della risposta generato dalla lambda |
-| `jobCardId` | String | Job card identifier (da payload) |
-| `timestamp` | ISO 8601 | Timestamp dell'evento (da payload) |
-| `djcFlag` | Y/N | Flag djc normalizzato |
-| `ambito` | String | Ambito/contesto dell'evento (da payload) |
-| `djcSyncStatus` | ENUM | Stato della sincronizzazione: `SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE`, `null` |
-| `version` | Integer | Numero versione del record (incrementato ad ogni UPDATE) |
+| `statusCode` | Integer | HTTP status code (200 per successo) |
+| `success` | Boolean | Indica se la richiesta è andata a buon fine |
+| `message` | String | Messaggio descrittivo del risultato |
+| `response.responseId` | UUID | ID univoco della risposta generato dalla lambda |
+| `response.jobCardId` | String | Job card identifier (da payload) |
+| `response.eventType` | String | Tipo di evento ricevuto (uno dei 4 supportati) |
+| `response.status` | ENUM | Stato della sincronizzazione: `SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE` |
+| `response.timestamp` | ISO 8601 | Timestamp dell'evento (da payload) |
+| `response.version` | Integer | Numero versione del record (incrementato ad ogni UPDATE) |
 | `traceId` | String | ID univoco della traccia per debugging |
 
 ---

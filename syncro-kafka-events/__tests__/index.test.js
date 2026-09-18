@@ -264,7 +264,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
       expect(body.message).toContain('successo');
-      expect(body.data.djcSyncStatus).toBe('SUCCESS_WITHOUT_UPDATE');
+      expect(body.response.status).toBe('SUCCESS_WITHOUT_UPDATE');
     });
 
     it('DEVE registrare evento DMS_PUSH_SUCCESS_WITH_UPDATE e ritornare 200', async () => {
@@ -293,7 +293,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.data.djcSyncStatus).toBe('SUCCESS_WITH_UPDATE');
+      expect(body.response.status).toBe('SUCCESS_WITH_UPDATE');
     });
 
     it('DEVE registrare evento DMS_PUSH_REFUSAL con error_code', async () => {
@@ -322,7 +322,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.data.djcSyncStatus).toBe('REFUSAL');
+      expect(body.response.status).toBe('REFUSAL');
     });
 
     it('DEVE registrare evento DMS_PUSH_FAILURE con error_code', async () => {
@@ -351,7 +351,7 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.data.djcSyncStatus).toBe('FAILURE');
+      expect(body.response.status).toBe('FAILURE');
     });
 
     it('DEVE ritornare 400 se eventType non supportato', async () => {
@@ -417,13 +417,13 @@ describe('syncro-kafka-events Lambda - 4 Event Types', () => {
       const response1 = await handler(event, {});
       expect(response1.statusCode).toBe(200);
       const body1 = JSON.parse(response1.body);
-      expect(body1.data.version).toBe(1); // INSERT
+      expect(body1.response.version).toBe(1); // INSERT
 
       // Secondo call (stesso payload)
       const response2 = await handler(event, {});
       expect(response2.statusCode).toBe(200);
       const body2 = JSON.parse(response2.body);
-      expect(body2.data.version).toBe(2); // UPDATE per idempotency
+      expect(body2.response.version).toBe(2); // UPDATE per idempotency
     });
 
     it('DEVE ritornare 503 se Aurora non disponibile', async () => {
