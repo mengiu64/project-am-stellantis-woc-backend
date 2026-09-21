@@ -36,7 +36,7 @@ class AuthService {
       // Acquisici nuovo token
       this.logger.info('Acquiring OAuth2 token da PingFederate');
 
-      const secret = await this._getSecret('stellantis/syncro-kafka-events/oauth-credentials');
+      const secret = await this._getSecret('stellantis/synch-status/oauth-credentials');
       const { clientId, clientSecret } = JSON.parse(secret.SecretString);
       
       const oauthConfig = this.config.getByPath('oauth');
@@ -118,7 +118,7 @@ class AuthService {
         'Authorization': `Bearer ${oauthToken}`,
         'X-IBM-Client-Id': apicConfig.clientId,
         'Content-Type': 'application/json',
-        'User-Agent': 'stellantis-syncro-kafka-events/1.0'
+        'User-Agent': 'stellantis-synch-status/1.0'
       };
     } catch (error) {
       this.logger.error('Errore preparazione header esterni', error);

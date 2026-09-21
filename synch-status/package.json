@@ -1,5 +1,5 @@
 {
-  "name": "syncro-kafka-events-lambda",
+  "name": "synch-status-lambda",
   "version": "1.0.0",
   "description": "AWS Lambda REST API per sincronizzazione eventi Kafka da SRP Digital Layer a sistemi esterni (DJC/GCT)",
   "main": "index.js",

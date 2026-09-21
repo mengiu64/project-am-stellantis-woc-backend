@@ -4,7 +4,7 @@
     "username": "mengiu64",
     "repository": "https://github.com/mengiu64/project-am-stellantis-woc-backend",
     "branch_main": "main",
-    "branch_feature": "feature/syncro-kafka-events-implementation",
+    "branch_feature": "feature/synch-status-implementation",
     "pr_number": 20,
     "pr_url": "https://github.com/mengiu64/project-am-stellantis-woc-backend/pull/20",
     "token_location": "Inlay Project Settings (encrypted)"
@@ -24,7 +24,7 @@
   ],
   "inlay_commands": {
     "git_push": "/git-push [message] or /git-push --force",
-    "ci_cd_workflow": "syncro-kafka-ci-cd (scheduled Mon-Fri 09:00 UTC)"
+    "ci_cd_workflow": "synch-status-ci-cd (scheduled Mon-Fri 09:00 UTC)"
   },
   "next_steps": [
     "Code review on GitHub PR #20",

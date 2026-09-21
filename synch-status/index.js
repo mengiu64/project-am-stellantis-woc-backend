@@ -43,7 +43,7 @@ exports.handler = async (event, context) => {
   
   try {
     // Log: evento ricevuto
-    logger.info('🔔 Lambda syncro-kafka-events invocata', {
+    logger.info('🔔 Lambda synch-status invocata', {
       httpMethod: event.httpMethod || event.requestContext?.http?.method,
       path: event.path || event.rawPath,
       traceId: logger.getTraceId()

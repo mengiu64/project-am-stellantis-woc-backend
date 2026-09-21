@@ -1,4 +1,4 @@
-# Deployment Report: syncro-kafka-events Lambda
+# Deployment Report: synch-status Lambda
 
 **Date:** 2026-09-16T14:34:19Z  
 **Project:** Stellantis-lambda  
@@ -9,12 +9,12 @@
 
 ## 📋 Summary
 
-Complete implementation of the **syncro-kafka-events** Lambda function pushed to GitHub and ready for review.
+Complete implementation of the **synch-status** Lambda function pushed to GitHub and ready for review.
 
-- **Branch:** `feature/syncro-kafka-events-implementation`
+- **Branch:** `feature/synch-status-implementation`
 - **Pull Request:** #20 (https://github.com/mengiu64/project-am-stellantis-woc-backend/pull/20)
 - **Commits:** 2
-  1. `680546c` - feat: Initial implementation of syncro-kafka-events Lambda
+  1. `680546c` - feat: Initial implementation of synch-status Lambda
   2. `113deda` - docs: Save GitHub credentials configuration and Inlay automation setup
 - **Files Changed:** 17 (15 source files + 2 configuration files)
 - **Total Lines:** 2,333 lines of code + documentation
@@ -129,7 +129,7 @@ Complete implementation of the **syncro-kafka-events** Lambda function pushed to
 
 ### Branch Information
 ```
-Feature Branch: feature/syncro-kafka-events-implementation
+Feature Branch: feature/synch-status-implementation
 Base Branch: main
 Commits: 2
 Changed Files: 17
@@ -148,7 +148,7 @@ Created: 2026-09-16T14:34:19Z
 ### Commits
 ```
 113deda - docs: Save GitHub credentials configuration and Inlay automation setup
-680546c - feat: Initial implementation of syncro-kafka-events Lambda
+680546c - feat: Initial implementation of synch-status Lambda
 ```
 
 ---
@@ -162,17 +162,17 @@ Created: 2026-09-16T14:34:19Z
 
 ### Phase 2: AWS Configuration (Before Dev Deployment)
 - [ ] Create Parameter Store parameters (dev, stage, prod):
-  - `/stellantis/syncro-kafka-events/oauth-client-id-{env}`
-  - `/stellantis/syncro-kafka-events/oauth-token-url-{env}`
-  - `/stellantis/syncro-kafka-events/apic-client-id-{env}`
-  - `/stellantis/syncro-kafka-events/apic-url-{env}`
-  - `/stellantis/syncro-kafka-events/djc-endpoint-{env}`
-  - `/stellantis/syncro-kafka-events/gct-endpoint-{env}`
+  - `/stellantis/synch-status/oauth-client-id-{env}`
+  - `/stellantis/synch-status/oauth-token-url-{env}`
+  - `/stellantis/synch-status/apic-client-id-{env}`
+  - `/stellantis/synch-status/apic-url-{env}`
+  - `/stellantis/synch-status/djc-endpoint-{env}`
+  - `/stellantis/synch-status/gct-endpoint-{env}`
 
 - [ ] Create Secrets Manager secret:
   ```bash
   aws secretsmanager create-secret \
-    --name stellantis/syncro-kafka-events/oauth-credentials-dev \
+    --name stellantis/synch-status/oauth-credentials-dev \
     --secret-string '{"clientId":"...","clientSecret":"..."}'
   ```
 
@@ -187,7 +187,7 @@ npm run test:watch            # Development mode
 ### Phase 4: Dev Deployment (1 hour)
 ```bash
 sam build
-sam deploy --parameter-overrides Env=dev --stack-name stellantis-syncro-kafka-events-dev
+sam deploy --parameter-overrides Env=dev --stack-name stellantis-synch-status-dev
 ```
 
 ### Phase 5: E2E Testing
@@ -218,7 +218,7 @@ sam deploy --parameter-overrides Env=dev --stack-name stellantis-syncro-kafka-ev
 **Command: `/git-push`**
 ```
 Syntax: /git-push [message] or /git-push --force
-Usage: Push changes to feature/syncro-kafka-events-implementation
+Usage: Push changes to feature/synch-status-implementation
 Features:
   - Auto-uses saved GitHub token (no manual entry)
   - Auto-commits if needed
@@ -254,10 +254,10 @@ Tool Policy: code execution + approval gate enabled
 - ✅ Configuration files committed
 
 ### GitHub Verification
-- ✅ Branch pushed: `feature/syncro-kafka-events-implementation`
+- ✅ Branch pushed: `feature/synch-status-implementation`
 - ✅ PR created: #20
 - ✅ PR base: main
-- ✅ PR head: feature/syncro-kafka-events-implementation
+- ✅ PR head: feature/synch-status-implementation
 - ✅ 2 commits visible
 - ✅ 17 files changed
 - ✅ No merge conflicts
@@ -275,13 +275,13 @@ Tool Policy: code execution + approval gate enabled
 
 All comprehensive documentation is available on **Stellantis-lambda** project in Atlas:
 
-1. **requirements-syncro-kafka-events.md** (2,500+ words)
+1. **requirements-synch-status.md** (2,500+ words)
    - Functional requirements (FR1-FR6)
    - Non-functional requirements (NFR1-NFR5)
    - AWS technical specifications (T1-T5)
    - Enterprise standards compliance (AC1-AC10)
 
-2. **design-syncro-kafka-events.md** (3,000+ words)
+2. **design-synch-status.md** (3,000+ words)
    - Architecture overview with data flow diagrams
    - Component breakdown with pseudo-code
    - Sequence diagrams (happy path, error scenarios)
@@ -290,7 +290,7 @@ All comprehensive documentation is available on **Stellantis-lambda** project in
    - Monitoring with X-Trace-Id correlation
    - CloudFormation deployment architecture
 
-3. **tasks-syncro-kafka-events.md** (4,000+ words)
+3. **tasks-synch-status.md** (4,000+ words)
    - 7-phase implementation roadmap
    - Detailed tasks with acceptance criteria
    - Code templates for all 6 components
@@ -349,7 +349,7 @@ All comprehensive documentation is available on **Stellantis-lambda** project in
 - Push changes: `/git-push [message]`
 - Run tests: `npm test`
 - Deploy: `sam deploy --parameter-overrides Env=dev`
-- View logs: `aws logs tail /aws/lambda/stellantis-syncro-kafka-events-dev --follow`
+- View logs: `aws logs tail /aws/lambda/stellantis-synch-status-dev --follow`
 
 ---
 

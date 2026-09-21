@@ -78,7 +78,7 @@ class Config {
     const params = {};
     
     try {
-      // Naming rule: stellantis/syncro-kafka-events/{param-name}-{env}
+      // Naming rule: stellantis/synch-status/{param-name}-{env}
       const paramNames = [
         'OAUTH_CLIENT_ID',
         'OAUTH_CLIENT_SECRET',
@@ -92,7 +92,7 @@ class Config {
       // Carica ogni parametro (usa suffix -dev, -stage, none per prod)
       for (const name of paramNames) {
         const suffix = this.env === 'produzione' ? '' : `-${this.env}`;
-        const paramPath = `/stellantis/syncro-kafka-events/${name.toLowerCase()}${suffix}`;
+        const paramPath = `/stellantis/synch-status/${name.toLowerCase()}${suffix}`;
         
         try {
           const response = await ssm.getParameter({ Name: paramPath }).promise();

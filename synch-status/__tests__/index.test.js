@@ -1,5 +1,5 @@
 // index.test.js
-// Test suite per lambda syncro-kafka-events con 4 eventi specifici
+// Test suite per lambda synch-status con 4 eventi specifici
 // Implementazione ristretta secondo SRP DL KAFKA Specification
 
 const { 
@@ -26,7 +26,7 @@ jest.mock('../logger', () => {
   };
 });
 
-describe('syncro-kafka-events Lambda - 4 Event Types', () => {
+describe('synch-status Lambda - 4 Event Types', () => {
   
   let mockPool;
 

@@ -2,10 +2,10 @@ module.exports = {
   testEnvironment: 'node',
   coveragePathIgnorePatterns: ['/node_modules/'],
   testMatch: ['**/__tests__/**/*.test.js'],
-  setupFilesAfterEnv: ['<rootDir>/syncro-kafka-events/__tests__/setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/synch-status/__tests__/setup.js'],
   collectCoverageFrom: [
-    'syncro-kafka-events/*.js',
-    '!syncro-kafka-events/index.test.js'
+    'synch-status/*.js',
+    '!synch-status/index.test.js'
   ],
   coverageThreshold: {
     global: {

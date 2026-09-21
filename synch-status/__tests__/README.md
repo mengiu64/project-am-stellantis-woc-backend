@@ -2,7 +2,7 @@
 
 ## 📋 Sommario
 
-Lambda `syncro-kafka-events` riceve **SOLTANTO 4 eventi specifici** da DJC e li registra in Aurora PostgreSQL secondo la specifica **SRP DL KAFKA Specification.md**.
+Lambda `synch-status` riceve **SOLTANTO 4 eventi specifici** da DJC e li registra in Aurora PostgreSQL secondo la specifica **SRP DL KAFKA Specification.md**.
 
 ### I 4 Eventi Supportati:
 1. **DMS_PUSH_SUCCESS_WITHOUT_UPDATE** → Status DB: `SUCCESS_WITHOUT_UPDATE` (nessun errore)
@@ -23,7 +23,7 @@ Lambda `syncro-kafka-events` riceve **SOLTANTO 4 eventi specifici** da DJC e li 
               │ Content-Type: application/json
               ▼
 ┌────────────────────────────────────────────┐
-│    syncro-kafka-events Lambda              │
+│    synch-status Lambda              │
 │    (Node.js 24.x, 512MB, timeout 30s)     │
 │                                            │
 │  1. Parse e Valida payload                │
@@ -192,7 +192,7 @@ npm test -- --coverage
 La lambda log a ogni step con traccia ID per correlazione:
 
 ```javascript
-logger.info('🔔 Lambda syncro-kafka-events invocata', { traceId, method, path });
+logger.info('🔔 Lambda synch-status invocata', { traceId, method, path });
 logger.info('📋 Payload ricevuto:', { payload });
 logger.info('✅ Payload validato', { eventType, jobCardId, timestamp });
 logger.info('🔗 Connessione Aurora PostgreSQL acquisita');
@@ -266,8 +266,8 @@ curl -X POST https://api.example.com/api/synch-status \
 ## 📚 Riferimenti
 
 - **Specifica**: [SRP DL KAFKA Specification.md](/docs/srp-dl-kafka-specification)
-- **Walden Requirements**: [Walden Spec - syncro-kafka-events](/docs/walden-syncro-kafka-events-requirements)
-- **Design**: [Design Document](/docs/design-syncro-kafka-events)
+- **Walden Requirements**: [Walden Spec - synch-status](/docs/walden-synch-status-requirements)
+- **Design**: [Design Document](/docs/design-synch-status)
 - **Database**: `shared/dbClient.js` (Pattern Aurora PostgreSQL)
 
 ---

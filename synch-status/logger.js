@@ -93,7 +93,7 @@ const logger = winston.createLogger({
   format: customFormat,
   // Metadati di default su tutti i log
   defaultMeta: {
-    service: 'syncro-kafka-events',
+    service: 'synch-status',
     environment: process.env.ENVIRONMENT || 'dev'
   },
   // Transport di output (Console per CloudWatch)

@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Stellantis WOC Backend - AWS Lambda REST APIs",
   "scripts": {
-    "test": "jest --coverage syncro-kafka-events/__tests__",
-    "test:watch": "jest --watch syncro-kafka-events/__tests__",
-    "test:unit": "jest syncro-kafka-events/__tests__/unit --coverage",
-    "lint": "eslint syncro-kafka-events/*.js",
-    "install:lambda": "cd syncro-kafka-events && npm install && cd .."
+    "test": "jest --coverage synch-status/__tests__",
+    "test:watch": "jest --watch synch-status/__tests__",
+    "test:unit": "jest synch-status/__tests__/unit --coverage",
+    "lint": "eslint synch-status/*.js",
+    "install:lambda": "cd synch-status && npm install && cd .."
   },
   "dependencies": {},
   "devDependencies": {
