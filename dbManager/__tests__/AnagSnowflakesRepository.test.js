@@ -45,6 +45,13 @@ describe('AnagSnowflakesRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
+    it('throws when called without a params object', async () => {
+      const pool = makePool();
+      await expect(getPhysicalSiteAndSincom(pool))
+        .rejects.toThrow('"mainSincom" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
     it('throws when market is missing', async () => {
       const pool = makePool();
       await expect(getPhysicalSiteAndSincom(pool, { mainSincom: '0073741', brand: 'FT' }))
@@ -139,6 +146,13 @@ describe('AnagSnowflakesRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
+    it('throws when called without a params object', async () => {
+      const pool = makePool();
+      await expect(getPhysicalSiteAndPdvId(pool))
+        .rejects.toThrow('"mainSincom" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
     it('throws when market is missing', async () => {
       const pool = makePool();
       await expect(getPhysicalSiteAndPdvId(pool, { mainSincom: '0073741', brand: 'FT', oic: '00007584' }))
@@ -204,6 +218,7 @@ describe('AnagSnowflakesRepository', () => {
       const pool = makePool();
 
       expect(await getBrandsByOics(pool, {})).toEqual(new Map());
+      expect(await getBrandsByOics(pool)).toEqual(new Map());
       expect(await getBrandsByOics(pool, { oics: [] })).toEqual(new Map());
       expect(pool.query).not.toHaveBeenCalled();
     });

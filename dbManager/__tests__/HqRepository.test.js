@@ -9,6 +9,13 @@ const {
   insertVehicleInspection,
   getDisabledOics,
   getAddressByOics,
+  setMarketEnable,
+  setMarketDisable,
+  setOicEnable,
+  insertDomain,
+  setDomain,
+  insertPackage,
+  setPackage,
 } = require('../HqRepository');
 
 function makePool(queryImpl) {
@@ -313,6 +320,200 @@ describe('HqRepository', () => {
 
       const poolNoRows = makePool(async () => ({ rows: [] }));
       expect(await getAddressByOics(poolNoRows, { oics: ['00099999'] })).toEqual(new Map());
+    });
+  });
+
+  describe('setMarketEnable', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(setMarketEnable(pool, undefined))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('upserts hq_pk_market (deleted = 0) and cascades deleted = 1 on hq_pk_oic', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setMarketEnable(pool, '1000');
+
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('INSERT INTO woc.hq_pk_market'),
+        ['1000'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ON CONFLICT (market) DO UPDATE SET deleted = 0'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('UPDATE woc.hq_pk_oic SET deleted = 1'),
+        ['1000'],
+      );
+    });
+  });
+
+  describe('setMarketDisable', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(setMarketDisable(pool, undefined))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('upserts hq_pk_market (deleted = 1) and re-enables (deleted = 0) on hq_pk_oic', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setMarketDisable(pool, '1000');
+
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('INSERT INTO woc.hq_pk_market'),
+        ['1000'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ON CONFLICT (market) DO UPDATE SET deleted = 1'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('UPDATE woc.hq_pk_oic SET deleted = 0'),
+        ['1000'],
+      );
+    });
+  });
+
+  describe('setOicEnable', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(setOicEnable(pool, undefined, '00006821'))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when oic is missing', async () => {
+      const pool = makePool();
+      await expect(setOicEnable(pool, '1000', undefined))
+        .rejects.toThrow('"oic" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('upserts hq_pk_oic (deleted = 0) on the (market, oic) PK', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setOicEnable(pool, '1000', '00006821');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_oic'),
+        ['1000', '00006821'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ON CONFLICT (market, oic) DO UPDATE SET deleted = 0'));
+    });
+  });
+
+  describe('insertDomain', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(insertDomain(pool, undefined, '00006821', 'Meccanica'))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('inserts the domain and returns the generated iddomain', async () => {
+      const pool = makePool(async () => ({ rows: [{ iddomain: 42 }] }));
+
+      const result = await insertDomain(pool, '1000', '00006821', 'Meccanica');
+
+      expect(result).toBe(42);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_domain'),
+        ['1000', '00006821', 'Meccanica'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING iddomain'));
+    });
+  });
+
+  describe('setDomain', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(setDomain(pool, undefined, 42, 'Meccanica'))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when iddomain is missing', async () => {
+      const pool = makePool();
+      await expect(setDomain(pool, '1000', undefined, 'Meccanica'))
+        .rejects.toThrow('"iddomain" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE with the given market/iddomain/descr', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setDomain(pool, '1000', 42, 'Meccanica');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE woc.hq_pk_domain'),
+        ['1000', 42, 'Meccanica'],
+      );
+    });
+  });
+
+  describe('insertPackage', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(insertPackage(pool, undefined, '00006821', 42, 'Tagliando', 60, 100.5))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when iddomain is missing', async () => {
+      const pool = makePool();
+      await expect(insertPackage(pool, '1000', '00006821', undefined, 'Tagliando', 60, 100.5))
+        .rejects.toThrow('"iddomain" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('inserts the package and returns the generated idpackage', async () => {
+      const pool = makePool(async () => ({ rows: [{ idpackage: 7 }] }));
+
+      const result = await insertPackage(pool, '1000', '00006821', 42, 'Tagliando', 60, 100.5);
+
+      expect(result).toBe(7);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_packages'),
+        ['1000', '00006821', 42, 'Tagliando', 60, 100.5],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING idpackage'));
+    });
+  });
+
+  describe('setPackage', () => {
+    it('throws when idpackage is missing', async () => {
+      const pool = makePool();
+      await expect(setPackage(pool, undefined, 42, 'Tagliando', 60, 100.5))
+        .rejects.toThrow('"idpackage" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when iddomain is missing', async () => {
+      const pool = makePool();
+      await expect(setPackage(pool, 7, undefined, 'Tagliando', 60, 100.5))
+        .rejects.toThrow('"iddomain" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE with the given idpackage/iddomain/descr/timeop/pricewithvat', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setPackage(pool, 7, 42, 'Tagliando', 60, 100.5);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE woc.hq_pk_packages'),
+        [7, 42, 'Tagliando', 60, 100.5],
+      );
     });
   });
 });
