@@ -41,6 +41,8 @@ async function handler(event = {}) {
     // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di
     // "identita' solo dall'authorizer" gia' applicato a `sub`.
+    // `hqCentral`/`hqMarket`/`dealer` (0/1) sono derivati dagli stessi `roles`,
+    // vedi resolveRoleFlags().
     return response(200, insertAfterProfile(data, roles));
   } catch (err) {
     if (err.code === 'SESSION_NOT_FOUND') {
@@ -86,22 +88,63 @@ function getAuthContext(event) {
   return { sub, roles, profile };
 }
 
+// Pattern (case-insensitive) per il ruolo "HQ centrale" es. "WRT.WOC.NONPROD.HQCENTRAL"
+// (prefisso "Z" e ambiente NONPROD/PROD variabili, si cerca solo la sottostringa).
+const HQ_CENTRAL_ROLE_PATTERN = /HQCENTRAL/i;
+// Pattern per il ruolo "HQ mercato" es. "ZWRT.WOC.NONPROD.HQNSC3109": "HQNSC" seguito
+// dalle 4 cifre del codice mercato (variabili in base al mercato dell'utente HQ).
+const HQ_MARKET_ROLE_PATTERN = /HQNSC\d{4}/i;
+
 /**
- * Inserisce la chiave `userroles` subito dopo `profile` nell'oggetto dati di
- * sessione (stesso ordine di chiavi atteso nel JSON di risposta), senza
- * mutare l'oggetto originale. Se `profile` non e' presente (fallback difensivo,
- * non dovrebbe verificarsi con l'attuale MyPeopleDmsSessionRepository), `userroles`
- * viene semplicemente accodato in fondo.
+ * Deriva i 3 flag 0/1 `hqCentral`/`hqMarket`/`dealer` dai ruoli dell'utente
+ * (`userroles`, gia' estratti da getAuthContext). Un solo flag e' valorizzato
+ * a 1 per volta, con priorita' hqCentral > hqMarket > dealer: se nessun ruolo
+ * corrisponde ai pattern HQ, l'utente e' considerato un dealer (default).
+ *
+ * @param {string[]} roles - Ruoli dell'utente autenticato.
+ * @returns {{ hqCentral: 0|1, hqMarket: 0|1, dealer: 0|1 }}
+ */
+function resolveRoleFlags(roles) {
+  const list = Array.isArray(roles) ? roles : [];
+
+  const isHqCentral = list.some((role) => typeof role === 'string' && HQ_CENTRAL_ROLE_PATTERN.test(role));
+  const isHqMarket = !isHqCentral
+    && list.some((role) => typeof role === 'string' && HQ_MARKET_ROLE_PATTERN.test(role));
+  const isDealer = !isHqCentral && !isHqMarket;
+
+  return {
+    hqCentral: isHqCentral ? 1 : 0,
+    hqMarket: isHqMarket ? 1 : 0,
+    dealer: isDealer ? 1 : 0,
+  };
+}
+
+/**
+ * Inserisce, subito dopo `profile`, i campi `hqCentral`/`hqMarket`/`dealer`
+ * (derivati da `roles` via resolveRoleFlags()) seguiti da `userroles`,
+ * nell'oggetto dati di sessione (stesso ordine di chiavi atteso nel JSON di
+ * risposta), senza mutare l'oggetto originale. Se `profile` non e' presente
+ * (fallback difensivo, non dovrebbe verificarsi con l'attuale
+ * MyPeopleDmsSessionRepository), tutti questi campi vengono semplicemente
+ * accodati in fondo.
  *
  * @param {object} data - Dati di sessione restituiti dal repository.
  * @param {string[]} roles - Ruoli dell'utente autenticato (da getAuthContext).
- * @returns {object} Copia di `data` con `userroles` inserito dopo `profile`.
+ * @returns {object} Copia di `data` con i nuovi campi inseriti dopo `profile`.
  */
 function insertAfterProfile(data, roles) {
   const entries = Object.entries(data || {});
   const profileIndex = entries.findIndex(([key]) => key === 'profile');
   const insertAt = profileIndex === -1 ? entries.length : profileIndex + 1;
-  entries.splice(insertAt, 0, ['userroles', roles]);
+  const { hqCentral, hqMarket, dealer } = resolveRoleFlags(roles);
+  entries.splice(
+    insertAt,
+    0,
+    ['hqCentral', hqCentral],
+    ['hqMarket', hqMarket],
+    ['dealer', dealer],
+    ['userroles', roles],
+  );
   return Object.fromEntries(entries);
 }
 
@@ -163,4 +206,4 @@ if (require.main === module) {
   runCli();
 }
 
-module.exports = { handler, runCli, DEFAULT_MARKET, getAuthContext };
+module.exports = { handler, runCli, DEFAULT_MARKET, getAuthContext, resolveRoleFlags };

@@ -4,7 +4,7 @@ jest.mock('dotenv', () => ({ config: jest.fn() }));
 jest.mock('../src/repositoryFactory');
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('../src/repositoryFactory');
-const { handler, runCli, DEFAULT_MARKET, getAuthContext } = require('../src/index');
+const { handler, runCli, DEFAULT_MARKET, getAuthContext, resolveRoleFlags } = require('../src/index');
 const { SessionNotFoundError } = require('../src/errors');
 
 describe('session/src/index — handler', () => {
@@ -45,7 +45,14 @@ describe('session/src/index — handler', () => {
     expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ codmarket: '1000', sincom: '0073741', userroles: [] });
+    expect(JSON.parse(res.body)).toEqual({
+      codmarket: '1000',
+      sincom: '0073741',
+      hqCentral: 0,
+      hqMarket: 0,
+      dealer: 1,
+      userroles: [],
+    });
   });
 
   it('espone userroles (array) valorizzato da requestContext.authorizer.roles (CSV)', async () => {
@@ -65,7 +72,15 @@ describe('session/src/index — handler', () => {
     const res = await handler({
       requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
     });
-    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'profile', 'userroles', 'physicalsite']);
+    expect(Object.keys(JSON.parse(res.body))).toEqual([
+      'codmarket',
+      'profile',
+      'hqCentral',
+      'hqMarket',
+      'dealer',
+      'userroles',
+      'physicalsite',
+    ]);
   });
 
   it('accoda userroles in fondo se profile non e\' presente nei dati del repository', async () => {
@@ -73,7 +88,41 @@ describe('session/src/index — handler', () => {
     const res = await handler({
       requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
     });
-    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'userroles']);
+    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'hqCentral', 'hqMarket', 'dealer', 'userroles']);
+  });
+
+  it('valorizza hqCentral=1 quando un ruolo contiene HQCENTRAL (case-insensitive, prefisso/ambiente variabili)', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'ZWRT.WOC.PROD.hqcentral' } },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ hqCentral: 1, hqMarket: 0, dealer: 0 });
+  });
+
+  it('valorizza hqMarket=1 quando un ruolo contiene HQNSC + 4 cifre del mercato', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'ZWRT.WOC.NONPROD.HQNSC3109' } },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ hqCentral: 0, hqMarket: 1, dealer: 0 });
+  });
+
+  it('valorizza dealer=1 quando nessun ruolo e\' HQCENTRAL/HQNSC (default)', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer,advisor' } },
+    });
+    expect(JSON.parse(res.body)).toMatchObject({ hqCentral: 0, hqMarket: 0, dealer: 1 });
+  });
+
+  it('resolveRoleFlags da\' priorita\' a hqCentral su hqMarket se un utente avesse entrambi i ruoli', () => {
+    expect(resolveRoleFlags(['WRT.WOC.NONPROD.HQNSC3109', 'WRT.WOC.NONPROD.HQCENTRAL']))
+      .toEqual({ hqCentral: 1, hqMarket: 0, dealer: 0 });
+  });
+
+  it('resolveRoleFlags ritorna tutti 0 tranne dealer con roles vuoto/non array', () => {
+    expect(resolveRoleFlags([])).toEqual({ hqCentral: 0, hqMarket: 0, dealer: 1 });
+    expect(resolveRoleFlags(undefined)).toEqual({ hqCentral: 0, hqMarket: 0, dealer: 1 });
   });
 
   it('ignora username/codmarket passati dal client e usa sempre authorizer.sub', async () => {
