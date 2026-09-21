@@ -28,18 +28,18 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
         covers: ["R3.AC1"]
 
 - [ ] 2. Implement Connection Pool Management
-  - [ ] 2.1 Create databaseService.js with singleton pool
+  - [ ] 2.1 Create dbClient.js with singleton pool
     - Requirements: `R1.AC1`, `R1.AC2`, `R1.AC3`, `R1.AC4`, `R1.AC5`
     - Design: Components And Interfaces — DatabaseService
     - Verification:
-      - command: ["test", "-f", "synch-status/src/services/databaseService.js"]
+      - command: ["test", "-f", "synch-status/shared/dbClient.js"]
         covers: ["R1.AC1"]
 
   - [ ] 2.2 Test pool initialization and reuse
     - Requirements: `R1.AC2`, `R1.AC4`, `R1.AC5`
     - Design: Components And Interfaces — DatabaseService
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.pool.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R1.AC2", "R1.AC4"]
 
@@ -47,7 +47,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R1.AC3`
     - Design: Components And Interfaces — DatabaseService
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.pool.test.js", "--grep", "error"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js", "--grep", "error"]
         expect_output: "passing"
         covers: ["R1.AC3"]
 
@@ -56,7 +56,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R2.AC1`, `R2.AC2`, `R2.AC3`, `R2.AC4`, `R2.AC5`, `R2.AC6`, `R2.AC7`
     - Design: Credential Loading Flow
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.credentials.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R2.AC1", "R2.AC2", "R2.AC3"]
 
@@ -72,7 +72,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R8.AC1`, `R8.AC2`, `R8.AC3`, `R8.AC4`, `R8.AC5`, `R8.AC6`
     - Design: Error Handling & Failure Modes
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.retry.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R8.AC1", "R8.AC2", "R8.AC3"]
 
@@ -81,7 +81,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R3.AC1`, `R3.AC2`, `R3.AC3`, `R3.AC4`, `R3.AC5`
     - Design: Stored Procedures — mark_success
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.markSuccess.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R3.AC1", "R3.AC2"]
 
@@ -89,7 +89,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R4.AC1`, `R4.AC2`, `R4.AC3`, `R4.AC4`, `R4.AC5`
     - Design: Stored Procedures — mark_failure
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.markFailure.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R4.AC1", "R4.AC2"]
 
@@ -97,7 +97,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R5.AC1`, `R5.AC2`, `R5.AC3`
     - Design: Stored Procedures — increment_retry
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.incrementRetry.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R5.AC1"]
 
@@ -105,7 +105,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R6.AC1`, `R6.AC2`, `R6.AC3`, `R6.AC4`
     - Design: Stored Procedures — get_pending
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.getPending.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R6.AC1", "R6.AC2"]
 
@@ -114,23 +114,23 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R7.AC1`, `R7.AC2`, `R7.AC3`, `R7.AC4`, `R7.AC5`
     - Design: Data Models
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/databaseService.idempotency.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R7.AC1", "R7.AC2", "R7.AC3"]
 
 - [ ] 7. Implement Handler Integration
-  - [ ] 7.1 Integrate DatabaseService into index.js
+  - [ ] 7.1 Integrate dbClient into index.js
     - Requirements: `R1.AC1`, `R2.AC1`, `R3.AC1`, `R4.AC1`
     - Design: Components And Interfaces — Handler
     - Verification:
-      - command: ["grep", "-q", "const.*DatabaseService", "synch-status/index.js"]
+      - command: ["grep", "-q", "dbClient\|shared/dbClient", "synch-status/index.js"]
         covers: ["R1.AC1"]
 
   - [ ] 7.2 Implement POST /synch-status handler routing
     - Requirements: `R3.AC1`, `R4.AC1`, `R8.AC3`, `R8.AC4`
     - Design: Components And Interfaces — Handler
     - Verification:
-      - command: ["npm", "test", "--", "test/integration/handler.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R3.AC1", "R4.AC1"]
 
@@ -138,7 +138,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R6.AC1`, `R6.AC2`, `R6.AC3`, `R6.AC4`
     - Design: Components And Interfaces — Handler
     - Verification:
-      - command: ["npm", "test", "--", "test/integration/handler.get.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R6.AC1", "R6.AC2"]
 
@@ -147,7 +147,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R9.AC1`, `R9.AC2`, `R9.AC3`, `R9.AC4`
     - Design: Monitoring & Observability
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/logger.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
         expect_output: "passing"
         covers: ["R9.AC1", "R9.AC2"]
 
@@ -155,7 +155,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R9.AC5`, `R9.AC6`
     - Design: Monitoring & Observability
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/metrics.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/unit/metrics.test.js"]
         expect_output: "passing"
         covers: ["R9.AC5"]
 
@@ -163,7 +163,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R9.AC7`
     - Design: Monitoring & Observability
     - Verification:
-      - command: ["npm", "test", "--", "test/unit/xray.test.js"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/unit/xray.test.js"]
         expect_output: "passing"
         covers: ["R9.AC7"]
 
@@ -195,7 +195,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R1`, `R2`, `R3`, `R4`, `R5`, `R6`, `R7`, `R8`, `R9`
     - Design: Testing Strategy — Unit Tests
     - Verification:
-      - command: ["npm", "test", "--", "test/unit"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/unit"]
         expect_output: "passing"
         covers: ["R1", "R2", "R3", "R4", "R5", "R8", "R9"]
 
@@ -203,7 +203,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R1`, `R3`, `R4`, `R6`, `R7`, `R8`
     - Design: Testing Strategy — Integration Tests
     - Verification:
-      - command: ["npm", "test", "--", "test/integration"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/integration"]
         expect_output: "passing"
         covers: ["R3", "R4", "R6", "R7"]
 

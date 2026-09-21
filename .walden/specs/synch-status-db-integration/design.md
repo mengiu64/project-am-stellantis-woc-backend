@@ -18,7 +18,7 @@ source_requirements_fingerprint: sha256:2e68e6907cab7c9e85836cf6a8510a0907f69a37
 **ORM:** None (raw pg driver for control and performance)  
 **State Management:** UNIQUE constraint on request_id for idempotency  
 
-The design decouples **API handler logic** (index.js) from **database logic** (databaseService.js), following the Repository Pattern. All database mutations flow through stored procedures in the `woc` schema for atomicity and audit trails.
+The design decouples **API handler logic** (index.js) from **database logic** (dbClient.js), following the Repository Pattern. All database mutations flow through stored procedures in the `woc` schema for atomicity and audit trails.
 
 ---
 
@@ -44,7 +44,7 @@ The design decouples **API handler logic** (index.js) from **database logic** (d
                      │
                      ▼
         ┌────────────────────────────────────┐
-        │   databaseService.js                │
+        │   dbClient.js                │
         │  - getPool() (singleton)            │
         │  - markSuccess()                    │
         │  - markFailure()                    │
@@ -94,7 +94,7 @@ The design decouples **API handler logic** (index.js) from **database logic** (d
 - Emit structured logs
 - Handle errors and return appropriate HTTP status codes
 
-**Database Service (databaseService.js - NEW):**
+**Database Service (dbClient.js - NEW):**
 - Manage singleton connection pool (getPool)
 - Load credentials from Secrets Manager + SSM
 - Implement error handling and retries (transient vs permanent)
@@ -137,7 +137,7 @@ The design decouples **API handler logic** (index.js) from **database logic** (d
 
 ## Simplicity And Elegance Review
 
-- **Simplest Viable Shape:** One module (databaseService.js) with 5 methods, one connection pool, no ORM or query builder.
+- **Simplest Viable Shape:** One module (dbClient.js) with 5 methods, one connection pool, no ORM or query builder.
 - **Coupling Check:** Database layer (databaseService) has zero dependency on HTTP layer; index.js calls databaseService methods, not SQL queries directly.
 - **Future-Proofing:** Stored procedures deferred to DB team; Lambda code changes only if API contract changes or stored procedure signatures expand.
 - **Testability:** databaseService methods easily mocked; unit tests don't need Lambda or HTTP context.
@@ -146,16 +146,16 @@ The design decouples **API handler logic** (index.js) from **database logic** (d
 
 ## Components And Interfaces
 
-### 5.1 DatabaseService
+### 5.1 DbClient
 
-**File:** `synch-status/src/services/databaseService.js` (NEW)
+**File:** `synch-status/src/services/dbClient.js` (NEW)
 
 **Purpose:** Singleton connection pool + stored procedure wrapper
 
 **Public Interface:**
 
 ```javascript
-class DatabaseService {
+class DbClient {
   // Async initialization (singleton pattern)
   static async getPool() → pg.Pool
   
@@ -202,7 +202,7 @@ Error Classification:
 **Implementation Pattern:**
 
 ```javascript
-class DatabaseService {
+class DbClient {
   constructor(logger, config) {
     this.logger = logger;
     this.config = config;
@@ -226,10 +226,10 @@ class DatabaseService {
 
 ```javascript
 // At top of file
-const DatabaseService = require('./services/databaseService');
+const DbClient = require('./services/databaseService');
 
 // In _handlePostSynchStatus
-const dbService = new DatabaseService(logger, config);
+const dbService = new DbClient(logger, config);
 
 switch (status) {
   case 'SUCCESS':
@@ -732,7 +732,7 @@ When live in production:
 
 ## Testing Strategy
 
-**Unit Tests (databaseService.js):**
+**Unit Tests (dbClient.js):**
 - Mock pg.Pool, Secrets Manager, SSM
 - Test credential loading, error classification, retry logic
 - Coverage target: >= 90%
