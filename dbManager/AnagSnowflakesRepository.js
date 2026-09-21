@@ -27,6 +27,9 @@
  * usato cosi' com'e', altrimenti (tipicamente un codice numerico WebDAC, es.
  * "55", "00", "83") viene prima risolto nel corrispondente codice ARCAD
  * tramite resolveArcadBrandCode(), interrogando la stessa tabella.
+ *
+ * Tutte le query filtrano sempre fl_is_deleted_flag = 0, escludendo le righe
+ * cancellate logicamente dalla sorgente Snowflake (fl_is_deleted_flag = 1).
  */
 
 /** Codice brand a 2 lettere (es. "FT", "CY", "AR"): formato ARCAD/RefTech, usato come unico criterio di ricerca del brand. */
@@ -53,6 +56,7 @@ async function resolveArcadBrandCode(pool, brand) {
     `SELECT s.cd_contract_brand_arcad_code
        FROM woc.ang_snowflakes s
       WHERE s.cd_contract_brand_webdac_code = $1
+        AND s.fl_is_deleted_flag = 0
       LIMIT 1`,
     [brand],
   );
@@ -72,6 +76,7 @@ async function getCountryIsoCode(pool, { market }) {
     `SELECT s.cd_dealer_country_iso_code
        FROM woc.ang_snowflakes s
       WHERE s.cd_market_code = $1
+        AND s.fl_is_deleted_flag = 0
       LIMIT 1`,
     [market],
   );
@@ -125,6 +130,7 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
       WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
         AND s.cd_contract_brand_arcad_code = $3
+        AND s.fl_is_deleted_flag = 0
       LIMIT 1`,
     [mainSincom, market, arcadBrand],
   );
@@ -182,6 +188,7 @@ async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } 
         AND s.cd_market_code = $2
         AND s.cd_contract_brand_arcad_code = $3
         AND s.cd_paired_oic_code = $4
+        AND s.fl_is_deleted_flag = 0
       LIMIT 1`,
     [mainSincom, market, arcadBrand, oic],
   );
@@ -222,6 +229,7 @@ async function getBrandsByOics(pool, { oics } = {}) {
        FROM woc.ang_snowflakes s
       WHERE s.cd_paired_oic_code = ANY($1::varchar[])
         AND s.cd_contract_brand_webdac_code IS NOT NULL
+        AND s.fl_is_deleted_flag = 0
       GROUP BY s.cd_paired_oic_code`,
     [oics],
   );

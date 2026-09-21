@@ -51,6 +51,10 @@
  * gn_town. Usata da session (MyPeopleDmsSessionRepository) per sovrascrivere
  * address/zipcode/city di ciascun oic.
  *
+ * Entrambe le query su woc.ang_snowflakes filtrano fl_is_deleted_flag = 0,
+ * escludendo le righe cancellate logicamente dalla sorgente Snowflake
+ * (fl_is_deleted_flag = 1).
+ *
  * setMarketEnable/setMarketDisable/setOicEnable/insertDomain/setDomain/
  * deleteDomain/insertPackage/setPackage operano sulle tabelle woc.hq_pk_market/
  * hq_pk_oic/hq_pk_domain/hq_pk_packages (sql/create_table_hq_packages.sql):
@@ -87,7 +91,8 @@ async function getEnablingConfiguration(pool, codmarket) {
        FROM woc.ang_snowflakes t
        JOIN woc.addr_snowflakes t2 ON t.cd_unique_site_code = t2.cd_site_identification_code
        LEFT JOIN woc.hq_application_enabling hae ON hae.oic = t.cd_paired_oic_code
-      WHERE t.cd_market_code = $1`,
+      WHERE t.cd_market_code = $1
+        AND t.fl_is_deleted_flag = 0`,
     [codmarket],
   );
 
@@ -263,7 +268,8 @@ async function getAddressByOics(pool, { oics } = {}) {
                     , a.gn_town AS city
        FROM woc.ang_snowflakes s
        JOIN woc.addr_snowflakes a ON s.cd_unique_site_code = a.cd_site_identification_code
-      WHERE s.cd_paired_oic_code = ANY($1::varchar[])`,
+      WHERE s.cd_paired_oic_code = ANY($1::varchar[])
+        AND s.fl_is_deleted_flag = 0`,
     [oics],
   );
 

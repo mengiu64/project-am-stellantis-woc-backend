@@ -66,6 +66,7 @@ describe('HqRepository', () => {
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('JOIN woc.addr_snowflakes t2'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_application_enabling hae'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND t.fl_is_deleted_flag = 0'));
     });
 
     it('returns an empty array when no rows are found', async () => {
@@ -309,6 +310,7 @@ describe('HqRepository', () => {
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SELECT DISTINCT'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('s.cd_paired_oic_code = ANY($1::varchar[])'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
     });
 
     it('normalizes missing address fields to null and returns an empty map when there are no rows', async () => {
