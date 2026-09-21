@@ -2,6 +2,15 @@
 // Lambda handler - Riceve 4 eventi Kafka specifici da DJC e registra in Aurora
 // Implementazione RISTRETTA secondo SRP DL KAFKA Specification
 // 4 eventi supportati: DMS_PUSH_SUCCESS_WITHOUT_UPDATE, DMS_PUSH_SUCCESS_WITH_UPDATE, DMS_PUSH_REFUSAL, DMS_PUSH_FAILURE
+//
+// ⚠️  NOTA IMPORTANTE: Validazione token delegata a IBM API Connect Gateway
+//     - La lambda assume che il token ricevuto sia SEMPRE valido
+//     - IBM APIC Gateway esegue l'autenticazione e autorizzazione prima di inviare il payload alla lambda
+//     - Non c'è validazione di token nel codice lambda (nessun authService.js)
+//     - La lambda si concentra SOLO su:
+//       1. Parsing e validazione del payload (struttura, valori obbligatori)
+//       2. Registrazione stato sincronizzazione in Aurora
+//       3. Logging e tracing
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 📦 IMPORTS

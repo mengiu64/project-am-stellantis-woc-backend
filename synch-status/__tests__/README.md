@@ -1,8 +1,14 @@
-# Syncro-Kafka-Events Lambda - SRP DL KAFKA Integration
+# Synch-Status Lambda - SRP DL KAFKA Integration
 
 ## 📋 Sommario
 
 Lambda `synch-status` riceve **SOLTANTO 4 eventi specifici** da DJC e li registra in Aurora PostgreSQL secondo la specifica **SRP DL KAFKA Specification.md**.
+
+### ⚠️ Nota Importante: Validazione Token
+- **La lambda NON valida il token** - questa responsabilità è delegata a **IBM API Connect Gateway**
+- IBM APIC esegue l'autenticazione/autorizzazione PRIMA di inviare il payload alla lambda
+- La lambda assume che il token ricevuto sia SEMPRE valido
+- Il codice si concentra SOLO su validazione payload e registrazione dati in Aurora
 
 ### I 4 Eventi Supportati:
 1. **DMS_PUSH_SUCCESS_WITHOUT_UPDATE** → Status DB: `SUCCESS_WITHOUT_UPDATE` (nessun errore)
