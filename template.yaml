@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
-# Template CloudFormation per Lambda syncro-kafka-events
+# Template CloudFormation per Lambda synch-status
 # Naming convention: aggiungi suffix -dev/-stage al name, nessun suffix per produzione
 
 Description: |
-  Stellantis WOC - syncro-kafka-events Lambda
+  Stellantis WOC - synch-status Lambda
   REST API per sincronizzazione eventi Kafka da SRP Digital Layer a DJC/GCT
 
 Parameters:
@@ -41,7 +41,7 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'stellantis-syncro-kafka-events-role-${Env}'
+      RoleName: !Sub 'stellantis-synch-status-role-${Env}'
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -61,7 +61,7 @@ Resources:
                 Action:
                   - ssm:GetParameter
                   - ssm:GetParameters
-                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/stellantis/syncro-kafka-events/*'
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/stellantis/synch-status/*'
         
         # Politica: accesso Secrets Manager
         - PolicyName: SecretsManagerAccess
@@ -71,7 +71,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - secretsmanager:GetSecretValue
-                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stellantis/syncro-kafka-events/*'
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:stellantis/synch-status/*'
         
         # Politica: accesso CloudWatch Logs
         - PolicyName: CloudWatchLogsAccess
@@ -83,7 +83,7 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/stellantis-syncro-kafka-events-*'
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/stellantis-synch-status-*'
         
         # Politica: accesso X-Ray (per distributed tracing)
         - PolicyName: XRayAccess
@@ -99,17 +99,17 @@ Resources:
   # ==========================================
   # Lambda Function
   # ==========================================
-  SyncroKafkaEventsFunction:
+  SynchStatusFunction:
     Type: AWS::Serverless::Function
     Properties:
       # Nome con suffix environment (per naming convention)
       FunctionName: !If
         - IsProd
-        - stellantis-syncro-kafka-events
-        - !Sub 'stellantis-syncro-kafka-events-${Env}'
+        - stellantis-synch-status
+        - !Sub 'stellantis-synch-status-${Env}'
       
-      # Handler entrypoint - punta al file index.js della lambda nella directory syncro-kafka-events
-      CodeUri: syncro-kafka-events
+      # Handler entrypoint - punta al file index.js della lambda nella directory synch-status
+      CodeUri: synch-status
       Handler: index.handler
       
       # Role IAM
@@ -124,40 +124,40 @@ Resources:
           
           # OAuth2 configuration (da Parameter Store)
           OAUTH_CLIENT_ID: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/oauth-client-id${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/oauth-client-id${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
           
           OAUTH_TOKEN_URL: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/oauth-token-url${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/oauth-token-url${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
           
           # IBM API Connect configuration - Client ID per identificare consumer
           IBM_APIC_CLIENT_ID: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/apic-client-id${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/apic-client-id${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
           
           # IBM API Connect client secret - CRITICO per autenticazione APIC (FIX)
           IBM_APIC_CLIENT_SECRET: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/apic-client-secret${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/apic-client-secret${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
           
           IBM_APIC_URL: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/apic-url${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/apic-url${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
           
           # External systems endpoints
           DJC_ENDPOINT: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/djc-endpoint${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/djc-endpoint${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
           
           GCT_ENDPOINT: !Sub
-            - '{{resolve:ssm:/stellantis/syncro-kafka-events/gct-endpoint${EnvSuffix}:1}}'
+            - '{{resolve:ssm:/stellantis/synch-status/gct-endpoint${EnvSuffix}:1}}'
             - EnvSuffix: !If [IsProd, '', !Sub '-${Env}']
       
       # CloudWatch Logs
       LoggingConfig:
         LogFormat: JSON
-        LogGroup: !Sub '/aws/lambda/stellantis-syncro-kafka-events-${Env}'
+        LogGroup: !Sub '/aws/lambda/stellantis-synch-status-${Env}'
       
       # Tracing config (X-Ray)
       TracingConfig:
@@ -192,7 +192,7 @@ Resources:
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
-      Name: !Sub 'stellantis-syncro-kafka-events-${Env}'
+      Name: !Sub 'stellantis-synch-status-${Env}'
       ProtocolType: HTTP
       Description: REST API per sincronizzazione eventi Kafka
       CorsConfiguration:
@@ -223,7 +223,7 @@ Resources:
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub '/aws/apigateway/stellantis-syncro-kafka-events-${Env}'
+      LogGroupName: !Sub '/aws/apigateway/stellantis-synch-status-${Env}'
       RetentionInDays: 30
 
   # ==========================================
@@ -232,7 +232,7 @@ Resources:
   LambdaErrorAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub 'stellantis-syncro-kafka-events-errors-${Env}'
+      AlarmName: !Sub 'stellantis-synch-status-errors-${Env}'
       MetricName: Errors
       Namespace: AWS/Lambda
       Statistic: Sum
@@ -242,13 +242,13 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Dimensions:
         - Name: FunctionName
-          Value: !Ref SyncroKafkaEventsFunction
+          Value: !Ref SynchStatusFunction
       TreatMissingData: notBreaching
 
   LambdaThrottleAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub 'stellantis-syncro-kafka-events-throttles-${Env}'
+      AlarmName: !Sub 'stellantis-synch-status-throttles-${Env}'
       MetricName: Throttles
       Namespace: AWS/Lambda
       Statistic: Sum
@@ -258,13 +258,13 @@ Resources:
       ComparisonOperator: GreaterThanOrEqualToThreshold
       Dimensions:
         - Name: FunctionName
-          Value: !Ref SyncroKafkaEventsFunction
+          Value: !Ref SynchStatusFunction
       TreatMissingData: notBreaching
 
   LambdaDurationAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub 'stellantis-syncro-kafka-events-duration-${Env}'
+      AlarmName: !Sub 'stellantis-synch-status-duration-${Env}'
       MetricName: Duration
       Namespace: AWS/Lambda
       Statistic: Average
@@ -274,30 +274,30 @@ Resources:
       ComparisonOperator: GreaterThanThreshold
       Dimensions:
         - Name: FunctionName
-          Value: !Ref SyncroKafkaEventsFunction
+          Value: !Ref SynchStatusFunction
       TreatMissingData: notBreaching
 
 Outputs:
   FunctionName:
     Description: Nome della Lambda function
-    Value: !Ref SyncroKafkaEventsFunction
+    Value: !Ref SynchStatusFunction
     Export:
-      Name: !Sub 'SyncroKafkaEvents-Function-${Env}'
+      Name: !Sub 'SynchStatus-Function-${Env}'
 
   FunctionArn:
     Description: ARN della Lambda function
-    Value: !GetAtt SyncroKafkaEventsFunction.Arn
+    Value: !GetAtt SynchStatusFunction.Arn
     Export:
-      Name: !Sub 'SyncroKafkaEvents-Arn-${Env}'
+      Name: !Sub 'SynchStatus-Arn-${Env}'
 
   ApiEndpoint:
     Description: Endpoint API Gateway HTTP API
     Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Env}'
     Export:
-      Name: !Sub 'SyncroKafkaEvents-Api-${Env}'
+      Name: !Sub 'SynchStatus-Api-${Env}'
 
   LogGroupName:
     Description: CloudWatch Log Group
-    Value: !Sub '/aws/lambda/stellantis-syncro-kafka-events-${Env}'
+    Value: !Sub '/aws/lambda/stellantis-synch-status-${Env}'
     Export:
       Name: !Sub 'SyncroKafkaEvents-LogGroup-${Env}'
