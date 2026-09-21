@@ -108,7 +108,10 @@ exports.handler = async (event = {}) => {
     return response(400, { success: false, message: `Azione non supportata: "${action}". Azioni valide: ${VALID_ACTIONS.join(', ')}` });
   }
 
-  const { codmarket, oic, enableWOC, enableSignature, market, type, id, value, descr } = body;
+  const {
+    codmarket, oic, enableWOC, enableSignature, market, type, id, value, descr,
+    iddomain, timeop, pricewithvat, idpackage,
+  } = body;
   const manager = new HqManager();
 
   try {
@@ -137,8 +140,43 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, id, value });
     }
 
-    await manager.insertVehicleInspection(market, type, descr);
-    return response(200, { success: true, market, type, descr });
+    if (action === 'insertVehicleInspection') {
+      await manager.insertVehicleInspection(market, type, descr);
+      return response(200, { success: true, market, type, descr });
+    }
+
+    if (action === 'setMarketEnable') {
+      await manager.setMarketEnable(market);
+      return response(200, { success: true, market });
+    }
+
+    if (action === 'setMarketDisable') {
+      await manager.setMarketDisable(market);
+      return response(200, { success: true, market });
+    }
+
+    if (action === 'setOicEnable') {
+      await manager.setOicEnable(market, oic);
+      return response(200, { success: true, market, oic });
+    }
+
+    if (action === 'insertDomain') {
+      const newIddomain = await manager.insertDomain(market, oic, descr);
+      return response(200, { success: true, market, oic, descr, iddomain: newIddomain });
+    }
+
+    if (action === 'setDomain') {
+      await manager.setDomain(market, iddomain, descr);
+      return response(200, { success: true, market, iddomain, descr });
+    }
+
+    if (action === 'insertPackage') {
+      const newIdpackage = await manager.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
+      return response(200, { success: true, market, oic, iddomain, descr, timeop, pricewithvat, idpackage: newIdpackage });
+    }
+
+    await manager.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
+    return response(200, { success: true, idpackage, iddomain, descr, timeop, pricewithvat });
   } catch (err) {
     const statusCode = err.message.includes('is required') ? 400 : 502;
     return response(statusCode, { success: false, message: err.message });
