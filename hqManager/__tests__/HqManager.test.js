@@ -12,6 +12,13 @@ jest.mock('../../dbManager/HqRepository', () => ({
   setVehicleInspectionVisible: jest.fn(),
   deletetVehicleInspectionVisible: jest.fn(),
   insertVehicleInspection: jest.fn(),
+  setMarketEnable: jest.fn(),
+  setMarketDisable: jest.fn(),
+  setOicEnable: jest.fn(),
+  insertDomain: jest.fn(),
+  setDomain: jest.fn(),
+  insertPackage: jest.fn(),
+  setPackage: jest.fn(),
 }));
 
 const { getPool } = require('../../dbManager/db');
@@ -22,6 +29,13 @@ const {
   setVehicleInspectionVisible,
   deletetVehicleInspectionVisible,
   insertVehicleInspection,
+  setMarketEnable,
+  setMarketDisable,
+  setOicEnable,
+  insertDomain,
+  setDomain,
+  insertPackage,
+  setPackage,
 } = require('../../dbManager/HqRepository');
 const { HqManager } = require('../HqManager');
 
@@ -104,6 +118,85 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria');
+    });
+  });
+
+  describe('setMarketEnable', () => {
+    it('resolves the pool and delegates to HqRepository.setMarketEnable', async () => {
+      setMarketEnable.mockResolvedValue(undefined);
+
+      await manager.setMarketEnable('1000');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setMarketEnable).toHaveBeenCalledWith(fakePool, '1000');
+    });
+  });
+
+  describe('setMarketDisable', () => {
+    it('resolves the pool and delegates to HqRepository.setMarketDisable', async () => {
+      setMarketDisable.mockResolvedValue(undefined);
+
+      await manager.setMarketDisable('1000');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
+    });
+  });
+
+  describe('setOicEnable', () => {
+    it('resolves the pool and delegates to HqRepository.setOicEnable', async () => {
+      setOicEnable.mockResolvedValue(undefined);
+
+      await manager.setOicEnable('1000', '00006821');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setOicEnable).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+    });
+  });
+
+  describe('insertDomain', () => {
+    it('resolves the pool and delegates to HqRepository.insertDomain', async () => {
+      insertDomain.mockResolvedValue(42);
+
+      const result = await manager.insertDomain('1000', '00006821', 'Meccanica');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(insertDomain).toHaveBeenCalledWith(fakePool, '1000', '00006821', 'Meccanica');
+      expect(result).toBe(42);
+    });
+  });
+
+  describe('setDomain', () => {
+    it('resolves the pool and delegates to HqRepository.setDomain', async () => {
+      setDomain.mockResolvedValue(undefined);
+
+      await manager.setDomain('1000', 42, 'Meccanica');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setDomain).toHaveBeenCalledWith(fakePool, '1000', 42, 'Meccanica');
+    });
+  });
+
+  describe('insertPackage', () => {
+    it('resolves the pool and delegates to HqRepository.insertPackage', async () => {
+      insertPackage.mockResolvedValue(7);
+
+      const result = await manager.insertPackage('1000', '00006821', 42, 'Tagliando', 60, 100.5);
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(insertPackage).toHaveBeenCalledWith(fakePool, '1000', '00006821', 42, 'Tagliando', 60, 100.5);
+      expect(result).toBe(7);
+    });
+  });
+
+  describe('setPackage', () => {
+    it('resolves the pool and delegates to HqRepository.setPackage', async () => {
+      setPackage.mockResolvedValue(undefined);
+
+      await manager.setPackage(7, 42, 'Tagliando', 60, 100.5);
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setPackage).toHaveBeenCalledWith(fakePool, 7, 42, 'Tagliando', 60, 100.5);
     });
   });
 });
