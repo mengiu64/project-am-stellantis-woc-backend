@@ -56,6 +56,26 @@ describe('session/src/index — handler', () => {
     expect(JSON.parse(res.body).userroles).toEqual(['dealer', 'advisor']);
   });
 
+  it('inserisce userroles subito dopo profile nell\'ordine delle chiavi della risposta', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({
+      codmarket: '1000',
+      profile: 'ADMIN',
+      physicalsite: 'SITE1',
+    });
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
+    });
+    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'profile', 'userroles', 'physicalsite']);
+  });
+
+  it('accoda userroles in fondo se profile non e\' presente nei dati del repository', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
+    });
+    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'userroles']);
+  });
+
   it('ignora username/codmarket passati dal client e usa sempre authorizer.sub', async () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({});
     await handler({

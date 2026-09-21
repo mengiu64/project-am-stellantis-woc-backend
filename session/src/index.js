@@ -41,7 +41,7 @@ async function handler(event = {}) {
     // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di
     // "identita' solo dall'authorizer" gia' applicato a `sub`.
-    return response(200, { ...data, userroles: roles });
+    return response(200, insertAfterProfile(data, roles));
   } catch (err) {
     if (err.code === 'SESSION_NOT_FOUND') {
       return response(404, { success: false, message: err.message });
@@ -84,6 +84,25 @@ function getAuthContext(event) {
   }
 
   return { sub, roles, profile };
+}
+
+/**
+ * Inserisce la chiave `userroles` subito dopo `profile` nell'oggetto dati di
+ * sessione (stesso ordine di chiavi atteso nel JSON di risposta), senza
+ * mutare l'oggetto originale. Se `profile` non e' presente (fallback difensivo,
+ * non dovrebbe verificarsi con l'attuale MyPeopleDmsSessionRepository), `userroles`
+ * viene semplicemente accodato in fondo.
+ *
+ * @param {object} data - Dati di sessione restituiti dal repository.
+ * @param {string[]} roles - Ruoli dell'utente autenticato (da getAuthContext).
+ * @returns {object} Copia di `data` con `userroles` inserito dopo `profile`.
+ */
+function insertAfterProfile(data, roles) {
+  const entries = Object.entries(data || {});
+  const profileIndex = entries.findIndex(([key]) => key === 'profile');
+  const insertAt = profileIndex === -1 ? entries.length : profileIndex + 1;
+  entries.splice(insertAt, 0, ['userroles', roles]);
+  return Object.fromEntries(entries);
 }
 
 function response(statusCode, body) {
