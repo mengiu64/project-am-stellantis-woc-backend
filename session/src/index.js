@@ -25,7 +25,7 @@ const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
  * @returns {Promise<object>} { statusCode, body }
  */
 async function handler(event = {}) {
-  const { sub } = getAuthContext(event);
+  const { sub, roles } = getAuthContext(event);
 
   if (!sub) {
     return response(401, {
@@ -37,7 +37,11 @@ async function handler(event = {}) {
   try {
     const repository = buildMyPeopleDmsRepository();
     const data = await repository.getSessionData(sub);
-    return response(200, data);
+    // `userroles` (array) e' il ruolo/i ruoli dell'utente autenticato, presi
+    // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
+    // estratto da getAuthContext), mai da myPeople/dms: stesso principio di
+    // "identita' solo dall'authorizer" gia' applicato a `sub`.
+    return response(200, { ...data, userroles: roles });
   } catch (err) {
     if (err.code === 'SESSION_NOT_FOUND') {
       return response(404, { success: false, message: err.message });

@@ -45,7 +45,15 @@ describe('session/src/index — handler', () => {
     expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ codmarket: '1000', sincom: '0073741' });
+    expect(JSON.parse(res.body)).toEqual({ codmarket: '1000', sincom: '0073741', userroles: [] });
+  });
+
+  it('espone userroles (array) valorizzato da requestContext.authorizer.roles (CSV)', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer, advisor' } },
+    });
+    expect(JSON.parse(res.body).userroles).toEqual(['dealer', 'advisor']);
   });
 
   it('ignora username/codmarket passati dal client e usa sempre authorizer.sub', async () => {
