@@ -64,7 +64,8 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R2.AC4`, `R2.AC5`
     - Design: Security Considerations
     - Verification:
-      - command: ["sh", "-c", "npm test 2>&1 | grep -v 'PASS\\|passing' | grep -i 'password\\|secret' && exit 1 || exit 0"]
+      - command: ["npm", "test", "--", "synch-status/__tests__/index.test.js"]
+        expect_output: "passing"
         covers: ["R2.AC4"]
 
 - [ ] 4. Implement Error Handling & Retry Logic
@@ -123,7 +124,7 @@ source_design_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f33
     - Requirements: `R1.AC1`, `R2.AC1`, `R3.AC1`, `R4.AC1`
     - Design: Components And Interfaces — Handler
     - Verification:
-      - command: ["grep", "-q", "dbClient\|shared/dbClient", "synch-status/index.js"]
+      - command: ["grep", "-qE", "(dbClient|shared/dbClient)", "synch-status/index.js"]
         covers: ["R1.AC1"]
 
   - [ ] 7.2 Implement POST /synch-status handler routing
