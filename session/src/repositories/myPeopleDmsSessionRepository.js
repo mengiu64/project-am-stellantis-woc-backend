@@ -217,6 +217,13 @@ function loadGetAddressByOics() {
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
 // es. "00") verso il codice brand "RefTech" atteso da dms/settings (es. "FT").
 // Tabella fornita dal business (fonte: myPeople -> dms brand mapping).
+// Codice RC ritornato da myPeople readUserProfiles per gli utenti HQ (staff
+// Stellantis, non rete dealer): `{"Response":{"RC":121,"STATUS":"HQ users are
+// not allowed for this feature.","User":{}}}`. myPeople modella solo profili
+// IURSMA della rete dealer, quindi per questi utenti non esiste un profilo da
+// leggere (non e' un errore/utente non abilitato).
+const HQ_USER_NOT_ALLOWED_RC = 121;
+
 const BRAND_CODE_TO_REFTECH = {
   83: 'AR',
   '00': 'FT',
@@ -325,6 +332,15 @@ const BRAND_CODE_TO_REFTECH = {
  *      altre letture DB di questa classe: entrambi `null` se manca
  *      mainSincom/market/brand/oic, se non esiste una riga corrispondente, o se
  *      la query fallisce per qualunque motivo.
+ *
+ *      Utenti HQ (staff Stellantis, non rete dealer, es. "SF48816"): myPeople
+ *      modella solo profili IURSMA della rete dealer e per un utente HQ
+ *      risponde con `RC=121`/`STATUS="HQ users are not allowed for this
+ *      feature."`/`User={}` (v. HQ_USER_NOT_ALLOWED_RC). Questo NON viene
+ *      trattato come utente non trovato (404): `getSessionData` ritorna invece
+ *      una sessione "vuota" (v. buildHqSessionData — stessa forma/chiavi del
+ *      JSON storico, campi dealer-specific `null`/`[]`, `usertype: 'HQ'`),
+ *      cosi' un utente HQ legittimo puo' comunque accedere all'app.
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({
@@ -365,6 +381,19 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const peopleResponse = await readUserProfiles({ username });
 
     const result = peopleResponse && peopleResponse.Response;
+
+    // myPeople modella SOLO i profili della rete dealer (username IURSMA): per
+    // un utente HQ (staff Stellantis, es. "SF48816") risponde con RC=121,
+    // STATUS="HQ users are not allowed for this feature.", User={} — NON e'
+    // un utente inesistente/non abilitato, semplicemente myPeople non ha nulla
+    // da restituire per lui. Propagare un 404 (SessionNotFoundError) in
+    // questo caso e' quindi errato: si ritorna invece una sessione "vuota"
+    // (stessa forma storica, campi dealer-specific a null/[]), cosi' l'utente
+    // HQ può comunque accedere all'app.
+    if (result && Number(result.RC) === HQ_USER_NOT_ALLOWED_RC) {
+      return buildHqSessionData(username);
+    }
+
     if (!result || String(result.RC) !== '0' || result.STATUS !== 'SUCCESS' || !result.User) {
       throw new SessionNotFoundError(username, "l'utente");
     }
@@ -586,6 +615,62 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
         : [],
     };
   }
+}
+
+/**
+ * Sessione "vuota" per un utente HQ (myPeople RC=121, v. HQ_USER_NOT_ALLOWED_RC):
+ * stessa forma/chiavi del JSON storico restituito per un dealer, ma con tutti i
+ * campi non derivabili (nessun dato myPeople/dms disponibile per un utente HQ)
+ * a `null`/`[]`. `usertype: 'HQ'` permette al chiamante di distinguere questo
+ * caso da un dealer con `usertype` non valorizzato.
+ *
+ * @param {string} username - Username HQ (es. "SF48816").
+ * @returns {object} Dati di sessione con la stessa forma di un utente dealer.
+ */
+function buildHqSessionData(username) {
+  return {
+    username,
+    codmarket: null,
+    marketIso: null,
+    oic: null,
+    sincom: null,
+    firstname: null,
+    lastname: null,
+    profile: null,
+    physicalsite: null,
+    pdvId: null,
+    sessionbrand: null,
+    inmandate: null,
+    language: null,
+    locale: null,
+    isdml: false,
+    dmlcustomerupdate: null,
+    dmldiscount: null,
+    brandvehic_genome: null,
+    brandvehic_reftech: null,
+    brandvehic_fca: null,
+    pkwstouse: null,
+    vat: null,
+    usertype: 'HQ',
+    interiorcarwash: null,
+    exteriorcarwash: null,
+    partpref_old: null,
+    partpref_original: null,
+    partpref_returned: null,
+    partpref_circularec: null,
+    pcydealer1: null,
+    pcydealer2: null,
+    pcydealer3: null,
+    pcystellantis1: null,
+    pcystellantis2: null,
+    pcystellantis3: null,
+    maxdiscountperc: null,
+    maxdiscountval: null,
+    oics: [],
+    applications: [],
+    companytypes: [],
+    customertitles: [],
+  };
 }
 
 /** Restituisce una copia dell'oggetto con tutte le chiavi di primo livello in minuscolo. */

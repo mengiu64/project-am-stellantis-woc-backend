@@ -277,6 +277,71 @@ describe('MyPeopleDmsSessionRepository', () => {
     await expect(repository.getSessionData('unknown.user')).rejects.toThrow(SessionNotFoundError);
   });
 
+  test('ritorna una sessione "vuota" (senza 404) quando myPeople risponde RC=121 (utente HQ)', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: { RC: 121, STATUS: 'HQ users are not allowed for this feature.', User: {} },
+      }),
+    });
+
+    const data = await repository.getSessionData('SF48816');
+
+    expect(data).toEqual({
+      username: 'SF48816',
+      codmarket: null,
+      marketIso: null,
+      oic: null,
+      sincom: null,
+      firstname: null,
+      lastname: null,
+      profile: null,
+      physicalsite: null,
+      pdvId: null,
+      sessionbrand: null,
+      inmandate: null,
+      language: null,
+      locale: null,
+      isdml: false,
+      dmlcustomerupdate: null,
+      dmldiscount: null,
+      brandvehic_genome: null,
+      brandvehic_reftech: null,
+      brandvehic_fca: null,
+      pkwstouse: null,
+      vat: null,
+      usertype: 'HQ',
+      interiorcarwash: null,
+      exteriorcarwash: null,
+      partpref_old: null,
+      partpref_original: null,
+      partpref_returned: null,
+      partpref_circularec: null,
+      pcydealer1: null,
+      pcydealer2: null,
+      pcydealer3: null,
+      pcystellantis1: null,
+      pcystellantis2: null,
+      pcystellantis3: null,
+      maxdiscountperc: null,
+      maxdiscountval: null,
+      oics: [],
+      applications: [],
+      companytypes: [],
+      customertitles: [],
+    });
+  });
+
+  test('riconosce RC=121 come stringa ("121") come utente HQ', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: { RC: '121', STATUS: 'HQ users are not allowed for this feature.', User: {} },
+      }),
+    });
+
+    const data = await repository.getSessionData('SF48816');
+    expect(data.usertype).toBe('HQ');
+  });
+
   test('usa il primo OIC come fallback quando nessuno ha MAIN="Y"', async () => {
     const repository = buildRepository({
       readUserProfilesFn: jest.fn().mockResolvedValue({
