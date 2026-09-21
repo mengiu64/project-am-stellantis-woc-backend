@@ -2,10 +2,10 @@
 walden_schema_version: v1alpha1
 status: approved
 approved_at: 2026-09-17T20:00:57Z
-last_modified: 2026-09-17T20:00:57Z
-approved_fingerprint: sha256:ca115e75b7d27a19ffde32b94499a8ee0ad984b2d31f3393bb89ec581a27c756
+last_modified: 2026-09-21T11:21:00Z
+approved_fingerprint: sha256:2ee8c615f862fba762518129fb6761ee1d9363aa3cd05cf2f1b448c134fde89d
 source_requirements_approved_at: 2026-09-17T19:58:38Z
-source_requirements_fingerprint: sha256:2e68e6907cab7c9e85836cf6a8510a0907f69a370e39f34f3609315ba0c5b159
+source_requirements_fingerprint: sha256:f1f7022baa611f84e840c62d6bea9c83945f84aaec91a558bc4448779e07484d
 ---
 
 # Design: synch-status Aurora DB Integration
