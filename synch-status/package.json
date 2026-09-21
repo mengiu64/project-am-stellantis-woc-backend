@@ -4,8 +4,8 @@
   "description": "AWS Lambda REST API per sincronizzazione eventi Kafka da SRP Digital Layer a sistemi esterni (DJC/GCT)",
   "main": "index.js",
   "scripts": {
-    "test": "jest --coverage --testPathPattern=__tests__",
-    "test:watch": "jest --watch --testPathPattern=__tests__",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
     "lint": "eslint *.js"
   },
   "keywords": [
@@ -33,6 +33,11 @@
     "jest-mock-axios": "^4.6.1",
     "eslint": "^8.57.0",
     "@jest/globals": "^29.7.0"
+  },
+  "jest": {
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ]
   },
   "engines": {
     "node": ">=18.0.0"
