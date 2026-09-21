@@ -29,8 +29,10 @@ function makeManagerInstance(overrides = {}) {
     setOicEnable: jest.fn(),
     insertDomain: jest.fn(),
     setDomain: jest.fn(),
+    deleteDomain: jest.fn(),
     insertPackage: jest.fn(),
     setPackage: jest.fn(),
+    getPackageList: jest.fn(),
     ...overrides,
   };
   HqManager.mockImplementation(() => instance);
@@ -197,6 +199,21 @@ describe('hqManager/index.js', () => {
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42, descr: 'Meccanica' });
     });
 
+    it('dispatches deleteDomain (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        deleteDomain: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({
+        action: 'deleteDomain',
+        body: { market: '3110', iddomain: 42 },
+      });
+
+      expect(instance.deleteDomain).toHaveBeenCalledWith('3110', 42);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42 });
+    });
+
     it('dispatches insertPackage (direct invocation payload)', async () => {
       const instance = makeManagerInstance({
         insertPackage: jest.fn().mockResolvedValue(7),
@@ -233,6 +250,33 @@ describe('hqManager/index.js', () => {
       expect(JSON.parse(res.body)).toEqual({
         success: true, idpackage: 7, iddomain: 42, descr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
       });
+    });
+
+    it('dispatches getPackageList with a specific oic (direct invocation payload)', async () => {
+      const packages = [{
+        market: '1000', oic: '00006821', domainDescr: 'Meccanica', idpackage: 7, packageDescr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
+      }];
+      const instance = makeManagerInstance({
+        getPackageList: jest.fn().mockResolvedValue(packages),
+      });
+
+      const res = await handler({ action: 'getPackageList', body: { market: '1000', oic: '00006821' } });
+
+      expect(instance.getPackageList).toHaveBeenCalledWith('1000', '00006821');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: '00006821', packages });
+    });
+
+    it('dispatches getPackageList without oic (market-level configuration)', async () => {
+      const instance = makeManagerInstance({
+        getPackageList: jest.fn().mockResolvedValue([]),
+      });
+
+      const res = await handler({ action: 'getPackageList', body: { market: '1000' } });
+
+      expect(instance.getPackageList).toHaveBeenCalledWith('1000', undefined);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
     });
 
     it('ignores an unparseable JSON body (parseBody catch branch) and falls back to path-derived action', async () => {

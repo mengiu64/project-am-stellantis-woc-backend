@@ -14,8 +14,10 @@ const {
   setOicEnable,
   insertDomain,
   setDomain,
+  deleteDomain,
   insertPackage,
   setPackage,
+  getPackageList,
 } = require('../HqRepository');
 
 function makePool(queryImpl) {
@@ -459,6 +461,35 @@ describe('HqRepository', () => {
     });
   });
 
+  describe('deleteDomain', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(deleteDomain(pool, undefined, 42))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when iddomain is missing', async () => {
+      const pool = makePool();
+      await expect(deleteDomain(pool, '1000', undefined))
+        .rejects.toThrow('"iddomain" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE SET deleted = 1 with the given market/iddomain', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await deleteDomain(pool, '1000', 42);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE woc.hq_pk_domain'),
+        ['1000', 42],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SET deleted = 1'));
+    });
+  });
+
   describe('insertPackage', () => {
     it('throws when market is missing', async () => {
       const pool = makePool();
@@ -514,6 +545,94 @@ describe('HqRepository', () => {
         expect.stringContaining('UPDATE woc.hq_pk_packages'),
         [7, 42, 'Tagliando', 60, 100.5],
       );
+    });
+  });
+
+  describe('getPackageList', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(getPackageList(pool, undefined, '00006821'))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('filters on oi.oic = $2 and maps the joined rows when oic is provided', async () => {
+      const pool = makePool(async () => ({
+        rows: [
+          {
+            market: '1000',
+            oic: '00006821',
+            domaindescr: 'Meccanica',
+            idpackage: 7,
+            packagedescr: 'Tagliando',
+            timeop: 60,
+            pricewithvat: 100.5,
+          },
+        ],
+      }));
+
+      const result = await getPackageList(pool, '1000', '00006821');
+
+      expect(result).toEqual([
+        {
+          market: '1000',
+          oic: '00006821',
+          domainDescr: 'Meccanica',
+          idpackage: 7,
+          packageDescr: 'Tagliando',
+          timeop: 60,
+          pricewithvat: 100.5,
+        },
+      ]);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('AND oi.oic = $2'),
+        ['1000', '00006821'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('FROM woc.hq_pk_market mk'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_oic oi'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND dom.deleted = 0'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk'));
+      expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('pk.oic IS NULL'));
+    });
+
+    it('filters on pk.oic IS NULL (market-level configuration) when oic is null/undefined', async () => {
+      const pool = makePool(async () => ({
+        rows: [
+          {
+            market: '1000',
+            oic: null,
+            domaindescr: null,
+            idpackage: null,
+            packagedescr: null,
+            timeop: null,
+            pricewithvat: null,
+          },
+        ],
+      }));
+
+      const result = await getPackageList(pool, '1000', undefined);
+
+      expect(result).toEqual([
+        {
+          market: '1000', oic: null, domainDescr: null, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null,
+        },
+      ]);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('AND pk.oic IS NULL'),
+        ['1000'],
+      );
+      expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('oi.oic = $2'));
+    });
+
+    it('returns an empty array when no rows are found', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getPackageList(pool, '1000', '00006821');
+
+      expect(result).toEqual([]);
     });
   });
 });

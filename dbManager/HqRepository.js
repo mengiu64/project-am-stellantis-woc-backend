@@ -52,11 +52,21 @@
  * address/zipcode/city di ciascun oic.
  *
  * setMarketEnable/setMarketDisable/setOicEnable/insertDomain/setDomain/
- * insertPackage/setPackage operano sulle tabelle woc.hq_pk_market/
+ * deleteDomain/insertPackage/setPackage operano sulle tabelle woc.hq_pk_market/
  * hq_pk_oic/hq_pk_domain/hq_pk_packages (sql/create_table_hq_packages.sql):
  * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto usata
  * per l'amministrazione dei pacchetti HQ. Gli upsert su hq_pk_market/
  * hq_pk_oic usano ON CONFLICT DO UPDATE sulla PK (market / market+oic).
+ * deleteDomain cancella logicamente (hq_pk_domain.deleted = 1, v.
+ * sql/alter_table_hq_pk_domain_add_deleted.sql) il dominio (market, iddomain)
+ * indicato.
+ *
+ * getPackageList(market, oic) legge, in un'unica query con LEFT JOIN a
+ * cascata mercato -> OIC -> dominio -> pacchetto, la gerarchia configurata
+ * per il mercato (ed eventualmente l'OIC) richiesto: se oic e' valorizzato
+ * filtra sull'OIC specifico, altrimenti sulla configurazione "a livello
+ * mercato" (pk.oic IS NULL); i domini cancellati logicamente (deleted = 1)
+ * sono esclusi (dom.deleted = 0).
  */
 
 /** Codice errore Postgres per violazione di unique/primary key ("unique_violation"). */
@@ -385,6 +395,28 @@ async function setDomain(pool, market, iddomain, descr) {
 }
 
 /**
+ * Cancella (logicamente, woc.hq_pk_domain.deleted = 1) il dominio
+ * (market, iddomain) indicato.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {number} iddomain
+ * @returns {Promise<void>}
+ */
+async function deleteDomain(pool, market, iddomain) {
+  if (!market) throw new Error('"market" is required');
+  if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_pk_domain
+        SET deleted = 1
+      WHERE market = $1
+        AND iddomain = $2`,
+    [market, iddomain],
+  );
+}
+
+/**
  * Inserisce un nuovo pacchetto (woc.hq_pk_packages.idpackage generato dalla
  * sequence woc.hq_pk_packages_idpackage_seq).
  *
@@ -439,6 +471,51 @@ async function setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat
   );
 }
 
+/**
+ * Elenca la gerarchia mercato -> OIC -> dominio -> pacchetto configurata per
+ * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
+ * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
+ *
+ * Se oic e' valorizzato, filtra sull'OIC richiesto (oi.oic = oic); se oic e'
+ * null/undefined, filtra invece sulla configurazione "a livello mercato" (non
+ * legata a un OIC specifico), cioe' le righe con pk.oic IS NULL.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string|null} [oic]
+ * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null }>>}
+ */
+async function getPackageList(pool, market, oic) {
+  if (!market) throw new Error('"market" is required');
+
+  const baseQuery = `SELECT mk.market
+                          , oi.oic
+                          , dom.descr AS domaindescr
+                          , pk.idpackage
+                          , pk.descr AS packagedescr
+                          , pk.timeop
+                          , pk.pricewithvat
+                       FROM woc.hq_pk_market mk
+                       LEFT JOIN woc.hq_pk_oic oi ON mk.market = oi.market AND oi.deleted = 0
+                       LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
+                       LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
+                      WHERE mk.market = $1`;
+
+  const { rows } = oic
+    ? await pool.query(`${baseQuery} AND oi.oic = $2`, [market, oic])
+    : await pool.query(`${baseQuery} AND pk.oic IS NULL`, [market]);
+
+  return rows.map((row) => ({
+    market: row.market,
+    oic: row.oic,
+    domainDescr: row.domaindescr,
+    idpackage: row.idpackage,
+    packageDescr: row.packagedescr,
+    timeop: row.timeop,
+    pricewithvat: row.pricewithvat,
+  }));
+}
+
 module.exports = {
   getEnablingConfiguration,
   setEnablingConfiguration,
@@ -453,6 +530,8 @@ module.exports = {
   setOicEnable,
   insertDomain,
   setDomain,
+  deleteDomain,
   insertPackage,
   setPackage,
+  getPackageList,
 };

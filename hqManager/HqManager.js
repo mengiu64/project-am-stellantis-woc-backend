@@ -26,12 +26,18 @@ const path = require('path');
  * insertVehicleInspection(market, type, descr) espongono la gestione delle
  * voci di controllo veicolo (woc.hq_vehicle_inspection).
  *
- * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic),
- * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr) e
+ * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
+ * (che a cascata disabilita anche il mercato, v. sotto),
+ * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr)/
+ * deleteDomain(market, iddomain) (cancellazione logica, deleted = 1) e
  * insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
  * setPackage(idpackage, iddomain, descr, timeop, pricewithvat) espongono la
  * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto
  * (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
+ *
+ * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
+ * pacchetto configurata per il mercato (ed eventualmente l'OIC) richiesto
+ * (i domini cancellati logicamente sono esclusi).
  */
 class HqManager {
   /**
@@ -139,16 +145,22 @@ class HqManager {
   }
 
   /**
+   * Abilita l'OIC e, a cascata, disabilita il mercato (woc.hq_pk_market),
+   * dato che una volta configurato manualmente almeno un OIC del mercato la
+   * configurazione "a livello mercato" (setMarketEnable, che abilita tutti
+   * gli OIC in blocco) non deve piu' applicarsi.
+   *
    * @param {string} market
    * @param {string} oic
    * @returns {Promise<void>}
    */
   async setOicEnable(market, oic) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setOicEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    const { setOicEnable, setMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return setOicEnable(pool, market, oic);
+    await setOicEnable(pool, market, oic);
+    return setMarketDisable(pool, market);
   }
 
   /**
@@ -177,6 +189,19 @@ class HqManager {
 
     const pool = await getPool();
     return setDomain(pool, market, iddomain, descr);
+  }
+
+  /**
+   * @param {string} market
+   * @param {number} iddomain
+   * @returns {Promise<void>}
+   */
+  async deleteDomain(market, iddomain) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { deleteDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return deleteDomain(pool, market, iddomain);
   }
 
   /**
@@ -210,6 +235,19 @@ class HqManager {
 
     const pool = await getPool();
     return setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat);
+  }
+
+  /**
+   * @param {string} market
+   * @param {string|null} [oic]
+   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null }>>}
+   */
+  async getPackageList(market, oic) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { getPackageList } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return getPackageList(pool, market, oic);
   }
 }
 

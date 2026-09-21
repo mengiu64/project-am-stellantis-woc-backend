@@ -17,8 +17,10 @@ jest.mock('../../dbManager/HqRepository', () => ({
   setOicEnable: jest.fn(),
   insertDomain: jest.fn(),
   setDomain: jest.fn(),
+  deleteDomain: jest.fn(),
   insertPackage: jest.fn(),
   setPackage: jest.fn(),
+  getPackageList: jest.fn(),
 }));
 
 const { getPool } = require('../../dbManager/db');
@@ -34,8 +36,10 @@ const {
   setOicEnable,
   insertDomain,
   setDomain,
+  deleteDomain,
   insertPackage,
   setPackage,
+  getPackageList,
 } = require('../../dbManager/HqRepository');
 const { HqManager } = require('../HqManager');
 
@@ -144,13 +148,15 @@ describe('HqManager', () => {
   });
 
   describe('setOicEnable', () => {
-    it('resolves the pool and delegates to HqRepository.setOicEnable', async () => {
+    it('resolves the pool, delegates to HqRepository.setOicEnable and cascades a setMarketDisable', async () => {
       setOicEnable.mockResolvedValue(undefined);
+      setMarketDisable.mockResolvedValue(undefined);
 
       await manager.setOicEnable('1000', '00006821');
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setOicEnable).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(setMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
     });
   });
 
@@ -177,6 +183,17 @@ describe('HqManager', () => {
     });
   });
 
+  describe('deleteDomain', () => {
+    it('resolves the pool and delegates to HqRepository.deleteDomain', async () => {
+      deleteDomain.mockResolvedValue(undefined);
+
+      await manager.deleteDomain('1000', 42);
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(deleteDomain).toHaveBeenCalledWith(fakePool, '1000', 42);
+    });
+  });
+
   describe('insertPackage', () => {
     it('resolves the pool and delegates to HqRepository.insertPackage', async () => {
       insertPackage.mockResolvedValue(7);
@@ -197,6 +214,21 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setPackage).toHaveBeenCalledWith(fakePool, 7, 42, 'Tagliando', 60, 100.5);
+    });
+  });
+
+  describe('getPackageList', () => {
+    it('resolves the pool and delegates to HqRepository.getPackageList', async () => {
+      const packages = [{
+        market: '1000', oic: '00006821', domainDescr: 'Meccanica', idpackage: 7, packageDescr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
+      }];
+      getPackageList.mockResolvedValue(packages);
+
+      const result = await manager.getPackageList('1000', '00006821');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(result).toBe(packages);
     });
   });
 });

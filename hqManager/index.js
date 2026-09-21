@@ -21,14 +21,20 @@
  *     disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic).
  *   - setMarketDisable(market): disabilita il mercato e riabilita a cascata
  *     tutti i suoi OIC.
- *   - setOicEnable(market, oic): abilita l'OIC (woc.hq_pk_oic).
+ *   - setOicEnable(market, oic): abilita l'OIC (woc.hq_pk_oic) e, a cascata,
+ *     disabilita il mercato (woc.hq_pk_market).
  *   - insertDomain(market, oic, descr): crea un nuovo dominio
  *     (woc.hq_pk_domain).
  *   - setDomain(market, iddomain, descr): aggiorna la descr del dominio.
+ *   - deleteDomain(market, iddomain): cancella logicamente il dominio
+ *     (woc.hq_pk_domain.deleted = 1).
  *   - insertPackage(market, oic, iddomain, descr, timeop, pricewithvat):
  *     crea un nuovo pacchetto (woc.hq_pk_packages).
  *   - setPackage(idpackage, iddomain, descr, timeop, pricewithvat):
  *     aggiorna iddomain/descr/timeop/pricewithvat del pacchetto.
+ *   - getPackageList(market, oic): elenco della gerarchia mercato -> OIC ->
+ *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
+ *     la configurazione "a livello mercato").
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -60,8 +66,10 @@ const VALID_ACTIONS = [
   'setOicEnable',
   'insertDomain',
   'setDomain',
+  'deleteDomain',
   'insertPackage',
   'setPackage',
+  'getPackageList',
 ];
 
 function parseBody(event) {
@@ -170,13 +178,23 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, market, iddomain, descr });
     }
 
+    if (action === 'deleteDomain') {
+      await manager.deleteDomain(market, iddomain);
+      return response(200, { success: true, market, iddomain });
+    }
+
     if (action === 'insertPackage') {
       const newIdpackage = await manager.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
       return response(200, { success: true, market, oic, iddomain, descr, timeop, pricewithvat, idpackage: newIdpackage });
     }
 
-    await manager.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
-    return response(200, { success: true, idpackage, iddomain, descr, timeop, pricewithvat });
+    if (action === 'setPackage') {
+      await manager.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
+      return response(200, { success: true, idpackage, iddomain, descr, timeop, pricewithvat });
+    }
+
+    const packages = await manager.getPackageList(market, oic);
+    return response(200, { success: true, market, oic: oic ?? null, packages });
   } catch (err) {
     const statusCode = err.message.includes('is required') ? 400 : 502;
     return response(statusCode, { success: false, message: err.message });
