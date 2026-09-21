@@ -47,11 +47,24 @@ Lambda `synch-status` riceve **SOLTANTO 4 eventi specifici** da DJC e li registr
 ## 📊 Schema Tabella Aurora
 
 ```sql
+-- ENUM type: 6 stati possibili della sincronizzazione asincrona con DJC
+-- 🔴 IMPORTANTE: syncro-kafka-events usa SOLO i 4 stati FINALI (ultimi 4)
+CREATE TYPE woc.djc_sync_status AS ENUM (
+  'PENDING',                -- Una lambda ha pushato dei dati modificati verso DJC (creato da isStellantisBrand)
+  'NOT_PENDING',            -- Una lambda ha modificato dei dati ma NON ha pushato i dati modificati verso DJC
+  'SUCCESS_WITHOUT_UPDATE', -- DMS ha completato senza modificare dati (syncro-kafka-events AGGIORNA a questo stato)
+  'SUCCESS_WITH_UPDATE',    -- DMS ha completato e modificato dati (syncro-kafka-events AGGIORNA a questo stato)
+  'REFUSAL',                -- DMS ha rifiutato il push (syncro-kafka-events AGGIORNA a questo stato)
+  'FAILURE'                 -- DMS ha segnalato un fallimento (syncro-kafka-events AGGIORNA a questo stato)
+);
+
 CREATE TABLE woc.comunication_asyncro_djc (
   response_id UUID PRIMARY KEY,
   job_card_id VARCHAR(50) NOT NULL,         -- jobCardSrpId dal payload
   push_timestamp TIMESTAMP NOT NULL,        -- timestamp dal payload
-  djc_sync_status VARCHAR(50) NOT NULL,     -- SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE
+  djc_sync_status woc.djc_sync_status NOT NULL, -- ENUM: 6 stati totali, 4 finali usati da syncro-kafka-events
+  djc VARCHAR(1) NOT NULL DEFAULT 'Y',         -- Flag Y/N per abilitare sincronizzazione
+  ambito VARCHAR(100) NOT NULL,               -- Ambito/contesto dell'evento
   json_payload JSONB,                       -- Payload originale ricevuto da DJC
   json_modified JSONB,                      -- Metadati: receivedAt, eventType, additionalFields
   retry_count INTEGER DEFAULT 0,            -- Per future retry logic
@@ -65,6 +78,46 @@ CREATE TABLE woc.comunication_asyncro_djc (
   UNIQUE (job_card_id, push_timestamp)      -- Idempotency: stessa richiesta → ON CONFLICT DO UPDATE
 );
 ```
+
+### 📊 Stati ENUM - Responsabilità Lambd
+
+| Stato | Creato da | Modificato da | Lambda | Descrizione |
+|-------|-----------|---------------|--------|-------------|
+| `PENDING` | `isStellantisBrand` | ❌ Nessuno | - | Record creato, dati pushati verso DJC |
+| `NOT_PENDING` | Altra lambda | ❌ Nessuno | - | Modifiche non pushate verso DJC |
+| `SUCCESS_WITHOUT_UPDATE` | - | **syncro-kafka-events** | ✅ Usato | DMS completò senza modifiche |
+| `SUCCESS_WITH_UPDATE` | - | **syncro-kafka-events** | ✅ Usato | DMS completò con modifiche |
+| `REFUSAL` | - | **syncro-kafka-events** | ✅ Usato | DMS rifiutò il push |
+| `FAILURE` | - | **syncro-kafka-events** | ✅ Usato | DMS segnalò fallimento |
+
+### 🟢 Stati Finali Usati da `syncro-kafka-events`
+**SOLO 4 stati enum (i 4 finali):**
+- ✅ `SUCCESS_WITHOUT_UPDATE` → Evento DMS_PUSH_SUCCESS_WITHOUT_UPDATE ricevuto
+- ✅ `SUCCESS_WITH_UPDATE` → Evento DMS_PUSH_SUCCESS_WITH_UPDATE ricevuto
+- ✅ `REFUSAL` → Evento DMS_PUSH_REFUSAL ricevuto
+- ✅ `FAILURE` → Evento DMS_PUSH_FAILURE ricevuto
+
+### 🔄 Transizioni di Stato
+```
+isStellantisBrand crea record:
+PENDING (record creato e pushato verso DJC)
+   ↓
+syncro-kafka-events riceve uno dei 4 eventi:
+SUCCESS_WITHOUT_UPDATE / SUCCESS_WITH_UPDATE / REFUSAL / FAILURE (stato finale)
+```
+
+### 🔄 Stato PENDING
+- **Creato da:** `isStellantisBrand` quando pushano dati verso DJC
+- **Aggiornato da:** `syncro-kafka-events` quando riceve la risposta finale da DJC (uno dei 4 stati finali)
+- **Transizioni:** `PENDING` → uno dei 4 stati finali (`SUCCESS_WITHOUT_UPDATE`, `SUCCESS_WITH_UPDATE`, `REFUSAL`, `FAILURE`)
+
+### 🔴 IMPORTANTE - Campi NON modificati da `syncro-kafka-events`
+- **`ambito`**: Riempito SOLO dalla lambda che crea il record iniziale (es. `isStellantisBrand`)
+- **`json_payload`**: Riempito SOLO dalla lambda che crea il record iniziale
+- **`json_modified`**: Riempito SOLO dalla lambda che crea il record iniziale
+- **`djc`**: Impostato SOLO dalla lambda che crea il record iniziale (NON mai modificato da syncro-kafka-events)
+- **`updated_at`**: Gestito da trigger PostgreSQL (BEFORE UPDATE trigger)
+- Questi campi rimangono invariati per tutta la durata del ciclo di vita dell'evento
 
 ---
 
@@ -84,6 +137,8 @@ CREATE TABLE woc.comunication_asyncro_djc (
   "marketCode": "1000"                      // Opzionale
 }
 ```
+
+**Nota**: `djc` e `ambito` sono gestiti internamente dalla lambda, non ricevuti da input
 
 ### 2️⃣ **Validazione**
 - ✅ `eventType` obbligatorio e ∈ [4 supportati]
@@ -112,16 +167,14 @@ CREATE TABLE woc.comunication_asyncro_djc (
 {
   "statusCode": 200,
   "success": true,
-  "message": "Evento DMS_PUSH_SUCCESS_WITHOUT_UPDATE registrato con successo",
+  "message": "Evento aggiornato con successo",
   "response": {
     "responseId": "uuid-1234",
     "jobCardId": "JCID-42",
     "eventType": "DMS_PUSH_SUCCESS_WITHOUT_UPDATE",
     "status": "SUCCESS_WITHOUT_UPDATE",
     "timestamp": "2026-04-24T10:30:00Z",
-    "version": 1
-  },
-  "traceId": "trace-12345"
+  }
 }
 ```
 

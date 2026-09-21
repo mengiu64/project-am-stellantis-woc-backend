@@ -11,13 +11,12 @@ const { v4: uuidv4 } = require('uuid');
 const Logger = require('./logger');
 const Validator = require('./validator');
 const configModule = require('./config');
-const { getPool } = require('./shared/dbClient'); // Pool Aurora PostgreSQL (pattern isStellantisBrand)
+const { getPool } = require('./shared/dbClient');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔧 COSTANTI - Definisci i 4 eventi supportati
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Enum dei 4 tipi di evento supportati dalla specifica SRP DL KAFKA
 const SUPPORTED_EVENT_TYPES = {
   DMS_PUSH_SUCCESS_WITHOUT_UPDATE: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE',
   DMS_PUSH_SUCCESS_WITH_UPDATE: 'DMS_PUSH_SUCCESS_WITH_UPDATE',
@@ -25,7 +24,6 @@ const SUPPORTED_EVENT_TYPES = {
   DMS_PUSH_FAILURE: 'DMS_PUSH_FAILURE'
 };
 
-// Mappa dei tipi evento ai stati database
 const EVENT_TYPE_TO_DB_STATUS = {
   [SUPPORTED_EVENT_TYPES.DMS_PUSH_SUCCESS_WITHOUT_UPDATE]: 'SUCCESS_WITHOUT_UPDATE',
   [SUPPORTED_EVENT_TYPES.DMS_PUSH_SUCCESS_WITH_UPDATE]: 'SUCCESS_WITH_UPDATE',
@@ -38,11 +36,9 @@ const EVENT_TYPE_TO_DB_STATUS = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 exports.handler = async (event, context) => {
-  // Crea istanza logger con trace ID per correlazione
   const logger = new Logger();
   
   try {
-    // Log: evento ricevuto
     logger.info('🔔 Lambda synch-status invocata', {
       httpMethod: event.httpMethod || event.requestContext?.http?.method,
       path: event.path || event.rawPath,
@@ -53,29 +49,28 @@ exports.handler = async (event, context) => {
     // 1️⃣  PARSING DEL PAYLOAD
     // ─────────────────────────────────────────────────────────────────────
 
-    // Estrai il body dalle diverse fonti (API Gateway v1/v2 o direct invoke)
     let payload = event.body;
     if (typeof payload === 'string') {
-      // API Gateway invia body come string, parse necessario
       try {
         payload = JSON.parse(payload);
       } catch (parseError) {
         logger.error('❌ Errore parsing JSON body', parseError);
         return exports._buildResponse(400, {
+          statusCode: 400,
+          success: false,
           error: 'Bad Request',
-          message: 'Body non è valido JSON',
-          traceId: logger.getTraceId()
+          message: 'Body non è valido JSON'
         }, logger.getTraceId());
       }
     }
 
-    logger.info('📋 Payload ricevuto:', { payload });
+    // 🔴 NUOVO: Log della request ricevuta da DJC
+    logger.info('📥 REQUEST DA DJC RICEVUTA:', JSON.stringify(payload, null, 2));
 
     // ─────────────────────────────────────────────────────────────────────
     // 2️⃣  VALIDAZIONE DEL PAYLOAD
     // ─────────────────────────────────────────────────────────────────────
 
-    // Valida che payload contiene i 3 campi obbligatori
     const validation = _validatePayload(payload, logger);
     if (!validation.valid) {
       logger.warn('⚠️  Validazione payload fallita', {
@@ -83,10 +78,11 @@ exports.handler = async (event, context) => {
         traceId: logger.getTraceId()
       });
       return exports._buildResponse(400, {
+        statusCode: 400,
+        success: false,
         error: 'Bad Request',
         message: 'Validazione payload fallita',
-        details: validation.errors,
-        traceId: logger.getTraceId()
+        details: validation.errors
       }, logger.getTraceId());
     }
 
@@ -94,6 +90,7 @@ exports.handler = async (event, context) => {
     // 3️⃣  ESTRAI DATI DAL PAYLOAD VALIDATO
     // ─────────────────────────────────────────────────────────────────────
 
+    // 🔴 MODIFICATO: Rimuovi djc e ambito dall'input - saranno sempre Y e determinati internamente
     const { eventType, jobCardId, timestamp, ...additionalData } = validation.data;
 
     logger.info('✅ Payload validato', {
@@ -109,342 +106,336 @@ exports.handler = async (event, context) => {
 
     let pool = null;
     try {
-      // Ottieni pool da shared/dbClient (pattern isStellantisBrand)
       pool = await getPool();
       logger.info('🔗 Connessione Aurora PostgreSQL acquisita');
     } catch (dbConnectError) {
       logger.error('❌ Errore connessione Aurora', dbConnectError);
       return exports._buildResponse(503, {
+        statusCode: 503,
+        success: false,
         error: 'Service Unavailable',
         message: 'Impossibile connettersi al database Aurora',
-        traceId: logger.getTraceId()
       }, logger.getTraceId());
     }
 
     // ─────────────────────────────────────────────────────────────────────
-    // 5️⃣  SALVA L'EVENTO IN AURORA - INSERT O UPDATE A SECONDA DEL CASO
+    // 5️⃣  SALVA L'EVENTO IN AURORA - UPDATE RECORD ESISTENTE
     // ─────────────────────────────────────────────────────────────────────
 
     try {
-      // Genera response_id univoco per questo evento
-      const responseId = uuidv4();
-      
-      // Converti eventType nel status database corrispondente
-      const dbStatus = EVENT_TYPE_TO_DB_STATUS[eventType];
+      // 🔴 MODIFICATO: djcFlag è sempre 'Y' (non ricevuto da input)
+      // Calcola djc_sync_status in base al flag djc (sempre Y)
+      // djc_sync_status = uno dei 4 stati enum (evento processato)
+      const djcSyncStatus = EVENT_TYPE_TO_DB_STATUS[eventType];
+      logger.info('🟢 djc=Y: djc_sync_status mappato', {
+        eventType,
+        djcSyncStatus
+      });
 
-      // Query: INSERT con ON CONFLICT DO UPDATE per idempotency
-      // Se (job_card_id, push_timestamp) esiste già, aggiorna; altrimenti inserisce
-      const upsertQuery = `
-        INSERT INTO woc.comunication_asyncro_djc (
-          response_id,
-          job_card_id,
-          push_timestamp,
-          djc_sync_status,
-          json_payload,
-          json_modified,
-          retry_count,
-          error_code,
-          error_message,
-          source_system,
-          created_by,
-          created_at,
-          updated_at,
-          version
-        ) VALUES (
-          $1,     -- response_id: ID univoco della risposta
-          $2,     -- job_card_id: job card identifier dal payload
-          $3,     -- push_timestamp: timestamp dell'evento Kafka
-          $4,     -- djc_sync_status: stato dell'evento (SUCCESS_WITHOUT_UPDATE, SUCCESS_WITH_UPDATE, REFUSAL, FAILURE)
-          $5,     -- json_payload: payload originale ricevuto da DJC
-          $6,     -- json_modified: metadati aggiuntivi (timestamp ricezione, event type, etc.)
-          $7,     -- retry_count: iniziale 0 (per future retry logic)
-          $8,     -- error_code: null (se successo) o codice errore (se failure)
-          $9,     -- error_message: null (se successo) o messaggio errore
-          $10,    -- source_system: 'DJC' (sistema che ha inviato l'evento)
-          $11,    -- created_by: identità del chiamante (Bearer token user, o 'djc-system')
-          $12,    -- created_at: timestamp di creazione del record
-          $13,    -- updated_at: timestamp di ultimo aggiornamento
-          $14     -- version: numero versione per optimistic locking (iniziale 1)
-        )
-        ON CONFLICT (job_card_id, push_timestamp)
-        DO UPDATE SET
-          response_id = $1,
-          djc_sync_status = $4,
-          json_modified = $6,
-          updated_at = $12,
+      const updateQuery = `
+        -- 🔴 MODIFICATO: Cambio da UPSERT a UPDATE-ONLY
+        -- La lambda NON inserisce mai record, solo aggiorna record esistenti
+        -- Se il record non esiste, la query ritorna 0 righe e generiamo un'eccezione
+        -- 🔴 IMPORTANTE: ambito, json_payload, json_modified, djc NON sono mai modificati
+        --                Questi campi sono riempiti SOLO dalla lambda che fa il push iniziale verso DJC
+        -- 🔴 IMPORTANTE: updated_at è gestito da un trigger PostgreSQL, non dalla lambda
+        UPDATE woc.comunication_asyncro_djc
+        SET
+          -- 🔴 MODIFICATO: NON aggiornare response_id - è la PK e deve rimanere invariato
+          -- response_id rimane quello originale inserito da isStellantisBrand
+          
+          -- Aggiorna stato sincronizzazione DJC
+          djc_sync_status = $1,
+          -- Incrementa version per optimistic locking
           version = version + 1
-        RETURNING response_id, djc_sync_status, version
+        WHERE
+          -- Chiave primaria: job_card_id
+          job_card_id = $2 AND
+          -- Chiave primaria: push_timestamp (chiave UNIQUE)
+          push_timestamp = $3
+        RETURNING response_id, djc_sync_status, version;
       `;
 
-      // Parametri della query
-      const upsertValues = [
-        responseId,                                    // $1: response_id
-        jobCardId,                                     // $2: job_card_id
-        new Date(timestamp),                           // $3: push_timestamp (converte a Date PostgreSQL)
-        dbStatus,                                      // $4: djc_sync_status (stato evento)
-        JSON.stringify(payload),                       // $5: json_payload (payload originale)
-        JSON.stringify({
-          eventType,                                   // Tipo evento ricevuto
-          receivedAt: new Date().toISOString(),        // Quando è stato ricevuto dalla lambda
-          additionalFields: Object.keys(additionalData) // Quali campi aggiuntivi erano presenti
-        }),                                            // $6: json_modified
-        0,                                             // $7: retry_count (iniziale 0)
-        _getErrorCode(eventType),                      // $8: error_code (null per success, codice per failure)
-        _getErrorMessage(eventType),                   // $9: error_message (null per success, messaggio per failure)
-        'DJC',                                         // $10: source_system (sempre DJC)
-        'djc-system',                                  // $11: created_by (sistema DJC, eventualmente user da token)
-        new Date(),                                    // $12: created_at
-        new Date(),                                    // $13: updated_at
-        1                                              // $14: version (iniziale 1)
+      // 🔴 MODIFICATO: Valori per la query UPDATE-ONLY (3 parametri)
+      // ambito, json_payload, json_modified, djc NON sono mai modificati
+      // updated_at è gestito dal trigger PostgreSQL
+      const updateValues = [
+        djcSyncStatus,                                 // $1: djc_sync_status - stato sincronizzazione aggiornato
+        jobCardId,                                     // $2: job_card_id - chiave WHERE
+        new Date(timestamp)                            // $3: push_timestamp - chiave WHERE
       ];
 
-      // Esegui l'UPSERT (INSERT con ON CONFLICT DO UPDATE)
-      const result = await pool.query({
-        text: upsertQuery,
-        values: upsertValues,
-        statement_timeout: 5000  // Timeout 5 secondi per query database
+      // 🔴 MODIFICATO: Esegui UPDATE-ONLY senza INSERT
+      logger.info('📝 Esecuzione query UPDATE-ONLY su woc.comunication_asyncro_djc', {
+        jobCardId,
+        timestamp,
+        traceId: logger.getTraceId()
       });
 
-      // Verifica che l'operazione sia andata a buon fine
+      const result = await pool.query({
+        text: updateQuery,
+        values: updateValues,
+        statement_timeout: 5000
+      });
+
+      // 🔴 MODIFICATO: Verifica che il record sia stato trovato e aggiornato
+      // Se nessuna riga ritornata → il record non esiste → errore 404
       if (!result.rows || result.rows.length === 0) {
-        logger.error('❌ UPSERT fallito: nessuna riga ritornata', {
-          jobCardId,
-          eventType
+        // 🔴 NUOVO: Genera eccezione quando il record non viene trovato
+        const recordNotFoundError = new Error('RECORD_NOT_FOUND');
+        // Imposta status code 404 (Not Found)
+        recordNotFoundError.statusCode = 404;
+        // Flag per identificare l'errore di record non trovato
+        recordNotFoundError.isRecordNotFound = true;
+        
+        // 🔴 NUOVO: Log completo dell'eccezione con TUTTI i dati ricevuti da DJC
+        logger.error('❌ ERRORE CRITICO: Record non trovato in woc.comunication_asyncro_djc', {
+          // Informazioni sull'errore
+          errorType: 'RECORD_NOT_FOUND',
+          message: 'La lambda NON ha trovato il record per aggiornarlo',
+          description: 'Il record deve essere creato da un\'altra lambda (e.g., isStellantisBrand) PRIMA di essere aggiornato da syncro-kafka-events',
+          
+          // Chiavi di ricerca utilizzate nella query WHERE
+          searchKeys: {
+            job_card_id: jobCardId,
+            push_timestamp: timestamp
+          },
+          
+          // Dati completi ricevuti da DJC nel payload
+          receivedFromDJC: {
+            eventType,
+            jobCardId,
+            timestamp,
+            additionalData
+          },
+          
+          // Payload originale completo inviato da DJC
+          originalPayload: JSON.stringify(payload),
+          
+          // Informazioni tecniche della query
+          technical: {
+            djcSyncStatus,
+            queryType: 'UPDATE-ONLY',
+            queryTimeout: 5000,
+            parametersCount: updateValues.length
+          }
         });
-        return exports._buildResponse(500, {
-          error: 'Internal Server Error',
-          message: 'Errore durante salvataggio evento in Aurora',
-          traceId: logger.getTraceId()
-        }, logger.getTraceId());
+        
+        // Lancia l'eccezione per la gestione nel catch block
+        throw recordNotFoundError;
       }
 
-      // Estrai risultato dell'UPSERT
-      const upsertedRecord = result.rows[0];
-      
-      logger.info('✅ Evento registrato in Aurora', {
-        responseId: upsertedRecord.response_id,
+      const updatedRecord = result.rows[0];
+      // 🔴 MODIFICATO: Log di successo per UPDATE
+      logger.info('✅ Evento aggiornato con successo in Aurora', {
+        responseId: updatedRecord.response_id,
+        djcSyncStatus: updatedRecord.djc_sync_status,
+        version: updatedRecord.version,
         jobCardId,
-        eventType,
-        dbStatus: upsertedRecord.djc_sync_status,
-        version: upsertedRecord.version,
-        isInsert: upsertedRecord.version === 1,  // version=1 significa INSERT, >1 significa UPDATE
-        isUpdate: upsertedRecord.version > 1
+        timestamp
       });
 
-      // ─────────────────────────────────────────────────────────────────────
-      // 6️⃣  COSTRUISCI E RITORNA RISPOSTA DI SUCCESSO
-      // ─────────────────────────────────────────────────────────────────────
-
-      // Risposta HTTP 200 OK con dettagli dell'evento registrato
-      return exports._buildResponse(200, {
+      // 🔴 MODIFICATO: Struttura risposta allineata con swagger
+      const responseBody = {
         statusCode: 200,
         success: true,
-        message: `Evento ${eventType} registrato con successo`,
+        message: 'Evento aggiornato con successo in Aurora',
         response: {
-          responseId: upsertedRecord.response_id,
+          responseId: updatedRecord.response_id,
           jobCardId,
           eventType,
-          status: upsertedRecord.djc_sync_status,
-          timestamp: new Date().toISOString(),
-          version: upsertedRecord.version
-        },
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
-
-    } catch (dbError) {
-      // ─────────────────────────────────────────────────────────────────────
-      // 🛑 GESTIONE ERRORE DATABASE
-      // ─────────────────────────────────────────────────────────────────────
-
-      logger.error('❌ Errore durante UPSERT in Aurora', dbError, {
+          status: updatedRecord.djc_sync_status,
+          timestamp
+        }
+      };
+      
+      // 🔴 NUOVO: Log della risposta inviata a DJC
+      logger.info('📤 RESPONSE INVIATA A DJC:', JSON.stringify(responseBody, null, 2));
+      
+      return exports._buildResponse(200, responseBody, logger.getTraceId());
+    } catch (upsertError) {
+      // 🔴 MODIFICATO: Gestione errori per UPDATE-ONLY
+      
+      // Se è l'errore "record non trovato" da noi creato
+      if (upsertError.isRecordNotFound) {
+        // 🔴 NUOVO: Gestione specifica per record non trovato
+        logger.error('❌ ERRORE CRITICO: Record non trovato per UPDATE', {
+          statusCode: 404,
+          jobCardId,
+          timestamp,
+          eventType,
+          // Include il payload completo per debugging
+          payload,
+          // Include tutte le informazioni tecniche
+          technical: {
+            errorMessage: upsertError.message,
+            errorStack: upsertError.stack,
+            traceId: logger.getTraceId()
+          }
+        });
+        
+        const errorResponse = {
+          statusCode: 404,
+          success: false,
+          error: 'Not Found',
+          message: 'Record non trovato in woc.comunication_asyncro_djc',
+          details: {
+            jobCardId,
+            timestamp,
+            suggestion: 'Il record deve essere creato da un\'altra lambda prima di essere aggiornato'
+          }
+        };
+        
+        // 🔴 NUOVO: Log della risposta di errore
+        logger.info('📤 RESPONSE INVIATA A DJC (404):', JSON.stringify(errorResponse, null, 2));
+        
+        return exports._buildResponse(404, errorResponse, logger.getTraceId());
+      }
+      
+      // 🔴 MODIFICATO: Log generico di errore durante UPDATE
+      logger.error('❌ Errore durante UPDATE in Aurora', upsertError, {
         jobCardId,
-        eventType,
-        errorCode: dbError.code,
-        errorMessage: dbError.message
+        timestamp,
+        errorCode: upsertError.code,
+        errorMessage: upsertError.message,
+        errorStack: upsertError.stack,
+        traceId: logger.getTraceId()
       });
 
-      // Se l'errore è di timeout del database
-      if (dbError.message.includes('timeout')) {
-        return exports._buildResponse(504, {
-          error: 'Gateway Timeout',
-          message: 'Query database superato il timeout',
+      // Gestione errore connessione database
+      if (upsertError.code === 'ECONNREFUSED' || upsertError.code === 'ETIMEDOUT') {
+        logger.error('❌ Errore connessione al database Aurora', {
+          errorCode: upsertError.code,
+          jobCardId,
+          timestamp,
           traceId: logger.getTraceId()
-        }, logger.getTraceId());
-      }
-
-      // Se l'errore è di connessione
-      if (dbError.message.includes('connect') || dbError.message.includes('ECONNREFUSED')) {
+        });
         return exports._buildResponse(503, {
+          statusCode: 503,
+          success: false,
           error: 'Service Unavailable',
-          message: 'Connessione database non disponibile',
+          message: 'Errore connessione al database Aurora',
+        }, logger.getTraceId());
+      } 
+      // Gestione errore timeout query
+      else if (upsertError.message && upsertError.message.includes('statement timeout')) {
+        logger.error('❌ Errore timeout query database', {
+          message: upsertError.message,
+          jobCardId,
+          timestamp,
           traceId: logger.getTraceId()
+        });
+        return exports._buildResponse(504, {
+          statusCode: 504,
+          success: false,
+          error: 'Gateway Timeout',
+          message: 'Query database ha superato il timeout',
         }, logger.getTraceId());
       }
-
-      // Errore generico database
-      return exports._buildResponse(500, {
-        error: 'Internal Server Error',
-        message: 'Errore durante salvataggio in Aurora',
-        traceId: logger.getTraceId()
-      }, logger.getTraceId());
+      // Errore generico durante UPDATE
+      else {
+        logger.error('❌ Errore generico durante UPDATE in Aurora', {
+          errorMessage: upsertError.message,
+          jobCardId,
+          timestamp,
+          traceId: logger.getTraceId()
+        });
+        return exports._buildResponse(500, {
+          statusCode: 500,
+          success: false,
+          error: 'Internal Server Error',
+          message: 'Errore durante aggiornamento in database',
+        }, logger.getTraceId());
+      }
     }
-
-  } catch (error) {
-    // ─────────────────────────────────────────────────────────────────────
-    // 🔴 ERRORE NON GESTITO - Catch-all handler
-    // ─────────────────────────────────────────────────────────────────────
-
-    logger.error('🔴 Errore non gestito nel handler', error);
-
-    // Ritorna 500 Internal Server Error
+  } catch (handlerError) {
+    logger.error('❌ Errore non gestito in handler', handlerError);
     return exports._buildResponse(500, {
+      statusCode: 500,
+      success: false,
       error: 'Internal Server Error',
-      message: error.message || 'Errore interno del server',
-      traceId: logger.getTraceId()
+      message: 'Errore non gestito',
     }, logger.getTraceId());
   }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 🔍 VALIDAZIONE PAYLOAD
+// 🔍 FUNZIONI HELPER
 // ─────────────────────────────────────────────────────────────────────────────
 
 function _validatePayload(payload, logger) {
-  // Valida che payload sia un oggetto
-  if (!payload || typeof payload !== 'object') {
-    return {
-      valid: false,
-      errors: ['Payload deve essere un oggetto JSON']
-    };
+  const errors = [];
+  const requiredFields = ['eventType', 'jobCardId', 'timestamp'];
+
+  for (const field of requiredFields) {
+    const fieldKey = field === 'jobCardId' ? (payload.jobCardSrpId !== undefined ? 'jobCardSrpId' : 'jobCardId') : field;
+    
+    if (!payload[fieldKey]) {
+      errors.push(`Campo obbligatorio mancante: ${fieldKey}`);
+    }
   }
 
-  // Valida eventType (obbligatorio e deve essere uno dei 4 supportati)
-  if (!payload.eventType) {
-    return {
-      valid: false,
-      errors: ['eventType è obbligatorio']
-    };
+  if (payload.eventType && !Object.values(SUPPORTED_EVENT_TYPES).includes(payload.eventType)) {
+    errors.push(`eventType non supportato: ${payload.eventType}. Valori supportati: ${Object.keys(SUPPORTED_EVENT_TYPES).join(', ')}`);
   }
 
-  // Controlla che eventType sia uno dei 4 supportati
-  if (!Object.values(SUPPORTED_EVENT_TYPES).includes(payload.eventType)) {
-    const supportedList = Object.values(SUPPORTED_EVENT_TYPES).join(', ');
-    logger.warn('⚠️  eventType non supportato', {
-      receivedEventType: payload.eventType,
-      supportedEventTypes: supportedList
-    });
-    return {
-      valid: false,
-      errors: [
-        `eventType '${payload.eventType}' non supportato. Supportati: ${supportedList}`
-      ]
-    };
+  if (payload.timestamp && isNaN(Date.parse(payload.timestamp))) {
+    errors.push(`Timestamp non valido (ISO 8601): ${payload.timestamp}`);
   }
 
-  // Valida jobCardSrpId (obbligatorio - è la chiave insieme a timestamp)
-  if (!payload.jobCardSrpId) {
-    return {
-      valid: false,
-      errors: ['jobCardSrpId è obbligatorio (Job Card Identifier)']
-    };
+  if (errors.length > 0) {
+    return { valid: false, errors };
   }
 
-  // Valida timestamp (obbligatorio - deve essere valido ISO 8601 o numero)
-  if (!payload.timestamp) {
-    return {
-      valid: false,
-      errors: ['timestamp è obbligatorio (formato ISO 8601: 2026-04-24T10:30:00Z)']
-    };
-  }
+  const normalizedData = {
+    ...payload,
+    jobCardId: payload.jobCardSrpId || payload.jobCardId
+  };
+  delete normalizedData.jobCardSrpId;
 
-  // Valida che timestamp sia convertibile a Date
-  const timestampDate = new Date(payload.timestamp);
-  if (isNaN(timestampDate.getTime())) {
-    return {
-      valid: false,
-      errors: [`timestamp '${payload.timestamp}' non è valido (ISO 8601: 2026-04-24T10:30:00Z)`]
-    };
-  }
-
-  // Validazione passata: ritorna dati estratti
   return {
     valid: true,
-    data: {
-      eventType: payload.eventType,
-      jobCardId: payload.jobCardSrpId,  // Rinomina per coerenza nel codice
-      timestamp: payload.timestamp,
-      // Tutti gli altri campi sono opzionali (jobCardLegacyId, dmsRepairOrderId, xpDealerCode, etc.)
-      ...payload
-    }
+    data: normalizedData
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 📊 MAPPING STATO DB DA EVENT TYPE
-// ─────────────────────────────────────────────────────────────────────────────
-
 function _getErrorCode(eventType) {
-  // Ritorna error_code a seconda del tipo evento
-  // Per SUCCESS: null (nessun errore)
-  // Per FAILURE e REFUSAL: codice errore
-  
-  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE) {
-    // DMS_PUSH_FAILURE: errore durante push
-    return 'DMS_PUSH_FAILED';
+  switch (eventType) {
+    case SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL:
+      return 'DMS_PUSH_REFUSED';
+    case SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE:
+      return 'DMS_PUSH_FAILED';
+    default:
+      return null;
   }
-  
-  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL) {
-    // DMS_PUSH_REFUSAL: rifiutato dal sistema esterno
-    return 'DMS_PUSH_REFUSED';
-  }
-
-  // SUCCESS_WITHOUT_UPDATE e SUCCESS_WITH_UPDATE: nessun errore
-  return null;
 }
 
 function _getErrorMessage(eventType) {
-  // Ritorna messaggio errore a seconda del tipo evento
-  // Per SUCCESS: null
-  // Per FAILURE e REFUSAL: messaggio descrittivo
-  
-  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE) {
-    return 'DMS ha riportato un fallimento durante il push del job card';
+  switch (eventType) {
+    case SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL:
+      return 'DMS ha rifiutato il push dei dati';
+    case SUPPORTED_EVENT_TYPES.DMS_PUSH_FAILURE:
+      return 'DMS ha segnalato un fallimento durante l\'elaborazione';
+    default:
+      return null;
   }
-  
-  if (eventType === SUPPORTED_EVENT_TYPES.DMS_PUSH_REFUSAL) {
-    return 'DMS ha rifiutato il push del job card (validazione fallita)';
-  }
-
-  // SUCCESS events: nessun messaggio errore
-  return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 🛠️  COSTRUZIONE RISPOSTA HTTP
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _buildResponse(statusCode, body, traceId) {
-  // Costruisce risposta HTTP nel formato API Gateway Proxy (statusCode, headers, body)
-  
+exports._buildResponse = (statusCode, body, traceId = '') => {
   return {
-    statusCode,                                 // Codice HTTP: 200, 400, 500, etc.
+    statusCode,
     headers: {
-      'Content-Type': 'application/json',      // Risposta sempre JSON
-      'X-Trace-Id': traceId,                   // Trace ID per correlazione log
-      'Access-Control-Allow-Origin': '*'       // CORS permissivo (eventualmente limitare)
+      'Content-Type': 'application/json',
+      'X-Trace-Id': traceId,
+      'X-Lambda': 'synch-status',
+      'Access-Control-Allow-Origin': '*'
     },
-    body: JSON.stringify(body)                  // Body come JSON string
+    body: JSON.stringify(body)
   };
-}
+};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 📦 EXPORT PER TEST E INTEGRAZIONE
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Esponi funzioni ausiliarie per unit test
-exports._validatePayload = _validatePayload;
-exports._buildResponse = _buildResponse;
-exports._getErrorCode = _getErrorCode;
-exports._getErrorMessage = _getErrorMessage;
-exports.SUPPORTED_EVENT_TYPES = SUPPORTED_EVENT_TYPES;
-exports.EVENT_TYPE_TO_DB_STATUS = EVENT_TYPE_TO_DB_STATUS;
+module.exports.SUPPORTED_EVENT_TYPES = SUPPORTED_EVENT_TYPES;
+module.exports.EVENT_TYPE_TO_DB_STATUS = EVENT_TYPE_TO_DB_STATUS;
+module.exports._getErrorCode = _getErrorCode;
+module.exports._getErrorMessage = _getErrorMessage;
+module.exports._validatePayload = _validatePayload;
