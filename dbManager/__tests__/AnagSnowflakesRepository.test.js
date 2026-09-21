@@ -26,6 +26,7 @@ describe('AnagSnowflakesRepository', () => {
         expect.stringContaining('FROM woc.ang_snowflakes'),
         ['1000'],
       );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
     });
 
     it('returns null when no row is found', async () => {
@@ -85,6 +86,7 @@ describe('AnagSnowflakesRepository', () => {
         expect.stringContaining('s.cd_contract_brand_arcad_code = $3'),
         expect.anything(),
       );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
     });
 
     it('transforms a non-letter brand (WebDAC numeric code) into the ARCAD code before searching', async () => {
@@ -105,11 +107,13 @@ describe('AnagSnowflakesRepository', () => {
         expect.stringContaining('s.cd_contract_brand_webdac_code = $1'),
         ['55'],
       );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
       expect(pool.query).toHaveBeenNthCalledWith(
         2,
         expect.stringContaining('s.cd_contract_brand_arcad_code = $3'),
         ['0073741', '1000', 'FT'],
       );
+      expect(pool.query.mock.calls[1][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
     });
 
     it('returns nulls without querying the main table when a non-letter brand cannot be resolved to an ARCAD code', async () => {
@@ -189,6 +193,7 @@ describe('AnagSnowflakesRepository', () => {
         expect.stringContaining('AND s.cd_paired_oic_code = $4'),
         ['0073741', '1000', 'FT', '00007584'],
       );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
     });
 
     it('returns nulls without querying the main table when a non-letter brand cannot be resolved to an ARCAD code', async () => {
@@ -244,6 +249,7 @@ describe('AnagSnowflakesRepository', () => {
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('GROUP BY s.cd_paired_oic_code'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('s.cd_paired_oic_code = ANY($1::varchar[])'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
     });
 
     it('omits an oic from the map when its brands column is not an array', async () => {
