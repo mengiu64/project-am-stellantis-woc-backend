@@ -25,6 +25,13 @@ const path = require('path');
  * deletetVehicleInspectionVisible(id, value) e
  * insertVehicleInspection(market, type, descr) espongono la gestione delle
  * voci di controllo veicolo (woc.hq_vehicle_inspection).
+ *
+ * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic),
+ * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr) e
+ * insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
+ * setPackage(idpackage, iddomain, descr, timeop, pricewithvat) espongono la
+ * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto
+ * (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
  */
 class HqManager {
   /**
@@ -105,6 +112,104 @@ class HqManager {
 
     const pool = await getPool();
     return insertVehicleInspection(pool, market, type, descr);
+  }
+
+  /**
+   * @param {string} market
+   * @returns {Promise<void>}
+   */
+  async setMarketEnable(market) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setMarketEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return setMarketEnable(pool, market);
+  }
+
+  /**
+   * @param {string} market
+   * @returns {Promise<void>}
+   */
+  async setMarketDisable(market) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return setMarketDisable(pool, market);
+  }
+
+  /**
+   * @param {string} market
+   * @param {string} oic
+   * @returns {Promise<void>}
+   */
+  async setOicEnable(market, oic) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setOicEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return setOicEnable(pool, market, oic);
+  }
+
+  /**
+   * @param {string} market
+   * @param {string} oic
+   * @param {string} descr
+   * @returns {Promise<number>} l'iddomain generato
+   */
+  async insertDomain(market, oic, descr) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { insertDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return insertDomain(pool, market, oic, descr);
+  }
+
+  /**
+   * @param {string} market
+   * @param {number} iddomain
+   * @param {string} descr
+   * @returns {Promise<void>}
+   */
+  async setDomain(market, iddomain, descr) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return setDomain(pool, market, iddomain, descr);
+  }
+
+  /**
+   * @param {string} market
+   * @param {string} oic
+   * @param {number} iddomain
+   * @param {string} descr
+   * @param {number} timeop
+   * @param {number} pricewithvat
+   * @returns {Promise<number>} l'idpackage generato
+   */
+  async insertPackage(market, oic, iddomain, descr, timeop, pricewithvat) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { insertPackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat);
+  }
+
+  /**
+   * @param {number} idpackage
+   * @param {number} iddomain
+   * @param {string} descr
+   * @param {number} timeop
+   * @param {number} pricewithvat
+   * @returns {Promise<void>}
+   */
+  async setPackage(idpackage, iddomain, descr, timeop, pricewithvat) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setPackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat);
   }
 }
 

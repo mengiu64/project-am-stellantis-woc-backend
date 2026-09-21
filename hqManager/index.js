@@ -17,6 +17,18 @@
  *   - deletetVehicleInspectionVisible(id, value): aggiorna il flag "deleted".
  *   - insertVehicleInspection(market, type, descr): crea una nuova voce di
  *     controllo veicolo.
+ *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market) e
+ *     disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic).
+ *   - setMarketDisable(market): disabilita il mercato e riabilita a cascata
+ *     tutti i suoi OIC.
+ *   - setOicEnable(market, oic): abilita l'OIC (woc.hq_pk_oic).
+ *   - insertDomain(market, oic, descr): crea un nuovo dominio
+ *     (woc.hq_pk_domain).
+ *   - setDomain(market, iddomain, descr): aggiorna la descr del dominio.
+ *   - insertPackage(market, oic, iddomain, descr, timeop, pricewithvat):
+ *     crea un nuovo pacchetto (woc.hq_pk_packages).
+ *   - setPackage(idpackage, iddomain, descr, timeop, pricewithvat):
+ *     aggiorna iddomain/descr/timeop/pricewithvat del pacchetto.
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -25,6 +37,13 @@
  *   node index.js setVehicleInspectionVisible <id> <value>
  *   node index.js deletetVehicleInspectionVisible <id> <value>
  *   node index.js insertVehicleInspection <market> <type> <descr>
+ *   node index.js setMarketEnable <market>
+ *   node index.js setMarketDisable <market>
+ *   node index.js setOicEnable <market> <oic>
+ *   node index.js insertDomain <market> <oic> <descr>
+ *   node index.js setDomain <market> <iddomain> <descr>
+ *   node index.js insertPackage <market> <oic> <iddomain> <descr> <timeop> <pricewithvat>
+ *   node index.js setPackage <idpackage> <iddomain> <descr> <timeop> <pricewithvat>
  */
 
 const { HqManager } = require('./HqManager');
@@ -36,6 +55,13 @@ const VALID_ACTIONS = [
   'setVehicleInspectionVisible',
   'deletetVehicleInspectionVisible',
   'insertVehicleInspection',
+  'setMarketEnable',
+  'setMarketDisable',
+  'setOicEnable',
+  'insertDomain',
+  'setDomain',
+  'insertPackage',
+  'setPackage',
 ];
 
 function parseBody(event) {

@@ -50,6 +50,13 @@
  * query batch: address <- gn_address_1, zipcode <- cd_zip_code, city <-
  * gn_town. Usata da session (MyPeopleDmsSessionRepository) per sovrascrivere
  * address/zipcode/city di ciascun oic.
+ *
+ * setMarketEnable/setMarketDisable/setOicEnable/insertDomain/setDomain/
+ * insertPackage/setPackage operano sulle tabelle woc.hq_pk_market/
+ * hq_pk_oic/hq_pk_domain/hq_pk_packages (sql/create_table_hq_packages.sql):
+ * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto usata
+ * per l'amministrazione dei pacchetti HQ. Gli upsert su hq_pk_market/
+ * hq_pk_oic usano ON CONFLICT DO UPDATE sulla PK (market / market+oic).
  */
 
 /** Codice errore Postgres per violazione di unique/primary key ("unique_violation"). */
@@ -261,6 +268,177 @@ async function getAddressByOics(pool, { oics } = {}) {
   return addressByOic;
 }
 
+/**
+ * Abilita un mercato (woc.hq_pk_market.deleted = 0, upsert sulla PK
+ * "market") e disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic.deleted
+ * = 1) per il mercato indicato.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @returns {Promise<void>}
+ */
+async function setMarketEnable(pool, market) {
+  if (!market) throw new Error('"market" is required');
+
+  await pool.query(
+    `INSERT INTO woc.hq_pk_market (market, deleted)
+     VALUES ($1, 0)
+     ON CONFLICT (market) DO UPDATE SET deleted = 0`,
+    [market],
+  );
+
+  await pool.query(
+    `UPDATE woc.hq_pk_oic SET deleted = 1 WHERE market = $1`,
+    [market],
+  );
+}
+
+/**
+ * Disabilita un mercato (woc.hq_pk_market.deleted = 1, upsert sulla PK
+ * "market") e riabilita tutti i suoi OIC (woc.hq_pk_oic.deleted = 0) per il
+ * mercato indicato.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @returns {Promise<void>}
+ */
+async function setMarketDisable(pool, market) {
+  if (!market) throw new Error('"market" is required');
+
+  await pool.query(
+    `INSERT INTO woc.hq_pk_market (market, deleted)
+     VALUES ($1, 1)
+     ON CONFLICT (market) DO UPDATE SET deleted = 1`,
+    [market],
+  );
+
+  await pool.query(
+    `UPDATE woc.hq_pk_oic SET deleted = 0 WHERE market = $1`,
+    [market],
+  );
+}
+
+/**
+ * Abilita un OIC (woc.hq_pk_oic.deleted = 0), upsert sulla PK
+ * "market, oic".
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<void>}
+ */
+async function setOicEnable(pool, market, oic) {
+  if (!market) throw new Error('"market" is required');
+  if (!oic) throw new Error('"oic" is required');
+
+  await pool.query(
+    `INSERT INTO woc.hq_pk_oic (market, oic, deleted)
+     VALUES ($1, $2, 0)
+     ON CONFLICT (market, oic) DO UPDATE SET deleted = 0`,
+    [market, oic],
+  );
+}
+
+/**
+ * Inserisce un nuovo dominio (woc.hq_pk_domain.iddomain generato dalla
+ * sequence woc.hq_pk_domain_iddomain_seq).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @param {string} descr
+ * @returns {Promise<number>} l'iddomain generato
+ */
+async function insertDomain(pool, market, oic, descr) {
+  if (!market) throw new Error('"market" is required');
+
+  const { rows } = await pool.query(
+    `INSERT INTO woc.hq_pk_domain (market, oic, descr)
+     VALUES ($1, $2, $3)
+     RETURNING iddomain`,
+    [market, oic, descr],
+  );
+
+  return rows[0].iddomain;
+}
+
+/**
+ * Modifica la descr del dominio (market, iddomain).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {number} iddomain
+ * @param {string} descr
+ * @returns {Promise<void>}
+ */
+async function setDomain(pool, market, iddomain, descr) {
+  if (!market) throw new Error('"market" is required');
+  if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_pk_domain
+        SET descr = $3
+      WHERE market = $1
+        AND iddomain = $2`,
+    [market, iddomain, descr],
+  );
+}
+
+/**
+ * Inserisce un nuovo pacchetto (woc.hq_pk_packages.idpackage generato dalla
+ * sequence woc.hq_pk_packages_idpackage_seq).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @param {number} iddomain
+ * @param {string} descr
+ * @param {number} timeop
+ * @param {number} pricewithvat
+ * @returns {Promise<number>} l'idpackage generato
+ */
+async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat) {
+  if (!market) throw new Error('"market" is required');
+  if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
+
+  const { rows } = await pool.query(
+    `INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING idpackage`,
+    [market, oic, iddomain, descr, timeop, pricewithvat],
+  );
+
+  return rows[0].idpackage;
+}
+
+/**
+ * Modifica iddomain/descr/timeop/pricewithvat del pacchetto con idpackage
+ * indicato (idpackage e' univoco a livello globale, generato dalla sequence
+ * woc.hq_pk_packages_idpackage_seq).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {number} idpackage
+ * @param {number} iddomain
+ * @param {string} descr
+ * @param {number} timeop
+ * @param {number} pricewithvat
+ * @returns {Promise<void>}
+ */
+async function setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat) {
+  if (idpackage === undefined || idpackage === null) throw new Error('"idpackage" is required');
+  if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_pk_packages
+        SET iddomain = $2,
+            descr = $3,
+            timeop = $4,
+            pricewithvat = $5
+      WHERE idpackage = $1`,
+    [idpackage, iddomain, descr, timeop, pricewithvat],
+  );
+}
+
 module.exports = {
   getEnablingConfiguration,
   setEnablingConfiguration,
@@ -270,4 +448,11 @@ module.exports = {
   insertVehicleInspection,
   getDisabledOics,
   getAddressByOics,
+  setMarketEnable,
+  setMarketDisable,
+  setOicEnable,
+  insertDomain,
+  setDomain,
+  insertPackage,
+  setPackage,
 };
