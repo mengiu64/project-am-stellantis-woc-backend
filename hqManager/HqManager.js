@@ -17,12 +17,15 @@ const path = require('path');
  * abilitazione WOC/firma digitale per ciascun sito del mercato richiesto
  * (join ang_snowflakes + addr_snowflakes + hq_application_enabling).
  *
- * setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature)
- * crea/aggiorna (upsert) la riga di configurazione per la coppia
- * (codmarket, oic).
+ * setEnablingConfiguration(configurations) crea/aggiorna (upsert), in un
+ * loop, la riga di configurazione per ciascun elemento dell'array
+ * configurations ({ codmarket, oic, enableWOC, enableSignature }).
  *
- * getVehicleInspection(market, type), setVehicleInspectionVisible(id, value),
- * deletetVehicleInspectionVisible(id, value) e
+ * getVehicleInspection(market, type),
+ * setVehicleInspectionVisible(payload) (payload contiene un array { id,
+ * value } sotto una di queste chiavi: conditions, equipment, damagearea,
+ * receptions, vehicleconfiguration — una sola per chiamata; loop su ciascun
+ * elemento), deletetVehicleInspection(id, value) e
  * insertVehicleInspection(market, type, descr) espongono la gestione delle
  * voci di controllo veicolo (woc.hq_vehicle_inspection).
  *
@@ -31,7 +34,8 @@ const path = require('path');
  * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr)/
  * deleteDomain(market, iddomain) (cancellazione logica, deleted = 1) e
  * insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
- * setPackage(idpackage, iddomain, descr, timeop, pricewithvat) espongono la
+ * setPackage(idpackage, iddomain, descr, timeop, pricewithvat)/
+ * deletePackage(idpackage) espongono la
  * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto
  * (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
  *
@@ -40,6 +44,12 @@ const path = require('path');
  * (i domini cancellati logicamente sono esclusi).
  */
 class HqManager {
+  /**
+   * Chiavi array note del payload di setVehicleInspectionVisible: solo una
+   * e' presente per chiamata, in base alla categoria di controllo veicolo.
+   */
+  static VEHICLE_INSPECTION_ARRAY_KEYS = ['conditions', 'equipment', 'damagearea', 'receptions', 'vehicleconfiguration'];
+
   /**
    * @param {string} codmarket
    * @returns {Promise<Array<{ siteName: string|null, oic: string|null, address: string|null, legalEntity: string|null, enableWOC: number, enableSignature: number }>>}
@@ -53,18 +63,24 @@ class HqManager {
   }
 
   /**
-   * @param {string} codmarket
-   * @param {string} oic
-   * @param {number} enableWOC
-   * @param {number} enableSignature
+   * Crea/aggiorna (upsert), in un loop, la riga di configurazione per
+   * ciascun elemento dell'array configurations, riusando lo stesso pool.
+   *
+   * @param {Array<{ codmarket: string, oic: string, enableWOC: number, enableSignature: number }>} configurations
    * @returns {Promise<void>}
    */
-  async setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature) {
+  async setEnablingConfiguration(configurations) {
+    if (!Array.isArray(configurations) || configurations.length === 0) {
+      throw new Error('"configurations" is required');
+    }
+
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { setEnablingConfiguration } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
+    for (const { codmarket, oic, enableWOC, enableSignature } of configurations) {
+      await setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
+    }
   }
 
   /**
@@ -81,16 +97,27 @@ class HqManager {
   }
 
   /**
-   * @param {number} id
-   * @param {number} value
+   * Aggiorna il flag "visible" per ciascun elemento { id, value } contenuto
+   * in una delle chiavi array note del payload (conditions, equipment,
+   * damagearea, receptions, vehicleconfiguration — solo una e' presente per
+   * chiamata), riusando lo stesso pool.
+   *
+   * @param {{ conditions?: Array<{id:number, value:number}>, equipment?: Array<{id:number, value:number}>, damagearea?: Array<{id:number, value:number}>, receptions?: Array<{id:number, value:number}>, vehicleconfiguration?: Array<{id:number, value:number}> }} payload
    * @returns {Promise<void>}
    */
-  async setVehicleInspectionVisible(id, value) {
+  async setVehicleInspectionVisible(payload) {
+    const key = HqManager.VEHICLE_INSPECTION_ARRAY_KEYS.find((k) => Array.isArray(payload && payload[k]));
+    if (!key) {
+      throw new Error(`"payload" must contain an array in one of: ${HqManager.VEHICLE_INSPECTION_ARRAY_KEYS.join(', ')}`);
+    }
+
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { setVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return setVehicleInspectionVisible(pool, id, value);
+    for (const { id, value } of payload[key]) {
+      await setVehicleInspectionVisible(pool, id, value);
+    }
   }
 
   /**
@@ -98,12 +125,12 @@ class HqManager {
    * @param {number} value
    * @returns {Promise<void>}
    */
-  async deletetVehicleInspectionVisible(id, value) {
+  async deletetVehicleInspection(id, value) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deletetVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    const { deletetVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return deletetVehicleInspectionVisible(pool, id, value);
+    return deletetVehicleInspection(pool, id, value);
   }
 
   /**
@@ -235,6 +262,18 @@ class HqManager {
 
     const pool = await getPool();
     return setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat);
+  }
+
+  /**
+   * @param {number} idpackage
+   * @returns {Promise<void>}
+   */
+  async deletePackage(idpackage) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { deletePackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return deletePackage(pool, idpackage);
   }
 
   /**

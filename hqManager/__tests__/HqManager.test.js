@@ -10,7 +10,7 @@ jest.mock('../../dbManager/HqRepository', () => ({
   setEnablingConfiguration: jest.fn(),
   getVehicleInspection: jest.fn(),
   setVehicleInspectionVisible: jest.fn(),
-  deletetVehicleInspectionVisible: jest.fn(),
+  deletetVehicleInspection: jest.fn(),
   insertVehicleInspection: jest.fn(),
   setMarketEnable: jest.fn(),
   setMarketDisable: jest.fn(),
@@ -20,6 +20,7 @@ jest.mock('../../dbManager/HqRepository', () => ({
   deleteDomain: jest.fn(),
   insertPackage: jest.fn(),
   setPackage: jest.fn(),
+  deletePackage: jest.fn(),
   getPackageList: jest.fn(),
 }));
 
@@ -29,7 +30,7 @@ const {
   setEnablingConfiguration,
   getVehicleInspection,
   setVehicleInspectionVisible,
-  deletetVehicleInspectionVisible,
+  deletetVehicleInspection,
   insertVehicleInspection,
   setMarketEnable,
   setMarketDisable,
@@ -39,6 +40,7 @@ const {
   deleteDomain,
   insertPackage,
   setPackage,
+  deletePackage,
   getPackageList,
 } = require('../../dbManager/HqRepository');
 const { HqManager } = require('../HqManager');
@@ -69,13 +71,24 @@ describe('HqManager', () => {
   });
 
   describe('setEnablingConfiguration', () => {
-    it('resolves the pool and delegates to HqRepository.setEnablingConfiguration', async () => {
+    it('throws when configurations is missing/empty', async () => {
+      await expect(manager.setEnablingConfiguration(undefined)).rejects.toThrow('"configurations" is required');
+      await expect(manager.setEnablingConfiguration([])).rejects.toThrow('"configurations" is required');
+      expect(getPool).not.toHaveBeenCalled();
+    });
+
+    it('resolves the pool once and delegates to HqRepository.setEnablingConfiguration for each element', async () => {
       setEnablingConfiguration.mockResolvedValue(undefined);
 
-      await manager.setEnablingConfiguration('1000', '00006821', 1, 0);
+      await manager.setEnablingConfiguration([
+        { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
+        { codmarket: '1000', oic: '00010925', enableWOC: 1, enableSignature: 0 },
+      ]);
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setEnablingConfiguration).toHaveBeenCalledWith(fakePool, '1000', '00006821', 1, 0);
+      expect(setEnablingConfiguration).toHaveBeenCalledTimes(2);
+      expect(setEnablingConfiguration).toHaveBeenNthCalledWith(1, fakePool, '1000', '00000989', 1, 1);
+      expect(setEnablingConfiguration).toHaveBeenNthCalledWith(2, fakePool, '1000', '00010925', 1, 0);
     });
   });
 
@@ -93,24 +106,46 @@ describe('HqManager', () => {
   });
 
   describe('setVehicleInspectionVisible', () => {
-    it('resolves the pool and delegates to HqRepository.setVehicleInspectionVisible', async () => {
+    it('throws when the payload has none of the known array keys', async () => {
+      await expect(manager.setVehicleInspectionVisible({})).rejects.toThrow(
+        '"payload" must contain an array in one of: conditions, equipment, damagearea, receptions, vehicleconfiguration',
+      );
+      expect(getPool).not.toHaveBeenCalled();
+    });
+
+    it('resolves the pool once and delegates to HqRepository.setVehicleInspectionVisible for each element of "conditions"', async () => {
       setVehicleInspectionVisible.mockResolvedValue(undefined);
 
-      await manager.setVehicleInspectionVisible(1, 1);
+      await manager.setVehicleInspectionVisible({
+        conditions: [{ id: 7, value: 0 }, { id: 8, value: 1 }],
+      });
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1);
+      expect(setVehicleInspectionVisible).toHaveBeenCalledTimes(2);
+      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0);
+      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1);
     });
+
+    it.each(['equipment', 'damagearea', 'receptions', 'vehicleconfiguration'])(
+      'also accepts the "%s" array key',
+      async (key) => {
+        setVehicleInspectionVisible.mockResolvedValue(undefined);
+
+        await manager.setVehicleInspectionVisible({ [key]: [{ id: 1, value: 1 }] });
+
+        expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1);
+      },
+    );
   });
 
-  describe('deletetVehicleInspectionVisible', () => {
-    it('resolves the pool and delegates to HqRepository.deletetVehicleInspectionVisible', async () => {
-      deletetVehicleInspectionVisible.mockResolvedValue(undefined);
+  describe('deletetVehicleInspection', () => {
+    it('resolves the pool and delegates to HqRepository.deletetVehicleInspection', async () => {
+      deletetVehicleInspection.mockResolvedValue(undefined);
 
-      await manager.deletetVehicleInspectionVisible(1, 1);
+      await manager.deletetVehicleInspection(1, 1);
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(deletetVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1);
+      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1);
     });
   });
 
@@ -214,6 +249,17 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setPackage).toHaveBeenCalledWith(fakePool, 7, 42, 'Tagliando', 60, 100.5);
+    });
+  });
+
+  describe('deletePackage', () => {
+    it('resolves the pool and delegates to HqRepository.deletePackage', async () => {
+      deletePackage.mockResolvedValue(undefined);
+
+      await manager.deletePackage(7);
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(deletePackage).toHaveBeenCalledWith(fakePool, 7);
     });
   });
 

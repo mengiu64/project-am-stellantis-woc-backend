@@ -8,13 +8,16 @@
  * dbManager/HqRepository.js):
  *   - getEnablingConfiguration(codmarket): elenco siti del mercato con
  *     l'eventuale configurazione di abilitazione WOC/firma digitale.
- *   - setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature):
- *     crea/aggiorna (upsert) la configurazione di abilitazione per la coppia
- *     (codmarket, oic).
+ *   - setEnablingConfiguration(configurations): crea/aggiorna (upsert), in
+ *     un loop, la configurazione per ciascun elemento dell'array
+ *     configurations ({ codmarket, oic, enableWOC, enableSignature }).
  *   - getVehicleInspection(market, type): elenco voci di controllo veicolo
  *     non cancellate per il "type" richiesto, con priorita' al mercato.
- *   - setVehicleInspectionVisible(id, value): aggiorna il flag "visible".
- *   - deletetVehicleInspectionVisible(id, value): aggiorna il flag "deleted".
+ *   - setVehicleInspectionVisible(payload): aggiorna il flag "visible", in
+ *     un loop, per ciascun elemento { id, value } dell'array presente in
+ *     payload sotto una di queste chiavi (una sola per chiamata):
+ *     conditions, equipment, damagearea, receptions, vehicleconfiguration.
+ *   - deletetVehicleInspection(id, value): aggiorna il flag "deleted".
  *   - insertVehicleInspection(market, type, descr): crea una nuova voce di
  *     controllo veicolo.
  *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market) e
@@ -32,6 +35,8 @@
  *     crea un nuovo pacchetto (woc.hq_pk_packages).
  *   - setPackage(idpackage, iddomain, descr, timeop, pricewithvat):
  *     aggiorna iddomain/descr/timeop/pricewithvat del pacchetto.
+ *   - deletePackage(idpackage): cancella (fisicamente) il pacchetto da
+ *     woc.hq_pk_packages.
  *   - getPackageList(market, oic): elenco della gerarchia mercato -> OIC ->
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
  *     la configurazione "a livello mercato").
@@ -41,7 +46,7 @@
  *   node index.js setEnablingConfiguration <codmarket> <oic> <enableWOC> <enableSignature>
  *   node index.js getVehicleInspection <market> <type>
  *   node index.js setVehicleInspectionVisible <id> <value>
- *   node index.js deletetVehicleInspectionVisible <id> <value>
+ *   node index.js deletetVehicleInspection <id> <value>
  *   node index.js insertVehicleInspection <market> <type> <descr>
  *   node index.js setMarketEnable <market>
  *   node index.js setMarketDisable <market>
@@ -54,12 +59,17 @@
 
 const { HqManager } = require('./HqManager');
 
+// Stesso elenco di HqManager.VEHICLE_INSPECTION_ARRAY_KEYS: duplicato qui (non
+// letto da HqManager.VEHICLE_INSPECTION_ARRAY_KEYS) per restare disaccoppiato
+// dal mock di HqManager usato nei test di questo file.
+const VEHICLE_INSPECTION_ARRAY_KEYS = ['conditions', 'equipment', 'damagearea', 'receptions', 'vehicleconfiguration'];
+
 const VALID_ACTIONS = [
   'getEnablingConfiguration',
   'setEnablingConfiguration',
   'getVehicleInspection',
   'setVehicleInspectionVisible',
-  'deletetVehicleInspectionVisible',
+  'deletetVehicleInspection',
   'insertVehicleInspection',
   'setMarketEnable',
   'setMarketDisable',
@@ -69,6 +79,7 @@ const VALID_ACTIONS = [
   'deleteDomain',
   'insertPackage',
   'setPackage',
+  'deletePackage',
   'getPackageList',
 ];
 
@@ -117,7 +128,7 @@ exports.handler = async (event = {}) => {
   }
 
   const {
-    codmarket, oic, enableWOC, enableSignature, market, type, id, value, descr,
+    codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
     iddomain, timeop, pricewithvat, idpackage,
   } = body;
   const manager = new HqManager();
@@ -129,8 +140,8 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'setEnablingConfiguration') {
-      await manager.setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature);
-      return response(200, { success: true, codmarket, oic, enableWOC, enableSignature });
+      await manager.setEnablingConfiguration(configurations);
+      return response(200, { success: true, configurations });
     }
 
     if (action === 'getVehicleInspection') {
@@ -139,12 +150,13 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'setVehicleInspectionVisible') {
-      await manager.setVehicleInspectionVisible(id, value);
-      return response(200, { success: true, id, value });
+      await manager.setVehicleInspectionVisible(body);
+      const key = VEHICLE_INSPECTION_ARRAY_KEYS.find((k) => Array.isArray(body[k]));
+      return response(200, { success: true, [key]: body[key] });
     }
 
-    if (action === 'deletetVehicleInspectionVisible') {
-      await manager.deletetVehicleInspectionVisible(id, value);
+    if (action === 'deletetVehicleInspection') {
+      await manager.deletetVehicleInspection(id, value);
       return response(200, { success: true, id, value });
     }
 
@@ -193,6 +205,11 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, idpackage, iddomain, descr, timeop, pricewithvat });
     }
 
+    if (action === 'deletePackage') {
+      await manager.deletePackage(idpackage);
+      return response(200, { success: true, idpackage });
+    }
+
     const packages = await manager.getPackageList(market, oic);
     return response(200, { success: true, market, oic: oic ?? null, packages });
   } catch (err) {
@@ -209,14 +226,14 @@ function printUsage() {
   console.log('  setEnablingConfiguration <codmarket> <oic> <enableWOC> <enableSignature>    Crea/aggiorna la configurazione');
   console.log('  getVehicleInspection <market> <type>                                       Elenco voci di controllo veicolo');
   console.log('  setVehicleInspectionVisible <id> <value>                                   Aggiorna il flag "visible"');
-  console.log('  deletetVehicleInspectionVisible <id> <value>                               Aggiorna il flag "deleted"');
+  console.log('  deletetVehicleInspection <id> <value>                               Aggiorna il flag "deleted"');
   console.log('  insertVehicleInspection <market> <type> <descr>                            Crea una nuova voce di controllo veicolo\n');
   console.log('Esempi:');
   console.log('  node index.js getEnablingConfiguration 1000');
   console.log('  node index.js setEnablingConfiguration 1000 00006821 1 0');
   console.log('  node index.js getVehicleInspection 1000 EXTERIOR');
   console.log('  node index.js setVehicleInspectionVisible 1 1');
-  console.log('  node index.js deletetVehicleInspectionVisible 1 1');
+  console.log('  node index.js deletetVehicleInspection 1 1');
   console.log('  node index.js insertVehicleInspection 1000 EXTERIOR "Controllo carrozzeria"\n');
 }
 
@@ -231,8 +248,9 @@ async function runGetEnablingConfiguration(codmarket) {
 async function runSetEnablingConfiguration(codmarket, oic, enableWOC, enableSignature) {
   console.log('\n=== hqManager setEnablingConfiguration ===');
   const manager = new HqManager();
-  await manager.setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature);
-  const result = { success: true, codmarket, oic, enableWOC, enableSignature };
+  const configurations = [{ codmarket, oic, enableWOC, enableSignature }];
+  await manager.setEnablingConfiguration(configurations);
+  const result = { success: true, configurations };
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -248,16 +266,17 @@ async function runGetVehicleInspection(market, type) {
 async function runSetVehicleInspectionVisible(id, value) {
   console.log('\n=== hqManager setVehicleInspectionVisible ===');
   const manager = new HqManager();
-  await manager.setVehicleInspectionVisible(id, value);
-  const result = { success: true, id, value };
+  const conditions = [{ id, value }];
+  await manager.setVehicleInspectionVisible({ conditions });
+  const result = { success: true, conditions };
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
 
 async function runDeletetVehicleInspectionVisible(id, value) {
-  console.log('\n=== hqManager deletetVehicleInspectionVisible ===');
+  console.log('\n=== hqManager deletetVehicleInspection ===');
   const manager = new HqManager();
-  await manager.deletetVehicleInspectionVisible(id, value);
+  await manager.deletetVehicleInspection(id, value);
   const result = { success: true, id, value };
   console.log(JSON.stringify(result, null, 2));
   return result;
@@ -288,7 +307,7 @@ async function main() {
     } else if (command === 'setVehicleInspectionVisible') {
       if (!arg1 || arg2 === undefined) { printUsage(); process.exit(1); return; }
       await runSetVehicleInspectionVisible(Number(arg1), Number(arg2));
-    } else if (command === 'deletetVehicleInspectionVisible') {
+    } else if (command === 'deletetVehicleInspection') {
       if (!arg1 || arg2 === undefined) { printUsage(); process.exit(1); return; }
       await runDeletetVehicleInspectionVisible(Number(arg1), Number(arg2));
     } else if (command === 'insertVehicleInspection') {

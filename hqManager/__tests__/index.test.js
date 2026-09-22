@@ -22,7 +22,7 @@ function makeManagerInstance(overrides = {}) {
     setEnablingConfiguration: jest.fn(),
     getVehicleInspection: jest.fn(),
     setVehicleInspectionVisible: jest.fn(),
-    deletetVehicleInspectionVisible: jest.fn(),
+    deletetVehicleInspection: jest.fn(),
     insertVehicleInspection: jest.fn(),
     setMarketEnable: jest.fn(),
     setMarketDisable: jest.fn(),
@@ -32,6 +32,7 @@ function makeManagerInstance(overrides = {}) {
     deleteDomain: jest.fn(),
     insertPackage: jest.fn(),
     setPackage: jest.fn(),
+    deletePackage: jest.fn(),
     getPackageList: jest.fn(),
     ...overrides,
   };
@@ -69,15 +70,16 @@ describe('hqManager/index.js', () => {
       const instance = makeManagerInstance({
         setEnablingConfiguration: jest.fn().mockResolvedValue(undefined),
       });
+      const configurations = [{ codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 }];
 
       const res = await handler({
         action: 'setEnablingConfiguration',
-        body: { codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 },
+        body: { configurations },
       });
 
-      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith('1000', '00006821', 1, 0);
+      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith(configurations);
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ success: true, codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 });
+      expect(JSON.parse(res.body)).toEqual({ success: true, configurations });
     });
 
     it('dispatches getVehicleInspection (direct invocation payload)', async () => {
@@ -96,22 +98,23 @@ describe('hqManager/index.js', () => {
       const instance = makeManagerInstance({
         setVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
       });
+      const conditions = [{ id: 1, value: 1 }];
 
-      const res = await handler({ action: 'setVehicleInspectionVisible', body: { id: 1, value: 1 } });
+      const res = await handler({ action: 'setVehicleInspectionVisible', body: { conditions } });
 
-      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith({ conditions });
       expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ success: true, id: 1, value: 1 });
+      expect(JSON.parse(res.body)).toEqual({ success: true, conditions });
     });
 
-    it('dispatches deletetVehicleInspectionVisible (direct invocation payload)', async () => {
+    it('dispatches deletetVehicleInspection (direct invocation payload)', async () => {
       const instance = makeManagerInstance({
-        deletetVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+        deletetVehicleInspection: jest.fn().mockResolvedValue(undefined),
       });
 
-      const res = await handler({ action: 'deletetVehicleInspectionVisible', body: { id: 1, value: 1 } });
+      const res = await handler({ action: 'deletetVehicleInspection', body: { id: 1, value: 1 } });
 
-      expect(instance.deletetVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(instance.deletetVehicleInspection).toHaveBeenCalledWith(1, 1);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, id: 1, value: 1 });
     });
@@ -250,6 +253,18 @@ describe('hqManager/index.js', () => {
       expect(JSON.parse(res.body)).toEqual({
         success: true, idpackage: 7, iddomain: 42, descr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
       });
+    });
+
+    it('dispatches deletePackage (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        deletePackage: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({ action: 'deletePackage', body: { idpackage: 7 } });
+
+      expect(instance.deletePackage).toHaveBeenCalledWith(7);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, idpackage: 7 });
     });
 
     it('dispatches getPackageList with a specific oic (direct invocation payload)', async () => {
@@ -395,8 +410,9 @@ describe('hqManager/index.js', () => {
 
       const result = await runSetEnablingConfiguration('1000', '00006821', 1, 0);
 
-      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith('1000', '00006821', 1, 0);
-      expect(result).toEqual({ success: true, codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 });
+      const configurations = [{ codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 }];
+      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith(configurations);
+      expect(result).toEqual({ success: true, configurations });
     });
 
     it('runGetVehicleInspection delegates to HqManager and returns the result', async () => {
@@ -417,18 +433,19 @@ describe('hqManager/index.js', () => {
 
       const result = await runSetVehicleInspectionVisible(1, 1);
 
-      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
-      expect(result).toEqual({ success: true, id: 1, value: 1 });
+      const conditions = [{ id: 1, value: 1 }];
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith({ conditions });
+      expect(result).toEqual({ success: true, conditions });
     });
 
     it('runDeletetVehicleInspectionVisible delegates to HqManager and returns a summary', async () => {
       const instance = makeManagerInstance({
-        deletetVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+        deletetVehicleInspection: jest.fn().mockResolvedValue(undefined),
       });
 
       const result = await runDeletetVehicleInspectionVisible(1, 1);
 
-      expect(instance.deletetVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(instance.deletetVehicleInspection).toHaveBeenCalledWith(1, 1);
       expect(result).toEqual({ success: true, id: 1, value: 1 });
     });
 
@@ -512,7 +529,9 @@ describe('hqManager/index.js', () => {
 
       await main();
 
-      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith('1000', '00006821', 1, 0);
+      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith([
+        { codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 },
+      ]);
       expect(exitSpy).not.toHaveBeenCalled();
     });
 
@@ -548,25 +567,25 @@ describe('hqManager/index.js', () => {
 
       await main();
 
-      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith({ conditions: [{ id: 1, value: 1 }] });
       expect(exitSpy).not.toHaveBeenCalled();
     });
 
-    it('exits 1 when deletetVehicleInspectionVisible is called with missing args', async () => {
-      process.argv = ['node', 'index.js', 'deletetVehicleInspectionVisible', '1'];
+    it('exits 1 when deletetVehicleInspection is called with missing args', async () => {
+      process.argv = ['node', 'index.js', 'deletetVehicleInspection', '1'];
       await main();
       expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    it('runs deletetVehicleInspectionVisible via CLI', async () => {
+    it('runs deletetVehicleInspection via CLI', async () => {
       const instance = makeManagerInstance({
-        deletetVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
+        deletetVehicleInspection: jest.fn().mockResolvedValue(undefined),
       });
-      process.argv = ['node', 'index.js', 'deletetVehicleInspectionVisible', '1', '1'];
+      process.argv = ['node', 'index.js', 'deletetVehicleInspection', '1', '1'];
 
       await main();
 
-      expect(instance.deletetVehicleInspectionVisible).toHaveBeenCalledWith(1, 1);
+      expect(instance.deletetVehicleInspection).toHaveBeenCalledWith(1, 1);
       expect(exitSpy).not.toHaveBeenCalled();
     });
 
