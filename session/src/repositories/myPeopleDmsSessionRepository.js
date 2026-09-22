@@ -370,9 +370,17 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
   /**
    * @param {string} username - Username IURSMA (es. "0073741.d235").
+   * @param {object|null} [authProfile] - Profilo utente dall'authorizer (v.
+   *   getAuthContext in index.js: sub, given_name, family_name, ...), usato
+   *   SOLO per l'utente HQ (myPeople RC=121, v. buildHqSessionData) per
+   *   valorizzare `firstname`/`lastname` (given_name/family_name) che
+   *   altrimenti resterebbero `null` (myPeople non ha alcun dato per un
+   *   utente HQ). Per gli utenti dealer questi campi restano quelli letti
+   *   da myPeople (User.Attributes.FIRSTNAME/LASTNAME), mai sovrascritti
+   *   dal profilo dell'authorizer.
    * @returns {Promise<object>} Dati di sessione (stessa forma di S3SessionRepository).
    */
-  async getSessionData(username) {
+  async getSessionData(username, authProfile = null) {
     if (!username) {
       throw new Error('[session] username is required');
     }
@@ -391,7 +399,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // (stessa forma storica, campi dealer-specific a null/[]), cosi' l'utente
     // HQ può comunque accedere all'app.
     if (result && Number(result.RC) === HQ_USER_NOT_ALLOWED_RC) {
-      return buildHqSessionData(username);
+      return buildHqSessionData(username, authProfile);
     }
 
     if (!result || String(result.RC) !== '0' || result.STATUS !== 'SUCCESS' || !result.User) {
@@ -624,18 +632,24 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
  * a `null`/`[]`. `usertype: 'HQ'` permette al chiamante di distinguere questo
  * caso da un dealer con `usertype` non valorizzato.
  *
+ * `firstname`/`lastname` sono l'unica eccezione: essendo assenti in myPeople
+ * per un utente HQ, vengono valorizzati da `authProfile.given_name`/
+ * `authProfile.family_name` (profilo canonico dell'authorizer, v.
+ * getAuthContext in index.js), se disponibile; altrimenti restano `null`.
+ *
  * @param {string} username - Username HQ (es. "SF48816").
+ * @param {object|null} [authProfile] - Profilo utente dall'authorizer (given_name/family_name).
  * @returns {object} Dati di sessione con la stessa forma di un utente dealer.
  */
-function buildHqSessionData(username) {
+function buildHqSessionData(username, authProfile) {
   return {
     username,
     codmarket: null,
     marketIso: null,
     oic: null,
     sincom: null,
-    firstname: null,
-    lastname: null,
+    firstname: (authProfile && authProfile.given_name) || null,
+    lastname: (authProfile && authProfile.family_name) || null,
     profile: null,
     physicalsite: null,
     pdvId: null,

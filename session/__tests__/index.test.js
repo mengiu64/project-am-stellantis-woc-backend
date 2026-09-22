@@ -42,7 +42,7 @@ describe('session/src/index — handler', () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000', sincom: '0073741' });
     const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
 
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null);
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({
@@ -133,8 +133,17 @@ describe('session/src/index — handler', () => {
       pathParameters: { username: 'altro.utente', codmarket: '3109' },
       criteria: { username: 'altro.utente', codmarket: '3109' },
     });
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235');
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null);
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
+  });
+
+  it('inoltra il profile (parsato da authorizer.profile) a getSessionData, per il mapping firstname/lastname HQ', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ usertype: 'HQ' });
+    const profile = { sub: 'SF48816', given_name: 'Mario', family_name: 'Rossi' };
+    await handler({
+      requestContext: { authorizer: { sub: 'SF48816', profile: JSON.stringify(profile) } },
+    });
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('SF48816', profile);
   });
 
   it('ritorna 404 quando MyPeopleDmsSessionRepository lancia SessionNotFoundError', async () => {

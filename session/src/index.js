@@ -25,7 +25,7 @@ const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
  * @returns {Promise<object>} { statusCode, body }
  */
 async function handler(event = {}) {
-  const { sub, roles } = getAuthContext(event);
+  const { sub, roles, profile } = getAuthContext(event);
 
   if (!sub) {
     return response(401, {
@@ -36,7 +36,10 @@ async function handler(event = {}) {
 
   try {
     const repository = buildMyPeopleDmsRepository();
-    const data = await repository.getSessionData(sub);
+    // `profile` (parsato da authorizer.profile, v. getAuthContext) viene passato
+    // solo per valorizzare firstname/lastname degli utenti HQ (given_name/family_name),
+    // che altrimenti resterebbero null: v. MyPeopleDmsSessionRepository::buildHqSessionData.
+    const data = await repository.getSessionData(sub, profile);
     // `userroles` (array) e' il ruolo/i ruoli dell'utente autenticato, presi
     // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di

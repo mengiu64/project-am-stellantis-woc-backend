@@ -342,6 +342,36 @@ describe('MyPeopleDmsSessionRepository', () => {
     expect(data.usertype).toBe('HQ');
   });
 
+  test('per un utente HQ mappa firstname/lastname da authProfile.given_name/family_name', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: { RC: 121, STATUS: 'HQ users are not allowed for this feature.', User: {} },
+      }),
+    });
+
+    const data = await repository.getSessionData('SF48816', {
+      given_name: 'Mario',
+      family_name: 'Rossi',
+    });
+
+    expect(data.firstname).toBe('Mario');
+    expect(data.lastname).toBe('Rossi');
+    expect(data.usertype).toBe('HQ');
+  });
+
+  test('per un utente HQ senza authProfile firstname/lastname restano null', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: { RC: 121, STATUS: 'HQ users are not allowed for this feature.', User: {} },
+      }),
+    });
+
+    const data = await repository.getSessionData('SF48816');
+
+    expect(data.firstname).toBeNull();
+    expect(data.lastname).toBeNull();
+  });
+
   test('usa il primo OIC come fallback quando nessuno ha MAIN="Y"', async () => {
     const repository = buildRepository({
       readUserProfilesFn: jest.fn().mockResolvedValue({
