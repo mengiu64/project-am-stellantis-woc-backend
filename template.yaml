@@ -1379,8 +1379,11 @@ Resources:
   # motivo/pattern di PkManagerFunction/SessionFunction/PkFavoriteFunction
   # sopra, quindi CodeUri: ./ + BuildMethod: makefile (vedi Makefile,
   # build-HqManagerFunction). Riusa lo stesso Aurora/secret di
-  # DbManagerFunction (DBMANAGER_DB_*): nessun nuovo parametro/permesso da
-  # aggiungere.
+  # DbManagerFunction (DBMANAGER_DB_*). getAnagSection()/getAnagAllocation()
+  # (dbManager/S3ConfigRepository.js) leggono da S3 config/hq_sections.json e
+  # config/hq_actiontype.json nello stesso bucket TranslationsBucket già
+  # usato da V360Function/altre function: serve quindi S3ReadPolicy +
+  # CONFIG_BUCKET_NAME come per quelle.
   HqManagerFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -1394,6 +1397,8 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
@@ -1410,6 +1415,7 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
           DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          CONFIG_BUCKET_NAME:     !Ref TranslationsBucket
       # NESSUN blocco Events qui: come tutte le altre function di questo
       # template, il routing HTTP (/api/hq/{method}) è gestito dall'API
       # Gateway REST esterno/preesistente (configurato fuori da questo stack

@@ -73,10 +73,28 @@
  * filtra sull'OIC specifico, altrimenti sulla configurazione "a livello
  * mercato" (pk.oic IS NULL); i domini cancellati logicamente (deleted = 1)
  * sono esclusi (dom.deleted = 0).
+ *
+ * insertAudit(username, section, market, actiontype, descr) inserisce una
+ * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
+ * automaticamente a CURRENT_DATE).
+ *
+ * searchAudit(market, section, datefrom, dateto, actiontype) legge da
+ * woc.hq_audit le righe che soddisfano, in AND, i soli filtri effettivamente
+ * valorizzati fra quelli passati (tutti opzionali), ordinate per
+ * creationdate/id decrescente (piu' recenti prima).
+ *
+ * getAnagSection()/getAnagAllocation() leggono, da S3 (bucket
+ * TranslationsBucket, S3ConfigRepository.js), le anagrafiche statiche delle
+ * sezioni HQ (config/hq_sections.json) e dei tipi di azione di audit
+ * (config/hq_actiontype.json).
  */
 
 /** Codice errore Postgres per violazione di unique/primary key ("unique_violation"). */
 const PG_UNIQUE_VIOLATION = '23505';
+
+const { S3ConfigRepository } = require('./S3ConfigRepository');
+
+const s3ConfigRepository = new S3ConfigRepository();
 
 /**
  * @param {import('pg').Pool} pool
@@ -543,6 +561,99 @@ async function getPackageList(pool, market, oic) {
   }));
 }
 
+/**
+ * Inserisce una riga di audit in woc.hq_audit (creationdate = CURRENT_DATE).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} username
+ * @param {string} section
+ * @param {string} market
+ * @param {string} actiontype
+ * @param {string} descr
+ * @returns {Promise<void>}
+ */
+async function insertAudit(pool, username, section, market, actiontype, descr) {
+  if (!username) throw new Error('"username" is required');
+  if (!section) throw new Error('"section" is required');
+  if (!market) throw new Error('"market" is required');
+  if (!actiontype) throw new Error('"actiontype" is required');
+
+  await pool.query(
+    `INSERT INTO woc.hq_audit (username, creationdate, section, market, actiontype, descr)
+     VALUES ($1, CURRENT_DATE, $2, $3, $4, $5)`,
+    [username, section, market, actiontype, descr],
+  );
+}
+
+/**
+ * Legge da woc.hq_audit le righe che soddisfano, in AND, i soli filtri
+ * effettivamente valorizzati fra market/section/datefrom/dateto/actiontype
+ * (tutti opzionali), ordinate per creationdate/id decrescente.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} [market]
+ * @param {string} [section]
+ * @param {string|Date} [datefrom]
+ * @param {string|Date} [dateto]
+ * @param {string} [actiontype]
+ * @returns {Promise<Array<{ id: number, username: string|null, creationdate: string|null, section: string|null, market: string|null, actiontype: string|null, descr: string|null }>>}
+ */
+async function searchAudit(pool, market, section, datefrom, dateto, actiontype) {
+  const conditions = [];
+  const params = [];
+
+  if (market) {
+    params.push(market);
+    conditions.push(`market = $${params.length}`);
+  }
+  if (section) {
+    params.push(section);
+    conditions.push(`section = $${params.length}`);
+  }
+  if (datefrom) {
+    params.push(datefrom);
+    conditions.push(`creationdate >= $${params.length}`);
+  }
+  if (dateto) {
+    params.push(dateto);
+    conditions.push(`creationdate <= $${params.length}`);
+  }
+  if (actiontype) {
+    params.push(actiontype);
+    conditions.push(`actiontype = $${params.length}`);
+  }
+
+  const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+  const { rows } = await pool.query(
+    `SELECT id, username, creationdate, section, market, actiontype, descr
+       FROM woc.hq_audit${whereClause}
+      ORDER BY creationdate DESC, id DESC`,
+    params,
+  );
+
+  return rows;
+}
+
+/**
+ * Elenco delle sezioni HQ (config/hq_sections.json su S3, TranslationsBucket).
+ *
+ * @returns {Promise<Array<{ section: string }>>}
+ */
+async function getAnagSection() {
+  return s3ConfigRepository.getAnagSection();
+}
+
+/**
+ * Elenco dei tipi di azione di audit (config/hq_actiontype.json su S3,
+ * TranslationsBucket).
+ *
+ * @returns {Promise<Array<{ type: string }>>}
+ */
+async function getAnagAllocation() {
+  return s3ConfigRepository.getAnagAllocation();
+}
+
 module.exports = {
   getEnablingConfiguration,
   setEnablingConfiguration,
@@ -562,4 +673,8 @@ module.exports = {
   setPackage,
   deletePackage,
   getPackageList,
+  insertAudit,
+  searchAudit,
+  getAnagSection,
+  getAnagAllocation,
 };

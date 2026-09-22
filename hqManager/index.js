@@ -10,7 +10,10 @@
  *     l'eventuale configurazione di abilitazione WOC/firma digitale.
  *   - setEnablingConfiguration(configurations): crea/aggiorna (upsert), in
  *     un loop, la configurazione per ciascun elemento dell'array
- *     configurations ({ codmarket, oic, enableWOC, enableSignature }).
+ *     configurations ({ codmarket, oic, enableWOC, enableSignature }),
+ *     registrando anche una riga di audit (woc.hq_audit) per ciascun
+ *     elemento, con username risolto da
+ *     event.requestContext.authorizer.sub (Lambda Authorizer).
  *   - getVehicleInspection(market, type): elenco voci di controllo veicolo
  *     non cancellate per il "type" richiesto, con priorita' al mercato.
  *   - setVehicleInspectionVisible(payload): aggiorna il flag "visible", in
@@ -40,6 +43,14 @@
  *   - getPackageList(market, oic): elenco della gerarchia mercato -> OIC ->
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
  *     la configurazione "a livello mercato").
+ *   - insertAudit(username, section, market, actiontype, descr): inserisce
+ *     una riga di log nell'audit HQ (woc.hq_audit).
+ *   - searchAudit(market, section, datefrom, dateto, actiontype): elenco
+ *     righe di audit filtrate (tutti i filtri sono opzionali).
+ *   - getAnagSection(): elenco delle sezioni HQ (config/hq_sections.json su
+ *     S3, TranslationsBucket).
+ *   - getAnagAllocation(): elenco dei tipi di azione di audit
+ *     (config/hq_actiontype.json su S3, TranslationsBucket).
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -81,6 +92,10 @@ const VALID_ACTIONS = [
   'setPackage',
   'deletePackage',
   'getPackageList',
+  'insertAudit',
+  'searchAudit',
+  'getAnagSection',
+  'getAnagAllocation',
 ];
 
 function parseBody(event) {
@@ -129,7 +144,7 @@ exports.handler = async (event = {}) => {
 
   const {
     codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
-    iddomain, timeop, pricewithvat, idpackage,
+    iddomain, timeop, pricewithvat, idpackage, username, section, actiontype, datefrom, dateto,
   } = body;
   const manager = new HqManager();
 
@@ -140,7 +155,7 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'setEnablingConfiguration') {
-      await manager.setEnablingConfiguration(configurations);
+      await manager.setEnablingConfiguration(configurations, event);
       return response(200, { success: true, configurations });
     }
 
@@ -210,8 +225,28 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, idpackage });
     }
 
-    const packages = await manager.getPackageList(market, oic);
-    return response(200, { success: true, market, oic: oic ?? null, packages });
+    if (action === 'getPackageList') {
+      const packages = await manager.getPackageList(market, oic);
+      return response(200, { success: true, market, oic: oic ?? null, packages });
+    }
+
+    if (action === 'insertAudit') {
+      await manager.insertAudit(username, section, market, actiontype, descr);
+      return response(200, { success: true, username, section, market, actiontype, descr });
+    }
+
+    if (action === 'searchAudit') {
+      const audits = await manager.searchAudit(market, section, datefrom, dateto, actiontype);
+      return response(200, { success: true, market, section, datefrom, dateto, actiontype, audits });
+    }
+
+    if (action === 'getAnagSection') {
+      const sections = await manager.getAnagSection();
+      return response(200, { success: true, sections });
+    }
+
+    const allocations = await manager.getAnagAllocation();
+    return response(200, { success: true, allocations });
   } catch (err) {
     const statusCode = err.message.includes('is required') ? 400 : 502;
     return response(statusCode, { success: false, message: err.message });

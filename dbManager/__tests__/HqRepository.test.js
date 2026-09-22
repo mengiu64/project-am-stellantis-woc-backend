@@ -1,5 +1,14 @@
 'use strict';
 
+const mockGetAnagSection = jest.fn();
+const mockGetAnagAllocation = jest.fn();
+jest.mock('../S3ConfigRepository', () => ({
+  S3ConfigRepository: jest.fn().mockImplementation(() => ({
+    getAnagSection: mockGetAnagSection,
+    getAnagAllocation: mockGetAnagAllocation,
+  })),
+}));
+
 const {
   getEnablingConfiguration,
   setEnablingConfiguration,
@@ -19,6 +28,10 @@ const {
   setPackage,
   deletePackage,
   getPackageList,
+  insertAudit,
+  searchAudit,
+  getAnagSection,
+  getAnagAllocation,
 } = require('../HqRepository');
 
 function makePool(queryImpl) {
@@ -657,6 +670,118 @@ describe('HqRepository', () => {
       const result = await getPackageList(pool, '1000', '00006821');
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('insertAudit', () => {
+    it('throws when username is missing', async () => {
+      const pool = makePool();
+      await expect(insertAudit(pool, undefined, 'domain', '1000', 'create', 'Nuovo dominio'))
+        .rejects.toThrow('"username" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when section is missing', async () => {
+      const pool = makePool();
+      await expect(insertAudit(pool, 'mario.rossi', undefined, '1000', 'create', 'Nuovo dominio'))
+        .rejects.toThrow('"section" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(insertAudit(pool, 'mario.rossi', 'domain', undefined, 'create', 'Nuovo dominio'))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('throws when actiontype is missing', async () => {
+      const pool = makePool();
+      await expect(insertAudit(pool, 'mario.rossi', 'domain', '1000', undefined, 'Nuovo dominio'))
+        .rejects.toThrow('"actiontype" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the INSERT with CURRENT_DATE and the given fields', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await insertAudit(pool, 'mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('CURRENT_DATE'));
+    });
+  });
+
+  describe('searchAudit', () => {
+    it('runs a query with no WHERE clause when no filters are given', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await searchAudit(pool, undefined, undefined, undefined, undefined, undefined);
+
+      expect(result).toEqual([]);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.not.stringContaining('WHERE'),
+        [],
+      );
+    });
+
+    it('builds a dynamic WHERE clause including only the provided filters', async () => {
+      const rows = [{
+        id: 1, username: 'mario.rossi', creationdate: '2024-01-01', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+      }];
+      const pool = makePool(async () => ({ rows }));
+
+      const result = await searchAudit(pool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+
+      expect(result).toBe(rows);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      const [sql, params] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('market = $1'));
+      expect(sql).toEqual(expect.stringContaining('section = $2'));
+      expect(sql).toEqual(expect.stringContaining('creationdate >= $3'));
+      expect(sql).toEqual(expect.stringContaining('creationdate <= $4'));
+      expect(sql).toEqual(expect.stringContaining('actiontype = $5'));
+      expect(params).toEqual(['1000', 'domain', '2024-01-01', '2024-12-31', 'create']);
+    });
+
+    it('builds a WHERE clause with only market and actiontype when the other filters are missing', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await searchAudit(pool, '1000', undefined, undefined, undefined, 'create');
+
+      const [sql, params] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('market = $1'));
+      expect(sql).toEqual(expect.stringContaining('actiontype = $2'));
+      expect(params).toEqual(['1000', 'create']);
+    });
+  });
+
+  describe('getAnagSection', () => {
+    it('delegates to S3ConfigRepository.getAnagSection', async () => {
+      const sections = [{ section: 'domain' }, { section: 'conditions' }];
+      mockGetAnagSection.mockResolvedValue(sections);
+
+      const result = await getAnagSection();
+
+      expect(mockGetAnagSection).toHaveBeenCalledWith();
+      expect(result).toBe(sections);
+    });
+  });
+
+  describe('getAnagAllocation', () => {
+    it('delegates to S3ConfigRepository.getAnagAllocation', async () => {
+      const allocations = [{ type: 'create' }, { type: 'update' }];
+      mockGetAnagAllocation.mockResolvedValue(allocations);
+
+      const result = await getAnagAllocation();
+
+      expect(mockGetAnagAllocation).toHaveBeenCalledWith();
+      expect(result).toBe(allocations);
     });
   });
 });

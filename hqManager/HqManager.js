@@ -17,9 +17,11 @@ const path = require('path');
  * abilitazione WOC/firma digitale per ciascun sito del mercato richiesto
  * (join ang_snowflakes + addr_snowflakes + hq_application_enabling).
  *
- * setEnablingConfiguration(configurations) crea/aggiorna (upsert), in un
- * loop, la riga di configurazione per ciascun elemento dell'array
- * configurations ({ codmarket, oic, enableWOC, enableSignature }).
+ * setEnablingConfiguration(configurations, event) crea/aggiorna (upsert), in
+ * un loop, la riga di configurazione per ciascun elemento dell'array
+ * configurations ({ codmarket, oic, enableWOC, enableSignature }),
+ * registrando anche una riga di audit (woc.hq_audit) per ciascun elemento,
+ * con username risolto da event.requestContext.authorizer.sub.
  *
  * getVehicleInspection(market, type),
  * setVehicleInspectionVisible(payload) (payload contiene un array { id,
@@ -42,6 +44,14 @@ const path = require('path');
  * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
  * pacchetto configurata per il mercato (ed eventualmente l'OIC) richiesto
  * (i domini cancellati logicamente sono esclusi).
+ *
+ * insertAudit(username, section, market, actiontype, descr) e
+ * searchAudit(market, section, datefrom, dateto, actiontype) (filtri tutti
+ * opzionali) espongono il log di audit HQ (woc.hq_audit).
+ *
+ * getAnagSection()/getAnagAllocation() espongono le anagrafiche statiche
+ * (sezioni HQ / tipi di azione di audit) lette da S3
+ * (dbManager/S3ConfigRepository.js, bucket TranslationsBucket).
  */
 class HqManager {
   /**
@@ -65,21 +75,30 @@ class HqManager {
   /**
    * Crea/aggiorna (upsert), in un loop, la riga di configurazione per
    * ciascun elemento dell'array configurations, riusando lo stesso pool.
+   * Per ciascun elemento registra anche una riga di audit (woc.hq_audit,
+   * sezione "enablingConfiguration", actiontype "update"), con lo username
+   * risolto da event.requestContext.authorizer.sub (Lambda Authorizer;
+   * null se l'evento non lo valorizza, es. invocazione diretta/CLI).
    *
    * @param {Array<{ codmarket: string, oic: string, enableWOC: number, enableSignature: number }>} configurations
+   * @param {object} [event]
    * @returns {Promise<void>}
    */
-  async setEnablingConfiguration(configurations) {
+  async setEnablingConfiguration(configurations, event = {}) {
     if (!Array.isArray(configurations) || configurations.length === 0) {
       throw new Error('"configurations" is required');
     }
 
+    const authz = (event.requestContext && event.requestContext.authorizer) || {};
+    const username = authz.sub || null;
+
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setEnablingConfiguration } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    const { setEnablingConfiguration, insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
     for (const { codmarket, oic, enableWOC, enableSignature } of configurations) {
       await setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
+      await insertAudit(pool, username, 'enablingConfiguration', codmarket, 'update', `enableWOC: ${enableWOC} enableSignature:${enableSignature}`);
     }
   }
 
@@ -287,6 +306,56 @@ class HqManager {
 
     const pool = await getPool();
     return getPackageList(pool, market, oic);
+  }
+
+  /**
+   * @param {string} username
+   * @param {string} section
+   * @param {string} market
+   * @param {string} actiontype
+   * @param {string} descr
+   * @returns {Promise<void>}
+   */
+  async insertAudit(username, section, market, actiontype, descr) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return insertAudit(pool, username, section, market, actiontype, descr);
+  }
+
+  /**
+   * @param {string} [market]
+   * @param {string} [section]
+   * @param {string} [datefrom]
+   * @param {string} [dateto]
+   * @param {string} [actiontype]
+   * @returns {Promise<Array<{ id: number, username: string|null, creationdate: string|null, section: string|null, market: string|null, actiontype: string|null, descr: string|null }>>}
+   */
+  async searchAudit(market, section, datefrom, dateto, actiontype) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { searchAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    return searchAudit(pool, market, section, datefrom, dateto, actiontype);
+  }
+
+  /**
+   * @returns {Promise<Array<{ section: string }>>}
+   */
+  async getAnagSection() {
+    const { getAnagSection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    return getAnagSection();
+  }
+
+  /**
+   * @returns {Promise<Array<{ type: string }>>}
+   */
+  async getAnagAllocation() {
+    const { getAnagAllocation } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    return getAnagAllocation();
   }
 }
 

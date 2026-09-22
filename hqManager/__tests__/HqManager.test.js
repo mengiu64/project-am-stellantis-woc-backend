@@ -22,6 +22,10 @@ jest.mock('../../dbManager/HqRepository', () => ({
   setPackage: jest.fn(),
   deletePackage: jest.fn(),
   getPackageList: jest.fn(),
+  insertAudit: jest.fn(),
+  searchAudit: jest.fn(),
+  getAnagSection: jest.fn(),
+  getAnagAllocation: jest.fn(),
 }));
 
 const { getPool } = require('../../dbManager/db');
@@ -42,6 +46,10 @@ const {
   setPackage,
   deletePackage,
   getPackageList,
+  insertAudit,
+  searchAudit,
+  getAnagSection,
+  getAnagAllocation,
 } = require('../../dbManager/HqRepository');
 const { HqManager } = require('../HqManager');
 
@@ -77,18 +85,33 @@ describe('HqManager', () => {
       expect(getPool).not.toHaveBeenCalled();
     });
 
-    it('resolves the pool once and delegates to HqRepository.setEnablingConfiguration for each element', async () => {
+    it('resolves the pool once and delegates to HqRepository.setEnablingConfiguration for each element, with insertAudit and username from event.requestContext.authorizer.sub', async () => {
       setEnablingConfiguration.mockResolvedValue(undefined);
+      insertAudit.mockResolvedValue(undefined);
 
       await manager.setEnablingConfiguration([
         { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
         { codmarket: '1000', oic: '00010925', enableWOC: 1, enableSignature: 0 },
-      ]);
+      ], { requestContext: { authorizer: { sub: 'mario.rossi' } } });
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setEnablingConfiguration).toHaveBeenCalledTimes(2);
       expect(setEnablingConfiguration).toHaveBeenNthCalledWith(1, fakePool, '1000', '00000989', 1, 1);
       expect(setEnablingConfiguration).toHaveBeenNthCalledWith(2, fakePool, '1000', '00010925', 1, 0);
+      expect(insertAudit).toHaveBeenCalledTimes(2);
+      expect(insertAudit).toHaveBeenNthCalledWith(1, fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
+      expect(insertAudit).toHaveBeenNthCalledWith(2, fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:0');
+    });
+
+    it('uses username=null when the event has no requestContext.authorizer.sub (e.g. CLI/direct invocation)', async () => {
+      setEnablingConfiguration.mockResolvedValue(undefined);
+      insertAudit.mockResolvedValue(undefined);
+
+      await manager.setEnablingConfiguration([
+        { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
+      ]);
+
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
     });
   });
 
@@ -275,6 +298,58 @@ describe('HqManager', () => {
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
       expect(result).toBe(packages);
+    });
+  });
+
+  describe('insertAudit', () => {
+    it('resolves the pool and delegates to HqRepository.insertAudit', async () => {
+      insertAudit.mockResolvedValue(undefined);
+
+      await manager.insertAudit('mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+    });
+  });
+
+  describe('searchAudit', () => {
+    it('resolves the pool and delegates to HqRepository.searchAudit', async () => {
+      const audits = [{
+        id: 1, username: 'mario.rossi', creationdate: '2024-01-01', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+      }];
+      searchAudit.mockResolvedValue(audits);
+
+      const result = await manager.searchAudit('1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(searchAudit).toHaveBeenCalledWith(fakePool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+      expect(result).toBe(audits);
+    });
+  });
+
+  describe('getAnagSection', () => {
+    it('delegates to HqRepository.getAnagSection without resolving a pool', async () => {
+      const sections = [{ section: 'domain' }, { section: 'conditions' }];
+      getAnagSection.mockResolvedValue(sections);
+
+      const result = await manager.getAnagSection();
+
+      expect(getPool).not.toHaveBeenCalled();
+      expect(getAnagSection).toHaveBeenCalledWith();
+      expect(result).toBe(sections);
+    });
+  });
+
+  describe('getAnagAllocation', () => {
+    it('delegates to HqRepository.getAnagAllocation without resolving a pool', async () => {
+      const allocations = [{ type: 'create' }, { type: 'update' }];
+      getAnagAllocation.mockResolvedValue(allocations);
+
+      const result = await manager.getAnagAllocation();
+
+      expect(getPool).not.toHaveBeenCalled();
+      expect(getAnagAllocation).toHaveBeenCalledWith();
+      expect(result).toBe(allocations);
     });
   });
 });

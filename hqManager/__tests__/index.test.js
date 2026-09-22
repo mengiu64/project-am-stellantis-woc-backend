@@ -34,6 +34,10 @@ function makeManagerInstance(overrides = {}) {
     setPackage: jest.fn(),
     deletePackage: jest.fn(),
     getPackageList: jest.fn(),
+    insertAudit: jest.fn(),
+    searchAudit: jest.fn(),
+    getAnagSection: jest.fn(),
+    getAnagAllocation: jest.fn(),
     ...overrides,
   };
   HqManager.mockImplementation(() => instance);
@@ -71,15 +75,29 @@ describe('hqManager/index.js', () => {
         setEnablingConfiguration: jest.fn().mockResolvedValue(undefined),
       });
       const configurations = [{ codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 }];
+      const event = { action: 'setEnablingConfiguration', body: { configurations } };
 
-      const res = await handler({
-        action: 'setEnablingConfiguration',
-        body: { configurations },
-      });
+      const res = await handler(event);
 
-      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith(configurations);
+      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith(configurations, event);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, configurations });
+    });
+
+    it('dispatches setEnablingConfiguration passing through requestContext.authorizer for username resolution', async () => {
+      const instance = makeManagerInstance({
+        setEnablingConfiguration: jest.fn().mockResolvedValue(undefined),
+      });
+      const configurations = [{ codmarket: '1000', oic: '00006821', enableWOC: 1, enableSignature: 0 }];
+      const event = {
+        action: 'setEnablingConfiguration',
+        body: { configurations },
+        requestContext: { authorizer: { sub: 'mario.rossi' } },
+      };
+
+      await handler(event);
+
+      expect(instance.setEnablingConfiguration).toHaveBeenCalledWith(configurations, event);
     });
 
     it('dispatches getVehicleInspection (direct invocation payload)', async () => {
@@ -292,6 +310,73 @@ describe('hqManager/index.js', () => {
       expect(instance.getPackageList).toHaveBeenCalledWith('1000', undefined);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
+    });
+
+    it('dispatches insertAudit (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        insertAudit: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({
+        action: 'insertAudit',
+        body: {
+          username: 'mario.rossi', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+        },
+      });
+
+      expect(instance.insertAudit).toHaveBeenCalledWith('mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        success: true, username: 'mario.rossi', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+      });
+    });
+
+    it('dispatches searchAudit (direct invocation payload)', async () => {
+      const audits = [{
+        id: 1, username: 'mario.rossi', creationdate: '2024-01-01', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+      }];
+      const instance = makeManagerInstance({
+        searchAudit: jest.fn().mockResolvedValue(audits),
+      });
+
+      const res = await handler({
+        action: 'searchAudit',
+        body: {
+          market: '1000', section: 'domain', datefrom: '2024-01-01', dateto: '2024-12-31', actiontype: 'create',
+        },
+      });
+
+      expect(instance.searchAudit).toHaveBeenCalledWith('1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        success: true, market: '1000', section: 'domain', datefrom: '2024-01-01', dateto: '2024-12-31', actiontype: 'create', audits,
+      });
+    });
+
+    it('dispatches getAnagSection (direct invocation payload)', async () => {
+      const sections = [{ section: 'domain' }, { section: 'conditions' }];
+      const instance = makeManagerInstance({
+        getAnagSection: jest.fn().mockResolvedValue(sections),
+      });
+
+      const res = await handler({ action: 'getAnagSection', body: {} });
+
+      expect(instance.getAnagSection).toHaveBeenCalledWith();
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, sections });
+    });
+
+    it('dispatches getAnagAllocation (direct invocation payload)', async () => {
+      const allocations = [{ type: 'create' }, { type: 'update' }];
+      const instance = makeManagerInstance({
+        getAnagAllocation: jest.fn().mockResolvedValue(allocations),
+      });
+
+      const res = await handler({ action: 'getAnagAllocation', body: {} });
+
+      expect(instance.getAnagAllocation).toHaveBeenCalledWith();
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, allocations });
     });
 
     it('ignores an unparseable JSON body (parseBody catch branch) and falls back to path-derived action', async () => {
