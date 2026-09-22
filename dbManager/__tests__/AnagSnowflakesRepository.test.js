@@ -1,6 +1,6 @@
 'use strict';
 
-const { getCountryIsoCode, getPhysicalSiteAndSincom, getPhysicalSiteAndPdvId, getBrandsByOics } = require('../AnagSnowflakesRepository');
+const { getCountryIsoCode, getPhysicalSiteAndSincom, getPhysicalSiteAndPdvId, getBrandsByOics, getMarkets } = require('../AnagSnowflakesRepository');
 
 function makePool(queryImpl) {
   return { query: jest.fn(queryImpl) };
@@ -268,6 +268,48 @@ describe('AnagSnowflakesRepository', () => {
       const result = await getBrandsByOics(pool, { oics: ['00099999'] });
 
       expect(result).toEqual(new Map());
+    });
+  });
+
+  describe('getMarkets', () => {
+    it('returns all distinct markets when no filter is given', async () => {
+      const rows = [
+        { market: '1000', description: 'Italy' },
+        { market: '3109', description: 'France' },
+      ];
+      const pool = makePool(async () => ({ rows }));
+
+      const result = await getMarkets(pool);
+
+      expect(result).toEqual(rows);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('FROM woc.ang_snowflakes'), []);
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('SELECT DISTINCT s.cd_market_code AS market, s.gn_country_name AS description'));
+      expect(sql).toEqual(expect.stringContaining('WHERE s.fl_is_deleted_flag = 0'));
+      expect(sql).not.toEqual(expect.stringContaining('cd_market_code = ANY'));
+    });
+
+    it('filters by the given market codes', async () => {
+      const pool = makePool(async () => ({ rows: [{ market: '3109', description: 'France' }] }));
+
+      const result = await getMarkets(pool, { markets: ['3109'] });
+
+      expect(result).toEqual([{ market: '3109', description: 'France' }]);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('s.cd_market_code = ANY($1::varchar[])'),
+        [['3109']],
+      );
+    });
+
+    it('ignores an empty markets array (no filter applied)', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await getMarkets(pool, { markets: [] });
+
+      expect(pool.query).toHaveBeenCalledWith(expect.any(String), []);
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).not.toEqual(expect.stringContaining('cd_market_code = ANY'));
     });
   });
 });

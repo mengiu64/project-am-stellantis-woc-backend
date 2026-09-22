@@ -8,6 +8,10 @@
  * getCountryIsoCode risolve il codice ISO del paese del dealer (colonna
  * cd_dealer_country_iso_code) a partire dal codice mercato (cd_market_code).
  *
+ * getMarkets risolve l'elenco DISTINCT dei mercati (cd_market_code/gn_country_name),
+ * senza filtro o per un sottoinsieme di codici mercato — usata da session
+ * (src/hqMarketsResolver.js) per valorizzare `hqMarketsList` degli utenti HQ.
+ *
  * getPhysicalSiteAndSincom risolve, a partire da mainSincom/market/brand (dati
  * già disponibili da session/jobCardDetails), il physicalSiteId del Sender
  * DMS (cd_paired_oic_code, sempre valorizzata — a differenza di
@@ -241,10 +245,39 @@ async function getBrandsByOics(pool, { oics } = {}) {
   return brandsByOic;
 }
 
+/**
+ * Risolve l'elenco (DISTINCT) dei mercati presenti in woc.ang_snowflakes,
+ * coppie cd_market_code/gn_country_name — usato da session
+ * (src/hqMarketsResolver.js) per valorizzare `hqMarketsList` nella risposta
+ * di sessione degli utenti HQ:
+ *  - HQ centrale: nessun filtro, TUTTI i mercati distinti;
+ *  - HQ mercato: `markets` valorizzato con il singolo codice mercato ricavato
+ *    dal ruolo (es. "3109"), per risolverne la descrizione (gn_country_name).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {{ markets?: string[] }} [params] - se valorizzato, filtra solo questi cd_market_code
+ * @returns {Promise<Array<{ market: string, description: string|null }>>}
+ */
+async function getMarkets(pool, { markets } = {}) {
+  const hasFilter = Array.isArray(markets) && markets.length > 0;
+
+  const { rows } = await pool.query(
+    `SELECT DISTINCT s.cd_market_code AS market, s.gn_country_name AS description
+       FROM woc.ang_snowflakes s
+      WHERE s.fl_is_deleted_flag = 0
+        ${hasFilter ? 'AND s.cd_market_code = ANY($1::varchar[])' : ''}
+      ORDER BY s.cd_market_code`,
+    hasFilter ? [markets] : [],
+  );
+
+  return rows;
+}
+
 module.exports = {
   getCountryIsoCode,
   getPhysicalSiteAndSincom,
   getPhysicalSiteAndPdvId,
   getBrandsByOics,
+  getMarkets,
   resolveArcadBrandCode,
 };

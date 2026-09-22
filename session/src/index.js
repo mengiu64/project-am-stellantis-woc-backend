@@ -3,6 +3,7 @@
 require('dotenv').config();
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('./repositoryFactory');
+const { resolveHqMarketsList } = require('./hqMarketsResolver');
 
 const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
 
@@ -45,8 +46,10 @@ async function handler(event = {}) {
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di
     // "identita' solo dall'authorizer" gia' applicato a `sub`.
     // `hqCentral`/`hqMarket`/`dealer` (0/1) sono derivati dagli stessi `roles`,
-    // vedi resolveRoleFlags().
-    return response(200, insertAfterProfile(data, roles));
+    // vedi resolveRoleFlags(). `hqMarketsList` (array, v. hqMarketsResolver.js)
+    // e' invece l'elenco dei mercati disponibili per l'utente HQ: [] per un
+    // dealer, viene calcolato in modo asincrono dentro insertAfterProfile().
+    return response(200, await insertAfterProfile(data, roles));
   } catch (err) {
     if (err.code === 'SESSION_NOT_FOUND') {
       return response(404, { success: false, message: err.message });
@@ -124,28 +127,32 @@ function resolveRoleFlags(roles) {
 
 /**
  * Inserisce, subito dopo `profile`, i campi `hqCentral`/`hqMarket`/`dealer`
- * (derivati da `roles` via resolveRoleFlags()) seguiti da `userroles`,
- * nell'oggetto dati di sessione (stesso ordine di chiavi atteso nel JSON di
- * risposta), senza mutare l'oggetto originale. Se `profile` non e' presente
- * (fallback difensivo, non dovrebbe verificarsi con l'attuale
+ * (derivati da `roles` via resolveRoleFlags()), `hqMarketsList` (v.
+ * hqMarketsResolver.js::resolveHqMarketsList — elenco dei mercati disponibili
+ * per l'utente HQ, `[]` per un dealer) e infine `userroles`, nell'oggetto
+ * dati di sessione (stesso ordine di chiavi atteso nel JSON di risposta),
+ * senza mutare l'oggetto originale. Se `profile` non e' presente (fallback
+ * difensivo, non dovrebbe verificarsi con l'attuale
  * MyPeopleDmsSessionRepository), tutti questi campi vengono semplicemente
  * accodati in fondo.
  *
  * @param {object} data - Dati di sessione restituiti dal repository.
  * @param {string[]} roles - Ruoli dell'utente autenticato (da getAuthContext).
- * @returns {object} Copia di `data` con i nuovi campi inseriti dopo `profile`.
+ * @returns {Promise<object>} Copia di `data` con i nuovi campi inseriti dopo `profile`.
  */
-function insertAfterProfile(data, roles) {
+async function insertAfterProfile(data, roles) {
   const entries = Object.entries(data || {});
   const profileIndex = entries.findIndex(([key]) => key === 'profile');
   const insertAt = profileIndex === -1 ? entries.length : profileIndex + 1;
   const { hqCentral, hqMarket, dealer } = resolveRoleFlags(roles);
+  const hqMarketsList = await resolveHqMarketsList({ hqCentral, hqMarket, roles });
   entries.splice(
     insertAt,
     0,
     ['hqCentral', hqCentral],
     ['hqMarket', hqMarket],
     ['dealer', dealer],
+    ['hqMarketsList', hqMarketsList],
     ['userroles', roles],
   );
   return Object.fromEntries(entries);
