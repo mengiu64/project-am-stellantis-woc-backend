@@ -2,8 +2,10 @@
 
 jest.mock('dotenv', () => ({ config: jest.fn() }));
 jest.mock('../src/repositoryFactory');
+jest.mock('../src/hqMarketsResolver');
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('../src/repositoryFactory');
+const { resolveHqMarketsList } = require('../src/hqMarketsResolver');
 const { handler, runCli, DEFAULT_MARKET, getAuthContext, resolveRoleFlags } = require('../src/index');
 const { SessionNotFoundError } = require('../src/errors');
 
@@ -16,6 +18,7 @@ describe('session/src/index — handler', () => {
     mockMyPeopleDmsRepository = { getSessionData: jest.fn() };
     buildRepository.mockReturnValue(mockRepository);
     buildMyPeopleDmsRepository.mockReturnValue(mockMyPeopleDmsRepository);
+    resolveHqMarketsList.mockResolvedValue([]);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -51,6 +54,7 @@ describe('session/src/index — handler', () => {
       hqCentral: 0,
       hqMarket: 0,
       dealer: 1,
+      hqMarketsList: [],
       userroles: [],
     });
   });
@@ -78,6 +82,7 @@ describe('session/src/index — handler', () => {
       'hqCentral',
       'hqMarket',
       'dealer',
+      'hqMarketsList',
       'userroles',
       'physicalsite',
     ]);
@@ -88,7 +93,7 @@ describe('session/src/index — handler', () => {
     const res = await handler({
       requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
     });
-    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'hqCentral', 'hqMarket', 'dealer', 'userroles']);
+    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'hqCentral', 'hqMarket', 'dealer', 'hqMarketsList', 'userroles']);
   });
 
   it('valorizza hqCentral=1 quando un ruolo contiene HQCENTRAL (case-insensitive, prefisso/ambiente variabili)', async () => {
@@ -144,6 +149,42 @@ describe('session/src/index — handler', () => {
       requestContext: { authorizer: { sub: 'SF48816', profile: JSON.stringify(profile) } },
     });
     expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('SF48816', profile);
+  });
+
+  it('valorizza hqMarketsList con l\'elenco ritornato da resolveHqMarketsList per un utente HQ centrale', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    const markets = [{ market: '1000', description: 'Italy' }, { market: '3109', description: 'France' }];
+    resolveHqMarketsList.mockResolvedValue(markets);
+
+    const res = await handler({
+      requestContext: { authorizer: { sub: 'SF48816', roles: 'ZWRT.WOC.NONPROD.HQCENTRAL' } },
+    });
+
+    expect(JSON.parse(res.body).hqMarketsList).toEqual(markets);
+    expect(resolveHqMarketsList).toHaveBeenCalledWith({ hqCentral: 1, hqMarket: 0, roles: ['ZWRT.WOC.NONPROD.HQCENTRAL'] });
+  });
+
+  it('valorizza hqMarketsList con il singolo mercato per un utente HQ mercato', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+    resolveHqMarketsList.mockResolvedValue([{ market: '3109', description: 'France' }]);
+
+    const res = await handler({
+      requestContext: { authorizer: { sub: 'SF48816', roles: 'ZWRT.WOC.NONPROD.HQNSC3109' } },
+    });
+
+    expect(JSON.parse(res.body).hqMarketsList).toEqual([{ market: '3109', description: 'France' }]);
+    expect(resolveHqMarketsList).toHaveBeenCalledWith({ hqCentral: 0, hqMarket: 1, roles: ['ZWRT.WOC.NONPROD.HQNSC3109'] });
+  });
+
+  it('hqMarketsList e\' [] per un dealer (default del mock resolveHqMarketsList)', async () => {
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
+
+    const res = await handler({
+      requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
+    });
+
+    expect(JSON.parse(res.body).hqMarketsList).toEqual([]);
+    expect(resolveHqMarketsList).toHaveBeenCalledWith({ hqCentral: 0, hqMarket: 0, roles: ['dealer'] });
   });
 
   it('ritorna 404 quando MyPeopleDmsSessionRepository lancia SessionNotFoundError', async () => {
