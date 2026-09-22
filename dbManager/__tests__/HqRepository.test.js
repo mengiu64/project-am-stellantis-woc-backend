@@ -5,7 +5,7 @@ const {
   setEnablingConfiguration,
   getVehicleInspection,
   setVehicleInspectionVisible,
-  deletetVehicleInspectionVisible,
+  deletetVehicleInspection,
   insertVehicleInspection,
   getDisabledOics,
   getAddressByOics,
@@ -17,6 +17,7 @@ const {
   deleteDomain,
   insertPackage,
   setPackage,
+  deletePackage,
   getPackageList,
 } = require('../HqRepository');
 
@@ -193,10 +194,10 @@ describe('HqRepository', () => {
     });
   });
 
-  describe('deletetVehicleInspectionVisible', () => {
+  describe('deletetVehicleInspection', () => {
     it('throws when id is missing', async () => {
       const pool = makePool();
-      await expect(deletetVehicleInspectionVisible(pool, undefined, 1))
+      await expect(deletetVehicleInspection(pool, undefined, 1))
         .rejects.toThrow('"id" is required');
       expect(pool.query).not.toHaveBeenCalled();
     });
@@ -204,7 +205,7 @@ describe('HqRepository', () => {
     it('runs the UPDATE with the given id/value', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await deletetVehicleInspectionVisible(pool, 1, 1);
+      await deletetVehicleInspection(pool, 1, 1);
 
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
@@ -546,6 +547,27 @@ describe('HqRepository', () => {
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('UPDATE woc.hq_pk_packages'),
         [7, 42, 'Tagliando', 60, 100.5],
+      );
+    });
+  });
+
+  describe('deletePackage', () => {
+    it('throws when idpackage is missing', async () => {
+      const pool = makePool();
+      await expect(deletePackage(pool, undefined))
+        .rejects.toThrow('"idpackage" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the DELETE with the given idpackage', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await deletePackage(pool, 7);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM woc.hq_pk_packages'),
+        [7],
       );
     });
   });

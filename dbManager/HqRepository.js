@@ -29,7 +29,7 @@
  * altri mercati.
  *
  * setVehicleInspectionVisible(id, value) e
- * deletetVehicleInspectionVisible(id, value) aggiornano rispettivamente i
+ * deletetVehicleInspection(id, value) aggiornano rispettivamente i
  * flag "visible" e "deleted" della riga con il dato "id".
  *
  * insertVehicleInspection(market, type, descr) inserisce una nuova voce di
@@ -56,14 +56,16 @@
  * (fl_is_deleted_flag = 1).
  *
  * setMarketEnable/setMarketDisable/setOicEnable/insertDomain/setDomain/
- * deleteDomain/insertPackage/setPackage operano sulle tabelle woc.hq_pk_market/
- * hq_pk_oic/hq_pk_domain/hq_pk_packages (sql/create_table_hq_packages.sql):
- * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto usata
- * per l'amministrazione dei pacchetti HQ. Gli upsert su hq_pk_market/
- * hq_pk_oic usano ON CONFLICT DO UPDATE sulla PK (market / market+oic).
- * deleteDomain cancella logicamente (hq_pk_domain.deleted = 1, v.
+ * deleteDomain/insertPackage/setPackage/deletePackage operano sulle tabelle
+ * woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages
+ * (sql/create_table_hq_packages.sql): gerarchia di configurazione mercato ->
+ * OIC -> dominio -> pacchetto usata per l'amministrazione dei pacchetti HQ.
+ * Gli upsert su hq_pk_market/hq_pk_oic usano ON CONFLICT DO UPDATE sulla PK
+ * (market / market+oic). deleteDomain cancella logicamente
+ * (hq_pk_domain.deleted = 1, v.
  * sql/alter_table_hq_pk_domain_add_deleted.sql) il dominio (market, iddomain)
- * indicato.
+ * indicato; deletePackage cancella invece fisicamente (DELETE) il pacchetto
+ * (idpackage) da woc.hq_pk_packages.
  *
  * getPackageList(market, oic) legge, in un'unica query con LEFT JOIN a
  * cascata mercato -> OIC -> dominio -> pacchetto, la gerarchia configurata
@@ -197,7 +199,7 @@ async function setVehicleInspectionVisible(pool, id, value) {
  * @param {number} value
  * @returns {Promise<void>}
  */
-async function deletetVehicleInspectionVisible(pool, id, value) {
+async function deletetVehicleInspection(pool, id, value) {
   if (id === undefined || id === null) throw new Error('"id" is required');
 
   await pool.query(
@@ -478,6 +480,25 @@ async function setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat
 }
 
 /**
+ * Cancella (fisicamente) il pacchetto con idpackage indicato da
+ * woc.hq_pk_packages (idpackage e' univoco a livello globale, generato dalla
+ * sequence woc.hq_pk_packages_idpackage_seq).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {number} idpackage
+ * @returns {Promise<void>}
+ */
+async function deletePackage(pool, idpackage) {
+  if (idpackage === undefined || idpackage === null) throw new Error('"idpackage" is required');
+
+  await pool.query(
+    `DELETE FROM woc.hq_pk_packages
+      WHERE idpackage = $1`,
+    [idpackage],
+  );
+}
+
+/**
  * Elenca la gerarchia mercato -> OIC -> dominio -> pacchetto configurata per
  * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
  * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
@@ -527,7 +548,7 @@ module.exports = {
   setEnablingConfiguration,
   getVehicleInspection,
   setVehicleInspectionVisible,
-  deletetVehicleInspectionVisible,
+  deletetVehicleInspection,
   insertVehicleInspection,
   getDisabledOics,
   getAddressByOics,
@@ -539,5 +560,6 @@ module.exports = {
   deleteDomain,
   insertPackage,
   setPackage,
+  deletePackage,
   getPackageList,
 };
