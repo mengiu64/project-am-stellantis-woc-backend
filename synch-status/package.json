@@ -1,0 +1,76 @@
+{
+  "name": "synch-status-lambda",
+  "version": "1.0.0",
+  "description": "AWS Lambda REST API per sincronizzazione eventi Kafka da SRP Digital Layer a sistemi esterni (DJC/GCT)",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "lint": "eslint *.js"
+  },
+  "keywords": [
+    "aws-lambda",
+    "serverless",
+    "kafka",
+    "rest-api",
+    "stellantis"
+  ],
+  "author": "Stellantis WOC Team",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1625.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
+    "@aws-sdk/client-ssm": "^3.600.0",
+    "pg": "^8.11.3",
+    "winston": "^3.13.1",
+    "joi": "^17.13.3",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-mock-axios": "^4.6.1",
+    "eslint": "^8.57.0",
+    "@jest/globals": "^29.7.0"
+  },
+  "jest": {
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "*.js",
+      "!logger.js",
+      "!node_modules/**",
+      "!coverage/**",
+      "!__tests__/**"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "statements": 85,
+        "branches": 80,
+        "functions": 85,
+        "lines": 85
+      },
+      "./index.js": {
+        "statements": 90,
+        "branches": 85,
+        "functions": 90,
+        "lines": 90
+      },
+      "./config.js": {
+        "statements": 80,
+        "branches": 70,
+        "functions": 85,
+        "lines": 80
+      },
+      "./validator.js": {
+        "statements": 100,
+        "branches": 100,
+        "functions": 100,
+        "lines": 100
+      }
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

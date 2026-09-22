@@ -2,7 +2,7 @@
 
 > 🇮🇹 Italiano &nbsp;|&nbsp; 🇬🇧 [Read in English](README.en.md)
 
-Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, moparDoc, isStellantisBrand, dmlConfigSync).
+Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i servizi Stellantis (AgendaSOA, NAGA, DMS, JobCard, DJC, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, moparDoc, isStellantisBrand, synch-status, dmlConfigSync).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -28,6 +28,7 @@ Stellantis – WOC BackEnd: raccolta di Lambda Node.js per l'integrazione con i 
    - [pkFavorite](#pkfavorite)
    - [moparDoc](#mopardoc)
    - [isStellantisBrand](#isstellantisbrand)   
+   - [synch-status](#synch-status)
    - [dmlConfigSync](#dmlconfigsync)
    - [auroraAutoStart](#auroraautostart)
 3. [Installazione](#installazione)
@@ -58,6 +59,7 @@ project-am-stellantis-woc-backend/
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
+├── synch-status/       # Lambda – Aggiornamento stato sincronizzazione DJC (4 eventi Kafka) su Aurora PostgreSQL via RDS Proxy; security demandata al gateway IBM APIC
 ├── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
 └── auroraAutoStart/    # Lambda – Avvio automatico mattutino (EventBridge Schedule, solo stage) del cluster Aurora se spento dal tool Stellantis di startstop
 
@@ -974,6 +976,79 @@ isStellantisBrand/
 
 ---
 
+### synch-status
+
+Lambda per l'**aggiornamento dello stato di sincronizzazione DJC** di una job card. Riceve da DJC uno dei 4 eventi Kafka previsti dalla SRP DL KAFKA Specification e aggiorna (**UPDATE-only**, mai INSERT) il campo `djc_sync_status` del record già presente nella tabella `woc.comunication_asyncro_djc` del database Aurora PostgreSQL "wiadvisor", raggiunto tramite **RDS Proxy**.
+
+> **Sicurezza:** la security di questa Lambda è **totalmente demandata al gateway IBM API Connect (APIC)**, inclusa l'autenticazione e la **validazione del token**. La Lambda assume che ogni invocazione ricevuta sia già autorizzata e **non esegue alcun controllo di token** (nessun `authService`): si concentra solo su parsing/validazione del payload, aggiornamento dello stato in Aurora, logging e tracing.
+
+#### Endpoint (gateway IBM APIC)
+
+Esposta sul gateway IBM APIC. In ambiente **DEV** l'endpoint è:
+
+```
+https://emea-aws.dev.np-api.stellantis.com/ps-dev/extra/woc/job-card/v1/synch-status
+```
+
+> Regola di naming ambiente (come per i nomi/ARN di ruoli, parametri SSM e secret): in **stage** `ps-dev`/`dev.np-api` diventano `ps-stage`/`stage.np-api`, in **produzione** non c'è il segmento `np-` (né il prefisso `np-` nei nomi delle risorse AWS).
+
+| Metodo | Path | Body | Descrizione |
+|---|---|---|---|
+| `POST` | `/synch-status` | `eventType`, `jobCardId` (o `jobCardSrpId`), `timestamp` (ISO 8601) | Aggiorna `djc_sync_status` del record esistente |
+
+I 4 `eventType` supportati (mappati sullo stato DB corrispondente):
+
+| eventType | djc_sync_status |
+|---|---|
+| `DMS_PUSH_SUCCESS_WITHOUT_UPDATE` | `SUCCESS_WITHOUT_UPDATE` |
+| `DMS_PUSH_SUCCESS_WITH_UPDATE` | `SUCCESS_WITH_UPDATE` |
+| `DMS_PUSH_REFUSAL` | `REFUSAL` |
+| `DMS_PUSH_FAILURE` | `FAILURE` |
+
+#### Risposte
+
+| Status | Body | Descrizione |
+|---|---|---|
+| 200 | `{ "success": true, "response": { "responseId", "jobCardId", "eventType", "status", "timestamp" } }` | Record aggiornato con successo |
+| 400 | `{ "success": false, "error": "Bad Request", ... }` | Body non JSON valido o validazione payload fallita |
+| 404 | `{ "success": false, "error": "Not Found", ... }` | Record non presente (deve essere creato prima da un'altra Lambda) |
+| 503 | `{ "success": false, "error": "Service Unavailable", ... }` | Impossibile connettersi ad Aurora |
+| 504 | `{ "success": false, "error": "Gateway Timeout", ... }` | Query DB oltre il timeout |
+| 500 | `{ "success": false, "error": "Internal Server Error", ... }` | Errore interno |
+
+#### Struttura
+
+```
+synch-status/
+├── index.js                    # Lambda handler (parsing + validazione + UPDATE Aurora)
+├── config.js                   # Configurazione centralizzata
+├── validator.js                # Validazione payload
+├── logger.js                   # Logging strutturato + traceId
+├── package.json                # Dipendenze (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
+├── shared/
+│   └── dbClient.js             # Libreria condivisa connessione DB (pool pg riutilizzabile — identica a isStellantisBrand)
+└── __tests__/                  # Unit test Jest
+```
+
+#### Permessi e ruolo IAM
+
+Stessi permessi di `isStellantisBrand` (VPC access, X-Ray, `ssm:GetParameter` sui due parametri DB, `secretsmanager:GetSecretValue`, `kms:Decrypt`). A differenza di `isStellantisBrand` — che usa policy inline gestite da SAM — questa Lambda referenzia in `template.yaml` un **ruolo IAM pre-esistente** fornito dall'infra. In DEV:
+
+```
+arn:aws:iam::237024525379:role/stla-rol-np-bsn0027990-dev-synch-status
+```
+
+> Stessa regola di naming: `-dev` in dev, `-stage` in stage, in **produzione** nessun suffisso ambiente `np-` (`stla-rol-bsn0027990-prod-synch-status`). I permessi equivalenti a quelli di `isStellantisBrand` devono essere già presenti su quel ruolo (quando si valorizza `Role`, SAM ignora `Policies`).
+
+#### Connessione DB (shared/dbClient.js)
+
+- Credenziali recuperate da **Secrets Manager** (ARN letto dal parametro SSM `DB_SECRET_ARN_PARAM`)
+- Pool `pg` con TLS verso **RDS Proxy** (endpoint letto dal parametro SSM `RDS_PROXY_ENDPOINT_PARAM`)
+- Pool riutilizzato tra invocazioni (warm start), invalidato in caso di errore
+- Timeout connessione: 5 secondi
+
+---
+
 ### pkFavorite
 
 Lambda per **salvare/leggere i pacchetti preferiti** del dealer (toggle per singolo pacchetto + elenco per VIN). I dati sono persistiti su tabella `PKFAVORITE` in **PostgreSQL** (cluster Aurora `rds-np-bsn0027990-dev-aurora`, raggiunto tramite **RDS Proxy**, non direttamente). Le credenziali del DB vengono lette da **AWS Secrets Manager** tramite l'[AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (stesso pattern di `myPeople`), riusando il layer esistente `MyPeopleExtensionLayerArn`.
@@ -1118,6 +1193,7 @@ cd myPeople       && npm install
 cd pkFavorite     && npm install
 cd moparDoc       && npm install
 cd isStellantisBrand && npm install
+cd synch-status   && npm install
 cd dmlConfigSync  && npm install
 cd auroraAutoStart && npm install
 ```
@@ -1309,6 +1385,15 @@ RDS_PROXY_ENDPOINT=...                     # Endpoint del RDS Proxy per la conne
 
 > **Nota:** il secret in Secrets Manager contiene un payload JSON con le chiavi `dbname` ("wiadvisor"), `engine` ("postgres"), `password`, `port` (5432), `username` ("wiadvisor_app"). La connessione è TLS via RDS Proxy. La Lambda gira in VPC.
 
+### synch-status
+
+```env
+DB_SECRET_ARN_PARAM=/app/np-BSN0027990-dev/DB_SECRET_ARN          # Parametro SSM con l'ARN del secret credenziali DB
+RDS_PROXY_ENDPOINT_PARAM=/app/np-BSN0027990-dev/RDS_PROXY_ENDPOINT # Parametro SSM con l'endpoint del RDS Proxy
+```
+
+> **Nota:** stesse due variabili d'ambiente (e stessi valori) di `isStellantisBrand`. La Lambda legge da SSM l'ARN del secret e l'endpoint RDS Proxy, poi le credenziali da Secrets Manager; connessione TLS via RDS Proxy, in VPC. Regola di naming: `-dev` in dev, `-stage` in stage, in produzione nessun `np-` né suffisso ambiente (`/app/BSN0027990/...`).
+
 ### pkFavorite
 
 ```env
@@ -1396,9 +1481,10 @@ cd agendaSoa && npm run test:coverage
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
+| **synch-status** | 3 | 87 | `index` (handler + `_validatePayload`/`_buildResponse`), `config`, `validator` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
-| **Totale** | **55** | **666** | |
+| **Totale** | **58** | **753** | |
 
 ### Copertura del codice
 
@@ -1419,10 +1505,13 @@ cd agendaSoa && npm run test:coverage
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
 | **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
 | **isStellantisBrand** | 100% ✅ | 97.87% ✅ | 100% ✅ | 100% ✅ |
+| **synch-status** | 94.85% ✅ | 94% ✅ | 100% ✅ | 94.76% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
+>
+> **Nota (`synch-status`):** le 3 suite (`__tests__/config.test.js`, `validator.test.js`, `index.test.js`) passano tutte (87 test). La copertura aggregata è sopra il 90% su tutti i criteri (branch 94%, `config.js` a 100% di branch); le soglie per-file definite in `synch-status/package.json` (index 90/85, config 80/70, validator 100) sono ampiamente rispettate.
 
 ### Struttura dei test
 
@@ -1494,6 +1583,12 @@ cd agendaSoa && npm run test:coverage
 - **index (handler)** – validazione `ar_codbrand` (mancante/null/vuoto/whitespace, >2 caratteri, caratteri non alfabetici) → 400 con messaggio dedicato per ciascun caso; conversione a uppercase prima della query; 200 con `isStellantisBrand: true|false` in base al risultato della query; 500 su errore di connessione DB/Secrets Manager/query, senza esporre stack trace o dettagli interni nel body; formato risposta (`statusCode`/`headers`/`body` JSON) su tutti i path
 - **shared/dbClient** – modalità remota (default): recupero ARN secret + endpoint RDS Proxy da SSM e credenziali da Secrets Manager, creazione del `pg.Pool` con `ssl: true`, errori su variabili d'ambiente mancanti (`DB_SECRET_ARN_PARAM`/`RDS_PROXY_ENDPOINT_PARAM`) o secret senza `SecretString`, cache del pool tra invocazioni (warm start, SSM/Secrets Manager interrogati una sola volta), `invalidatePool()` per forzare il refresh, gestione di `pool.connect()` fallito (invalida il pool, chiama `pool.end()`, propaga l'errore originale anche se `end()` fallisce a sua volta), invalidazione del pool tramite il listener `error` del pool, porta di default 5432; modalità locale (`DB_LOCAL_MODE=true`, case-insensitive): bypassa SSM/Secrets Manager, usa le credenziali/env locali di default con override via env (`DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASSWORD`/`DB_PORT`/`DB_SSL`)
 - **property-based (fast-check)** – invarianti sulla validazione di `ar_codbrand` verificate su input generati casualmente: stringhe alfabetiche di 1-2 caratteri sempre accettate (200, query eseguita con il valore uppercase), qualunque stringa non vuota più lunga di 2 caratteri sempre rifiutata con il messaggio "massimo 2 caratteri", qualunque stringa di 1-2 caratteri con almeno un carattere non alfabetico sempre rifiutata con il messaggio "solo caratteri alfabetici", qualunque stringa vuota/whitespace sempre rifiutata con il messaggio "obbligatorio"
+
+#### synch-status
+
+- **index (handler)** – parsing del `body` (stringa JSON o oggetto), 400 su body non JSON valido; validazione payload (campi obbligatori `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` tra i 4 supportati, `timestamp` ISO 8601) con 400 e dettaglio errori; mappatura `eventType` → `djc_sync_status`; **UPDATE-only** su `woc.comunication_asyncro_djc` (mai INSERT) con incremento di `version`; 404 quando il record non esiste (deve essere creato prima da un'altra Lambda); 503 su errore di connessione Aurora, 504 su timeout query, 500 su errore generico; nessuna validazione del token (security demandata al gateway IBM APIC)
+- **config** – pattern singleton `getInstance()`/`reset()`, struttura della configurazione (sezioni AWS/OAuth/APIC/Logging/Timeouts/API endpoints), risoluzione ambiente da env (`ENVIRONMENT`, default `dev`), `getByPath()` (path annidati, `null` se non trovato), gestione del log level
+- **validator** – regole di validazione del payload e degli eventi (campi obbligatori, `eventType` supportati, `timestamp` ISO 8601, dimensioni min/max, raccolta di tutti gli errori)
 
 #### dmlConfigSync
 - **index (syncMarket)** – chiamata parallela a `getCompanyTypes`/`getCustomerTitles` con upsert degli array `data` (`[]` se il servizio risponde senza dati, es. 404 normalizzato)

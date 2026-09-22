@@ -2,7 +2,7 @@
 
 > 🇮🇹 [Leggi in italiano](README.md) &nbsp;|&nbsp; 🇬🇧 English
 
-Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, isStellantisBrand, dmlConfigSync).
+Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with Stellantis services (AgendaSOA, NAGA, DMS, JobCard, V360, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, isStellantisBrand, synch-status, dmlConfigSync).
 
 ![Unit Tests](https://github.com/stla-wrt00/project-am-stellantis-woc-backend/actions/workflows/unit-tests.yml/badge.svg)
 
@@ -24,6 +24,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [translations](#translations)
    - [session](#session)
    - [isStellantisBrand](#isstellantisbrand)
+   - [synch-status](#synch-status)
    - [dmlConfigSync](#dmlconfigsync)
    - [auroraAutoStart](#auroraautostart)
 3. [Installation](#installation)
@@ -50,6 +51,7 @@ project-am-stellantis-woc-backend/
 ├── translations/       # Lambda – translation retrieval from S3
 ├── session/            # Lambda – session data (codmarket, oic, sincom, ...)
 ├── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
+├── synch-status/       # Lambda – DJC synchronization status update (4 Kafka events) on Aurora PostgreSQL via RDS Proxy; security delegated to the IBM APIC gateway
 ├── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles + dms/settings per market/dealer -> Aurora cache, read by session
 └── auroraAutoStart/    # Lambda – weekday morning auto-start (EventBridge Schedule, stage only) of the Aurora cluster if stopped by the Stellantis startstop tool
 
@@ -705,6 +707,79 @@ isStellantisBrand/
 
 ---
 
+### synch-status
+
+Lambda for **updating the DJC synchronization status** of a job card. It receives from DJC one of the 4 Kafka events defined by the SRP DL KAFKA Specification and updates (**UPDATE-only**, never INSERT) the `djc_sync_status` field of the record already present in the `woc.comunication_asyncro_djc` table of the "wiadvisor" Aurora PostgreSQL database, reached via **RDS Proxy**.
+
+> **Security:** this Lambda's security is **fully delegated to the IBM API Connect (APIC) gateway**, including authentication and **token validation**. The Lambda assumes every incoming invocation is already authorized and performs **no token check** (no `authService`): it only handles payload parsing/validation, updating the status in Aurora, logging and tracing.
+
+#### Endpoint (IBM APIC gateway)
+
+Exposed on the IBM APIC gateway. In **DEV** the endpoint is:
+
+```
+https://emea-aws.dev.np-api.stellantis.com/ps-dev/extra/woc/job-card/v1/synch-status
+```
+
+> Environment naming rule (same as for role/SSM-parameter/secret names and ARNs): in **stage** `ps-dev`/`dev.np-api` become `ps-stage`/`stage.np-api`; in **prod** there is no `np-` segment (nor the `np-` prefix on AWS resource names).
+
+| Method | Path | Body | Description |
+|---|---|---|---|
+| `POST` | `/synch-status` | `eventType`, `jobCardId` (or `jobCardSrpId`), `timestamp` (ISO 8601) | Updates `djc_sync_status` of the existing record |
+
+The 4 supported `eventType` values (mapped to the corresponding DB status):
+
+| eventType | djc_sync_status |
+|---|---|
+| `DMS_PUSH_SUCCESS_WITHOUT_UPDATE` | `SUCCESS_WITHOUT_UPDATE` |
+| `DMS_PUSH_SUCCESS_WITH_UPDATE` | `SUCCESS_WITH_UPDATE` |
+| `DMS_PUSH_REFUSAL` | `REFUSAL` |
+| `DMS_PUSH_FAILURE` | `FAILURE` |
+
+#### Responses
+
+| Status | Body | Description |
+|---|---|---|
+| 200 | `{ "success": true, "response": { "responseId", "jobCardId", "eventType", "status", "timestamp" } }` | Record updated successfully |
+| 400 | `{ "success": false, "error": "Bad Request", ... }` | Body not valid JSON or payload validation failed |
+| 404 | `{ "success": false, "error": "Not Found", ... }` | Record not present (must be created first by another Lambda) |
+| 503 | `{ "success": false, "error": "Service Unavailable", ... }` | Cannot connect to Aurora |
+| 504 | `{ "success": false, "error": "Gateway Timeout", ... }` | DB query exceeded the timeout |
+| 500 | `{ "success": false, "error": "Internal Server Error", ... }` | Internal error |
+
+#### Structure
+
+```
+synch-status/
+├── index.js                    # Lambda handler (parsing + validation + Aurora UPDATE)
+├── config.js                   # Centralized configuration
+├── validator.js                # Payload validation
+├── logger.js                   # Structured logging + traceId
+├── package.json                # Dependencies (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
+├── shared/
+│   └── dbClient.js             # Shared DB connection library (reusable pg pool — identical to isStellantisBrand)
+└── __tests__/                  # Jest unit tests
+```
+
+#### Permissions and IAM role
+
+Same permissions as `isStellantisBrand` (VPC access, X-Ray, `ssm:GetParameter` on the two DB parameters, `secretsmanager:GetSecretValue`, `kms:Decrypt`). Unlike `isStellantisBrand` — which uses SAM-managed inline policies — this Lambda references in `template.yaml` a **pre-existing IAM role** provided by the infra team. In DEV:
+
+```
+arn:aws:iam::237024525379:role/stla-rol-np-bsn0027990-dev-synch-status
+```
+
+> Same naming rule: `-dev` in dev, `-stage` in stage, in **prod** no `np-` and no environment suffix (`stla-rol-bsn0027990-prod-synch-status`). Permissions equivalent to `isStellantisBrand` must already be attached to that role (when `Role` is set, SAM ignores `Policies`).
+
+#### DB connection (shared/dbClient.js)
+
+- Credentials retrieved from **Secrets Manager** (ARN read from the SSM parameter `DB_SECRET_ARN_PARAM`)
+- `pg` pool with TLS to **RDS Proxy** (endpoint read from the SSM parameter `RDS_PROXY_ENDPOINT_PARAM`)
+- Pool reused across invocations (warm start), invalidated on error
+- Connection timeout: 5 seconds
+
+---
+
 ### dmlConfigSync
 
 **Scheduled** Lambda (EventBridge Schedule, `cron(0 8 * * ? *)` — daily at 08:00 UTC, see `template.yaml`) that syncs, once a day, two independent caches on Aurora PostgreSQL, so `session` can read them from a DB cache instead of calling the DML services live on every session request:
@@ -757,6 +832,7 @@ cd pkManager      && npm install
 cd translations   && npm install
 cd session        && npm install
 cd isStellantisBrand && npm install
+cd synch-status   && npm install
 cd dmlConfigSync  && npm install
 cd auroraAutoStart && npm install
 ```
@@ -910,6 +986,15 @@ RDS_PROXY_ENDPOINT=...                     # RDS Proxy endpoint for Aurora Postg
 
 > **Note:** the Secrets Manager secret contains a JSON payload with keys `dbname` ("wiadvisor"), `engine` ("postgres"), `password`, `port` (5432), `username` ("wiadvisor_app"). Connection uses TLS via RDS Proxy. The Lambda runs inside the VPC.
 
+### synch-status
+
+```env
+DB_SECRET_ARN_PARAM=/app/np-BSN0027990-dev/DB_SECRET_ARN          # SSM parameter with the ARN of the DB credentials secret
+RDS_PROXY_ENDPOINT_PARAM=/app/np-BSN0027990-dev/RDS_PROXY_ENDPOINT # SSM parameter with the RDS Proxy endpoint
+```
+
+> **Note:** same two environment variables (and same values) as `isStellantisBrand`. The Lambda reads the secret ARN and RDS Proxy endpoint from SSM, then the credentials from Secrets Manager; TLS connection via RDS Proxy, inside the VPC. Naming rule: `-dev` in dev, `-stage` in stage, in prod no `np-` nor environment suffix (`/app/BSN0027990/...`).
+
 ### dmlConfigSync
 
 ```env
@@ -969,9 +1054,10 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
+| **synch-status** | 3 | 87 | `index` (handler + `_validatePayload`/`_buildResponse`), `config`, `validator` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
-| **Total** | **44** | **491** | |
+| **Total** | **44+** | **491+** | |
 
 ### Code coverage
 
@@ -988,10 +1074,13 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
+| **synch-status** | 94.85% ✅ | 94% ✅ | 100% ✅ | 94.76% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
+>
+> **Note (`synch-status`):** all 3 suites (`__tests__/config.test.js`, `validator.test.js`, `index.test.js`) pass (87 tests). Aggregate coverage is above 90% on all criteria (branch 94%, `config.js` at 100% branch); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70, validator 100) are comfortably met.
 
 ### Test structure
 
@@ -1046,6 +1135,11 @@ cd agendaSoa && npm run test:coverage
 - **s3SessionRepository** – fetches and parses JSON from S3, extracts the section for the requested market (uppercased), `SessionNotFoundError` on missing market, S3 error handling (`NoSuchKey`/404/Code), invalid JSON, missing bucket configuration
 - **myPeopleDmsSessionRepository** – `username` flow: full myPeople→cache DB→session JSON mapping (`oics`/`applications`, `oics[].brandLogos` via `woc.anag_brand`, `oics[].brands` overridden from `woc.ang_snowflakes` via `getBrandsByOics` with fallback to myPeople's CSV, `oics[].address`/`oics[].zipcode`/`oics[].city` overridden from `woc.addr_snowflakes` via `getAddressByOics` with fallback to myPeople's own fields (`null` if neither source has data), disabled OICs (`enablewoc = 0` in `woc.hq_application_enabling`, via `getDisabledOics`) removed from `oics`, `companytypes`/`customertitles` from `woc.dml_configurations`), `isdml`/`dmlcustomerupdate`/`dmldiscount` read from the `woc.dms_settings` cache (never a live call), cache-miss auto-registers the `country`+`brand`+`dealer` combination into `woc.dms_settings_enabled_dealers` (best-effort, awaited, never blocks the session response), all DB reads fault-tolerant (safe defaults on error, no 502); see the Italian `README.md` for the full test list
 - **repositoryFactory** – builds the default instance and with overrides, for both `buildRepository` (S3) and `buildMyPeopleDmsRepository` (myPeople/DB cache)
+
+#### synch-status
+- **index (handler)** – parses the `body` (JSON string or object), 400 on invalid JSON body; payload validation (required fields `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` among the 4 supported, `timestamp` ISO 8601) with 400 and error details; `eventType` → `djc_sync_status` mapping; **UPDATE-only** on `woc.comunication_asyncro_djc` (never INSERT) with `version` increment; 404 when the record does not exist (must be created first by another Lambda); 503 on Aurora connection error, 504 on query timeout, 500 on generic error; no token validation (security delegated to the IBM APIC gateway)
+- **config** – `getInstance()`/`reset()` singleton pattern, configuration structure (AWS/OAuth/APIC/Logging/Timeouts/API endpoints sections), environment resolution from env (`ENVIRONMENT`, default `dev`), `getByPath()` (nested paths, `null` when not found), log level handling
+- **validator** – payload and event validation rules (required fields, supported `eventType` values, ISO 8601 `timestamp`, min/max sizing, collecting all errors)
 
 #### dmlConfigSync
 - **index (syncMarket/syncDealer)** – parallel `getCompanyTypes`/`getCustomerTitles` calls with upsert into `woc.dml_configurations`; `getDmsSettings` call with upsert into `woc.dms_settings`
