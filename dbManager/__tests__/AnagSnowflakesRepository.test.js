@@ -275,7 +275,7 @@ describe('AnagSnowflakesRepository', () => {
     it('returns all distinct markets when no filter is given', async () => {
       const rows = [
         { market: '1000', description: 'Italy' },
-        { market: '3109', description: 'France' },
+        { market: '3109', description: null },
       ];
       const pool = makePool(async () => ({ rows }));
 
@@ -285,8 +285,10 @@ describe('AnagSnowflakesRepository', () => {
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('FROM woc.ang_snowflakes'), []);
       const [sql] = pool.query.mock.calls[0];
-      expect(sql).toEqual(expect.stringContaining('SELECT DISTINCT s.cd_market_code AS market, s.gn_country_name AS description'));
-      expect(sql).toEqual(expect.stringContaining('WHERE s.fl_is_deleted_flag = 0'));
+      expect(sql).toEqual(expect.stringContaining('SELECT DISTINCT a.cd_market_code AS market, ad.gn_country_name AS description'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.addr_snowflakes ad'));
+      expect(sql).toEqual(expect.stringContaining('ON ad.cd_market_code = a.cd_market_code AND ad.fl_is_deleted_flag = 0'));
+      expect(sql).toEqual(expect.stringContaining('WHERE a.fl_is_deleted_flag = 0'));
       expect(sql).not.toEqual(expect.stringContaining('cd_market_code = ANY'));
     });
 
@@ -297,7 +299,7 @@ describe('AnagSnowflakesRepository', () => {
 
       expect(result).toEqual([{ market: '3109', description: 'France' }]);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('s.cd_market_code = ANY($1::varchar[])'),
+        expect.stringContaining('a.cd_market_code = ANY($1::varchar[])'),
         [['3109']],
       );
     });

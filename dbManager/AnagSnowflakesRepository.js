@@ -254,6 +254,13 @@ async function getBrandsByOics(pool, { oics } = {}) {
  *  - HQ mercato: `markets` valorizzato con il singolo codice mercato ricavato
  *    dal ruolo (es. "3109"), per risolverne la descrizione (gn_country_name).
  *
+ * NOTA: `gn_country_name` NON esiste su woc.ang_snowflakes (colonna presente
+ * solo su woc.addr_snowflakes): la descrizione del mercato viene quindi
+ * risolta con un LEFT JOIN su woc.addr_snowflakes (stesso cd_market_code,
+ * fl_is_deleted_flag = 0), cosi' da restituire comunque tutti i mercati noti
+ * ad ang_snowflakes anche quando addr_snowflakes non ha (ancora) righe per
+ * quel mercato (description: null in quel caso, mai un errore).
+ *
  * @param {import('pg').Pool} pool
  * @param {{ markets?: string[] }} [params] - se valorizzato, filtra solo questi cd_market_code
  * @returns {Promise<Array<{ market: string, description: string|null }>>}
@@ -262,11 +269,13 @@ async function getMarkets(pool, { markets } = {}) {
   const hasFilter = Array.isArray(markets) && markets.length > 0;
 
   const { rows } = await pool.query(
-    `SELECT DISTINCT s.cd_market_code AS market, s.gn_country_name AS description
-       FROM woc.ang_snowflakes s
-      WHERE s.fl_is_deleted_flag = 0
-        ${hasFilter ? 'AND s.cd_market_code = ANY($1::varchar[])' : ''}
-      ORDER BY s.cd_market_code`,
+    `SELECT DISTINCT a.cd_market_code AS market, ad.gn_country_name AS description
+       FROM woc.ang_snowflakes a
+       LEFT JOIN woc.addr_snowflakes ad
+         ON ad.cd_market_code = a.cd_market_code AND ad.fl_is_deleted_flag = 0
+      WHERE a.fl_is_deleted_flag = 0
+        ${hasFilter ? 'AND a.cd_market_code = ANY($1::varchar[])' : ''}
+      ORDER BY a.cd_market_code`,
     hasFilter ? [markets] : [],
   );
 
