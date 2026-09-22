@@ -24,9 +24,11 @@ const {
   insertDomain,
   setDomain,
   deleteDomain,
+  setDomainVisible,
   insertPackage,
   setPackage,
   deletePackage,
+  setPackageVisible,
   getPackageList,
   insertAudit,
   searchAudit,
@@ -506,6 +508,28 @@ describe('HqRepository', () => {
     });
   });
 
+  describe('setDomainVisible', () => {
+    it('throws when iddomain is missing', async () => {
+      const pool = makePool();
+      await expect(setDomainVisible(pool, undefined, 1))
+        .rejects.toThrow('"iddomain" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE SET visible = value with the given iddomain', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setDomainVisible(pool, 7, 0);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE woc.hq_pk_domain'),
+        [7, 0],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SET visible = $2'));
+    });
+  });
+
   describe('insertPackage', () => {
     it('throws when market is missing', async () => {
       const pool = makePool();
@@ -585,6 +609,28 @@ describe('HqRepository', () => {
     });
   });
 
+  describe('setPackageVisible', () => {
+    it('throws when idpackage is missing', async () => {
+      const pool = makePool();
+      await expect(setPackageVisible(pool, undefined, 1))
+        .rejects.toThrow('"idpackage" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('runs the UPDATE SET visible = value with the given idpackage', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await setPackageVisible(pool, 7, 0);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE woc.hq_pk_packages'),
+        [7, 0],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SET visible = $2'));
+    });
+  });
+
   describe('getPackageList', () => {
     it('throws when market is missing', async () => {
       const pool = makePool();
@@ -600,10 +646,12 @@ describe('HqRepository', () => {
             market: '1000',
             oic: '00006821',
             domaindescr: 'Meccanica',
+            domvisible: 1,
             idpackage: 7,
             packagedescr: 'Tagliando',
             timeop: 60,
             pricewithvat: 100.5,
+            pkvisible: 1,
           },
         ],
       }));
@@ -615,10 +663,12 @@ describe('HqRepository', () => {
           market: '1000',
           oic: '00006821',
           domainDescr: 'Meccanica',
+          domVisible: 1,
           idpackage: 7,
           packageDescr: 'Tagliando',
           timeop: 60,
           pricewithvat: 100.5,
+          pkVisible: 1,
         },
       ]);
       expect(pool.query).toHaveBeenCalledTimes(1);
@@ -631,6 +681,8 @@ describe('HqRepository', () => {
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND dom.deleted = 0'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('dom.visible AS domvisible'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('pk.visible AS pkvisible'));
       expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('pk.oic IS NULL'));
     });
 
@@ -641,10 +693,12 @@ describe('HqRepository', () => {
             market: '1000',
             oic: null,
             domaindescr: null,
+            domvisible: null,
             idpackage: null,
             packagedescr: null,
             timeop: null,
             pricewithvat: null,
+            pkvisible: null,
           },
         ],
       }));
@@ -653,7 +707,7 @@ describe('HqRepository', () => {
 
       expect(result).toEqual([
         {
-          market: '1000', oic: null, domainDescr: null, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null,
+          market: '1000', oic: null, domainDescr: null, domVisible: null, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null, pkVisible: null,
         },
       ]);
       expect(pool.query).toHaveBeenCalledTimes(1);

@@ -30,9 +30,11 @@ function makeManagerInstance(overrides = {}) {
     insertDomain: jest.fn(),
     setDomain: jest.fn(),
     deleteDomain: jest.fn(),
+    setDomainVisible: jest.fn(),
     insertPackage: jest.fn(),
     setPackage: jest.fn(),
     deletePackage: jest.fn(),
+    setPackageVisible: jest.fn(),
     getPackageList: jest.fn(),
     insertAudit: jest.fn(),
     searchAudit: jest.fn(),
@@ -235,6 +237,19 @@ describe('hqManager/index.js', () => {
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42 });
     });
 
+    it('dispatches setDomainVisible (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        setDomainVisible: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const domain = [{ iddomain: 7, value: 0 }, { iddomain: 8, value: 1 }];
+      const res = await handler({ action: 'setDomainVisible', body: { domain } });
+
+      expect(instance.setDomainVisible).toHaveBeenCalledWith({ domain });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, domain });
+    });
+
     it('dispatches insertPackage (direct invocation payload)', async () => {
       const instance = makeManagerInstance({
         insertPackage: jest.fn().mockResolvedValue(7),
@@ -283,6 +298,19 @@ describe('hqManager/index.js', () => {
       expect(instance.deletePackage).toHaveBeenCalledWith(7);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, idpackage: 7 });
+    });
+
+    it('dispatches setPackageVisible (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        setPackageVisible: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const pkg = [{ idpackage: 7, value: 0 }, { idpackage: 8, value: 1 }];
+      const res = await handler({ action: 'setPackageVisible', body: { package: pkg } });
+
+      expect(instance.setPackageVisible).toHaveBeenCalledWith({ package: pkg });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, package: pkg });
     });
 
     it('dispatches getPackageList with a specific oic (direct invocation payload)', async () => {

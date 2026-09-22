@@ -67,12 +67,17 @@
  * indicato; deletePackage cancella invece fisicamente (DELETE) il pacchetto
  * (idpackage) da woc.hq_pk_packages.
  *
+ * setDomainVisible(iddomain, value)/setPackageVisible(idpackage, value)
+ * aggiornano il flag "visible" (colonna aggiunta a hq_pk_domain/hq_pk_packages,
+ * default 1) rispettivamente del dominio e del pacchetto indicato.
+ *
  * getPackageList(market, oic) legge, in un'unica query con LEFT JOIN a
  * cascata mercato -> OIC -> dominio -> pacchetto, la gerarchia configurata
  * per il mercato (ed eventualmente l'OIC) richiesto: se oic e' valorizzato
  * filtra sull'OIC specifico, altrimenti sulla configurazione "a livello
  * mercato" (pk.oic IS NULL); i domini cancellati logicamente (deleted = 1)
- * sono esclusi (dom.deleted = 0).
+ * sono esclusi (dom.deleted = 0). Include anche domVisible/pkVisible
+ * (hq_pk_domain.visible/hq_pk_packages.visible).
  *
  * insertAudit(username, section, market, actiontype, descr) inserisce una
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
@@ -443,6 +448,27 @@ async function deleteDomain(pool, market, iddomain) {
 }
 
 /**
+ * Aggiorna il flag "visible" (woc.hq_pk_domain.visible) del dominio con
+ * iddomain indicato.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {number} iddomain
+ * @param {number} value
+ * @returns {Promise<void>}
+ */
+async function setDomainVisible(pool, iddomain, value) {
+  if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_pk_domain
+        SET visible = $2
+      WHERE iddomain = $1`,
+    [iddomain, value],
+  );
+}
+
+
+/**
  * Inserisce un nuovo pacchetto (woc.hq_pk_packages.idpackage generato dalla
  * sequence woc.hq_pk_packages_idpackage_seq).
  *
@@ -517,6 +543,27 @@ async function deletePackage(pool, idpackage) {
 }
 
 /**
+ * Aggiorna il flag "visible" (woc.hq_pk_packages.visible) del pacchetto con
+ * idpackage indicato.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {number} idpackage
+ * @param {number} value
+ * @returns {Promise<void>}
+ */
+async function setPackageVisible(pool, idpackage, value) {
+  if (idpackage === undefined || idpackage === null) throw new Error('"idpackage" is required');
+
+  await pool.query(
+    `UPDATE woc.hq_pk_packages
+        SET visible = $2
+      WHERE idpackage = $1`,
+    [idpackage, value],
+  );
+}
+
+
+/**
  * Elenca la gerarchia mercato -> OIC -> dominio -> pacchetto configurata per
  * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
  * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
@@ -528,7 +575,7 @@ async function deletePackage(pool, idpackage) {
  * @param {import('pg').Pool} pool
  * @param {string} market
  * @param {string|null} [oic]
- * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null }>>}
+ * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
 async function getPackageList(pool, market, oic) {
   if (!market) throw new Error('"market" is required');
@@ -536,10 +583,12 @@ async function getPackageList(pool, market, oic) {
   const baseQuery = `SELECT mk.market
                           , oi.oic
                           , dom.descr AS domaindescr
+                          , dom.visible AS domvisible
                           , pk.idpackage
                           , pk.descr AS packagedescr
                           , pk.timeop
                           , pk.pricewithvat
+                          , pk.visible AS pkvisible
                        FROM woc.hq_pk_market mk
                        LEFT JOIN woc.hq_pk_oic oi ON mk.market = oi.market AND oi.deleted = 0
                        LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
@@ -554,10 +603,12 @@ async function getPackageList(pool, market, oic) {
     market: row.market,
     oic: row.oic,
     domainDescr: row.domaindescr,
+    domVisible: row.domvisible,
     idpackage: row.idpackage,
     packageDescr: row.packagedescr,
     timeop: row.timeop,
     pricewithvat: row.pricewithvat,
+    pkVisible: row.pkvisible,
   }));
 }
 
@@ -669,9 +720,11 @@ module.exports = {
   insertDomain,
   setDomain,
   deleteDomain,
+  setDomainVisible,
   insertPackage,
   setPackage,
   deletePackage,
+  setPackageVisible,
   getPackageList,
   insertAudit,
   searchAudit,

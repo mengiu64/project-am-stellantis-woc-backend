@@ -34,15 +34,20 @@
  *   - setDomain(market, iddomain, descr): aggiorna la descr del dominio.
  *   - deleteDomain(market, iddomain): cancella logicamente il dominio
  *     (woc.hq_pk_domain.deleted = 1).
+ *   - setDomainVisible(payload): aggiorna il flag "visible", in un loop, per
+ *     ciascun elemento { iddomain, value } dell'array payload.domain.
  *   - insertPackage(market, oic, iddomain, descr, timeop, pricewithvat):
  *     crea un nuovo pacchetto (woc.hq_pk_packages).
  *   - setPackage(idpackage, iddomain, descr, timeop, pricewithvat):
  *     aggiorna iddomain/descr/timeop/pricewithvat del pacchetto.
  *   - deletePackage(idpackage): cancella (fisicamente) il pacchetto da
  *     woc.hq_pk_packages.
+ *   - setPackageVisible(payload): aggiorna il flag "visible", in un loop,
+ *     per ciascun elemento { idpackage, value } dell'array payload.package.
  *   - getPackageList(market, oic): elenco della gerarchia mercato -> OIC ->
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
- *     la configurazione "a livello mercato").
+ *     la configurazione "a livello mercato"), incluso il flag "visible" di
+ *     dominio/pacchetto (domVisible/pkVisible).
  *   - insertAudit(username, section, market, actiontype, descr): inserisce
  *     una riga di log nell'audit HQ (woc.hq_audit).
  *   - searchAudit(market, section, datefrom, dateto, actiontype): elenco
@@ -88,9 +93,11 @@ const VALID_ACTIONS = [
   'insertDomain',
   'setDomain',
   'deleteDomain',
+  'setDomainVisible',
   'insertPackage',
   'setPackage',
   'deletePackage',
+  'setPackageVisible',
   'getPackageList',
   'insertAudit',
   'searchAudit',
@@ -210,6 +217,11 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, market, iddomain });
     }
 
+    if (action === 'setDomainVisible') {
+      await manager.setDomainVisible(body);
+      return response(200, { success: true, domain: body.domain });
+    }
+
     if (action === 'insertPackage') {
       const newIdpackage = await manager.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
       return response(200, { success: true, market, oic, iddomain, descr, timeop, pricewithvat, idpackage: newIdpackage });
@@ -223,6 +235,11 @@ exports.handler = async (event = {}) => {
     if (action === 'deletePackage') {
       await manager.deletePackage(idpackage);
       return response(200, { success: true, idpackage });
+    }
+
+    if (action === 'setPackageVisible') {
+      await manager.setPackageVisible(body);
+      return response(200, { success: true, package: body.package });
     }
 
     if (action === 'getPackageList') {

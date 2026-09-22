@@ -34,16 +34,19 @@ const path = require('path');
  * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
  * (che a cascata disabilita anche il mercato, v. sotto),
  * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr)/
- * deleteDomain(market, iddomain) (cancellazione logica, deleted = 1) e
- * insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
+ * deleteDomain(market, iddomain) (cancellazione logica, deleted = 1)/
+ * setDomainVisible(payload) (payload.domain, array di { iddomain, value },
+ * loop) e insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
  * setPackage(idpackage, iddomain, descr, timeop, pricewithvat)/
- * deletePackage(idpackage) espongono la
+ * deletePackage(idpackage)/setPackageVisible(payload) (payload.package,
+ * array di { idpackage, value }, loop) espongono la
  * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto
  * (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
  *
  * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
  * pacchetto configurata per il mercato (ed eventualmente l'OIC) richiesto
- * (i domini cancellati logicamente sono esclusi).
+ * (i domini cancellati logicamente sono esclusi, include anche
+ * domVisible/pkVisible).
  *
  * insertAudit(username, section, market, actiontype, descr) e
  * searchAudit(market, section, datefrom, dateto, actiontype) (filtri tutti
@@ -251,6 +254,29 @@ class HqManager {
   }
 
   /**
+   * Aggiorna il flag "visible", in un loop, per ciascun elemento
+   * { iddomain, value } dell'array presente in payload.domain, riusando lo
+   * stesso pool.
+   *
+   * @param {{ domain: Array<{ iddomain: number, value: number }> }} payload
+   * @returns {Promise<void>}
+   */
+  async setDomainVisible(payload) {
+    const domain = payload && payload.domain;
+    if (!Array.isArray(domain) || domain.length === 0) {
+      throw new Error('"domain" is required');
+    }
+
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setDomainVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    for (const { iddomain, value } of domain) {
+      await setDomainVisible(pool, iddomain, value);
+    }
+  }
+
+  /**
    * @param {string} market
    * @param {string} oic
    * @param {number} iddomain
@@ -296,9 +322,32 @@ class HqManager {
   }
 
   /**
+   * Aggiorna il flag "visible", in un loop, per ciascun elemento
+   * { idpackage, value } dell'array presente in payload.package, riusando lo
+   * stesso pool.
+   *
+   * @param {{ package: Array<{ idpackage: number, value: number }> }} payload
+   * @returns {Promise<void>}
+   */
+  async setPackageVisible(payload) {
+    const pkg = payload && payload.package;
+    if (!Array.isArray(pkg) || pkg.length === 0) {
+      throw new Error('"package" is required');
+    }
+
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { setPackageVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    for (const { idpackage, value } of pkg) {
+      await setPackageVisible(pool, idpackage, value);
+    }
+  }
+
+  /**
    * @param {string} market
    * @param {string|null} [oic]
-   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null }>>}
+   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
   async getPackageList(market, oic) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));

@@ -18,9 +18,11 @@ jest.mock('../../dbManager/HqRepository', () => ({
   insertDomain: jest.fn(),
   setDomain: jest.fn(),
   deleteDomain: jest.fn(),
+  setDomainVisible: jest.fn(),
   insertPackage: jest.fn(),
   setPackage: jest.fn(),
   deletePackage: jest.fn(),
+  setPackageVisible: jest.fn(),
   getPackageList: jest.fn(),
   insertAudit: jest.fn(),
   searchAudit: jest.fn(),
@@ -42,9 +44,11 @@ const {
   insertDomain,
   setDomain,
   deleteDomain,
+  setDomainVisible,
   insertPackage,
   setPackage,
   deletePackage,
+  setPackageVisible,
   getPackageList,
   insertAudit,
   searchAudit,
@@ -252,6 +256,27 @@ describe('HqManager', () => {
     });
   });
 
+  describe('setDomainVisible', () => {
+    it('throws when payload.domain is missing/empty', async () => {
+      await expect(manager.setDomainVisible({})).rejects.toThrow('"domain" is required');
+      await expect(manager.setDomainVisible({ domain: [] })).rejects.toThrow('"domain" is required');
+      expect(getPool).not.toHaveBeenCalled();
+    });
+
+    it('resolves the pool once and delegates to HqRepository.setDomainVisible for each element', async () => {
+      setDomainVisible.mockResolvedValue(undefined);
+
+      await manager.setDomainVisible({
+        domain: [{ iddomain: 7, value: 0 }, { iddomain: 8, value: 1 }],
+      });
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setDomainVisible).toHaveBeenCalledTimes(2);
+      expect(setDomainVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0);
+      expect(setDomainVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1);
+    });
+  });
+
   describe('insertPackage', () => {
     it('resolves the pool and delegates to HqRepository.insertPackage', async () => {
       insertPackage.mockResolvedValue(7);
@@ -283,6 +308,27 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(deletePackage).toHaveBeenCalledWith(fakePool, 7);
+    });
+  });
+
+  describe('setPackageVisible', () => {
+    it('throws when payload.package is missing/empty', async () => {
+      await expect(manager.setPackageVisible({})).rejects.toThrow('"package" is required');
+      await expect(manager.setPackageVisible({ package: [] })).rejects.toThrow('"package" is required');
+      expect(getPool).not.toHaveBeenCalled();
+    });
+
+    it('resolves the pool once and delegates to HqRepository.setPackageVisible for each element', async () => {
+      setPackageVisible.mockResolvedValue(undefined);
+
+      await manager.setPackageVisible({
+        package: [{ idpackage: 7, value: 0 }, { idpackage: 8, value: 1 }],
+      });
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(setPackageVisible).toHaveBeenCalledTimes(2);
+      expect(setPackageVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0);
+      expect(setPackageVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1);
     });
   });
 
