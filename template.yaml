@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite) — redeploy trigger
+Description: Stellantis WOC Backend — Lambda Node.js (agendaSoa, agendaSoaNaga, dms, jobcard, v360, srpV360Ota, pkEper, pkDocsoa, pkMenupricing, pkManager, translations, session, myPeople, pkFavorite, synch-status) — redeploy trigger
 
 
 # ── Parameters ────────────────────────────────────────────────────────────────
@@ -1613,6 +1613,54 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${IsStellantisBrandFunction}"
       RetentionInDays: 30
 
+  # ── synch-status (Aurora via RDS Proxy) ───────────────────────────────────
+  #
+  # Lambda esposta sul gateway IBM API Connect (APIC) all'endpoint
+  # /ps-<env>/extra/woc/job-card/v1/synch-status. La security (autenticazione e
+  # validazione del token compresa) è TOTALMENTE demandata al gateway APIC: la
+  # Lambda assume che ogni invocazione ricevuta sia già autorizzata e non
+  # esegue alcun controllo di token (nessun authService).
+  #
+  # Ruolo IAM: a differenza di IsStellantisBrandFunction (policy inline gestite
+  # da SAM), questa Lambda usa un ruolo pre-esistente fornito dall'infra
+  # (arn:aws:iam::<account>:role/stla-rol-<np->bsn0027990-<env>-synch-status).
+  # Quando si valorizza `Role`, SAM ignora `Policies`: i permessi (equivalenti
+  # a quelli di IsStellantisBrandFunction — VPC access, X-Ray, ssm:GetParameter
+  # sui due parametri DB, secretsmanager:GetSecretValue, kms:Decrypt) devono
+  # quindi essere già presenti su quel ruolo. Regola di naming (come per gli
+  # altri nomi/ARN): "-dev" in dev, "-stage" in stage, in prod nessun suffisso
+  # e nessun prefisso "np-".
+  SynchStatusFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SynchStatusFunctionLogGroup
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-synch-status"
+      CodeUri: synch-status/
+      Role: !If
+        - IsProd
+        - !Sub "arn:aws:iam::${AWS::AccountId}:role/stla-rol-bsn0027990-prod-synch-status"
+        - !Sub "arn:aws:iam::${AWS::AccountId}:role/stla-rol-np-bsn0027990-${Environment}-synch-status"
+      Environment:
+        Variables:
+          DB_SECRET_ARN_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/DB_SECRET_ARN
+            - !Sub /app/np-BSN0027990-${Environment}/DB_SECRET_ARN
+          RDS_PROXY_ENDPOINT_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/RDS_PROXY_ENDPOINT
+            - !Sub /app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT
+
+  SynchStatusFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Nome letterale (non derivato dalla Lambda) per rompere la dipendenza
+      # LogGroup->Lambda: cosi' CloudFormation crea la LogGroup per prima.
+      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-synch-status"
+      RetentionInDays: 30
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 Outputs:
@@ -1654,3 +1702,5 @@ Outputs:
     Value: !GetAtt DbManagerFunction.Arn
   IsStellantisBrandFunctionArn:
     Value: !GetAtt IsStellantisBrandFunction.Arn
+  SynchStatusFunctionArn:
+    Value: !GetAtt SynchStatusFunction.Arn
