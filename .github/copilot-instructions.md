@@ -7,7 +7,7 @@ top-level folder with its own `package.json`, `node_modules`, `.env`, and Jest
 test suite (`agendaSoa`, `agendaSoaNaga`, `dms`, `jobcard`, `djc`, `v360`,
 `srpV360Ota`, `pkEper`, `pkDocsoa`, `pkMenupricing`, `pkManager`, `translations`,
 `session`, `myPeople`, `pkFavorite`, `moparDoc`, `isStellantisBrand`,
-`dbManager`). They are
+`synch-status`, `dbManager`). They are
 deployed via AWS SAM (`template.yaml`), one `AWS::Serverless::Function` per
 module. There is no shared root `package.json`/build — everything is per-module.
 
@@ -99,8 +99,10 @@ npx jest -t "name of the test or describe block"
 - Each module reads config/secrets from its own `.env` file (see
   `.env.example` per module); env vars are namespaced per module/integration
   (e.g. `DMS_PING_CLIENT_ID`, `JOBCARD_PING_CLIENT_ID`, `DGT_CLIENT_ID`).
-- `pkFavorite` and `isStellantisBrand` use Aurora PostgreSQL via RDS Proxy
-  (`db.js` / `shared/dbClient.js`) instead of external REST/SOAP calls.
+- `pkFavorite`, `isStellantisBrand` and `synch-status` use Aurora PostgreSQL via RDS Proxy
+  (`db.js` / `shared/dbClient.js`) instead of external REST/SOAP calls. `synch-status`
+  delegates all security (including token validation) to the IBM APIC gateway and uses a
+  pre-existing IAM role (`stla-rol-<np->bsn0027990-<env>-synch-status`) rather than SAM-managed policies.
 - README.md (Italian) is the source of truth for module-by-module details
   (actions table, event shape, env vars, test/coverage summary per module);
   README.en.md is the English translation. Update both if you change a
