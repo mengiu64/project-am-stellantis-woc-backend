@@ -645,6 +645,7 @@ describe('HqRepository', () => {
           {
             market: '1000',
             oic: '00006821',
+            iddomain: 3,
             domaindescr: 'Meccanica',
             domvisible: 1,
             idpackage: 7,
@@ -662,6 +663,7 @@ describe('HqRepository', () => {
         {
           market: '1000',
           oic: '00006821',
+          iddomain: 3,
           domainDescr: 'Meccanica',
           domVisible: 1,
           idpackage: 7,
@@ -692,6 +694,7 @@ describe('HqRepository', () => {
           {
             market: '1000',
             oic: null,
+            iddomain: null,
             domaindescr: null,
             domvisible: null,
             idpackage: null,
@@ -707,7 +710,7 @@ describe('HqRepository', () => {
 
       expect(result).toEqual([
         {
-          market: '1000', oic: null, domainDescr: null, domVisible: null, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null, pkVisible: null,
+          market: '1000', oic: null, iddomain: null, domainDescr: null, domVisible: null, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null, pkVisible: null,
         },
       ]);
       expect(pool.query).toHaveBeenCalledTimes(1);

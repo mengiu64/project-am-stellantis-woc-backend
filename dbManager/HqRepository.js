@@ -582,6 +582,7 @@ async function getPackageList(pool, market, oic) {
 
   const baseQuery = `SELECT mk.market
                           , oi.oic
+                          , dom.iddomain
                           , dom.descr AS domaindescr
                           , dom.visible AS domvisible
                           , pk.idpackage
@@ -602,6 +603,7 @@ async function getPackageList(pool, market, oic) {
   return rows.map((row) => ({
     market: row.market,
     oic: row.oic,
+    iddomain: row.iddomain,
     domainDescr: row.domaindescr,
     domVisible: row.domvisible,
     idpackage: row.idpackage,
