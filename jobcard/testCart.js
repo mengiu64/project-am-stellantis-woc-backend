@@ -1,8 +1,9 @@
 'use strict';
 
 /**
- * testCart.js — verifica GET /jobCardDetails via riga di comando, senza
- * arricchimento DML (v. testCartDML.js per prezzo/disponibilità DML).
+ * testCart.js — verifica GET /jobCardDetails via riga di comando (con
+ * l'arricchimento DML incluso, per la sola modalità "fetch" — v. sotto
+ * e testCartDML.js per ispezionare separatamente la risposta DML grezza).
  *
  * Uso:
  *   node testCart.js file  <jobCardDetailJsonFile>
@@ -11,13 +12,17 @@
  * Modalità:
  *   file  - Carica un jobCardDetail da un file JSON locale e lo stampa. Il
  *           file può contenere sia { "jobCardDetail": {...} } (risposta
- *           completa di jobCardDetails) sia direttamente il jobCardDetail.
+ *           completa di jobCardDetails) sia direttamente il jobCardDetail
+ *           (nessun arricchimento DML: il file è statico).
  *   fetch - Esegue una vera GET /jobCardDetails (node index.js details) e
  *           stampa il json restituito da getJobCardDetails, cioè lo stesso
- *           prodotto da sanitizeJobCardDetails (nessun arricchimento DML).
+ *           prodotto da sanitizeJobCardDetails, già arricchito con i dati
+ *           DML (getDataFromDML, v. jobCardService.js) prima di essere
+ *           persistito in cache.
  *
- * Richiede jobcard/.env (PING_CLIENT_ID/SECRET, DGT_CLIENT_ID/SECRET)
- * valorizzato (solo per "fetch").
+ * Richiede jobcard/.env (PING_CLIENT_ID/SECRET, DGT_CLIENT_ID/SECRET) e
+ * dms/.env (DMS_PING_*, DML_IBM_*) valorizzati (solo per "fetch"), dato che
+ * getJobCardDetails chiama anche il gateway DML.
  *
  * Esempi:
  *   node testCart.js file  ./jobCardDetail-sample.json
@@ -43,7 +48,7 @@ function printResult(label, data) {
 function printUsage() {
   console.log('\nUso: node testCart.js <command> <arg>\n');
   console.log('  file  <jobCardDetailJsonFile>  Carica jobCardDetail da file locale');
-  console.log('  fetch <jobCardId>              Esegue una vera GET /jobCardDetails (nessun arricchimento DML)\n');
+  console.log('  fetch <jobCardId>              Esegue una vera GET /jobCardDetails (già arricchita con i dati DML)\n');
   console.log('Esempi:');
   console.log('  node testCart.js file  ./jobCardDetail-sample.json');
   console.log('  node testCart.js fetch 79\n');
@@ -76,7 +81,7 @@ async function main() {
       case 'fetch': {
         const token = await getBearerToken();
         const body = await getJobCardDetails(token, arg1);
-        printResult('getJobCardDetails result (sanitizeJobCardDetails, nessun arricchimento DML)', body);
+        printResult('getJobCardDetails result (sanitizeJobCardDetails, già arricchito con i dati DML)', body);
         break;
       }
 

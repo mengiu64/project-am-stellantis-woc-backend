@@ -987,7 +987,10 @@ async function getDataFromDML(jobCardDetail, sessionContext) {
  * L'item può mancare o essere scaduto (TTL, scrittura fallita, o mai
  * scritto — v. saveJobCardDetailsToTmp): in quel caso, invece di fallire,
  * viene richiamato getJobCardDetails (che rigenera l'item tramite
- * saveJobCardDetailsToTmp) e si ritenta la lettura appena dopo.
+ * saveJobCardDetailsToTmp, arricchendolo già con getDataFromDML) e si
+ * ritenta la lettura appena dopo; in tal caso getDataFromDML NON viene
+ * richiamato una seconda volta qui sotto (evita una doppia chiamata al
+ * gateway DML).
  * @param {string|number} jobCardId  - usato per risolvere la cache key
  * @param {string} [bearerToken]     - ****** da PingFederate, usato solo per
  *                                     rigenerare l'item via getJobCardDetails
@@ -1009,11 +1012,16 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   const cacheKey = cacheKeyForJobCard(jobCardId);
 
   let body = await getCacheItem(cacheKey);
+  let alreadyEnriched = false;
   if (!body) {
     console.warn(`[jobCard] ${cacheKey} non trovato in cache: rigenero tramite getJobCardDetails`);
 
+    // getJobCardDetails arricchisce già con getDataFromDML (v. sopra) e
+    // scrive il risultato in cache: evitiamo quindi di richiamare
+    // getDataFromDML una seconda volta qui sotto.
     const token = bearerToken ?? await getBearerToken();
-    await getJobCardDetails(token, jobCardId);
+    await getJobCardDetails(token, jobCardId, sessionContext);
+    alreadyEnriched = true;
 
     body = await getCacheItem(cacheKey);
     if (!body) {
@@ -1023,7 +1031,9 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
 
   const jobCardDetail = body?.jobCardDetail ?? body;
 
-  await getDataFromDML(jobCardDetail, sessionContext);
+  if (!alreadyEnriched) {
+    await getDataFromDML(jobCardDetail, sessionContext);
+  }
 
   return body;
 }
@@ -1032,9 +1042,14 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
  * Calls jobCardDetails endpoint.
  * @param {string} bearerToken      - ****** from PingFederate
  * @param {string|number} jobCardId - JobCard identifier (input parameter)
- * @returns {Promise<object>} parsed response body
+ * @param {object} [sessionContext] - dati di sessione gia' disponibili al
+ *                                 chiamante (username/mainSincom/market/
+ *                                 language/dealerCountryCode), propagati a
+ *                                 getDataFromDML/getCartPriceAndAvailability
+ *                                 per il Sender dinamico — v. buildDmsSender()
+ * @returns {Promise<object>} parsed response body, arricchito con i dati DML
  */
-async function getJobCardDetails(bearerToken, jobCardId) {
+async function getJobCardDetails(bearerToken, jobCardId, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
     throw new Error('[jobCard] jobCardId is required');
   }
@@ -1052,6 +1067,9 @@ async function getJobCardDetails(bearerToken, jobCardId) {
   }
 
   const sanitized = sanitizeJobCardDetails(response.body);
+
+  const jobCardDetail = sanitized?.jobCardDetail ?? sanitized;
+  await getDataFromDML(jobCardDetail, sessionContext);
 
   return await saveJobCardDetailsToTmp(jobCardId, sanitized);
 }

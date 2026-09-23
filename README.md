@@ -344,7 +344,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 |---|---|---|
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) |
 | `jobCardService` | `getJobCardList(token, params)` | Lista JobCard con filtri e paginazione |
-| `jobCardService` | `getJobCardDetails(token, jobCardId)` | Dettaglio di una singola JobCard |
+| `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Dettaglio di una singola JobCard, arricchito con i dati DML (v. sotto) |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
@@ -371,6 +371,8 @@ Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDeta
 
 - **`jobs[].packageType` / `jobs[].packageCharge`** — aggiunti a ciascun job (posizionati prima di `partInfo`/`laborInfo` quando presenti), derivati da `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` con `packageCode` valorizzato → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` senza `packageCode` (o assente/vuoto/`null` di `jobType`) → `GC`/`CUSTOMER`; qualsiasi altro `jobType` non vuoto → `GC`/`INTERNAL`. Se il job ha `paymentType` valorizzato, questo sovrascrive sempre `packageCharge` (il `packageType` resta invariato).
 - **`roInfo.roSource`** — aggiunto subito dopo `roInfo.sourceApplication`, con lo stesso valore.
+
+Inoltre, prima di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene arricchita anche con i dati del gateway DML (`getDataFromDML`/`getCartPriceAndAvailability`, v. sotto): `jobs[].partInfo[]`/`jobs[].laborInfo[]` ricevono così già prezzo/disponibilità/sconto aggiornati, con lo stesso `sessionContext` (opzionale) passato a `getJobCardDetails` — best-effort, non blocca la risposta in caso di problemi verso `dms`.
 
 Vedi `jobcard/README.md` per la tabella completa delle regole.
 
@@ -409,7 +411,14 @@ di ricambi e manodopera, sullo stesso modello di
 [dms](#dms) → `postDmsInquiry`). L'azione `dml` viene chiamata **sempre dopo**
 che il chiamante e' gia' entrato nel dettaglio della repair order, quindi ha
 gia' a disposizione sia i dati di sessione sia il `jobCardDetail` appena
-recuperato. Il **frontend non passa (e non deve passare) mainSincom/market/
+recuperato. **Nota**: la stessa `getCartPriceAndAvailability` viene ormai
+invocata anche direttamente da `getJobCardDetails` (azione `details`), che
+arricchisce già la risposta con i dati DML prima di persisterla in cache
+(v. sopra); l'azione `dml` resta quindi utile per rileggere/aggiornare
+l'arricchimento su un `jobCardDetail` già in cache senza rifare la GET a DGT
+(es. dopo modifiche al carrello), evitando in tal caso una doppia chiamata
+al gateway DML in caso di rigenerazione della cache (v.
+`getDataFromDMLFromTmp`). Il **frontend non passa (e non deve passare) mainSincom/market/
 brand/lingua/country**: `jobCardService.js::buildDmsSender(jobCardDetail,
 sessionContext)` estrae il solo VIN da
 `jobCardDetail.vehicleInfo.identification.vin` e delega la risoluzione

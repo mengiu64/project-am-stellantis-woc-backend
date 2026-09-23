@@ -116,10 +116,17 @@ async function main() {
       case 'fetch': {
         const token = await getBearerToken();
         const body = await getJobCardDetails(token, arg1);
-        // getJobCardDetails non chiama più internamente
-        // getCartPriceAndAvailability/applyDataFromDml (v. getDataFromDML):
-        // li richiamiamo qui per stampare il risultato in questo script.
+        // getJobCardDetails chiama già internamente getDataFromDML
+        // (getCartPriceAndAvailability + applyDataFromDml): il jobCardDetail
+        // restituito qui è quindi già arricchito. Se non viene passato un
+        // dmlResponseFile, evitiamo di richiamare di nuovo per davvero il
+        // gateway DML più sotto e stampiamo direttamente il risultato già
+        // ottenuto (v. ritorno anticipato dopo lo switch).
         jobCardDetail = extractJobCardDetail(body);
+        if (!dmlResponseFile) {
+          printResult('getJobCardDetails result (già arricchito con i dati DML)', jobCardDetail);
+          return;
+        }
         break;
       }
 

@@ -338,7 +338,7 @@ Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, wi
 |---|---|---|
 | `authService` | `getBearerToken()` | Gets/renews the PingFederate bearer token (file cache) |
 | `jobCardService` | `getJobCardList(token, params)` | JobCard list with filters and pagination |
-| `jobCardService` | `getJobCardDetails(token, jobCardId)` | Details of a single JobCard |
+| `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Details of a single JobCard, enriched with DML data (see below) |
 | `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
 
 #### `getJobCardList` parameters
@@ -365,6 +365,8 @@ Before being returned, the response is enriched by `sanitizeJobCardDetails` with
 - **`jobs[].packageType` / `jobs[].packageCharge`** — added to each job (placed before `partInfo`/`laborInfo` when present), derived from `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` with `packageCode` set → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` without `packageCode` (or missing/empty/`null` `jobType`) → `GC`/`CUSTOMER`; any other non-empty `jobType` → `GC`/`INTERNAL`. If the job has `paymentType` set, it always overrides `packageCharge` (`packageType` stays unchanged).
 - **`roInfo.roSource`** — added right after `roInfo.sourceApplication`, with the same value.
 
+Additionally, before being persisted to cache (`saveJobCardDetailsToTmp`), the response is also enriched with data from the DML gateway (`getDataFromDML`/`getCartPriceAndAvailability`, see below): `jobs[].partInfo[]`/`jobs[].laborInfo[]` already receive updated price/availability/discount, using the same (optional) `sessionContext` passed to `getJobCardDetails` — best-effort, does not block the response if `dms` is unreachable.
+
 See `jobcard/README.md` for the full rule table.
 
 #### `getCartPriceAndAvailability` (`dml` action) — dynamic Sender
@@ -376,7 +378,14 @@ price and availability, following the same pattern as
 `pkManager/PkManager.js::getPriceAndAvailability` and `pkFavorite/index.js`
 (see [dms](#dms) → `postDmsInquiry`). The `dml` action is always called
 **after** the caller has already entered the repair order detail, so it
-already has both session data and the freshly-retrieved `jobCardDetail`. The
+already has both session data and the freshly-retrieved `jobCardDetail`.
+**Note**: the same `getCartPriceAndAvailability` is now also invoked directly
+by `getJobCardDetails` (`details` action), which already enriches the
+response with DML data before persisting it to cache (see above); the `dml`
+action therefore remains useful to re-read/refresh the enrichment on a
+`jobCardDetail` already in cache without redoing the GET to DGT (e.g. after
+cart changes), in which case a double call to the DML gateway is avoided
+when the cache is regenerated (see `getDataFromDMLFromTmp`). The
 **frontend does not (and must not) supply mainSincom/market/brand/language/
 country**: `jobCardService.js::buildDmsSender(jobCardDetail, sessionContext)`
 extracts only the VIN from

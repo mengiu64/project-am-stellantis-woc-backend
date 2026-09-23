@@ -255,6 +255,36 @@ describe('jobCardService', () => {
     await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
   });
 
+  test('calls getDataFromDML (gateway DML) with the given sessionContext before persisting to cache', async () => {
+    const body = {
+      jobCardDetail: {
+        roInfo: { jobCardSrpId: 'JCID-79' },
+        vehicleInfo: { identification: { vin: 'VIN79' } },
+        jobs: [
+          { partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 10 }], laborInfo: [] },
+        ],
+      },
+    };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+    postDmsInquiry.mockResolvedValue({
+      WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 20 }], LaborItems: [] }],
+    });
+
+    const sessionContext = { username: 'mario.rossi', mainSincom: '0062219' };
+    const result = await getJobCardDetails('token', '79', sessionContext);
+
+    expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-79', VehicleID: 'VIN79' }),
+    }));
+    expect(setCacheItem).toHaveBeenCalledTimes(1);
+    // postDmsInquiry (via getDataFromDML) deve essere chiamato prima della
+    // scrittura in cache (saveJobCardDetailsToTmp), cosi' l'item persistito
+    // e' gia' arricchito con i dati DML.
+    expect(postDmsInquiry.mock.invocationCallOrder[0])
+      .toBeLessThan(setCacheItem.mock.invocationCallOrder[0]);
+    expect(result.jobCardDetail.jobs[0].partInfo[0].unitaryPriceExclVat).toBe(20);
+  });
+
   // ── roInfo.roSource enrichment ───────────────────────────────────────────────
 
   describe('getJobCardListCurrent', () => {

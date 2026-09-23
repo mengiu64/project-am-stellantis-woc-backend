@@ -543,7 +543,7 @@ exports.handler = async (event) => {
       } else if (action === 'listCurrent') {
         result = await getJobCardListCurrent(token, body.dealerId, body.currentDate);
       } else if (action === 'details') {
-        result = await getJobCardDetails(token, body.jobCardId ?? body.id);
+        result = await getJobCardDetails(token, body.jobCardId ?? body.id, resolveSessionContext(event, body));
       } else {
         const jobCardPayload = body.payload ?? body;
         result = await saveJobCard(token, jobCardPayload);

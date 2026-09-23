@@ -183,6 +183,10 @@ Se il job ha un campo `paymentType` valorizzato, `packageCharge` assume **sempre
 
 Aggiunto subito dopo `roInfo.sourceApplication`, con lo **stesso valore** di quest'ultimo (se `roInfo`/`sourceApplication` sono assenti, `roSource` non viene aggiunto).
 
+#### Arricchimento DML (`jobs[].partInfo[]`/`jobs[].laborInfo[]`)
+
+Dopo `sanitizeJobCardDetails` ma **prima** di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene ulteriormente arricchita da `getDataFromDML` (v. `getCartPriceAndAvailability`/`applyDataFromDml`), che interroga il gateway DML (`dms/dmsService.js::postDmsInquiry`) per prezzo/disponibilità/sconto aggiornati di ricambi e manodopera. `getJobCardDetails` accetta un terzo parametro opzionale `sessionContext` (username/mainSincom/market/language/dealerCountryCode), propagato a `getDataFromDML` per costruire il Sender dinamico dell'inquiry DMS (v. `buildDmsSender`) — v. anche sezione `getCartPriceAndAvailability` nel README principale. Best-effort: eventuali problemi verso `dms` non fanno fallire la risposta di `getJobCardDetails`.
+
 ---
 
 ## Configurazione
