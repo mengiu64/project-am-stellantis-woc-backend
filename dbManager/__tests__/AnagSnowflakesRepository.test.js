@@ -76,7 +76,7 @@ describe('AnagSnowflakesRepository', () => {
         mainSincom: '0073741', market: '1000', brand: 'ft',
       });
 
-      expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230', dealerArcadCode: 'ARC001' });
+      expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230', dealerArcadCode: 'ARC001', arcadBrand: 'FT' });
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('(s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)'),
@@ -100,7 +100,7 @@ describe('AnagSnowflakesRepository', () => {
         mainSincom: '0073741', market: '1000', brand: '55',
       });
 
-      expect(result).toEqual({ physicalSiteId: 'SITE002', dealerNumberIdSource: '0062231', dealerArcadCode: 'ARC002' });
+      expect(result).toEqual({ physicalSiteId: 'SITE002', dealerNumberIdSource: '0062231', dealerArcadCode: 'ARC002', arcadBrand: 'FT' });
       expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenNthCalledWith(
         1,
@@ -123,7 +123,7 @@ describe('AnagSnowflakesRepository', () => {
         mainSincom: '0073741', market: '1000', brand: '999',
       });
 
-      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null });
+      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand: null });
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('s.cd_contract_brand_webdac_code = $1'),
@@ -138,7 +138,7 @@ describe('AnagSnowflakesRepository', () => {
         mainSincom: '0073741', market: '1000', brand: 'FT',
       });
 
-      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null });
+      expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand: 'FT' });
     });
   });
 

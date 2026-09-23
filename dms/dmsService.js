@@ -19,6 +19,24 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Cache in memoria (per l'intero ciclo di vita del container Lambda "caldo") del
+// repository usato per leggere config/brandowner.json da S3 — vedi buildApplicationArea().
+// Creato al primo utilizzo (nessun costo se il lookup non scatta mai).
+let cachedBrandOwnerRepository;
+
+function getBrandOwnerRepository() {
+  if (!cachedBrandOwnerRepository) {
+    const { S3ConfigRepository } = require(path.resolve(__dirname, '../v360/s3ConfigRepository'));
+    cachedBrandOwnerRepository = new S3ConfigRepository();
+  }
+  return cachedBrandOwnerRepository;
+}
+
+/** Resetta la cache del repository brand owner (solo per i test). */
+function _resetBrandOwnerRepository() {
+  cachedBrandOwnerRepository = undefined;
+}
+
 /**
  * Calls GET /dms/settings endpoint.
  *
@@ -320,6 +338,21 @@ async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
  * (senderOverrides espliciti, poi config.sender) — un problema di
  * arricchimento del Sender non deve mai bloccare la chiamata al gateway DML.
  *
+ * DealerNumberIDSource per "brand owner": il valore di dealerNumberIdSource
+ * risolto da woc.ang_snowflakes è CD_SINCOM_CODE, corretto per i brand il cui
+ * owner (config/brandowner.json su S3) è "XF". Per i brand con owner "XP" va
+ * invece usato CD_DEALER_ARCAD_CODE (già risolto da getPhysicalSiteAndSincom
+ * come dealerArcadCode). L'owner viene determinato sull'arcadBrand (codice
+ * ARCAD a 2 lettere, già risolto internamente da getPhysicalSiteAndSincom a
+ * partire dal brand ricevuto, che può arrivare sia in formato ARCAD che
+ * WebDAC), leggendo config/brandowner.json tramite v360/s3ConfigRepository.js
+ * (utility generica di lettura S3, riusata qui solo per il formato/parsing del
+ * file — la logica di business resta quella di jobcard/pkManager/dms, non di
+ * v360, e viene incapsulata con un proprio repository/cache locale a questo
+ * modulo, cfr. getBrandOwnerRepository()). Anche questo lookup è best-effort:
+ * qualunque errore (S3 non raggiungibile, brand assente dal registro, ...)
+ * lascia invariato il valore già risolto (CD_SINCOM_CODE).
+ *
  * @param {object} [senderOverrides] - Sottoinsieme di config.sender da
  *                     sovrascrivere per questa richiesta (stessi nomi campo:
  *                     componentId, dealerNumberId, dealerNumberIdSource,
@@ -349,13 +382,26 @@ async function buildApplicationArea(senderOverrides = {}) {
       const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
       const { getPhysicalSiteAndSincom } = require(path.resolve(__dirname, '../dbManager/AnagSnowflakesRepository'));
       const pool = await getPool();
-      const { physicalSiteId, dealerNumberIdSource } = await getPhysicalSiteAndSincom(pool, {
+      const {
+        physicalSiteId, dealerNumberIdSource, dealerArcadCode, arcadBrand,
+      } = await getPhysicalSiteAndSincom(pool, {
         mainSincom: dealerNumberId,
         market,
         brand,
       });
       if (physicalSiteId) s.physicalSiteId = physicalSiteId;
       if (dealerNumberIdSource) s.dealerNumberIdSource = dealerNumberIdSource;
+
+      if (arcadBrand && dealerArcadCode) {
+        try {
+          const brandOwnerRepository = getBrandOwnerRepository();
+          const brandOwners = await brandOwnerRepository.getBrandOwners();
+          const brandOwner = brandOwners.find((entry) => entry.codbrand === arcadBrand);
+          if (brandOwner && brandOwner.owner === 'XP') s.dealerNumberIdSource = dealerArcadCode;
+        } catch (ownerErr) {
+          console.warn(`[dms] impossibile risolvere il brand owner (config/brandowner.json) per brand="${arcadBrand}": ${ownerErr.message}`);
+        }
+      }
     } catch (err) {
       console.warn(`[dms] impossibile risolvere physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes) per mainSincom="${dealerNumberId}" market="${market}" brand="${brand}": ${err.message}`);
     }
@@ -623,6 +669,7 @@ module.exports = {
   validateTypeSection,
   buildUpSellingPackages,
   buildWorkLines,
+  _resetBrandOwnerRepository,
 };
 
 /**

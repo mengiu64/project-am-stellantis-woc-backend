@@ -37,13 +37,15 @@ jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
 jest.mock('../../dbManager/AnagSnowflakesRepository', () => ({ getPhysicalSiteAndSincom: jest.fn() }));
 jest.mock('../../session/src/sessionContextCache', () => ({ getCachedSessionContext: jest.fn() }));
 jest.mock('../../v360/v360Service', () => ({ getCachedBrand: jest.fn() }));
+jest.mock('../../v360/s3ConfigRepository', () => ({ S3ConfigRepository: jest.fn() }));
 
 const { httpsRequest } = require('../httpClient');
 const { getPool } = require('../../dbManager/db');
 const { getPhysicalSiteAndSincom } = require('../../dbManager/AnagSnowflakesRepository');
 const { getCachedSessionContext } = require('../../session/src/sessionContextCache');
 const { getCachedBrand } = require('../../v360/v360Service');
-const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea, resolveDynamicSenderFields } = require('../dmsService');
+const { S3ConfigRepository } = require('../../v360/s3ConfigRepository');
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea, resolveDynamicSenderFields, _resetBrandOwnerRepository } = require('../dmsService');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -565,10 +567,15 @@ describe('postDmsInquiry — ApplicationArea built internally', () => {
 // market (solo chiave di lookup, non un campo Sender) + brand in body.sender.
 
 describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes)', () => {
+  let mockGetBrandOwners;
+
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'warn').mockImplementation(() => {});
     getPool.mockResolvedValue({ fakePool: true });
+    mockGetBrandOwners = jest.fn().mockResolvedValue([]);
+    S3ConfigRepository.mockImplementation(() => ({ getBrandOwners: mockGetBrandOwners }));
+    _resetBrandOwnerRepository();
   });
 
   afterEach(() => console.warn.mockRestore());
@@ -630,6 +637,65 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
     const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
 
     expect(area.Sender.PhysicalSiteID).toBe('00007532');
+  });
+
+  // ── DealerNumberIDSource: CD_SINCOM_CODE (owner XF, default) vs CD_DEALER_ARCAD_CODE (owner XP) ──
+  describe('DealerNumberIDSource per brand owner (config/brandowner.json)', () => {
+    test('owner XF keeps the CD_SINCOM_CODE-derived dealerNumberIdSource (default behaviour)', async () => {
+      getPhysicalSiteAndSincom.mockResolvedValue({
+        physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: 'ARC-DYN', arcadBrand: 'FT',
+      });
+      mockGetBrandOwners.mockResolvedValue([{ codbrand: 'FT', owner: 'XF' }]);
+
+      const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
+
+      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+    });
+
+    test('owner XP overrides dealerNumberIdSource with CD_DEALER_ARCAD_CODE', async () => {
+      getPhysicalSiteAndSincom.mockResolvedValue({
+        physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: 'ARC-DYN', arcadBrand: 'AC',
+      });
+      mockGetBrandOwners.mockResolvedValue([{ codbrand: 'AC', owner: 'XP' }]);
+
+      const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'AC' });
+
+      expect(area.Sender.DealerNumberIDSource).toBe('ARC-DYN');
+    });
+
+    test('brand not found in brandowner.json falls back to the CD_SINCOM_CODE-derived value', async () => {
+      getPhysicalSiteAndSincom.mockResolvedValue({
+        physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: 'ARC-DYN', arcadBrand: 'ZZ',
+      });
+      mockGetBrandOwners.mockResolvedValue([{ codbrand: 'FT', owner: 'XF' }]);
+
+      const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'ZZ' });
+
+      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+    });
+
+    test('brandowner.json lookup failure falls back to the CD_SINCOM_CODE-derived value, without throwing', async () => {
+      getPhysicalSiteAndSincom.mockResolvedValue({
+        physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: 'ARC-DYN', arcadBrand: 'AC',
+      });
+      mockGetBrandOwners.mockRejectedValue(new Error('S3 non raggiungibile'));
+
+      const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'AC' });
+
+      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+      expect(console.warn).toHaveBeenCalled();
+    });
+
+    test('does not look up brandowner.json when dealerArcadCode is missing', async () => {
+      getPhysicalSiteAndSincom.mockResolvedValue({
+        physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: null, arcadBrand: 'AC',
+      });
+
+      const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'AC' });
+
+      expect(mockGetBrandOwners).not.toHaveBeenCalled();
+      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+    });
   });
 
   test('postDmsInquiry propagates body.sender.market through to buildApplicationArea', async () => {

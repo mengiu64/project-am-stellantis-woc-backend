@@ -219,6 +219,28 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > environment variables (same Aurora "wiadvisor" as
 > `PkManagerFunction`/`SessionFunction`).
 >
+> **`DealerNumberIDSource` per "brand owner" (`config/brandowner.json`)**: the
+> `dealerNumberIdSource` resolved above from `woc.ang_snowflakes`
+> (`CD_SINCOM_CODE`) is the correct value for brands whose **owner** is `XF`
+> (default behaviour, unchanged). For brands with owner `XP`,
+> `CD_DEALER_ARCAD_CODE` is used instead (column already read from the same
+> `woc.ang_snowflakes` row, exposed by `getPhysicalSiteAndSincom` as
+> `dealerArcadCode`). The owner is determined by looking up the brand's
+> 2-letter ARCAD code (`arcadBrand`, the same one already resolved internally
+> by `getPhysicalSiteAndSincom`/`resolveArcadBrandCode` for the query above, so
+> the match works regardless of the format — ARCAD or WebDAC — of the received
+> `brand`) in the static `config/brandowner.json` registry on S3 (bucket
+> `TranslationsBucket`, same file/format already used by
+> `v360/v360Service.js::enrichWithBrandOwnerAndEnergyType`), read via a
+> dedicated `v360/s3ConfigRepository.js::S3ConfigRepository` instance
+> (in-memory cache local to `dms/dmsService.js`, independent from `v360`'s own
+> cache — the business logic stays in `dms`/`jobcard`/`pkManager`, `v360` only
+> provides the S3 read/parse utility). This lookup is also **best-effort**: if
+> `dealerArcadCode` is missing, the brand is not present in the registry, or
+> S3 is unreachable, `dealerNumberIdSource` stays whatever was already
+> resolved (`CD_SINCOM_CODE`) — just a log warning, never an exception that
+> blocks the call to the DML gateway.
+>
 > **Automatic resolution of `dealerNumberId`/`market`/`brand`/language/country
 > (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
 > `dealerCountryCode` and `brand` **must never be supplied by the frontend**

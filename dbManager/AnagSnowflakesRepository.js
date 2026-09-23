@@ -114,9 +114,14 @@ async function getCountryIsoCode(pool, { market }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ mainSincom: string, market: string, brand: string }} params
- * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null, dealerArcadCode: string|null }>}
+ * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null, dealerArcadCode: string|null, arcadBrand: string|null }>}
  *          tutti null se non e' stata trovata alcuna riga corrispondente
- *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD)
+ *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD).
+ *          arcadBrand e' il codice ARCAD/RefTech a 2 lettere risolto per il brand
+ *          ricevuto (es. "FT"): usato dal chiamante (dms/dmsService.js::buildApplicationArea)
+ *          per determinare il "brand owner" (config/brandowner.json su S3) e scegliere
+ *          tra dealerNumberIdSource (CD_SINCOM_CODE, owner XF) e dealerArcadCode
+ *          (CD_DEALER_ARCAD_CODE, owner XP) per il campo DealerNumberIDSource del Sender.
  */
 async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}) {
   if (!mainSincom) throw new Error('"mainSincom" is required');
@@ -125,7 +130,7 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
 
   const arcadBrand = await resolveArcadBrandCode(pool, brand);
   if (!arcadBrand) {
-    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null };
+    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand: null };
   }
 
   const { rows } = await pool.query(
@@ -140,13 +145,14 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
   );
 
   if (rows.length === 0) {
-    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null };
+    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand };
   }
 
   return {
     physicalSiteId: rows[0].cd_paired_oic_code,
     dealerNumberIdSource: rows[0].cd_sincom_code,
     dealerArcadCode: rows[0].cd_dealer_arcad_code,
+    arcadBrand,
   };
 }
 

@@ -227,6 +227,28 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 > (build via `Metadata: BuildMethod: makefile`, v. `Makefile`) e le variabili
 > `DBMANAGER_DB_*` (stesso Aurora `wiadvisor` di `PkManagerFunction`/`SessionFunction`).
 >
+> **`DealerNumberIDSource` per "brand owner" (`config/brandowner.json`)**: il
+> valore di `dealerNumberIdSource` risolto sopra da `woc.ang_snowflakes`
+> (`CD_SINCOM_CODE`) è quello corretto per i brand il cui **owner** è `XF`
+> (comportamento di default, invariato). Per i brand con owner `XP` viene
+> invece usato `CD_DEALER_ARCAD_CODE` (colonna già letta dalla stessa riga di
+> `woc.ang_snowflakes`, esposta da `getPhysicalSiteAndSincom` come
+> `dealerArcadCode`). L'owner è determinato cercando il codice ARCAD a 2
+> lettere del brand (`arcadBrand`, lo stesso già risolto internamente da
+> `getPhysicalSiteAndSincom`/`resolveArcadBrandCode` per la query sopra, cosi'
+> il match funziona indipendentemente dal formato — ARCAD o WebDAC — del
+> `brand` ricevuto) nel registro statico `config/brandowner.json` su S3
+> (bucket `TranslationsBucket`, stesso file/formato già usato da
+> `v360/v360Service.js::enrichWithBrandOwnerAndEnergyType`), letto tramite un
+> proprio `v360/s3ConfigRepository.js::S3ConfigRepository` (cache in memoria
+> locale a `dms/dmsService.js`, indipendente da quella di `v360` — la logica
+> resta di `dms`/`jobcard`/`pkManager`, `v360` fornisce solo l'utility di
+> lettura/parsing del file S3). Anche questo lookup è **best-effort**: se
+> manca `dealerArcadCode`, il brand non è presente nel registro, o S3 non è
+> raggiungibile, `dealerNumberIdSource` resta quello già risolto
+> (`CD_SINCOM_CODE`) — solo un warning in log, mai un'eccezione che blocchi la
+> chiamata al gateway DML.
+>
 > **Risoluzione automatica del `dealerNumberId`/`market`/`brand`/lingua/country
 > (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
 > `dealerCountryCode` e `brand` **non devono mai essere passati dal frontend**
