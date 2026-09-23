@@ -398,6 +398,42 @@ function enrichJobsWithPackageInfo(body) {
 }
 
 /**
+ * Normalizza appDiscountPercentage/dmsDiscountPercentage su ogni elemento di
+ * jobs[].partInfo[]/laborInfo[], in place:
+ *  - se job.discountInPercentage e' valorizzato (diverso da null/undefined/0),
+ *    entrambi i campi vengono forzati a 0 (anche se gia' presenti con un
+ *    altro valore);
+ *  - altrimenti, i campi mancanti vengono aggiunti con valore 0, senza
+ *    toccare eventuali valori gia' presenti.
+ * @param {object} body - jobCardDetails response body
+ * @returns {object} the same body, with appDiscountPercentage/dmsDiscountPercentage normalized
+ */
+function checkDiscount(body) {
+  const jobs = body?.jobCardDetail?.jobs;
+  if (!Array.isArray(jobs)) return body;
+
+  for (const job of jobs) {
+    if (!job || typeof job !== 'object') continue;
+    const forceZero = Boolean(job.discountInPercentage);
+
+    for (const list of [job.partInfo, job.laborInfo]) {
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        if (!item || typeof item !== 'object') continue;
+        if (forceZero) {
+          item.appDiscountPercentage = 0;
+          item.dmsDiscountPercentage = 0;
+        } else {
+          if (!('appDiscountPercentage' in item)) item.appDiscountPercentage = 0;
+          if (!('dmsDiscountPercentage' in item)) item.dmsDiscountPercentage = 0;
+        }
+      }
+    }
+  }
+  return body;
+}
+
+/**
  * Returns a copy of obj with a new key inserted right after an existing key
  * (or appended at the end if that key is not found), preserving all other
  * keys/order. Used to keep derived fields close to the field they mirror.
@@ -484,6 +520,7 @@ function sanitizeJobCardDetails(body) {
     }
   }
   enrichJobsWithPackageInfo(body);
+  checkDiscount(body);
   addRoSource(body);
   sanitizeWorkshopReturn(body);
   return body;

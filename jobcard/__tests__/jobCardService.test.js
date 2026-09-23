@@ -574,6 +574,72 @@ describe('jobCardService', () => {
     });
   });
 
+  // ── appDiscountPercentage/dmsDiscountPercentage normalization (checkDiscount) ─
+
+  describe('checkDiscount', () => {
+    async function detailsFor(jobs) {
+      httpsRequest.mockResolvedValue({
+        statusCode: 200,
+        headers: {},
+        body: { jobCardDetail: { jobs } },
+      });
+      const result = await getJobCardDetails('token', '79');
+      return result.jobCardDetail.jobs;
+    }
+
+    test('discountInPercentage != 0 forces both fields to 0 even if already valorized', async () => {
+      const [job] = await detailsFor([
+        {
+          discountInPercentage: 10,
+          partInfo: [{ partId: '1', appDiscountPercentage: 5, dmsDiscountPercentage: 3 }],
+          laborInfo: [{ laborOperationId: '1', appDiscountPercentage: 7, dmsDiscountPercentage: 2 }],
+        },
+      ]);
+      expect(job.partInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+      expect(job.laborInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+    });
+
+    test('discountInPercentage != 0 adds missing fields with 0', async () => {
+      const [job] = await detailsFor([
+        {
+          discountInPercentage: -15,
+          partInfo: [{ partId: '1' }],
+          laborInfo: [{ laborOperationId: '1' }],
+        },
+      ]);
+      expect(job.partInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+      expect(job.laborInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+    });
+
+    test('discountInPercentage == 0 or missing only adds missing fields, leaving existing values untouched', async () => {
+      const [job] = await detailsFor([
+        {
+          discountInPercentage: 0,
+          partInfo: [{ partId: '1', appDiscountPercentage: 5 }],
+          laborInfo: [{ laborOperationId: '1' }],
+        },
+      ]);
+      expect(job.partInfo[0]).toMatchObject({ appDiscountPercentage: 5, dmsDiscountPercentage: 0 });
+      expect(job.laborInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+
+      const [job2] = await detailsFor([
+        { partInfo: [{ partId: '1', appDiscountPercentage: 9, dmsDiscountPercentage: 4 }] },
+      ]);
+      expect(job2.partInfo[0]).toMatchObject({ appDiscountPercentage: 9, dmsDiscountPercentage: 4 });
+    });
+
+    test('does not fail when partInfo/laborInfo are missing or not arrays', async () => {
+      const [job] = await detailsFor([{ discountInPercentage: 20 }]);
+      expect(job.partInfo).toBeUndefined();
+      expect(job.laborInfo).toBeUndefined();
+    });
+
+    test('does not fail when jobs is missing or not an array', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+    });
+  });
+
   // ── workshopReturn.workshopReturn boolean coercion ──────────────────────────
 
   describe('workshopReturn sanitization', () => {
