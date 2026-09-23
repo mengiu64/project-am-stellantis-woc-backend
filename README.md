@@ -1066,12 +1066,12 @@ I 4 `eventType` supportati (mappati sullo stato DB corrispondente):
 
 | Status | Body | Descrizione |
 |---|---|---|
-| 200 | `{ "success": true, "response": { "responseId", "jobCardId", "eventType", "status", "timestamp" } }` | Record aggiornato con successo |
-| 400 | `{ "success": false, "error": "Bad Request", ... }` | Body non JSON valido o validazione payload fallita |
-| 404 | `{ "success": false, "error": "Not Found", ... }` | Record non presente (deve essere creato prima da un'altra Lambda) |
-| 503 | `{ "success": false, "error": "Service Unavailable", ... }` | Impossibile connettersi ad Aurora |
-| 504 | `{ "success": false, "error": "Gateway Timeout", ... }` | Query DB oltre il timeout |
-| 500 | `{ "success": false, "error": "Internal Server Error", ... }` | Errore interno |
+| 200 | `{ "statusCode": 200, "success": true, "message": "Event successfully updated" }` | Record aggiornato con successo (i dettagli `responseId`/`jobCardId`/`eventType`/`status`/`timestamp` non sono più nella response, restano solo nei log) |
+| 400 | `{ "statusCode": 400, "success": false, "message": "Event not updated" }` | Body non JSON valido o validazione payload fallita |
+| 404 | `{ "statusCode": 404, "success": false, "message": "Event not updated" }` | Record non presente (deve essere creato prima da un'altra Lambda) |
+| 503 | `{ "statusCode": 503, "success": false, "message": "Event not updated" }` | Impossibile connettersi ad Aurora |
+| 504 | `{ "statusCode": 504, "success": false, "message": "Event not updated" }` | Query DB oltre il timeout |
+| 500 | `{ "statusCode": 500, "success": false, "message": "Event not updated" }` | Errore interno |
 
 #### Struttura
 
@@ -1079,7 +1079,6 @@ I 4 `eventType` supportati (mappati sullo stato DB corrispondente):
 synch-status/
 ├── index.js                    # Lambda handler (parsing + validazione + UPDATE Aurora)
 ├── config.js                   # Configurazione centralizzata
-├── validator.js                # Validazione payload
 ├── logger.js                   # Logging strutturato + traceId
 ├── package.json                # Dipendenze (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
 ├── shared/
@@ -1538,10 +1537,10 @@ cd agendaSoa && npm run test:coverage
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
-| **synch-status** | 3 | 87 | `index` (handler + `_validatePayload`/`_buildResponse`), `config`, `validator` |
+| **synch-status** | 2 | 61 | `index` (handler + `_validatePayload`/`_buildResponse`), `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
-| **Totale** | **58** | **753** | |
+| **Totale** | **57** | **727** | |
 
 ### Copertura del codice
 
@@ -1562,13 +1561,13 @@ cd agendaSoa && npm run test:coverage
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
 | **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
 | **isStellantisBrand** | 100% ✅ | 97.87% ✅ | 100% ✅ | 100% ✅ |
-| **synch-status** | 94.85% ✅ | 94% ✅ | 100% ✅ | 94.76% ✅ |
+| **synch-status** | 93.83% ✅ | 93.18% ✅ | 100% ✅ | 93.83% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 >
-> **Nota (`synch-status`):** le 3 suite (`__tests__/config.test.js`, `validator.test.js`, `index.test.js`) passano tutte (87 test). La copertura aggregata è sopra il 90% su tutti i criteri (branch 94%, `config.js` a 100% di branch); le soglie per-file definite in `synch-status/package.json` (index 90/85, config 80/70, validator 100) sono ampiamente rispettate.
+> **Nota (`synch-status`):** le 2 suite (`__tests__/config.test.js`, `index.test.js`) passano tutte (61 test). Il modulo `validator.js` (Joi) era codice morto — mai invocato da `index.js`, che valida i payload con `_validatePayload` — ed è stato rimosso insieme alla dipendenza `joi`. La copertura aggregata resta sopra il 90% su tutti i criteri (branch 93.18%, `config.js` a 100% di branch); le soglie per-file definite in `synch-status/package.json` (index 90/85, config 80/70) sono ampiamente rispettate.
 
 ### Struttura dei test
 
@@ -1645,7 +1644,6 @@ cd agendaSoa && npm run test:coverage
 
 - **index (handler)** – parsing del `body` (stringa JSON o oggetto), 400 su body non JSON valido; validazione payload (campi obbligatori `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` tra i 4 supportati, `timestamp` ISO 8601) con 400 e dettaglio errori; mappatura `eventType` → `djc_sync_status`; **UPDATE-only** su `woc.comunication_asyncro_djc` (mai INSERT) con incremento di `version`; 404 quando il record non esiste (deve essere creato prima da un'altra Lambda); 503 su errore di connessione Aurora, 504 su timeout query, 500 su errore generico; nessuna validazione del token (security demandata al gateway IBM APIC)
 - **config** – pattern singleton `getInstance()`/`reset()`, struttura della configurazione (sezioni AWS/OAuth/APIC/Logging/Timeouts/API endpoints), risoluzione ambiente da env (`ENVIRONMENT`, default `dev`), `getByPath()` (path annidati, `null` se non trovato), gestione del log level
-- **validator** – regole di validazione del payload e degli eventi (campi obbligatori, `eventType` supportati, `timestamp` ISO 8601, dimensioni min/max, raccolta di tutti gli errori)
 
 #### dmlConfigSync
 - **index (syncMarket)** – chiamata parallela a `getCompanyTypes`/`getCustomerTitles` con upsert degli array `data` (`[]` se il servizio risponde senza dati, es. 404 normalizzato)

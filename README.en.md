@@ -795,12 +795,14 @@ The 4 supported `eventType` values (mapped to the corresponding DB status):
 
 | Status | Body | Description |
 |---|---|---|
-| 200 | `{ "success": true, "response": { "responseId", "jobCardId", "eventType", "status", "timestamp" } }` | Record updated successfully |
-| 400 | `{ "success": false, "error": "Bad Request", ... }` | Body not valid JSON or payload validation failed |
-| 404 | `{ "success": false, "error": "Not Found", ... }` | Record not present (must be created first by another Lambda) |
-| 503 | `{ "success": false, "error": "Service Unavailable", ... }` | Cannot connect to Aurora |
-| 504 | `{ "success": false, "error": "Gateway Timeout", ... }` | DB query exceeded the timeout |
-| 500 | `{ "success": false, "error": "Internal Server Error", ... }` | Internal error |
+| Status | Body | Description |
+|---|---|---|
+| 200 | `{ "statusCode": 200, "success": true, "message": "Event successfully updated" }` | Record updated successfully (the `responseId`/`jobCardId`/`eventType`/`status`/`timestamp` details are no longer in the response, only logged) |
+| 400 | `{ "statusCode": 400, "success": false, "message": "Event not updated" }` | Body not valid JSON or payload validation failed |
+| 404 | `{ "statusCode": 404, "success": false, "message": "Event not updated" }` | Record not present (must be created first by another Lambda) |
+| 503 | `{ "statusCode": 503, "success": false, "message": "Event not updated" }` | Cannot connect to Aurora |
+| 504 | `{ "statusCode": 504, "success": false, "message": "Event not updated" }` | DB query exceeded the timeout |
+| 500 | `{ "statusCode": 500, "success": false, "message": "Event not updated" }` | Internal error |
 
 #### Structure
 
@@ -808,7 +810,6 @@ The 4 supported `eventType` values (mapped to the corresponding DB status):
 synch-status/
 ├── index.js                    # Lambda handler (parsing + validation + Aurora UPDATE)
 ├── config.js                   # Centralized configuration
-├── validator.js                # Payload validation
 ├── logger.js                   # Structured logging + traceId
 ├── package.json                # Dependencies (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
 ├── shared/
@@ -1109,7 +1110,7 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
-| **synch-status** | 3 | 87 | `index` (handler + `_validatePayload`/`_buildResponse`), `config`, `validator` |
+| **synch-status** | 2 | 61 | `index` (handler + `_validatePayload`/`_buildResponse`), `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
 | **Total** | **44+** | **491+** | |
@@ -1129,13 +1130,13 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
-| **synch-status** | 94.85% ✅ | 94% ✅ | 100% ✅ | 94.76% ✅ |
+| **synch-status** | 93.83% ✅ | 93.18% ✅ | 100% ✅ | 93.83% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 >
-> **Note (`synch-status`):** all 3 suites (`__tests__/config.test.js`, `validator.test.js`, `index.test.js`) pass (87 tests). Aggregate coverage is above 90% on all criteria (branch 94%, `config.js` at 100% branch); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70, validator 100) are comfortably met.
+> **Note (`synch-status`):** both suites (`__tests__/config.test.js`, `index.test.js`) pass (61 tests). The `validator.js` module (Joi) was dead code — never invoked by `index.js`, which validates payloads with `_validatePayload` — and was removed together with the `joi` dependency. Aggregate coverage remains above 90% on all criteria (branch 93.18%, `config.js` at 100% branch); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70) are comfortably met.
 
 ### Test structure
 
@@ -1194,7 +1195,6 @@ cd agendaSoa && npm run test:coverage
 #### synch-status
 - **index (handler)** – parses the `body` (JSON string or object), 400 on invalid JSON body; payload validation (required fields `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` among the 4 supported, `timestamp` ISO 8601) with 400 and error details; `eventType` → `djc_sync_status` mapping; **UPDATE-only** on `woc.comunication_asyncro_djc` (never INSERT) with `version` increment; 404 when the record does not exist (must be created first by another Lambda); 503 on Aurora connection error, 504 on query timeout, 500 on generic error; no token validation (security delegated to the IBM APIC gateway)
 - **config** – `getInstance()`/`reset()` singleton pattern, configuration structure (AWS/OAuth/APIC/Logging/Timeouts/API endpoints sections), environment resolution from env (`ENVIRONMENT`, default `dev`), `getByPath()` (nested paths, `null` when not found), log level handling
-- **validator** – payload and event validation rules (required fields, supported `eventType` values, ISO 8601 `timestamp`, min/max sizing, collecting all errors)
 
 #### dmlConfigSync
 - **index (syncMarket/syncDealer)** – parallel `getCompanyTypes`/`getCustomerTitles` calls with upsert into `woc.dml_configurations`; `getDmsSettings` call with upsert into `woc.dms_settings`

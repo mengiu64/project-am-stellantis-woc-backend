@@ -23,7 +23,6 @@
     "@aws-sdk/client-ssm": "^3.600.0",
     "pg": "^8.11.3",
     "winston": "^3.13.1",
-    "joi": "^17.13.3",
     "uuid": "^9.0.1"
   },
   "devDependencies": {
@@ -61,12 +60,6 @@
         "branches": 70,
         "functions": 85,
         "lines": 80
-      },
-      "./validator.js": {
-        "statements": 100,
-        "branches": 100,
-        "functions": 100,
-        "lines": 100
       }
     }
   },

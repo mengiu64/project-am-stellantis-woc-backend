@@ -18,7 +18,6 @@
 
 const { v4: uuidv4 } = require('uuid');
 const Logger = require('./logger');
-const Validator = require('./validator');
 const configModule = require('./config');
 const { getPool } = require('./shared/dbClient');
 
@@ -67,8 +66,7 @@ exports.handler = async (event, context) => {
         return exports._buildResponse(400, {
           statusCode: 400,
           success: false,
-          error: 'Bad Request',
-          message: 'Body non è valido JSON'
+          message: 'Event not updated'
         }, logger.getTraceId());
       }
     }
@@ -89,9 +87,7 @@ exports.handler = async (event, context) => {
       return exports._buildResponse(400, {
         statusCode: 400,
         success: false,
-        error: 'Bad Request',
-        message: 'Validazione payload fallita',
-        details: validation.errors
+        message: 'Event not updated'
       }, logger.getTraceId());
     }
 
@@ -122,8 +118,7 @@ exports.handler = async (event, context) => {
       return exports._buildResponse(503, {
         statusCode: 503,
         success: false,
-        error: 'Service Unavailable',
-        message: 'Impossibile connettersi al database Aurora',
+        message: 'Event not updated'
       }, logger.getTraceId());
     }
 
@@ -244,11 +239,9 @@ exports.handler = async (event, context) => {
         timestamp
       });
 
-      // 🔴 MODIFICATO: Struttura risposta allineata con swagger
-      const responseBody = {
-        statusCode: 200,
-        success: true,
-        message: 'Evento aggiornato con successo in Aurora',
+      // Dettaglio evento aggiornato: non più esposto nella response (schema swagger SuccessResponse),
+      // ma tracciato comunque nei log per debugging/audit.
+      logger.info('📤 Dettaglio evento aggiornato in Aurora:', JSON.stringify({
         response: {
           responseId: updatedRecord.response_id,
           jobCardId,
@@ -256,6 +249,13 @@ exports.handler = async (event, context) => {
           status: updatedRecord.djc_sync_status,
           timestamp
         }
+      }, null, 2));
+
+      // 🔴 MODIFICATO: Struttura risposta allineata con swagger (solo statusCode/success/message)
+      const responseBody = {
+        statusCode: 200,
+        success: true,
+        message: 'Event successfully updated'
       };
       
       // 🔴 NUOVO: Log della risposta inviata a DJC
@@ -286,13 +286,7 @@ exports.handler = async (event, context) => {
         const errorResponse = {
           statusCode: 404,
           success: false,
-          error: 'Not Found',
-          message: 'Record non trovato in woc.comunication_asyncro_djc',
-          details: {
-            jobCardId,
-            timestamp,
-            suggestion: 'Il record deve essere creato da un\'altra lambda prima di essere aggiornato'
-          }
+          message: 'Event not updated'
         };
         
         // 🔴 NUOVO: Log della risposta di errore
@@ -322,8 +316,7 @@ exports.handler = async (event, context) => {
         return exports._buildResponse(503, {
           statusCode: 503,
           success: false,
-          error: 'Service Unavailable',
-          message: 'Errore connessione al database Aurora',
+          message: 'Event not updated'
         }, logger.getTraceId());
       } 
       // Gestione errore timeout query
@@ -337,8 +330,7 @@ exports.handler = async (event, context) => {
         return exports._buildResponse(504, {
           statusCode: 504,
           success: false,
-          error: 'Gateway Timeout',
-          message: 'Query database ha superato il timeout',
+          message: 'Event not updated'
         }, logger.getTraceId());
       }
       // Errore generico durante UPDATE
@@ -352,8 +344,7 @@ exports.handler = async (event, context) => {
         return exports._buildResponse(500, {
           statusCode: 500,
           success: false,
-          error: 'Internal Server Error',
-          message: 'Errore durante aggiornamento in database',
+          message: 'Event not updated'
         }, logger.getTraceId());
       }
     }
@@ -362,8 +353,7 @@ exports.handler = async (event, context) => {
     return exports._buildResponse(500, {
       statusCode: 500,
       success: false,
-      error: 'Internal Server Error',
-      message: 'Errore non gestito',
+      message: 'Event not updated'
     }, logger.getTraceId());
   }
 };
