@@ -625,6 +625,36 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
     expect(area.Sender.Market).toBeUndefined();
   });
 
+  test('passes pairedOicCode through to getPhysicalSiteAndSincom when provided', async () => {
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN' });
+
+    const area = await buildApplicationArea({
+      dealerNumberId: '0710740', market: '1000', brand: 'FT', pairedOicCode: '00000357',
+    });
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+      mainSincom: '0710740',
+      market: '1000',
+      brand: 'FT',
+      pairedOicCode: '00000357',
+    });
+    expect(area.Sender.pairedOicCode).toBeUndefined();
+    expect(area.Sender.PairedOicCode).toBeUndefined();
+  });
+
+  test('omits pairedOicCode from the getPhysicalSiteAndSincom call when not provided (backward compatible)', async () => {
+    getPhysicalSiteAndSincom.mockResolvedValue({ physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN' });
+
+    await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
+
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+      mainSincom: '0710740',
+      market: '1000',
+      brand: 'FT',
+      pairedOicCode: undefined,
+    });
+  });
+
   test('falls back to existing values when the DB lookup fails, without throwing', async () => {
     getPhysicalSiteAndSincom.mockRejectedValue(new Error('DB down'));
 

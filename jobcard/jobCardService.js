@@ -548,7 +548,8 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * getCartPriceAndAvailability) — il Sender ricade sui default statici di
  * dms/config.js per quei soli campi.
  *
- * @param {object} jobCardDetail - usato solo per derivare il VIN (vehicleInfo.identification.vin)
+ * @param {object} jobCardDetail - usato per derivare il VIN (vehicleInfo.identification.vin)
+ *                     e il pairedOicCode (roInfo.pairedOicCode, se presente)
  * @param {object} [sessionContext] - dati già disponibili al chiamante (solo username è garantito)
  * @param {string} [sessionContext.username]         - da event.requestContext.authorizer.sub — usato sia come serviceId sia come chiave per la risoluzione automatica via session
  * @param {string} [sessionContext.mainSincom]       - override esplicito (opzionale); se assente, risolto da session.sincom
@@ -561,6 +562,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
 async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   const { username } = sessionContext;
   const vin = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
+  const pairedOicCode = jobCardDetail?.roInfo?.pairedOicCode ?? null;
 
   const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
   const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
@@ -575,6 +577,13 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   if (dealerCountryCode) sender.dealerCountryCode = dealerCountryCode;
   if (market) sender.market = market;
   if (brand) sender.brand = brand;
+  // Chiave di lookup aggiuntiva (woc.ang_snowflakes.cd_paired_oic_code) per
+  // disambiguare il physicalSiteId/dealerNumberIdSource quando più righe
+  // corrisponderebbero a mainSincom+market+brand — v. dms/dmsService.js::
+  // buildApplicationArea e dbManager/AnagSnowflakesRepository.js::
+  // getPhysicalSiteAndSincom. Solo jobcard la conosce (dalla jobCardDetails
+  // già recuperata/cache), quindi resta assente per pkManager/pkFavorite.
+  if (pairedOicCode) sender.pairedOicCode = pairedOicCode;
 
   return sender;
 }

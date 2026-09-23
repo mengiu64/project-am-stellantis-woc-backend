@@ -112,8 +112,17 @@ async function getCountryIsoCode(pool, { market }) {
  * prima trasformato nel corrispondente codice ARCAD tramite
  * resolveArcadBrandCode() — vedi sopra.
  *
+ * pairedOicCode (opzionale, cd_paired_oic_code) restringe ulteriormente il
+ * match quando il chiamante lo fornisce — tipicamente jobcard/jobCardService.js
+ * ::buildDmsSender, a partire da jobCardDetail.roInfo.pairedOicCode di una
+ * jobCardDetails già disponibile — per disambiguare tra più righe altrimenti
+ * corrispondenti a mainSincom+market+brand ma relative a siti fisici/OIC
+ * diversi. Se assente, il comportamento resta invariato (nessun filtro su
+ * cd_paired_oic_code) — retrocompatibile con i chiamanti che non lo
+ * conoscono (pkManager, pkFavorite, dms invocato direttamente).
+ *
  * @param {import('pg').Pool} pool
- * @param {{ mainSincom: string, market: string, brand: string }} params
+ * @param {{ mainSincom: string, market: string, brand: string, pairedOicCode?: string }} params
  * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null, dealerArcadCode: string|null, arcadBrand: string|null }>}
  *          tutti null se non e' stata trovata alcuna riga corrispondente
  *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD).
@@ -123,7 +132,9 @@ async function getCountryIsoCode(pool, { market }) {
  *          tra dealerNumberIdSource (CD_SINCOM_CODE, owner XF) e dealerArcadCode
  *          (CD_DEALER_ARCAD_CODE, owner XP) per il campo DealerNumberIDSource del Sender.
  */
-async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}) {
+async function getPhysicalSiteAndSincom(pool, {
+  mainSincom, market, brand, pairedOicCode,
+} = {}) {
   if (!mainSincom) throw new Error('"mainSincom" is required');
   if (!market) throw new Error('"market" is required');
   if (!brand) throw new Error('"brand" is required');
@@ -133,15 +144,22 @@ async function getPhysicalSiteAndSincom(pool, { mainSincom, market, brand } = {}
     return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand: null };
   }
 
+  const queryParams = [mainSincom, market, arcadBrand];
+  let pairedOicClause = '';
+  if (pairedOicCode) {
+    queryParams.push(pairedOicCode);
+    pairedOicClause = `\n        AND s.cd_paired_oic_code = $${queryParams.length}`;
+  }
+
   const { rows } = await pool.query(
     `SELECT s.cd_paired_oic_code, s.cd_sincom_code, s.cd_dealer_arcad_code
        FROM woc.ang_snowflakes s
       WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
         AND s.cd_contract_brand_arcad_code = $3
-        AND s.fl_is_deleted_flag = 0
+        AND s.fl_is_deleted_flag = 0${pairedOicClause}
       LIMIT 1`,
-    [mainSincom, market, arcadBrand],
+    queryParams,
   );
 
   if (rows.length === 0) {

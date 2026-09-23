@@ -257,6 +257,19 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 > statico di `config.sender` se non sovrascritto) — **invertiti rispetto ai
 > nomi interni** usati per la risoluzione DB/XF-XP sopra.
 >
+> **`pairedOicCode` (filtro opzionale del lookup su `cd_paired_oic_code`)**:
+> quando il `sender` passato a `postDmsInquiry` include anche `pairedOicCode`,
+> la query di `getPhysicalSiteAndSincom` aggiunge la condizione
+> `AND cd_paired_oic_code = pairedOicCode`, per disambiguare tra più righe
+> altrimenti corrispondenti a `mainSincom`+`market`+`brand` ma relative a siti
+> fisici/OIC diversi. È un campo **solo di lookup** (come `market`): non è mai
+> inoltrato al DML. Ad oggi solo `jobcard/jobCardService.js::buildDmsSender` lo
+> valorizza, a partire da `jobCardDetail.roInfo.pairedOicCode` di una
+> jobCardDetails già disponibile (recuperata via DGT o dalla cache DynamoDB
+> `TmpCacheTable`, v. sezione `jobcard`); `pkManager`/`pkFavorite` non lo
+> conoscono e continuano a funzionare esattamente come prima (nessun filtro
+> aggiuntivo sulla query) — retrocompatibile.
+>
 > **Risoluzione automatica del `dealerNumberId`/`market`/`brand`/lingua/country
 > (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
 > `dealerCountryCode` e `brand` **non devono mai essere passati dal frontend**

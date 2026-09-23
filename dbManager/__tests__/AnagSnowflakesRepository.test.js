@@ -140,6 +140,39 @@ describe('AnagSnowflakesRepository', () => {
 
       expect(result).toEqual({ physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand: 'FT' });
     });
+
+    it('adds an AND on cd_paired_oic_code as a 4th param when pairedOicCode is provided', async () => {
+      const pool = makePool(async () => ({
+        rows: [{ cd_paired_oic_code: 'SITE001', cd_sincom_code: '0062230', cd_dealer_arcad_code: 'ARC001' }],
+      }));
+
+      const result = await getPhysicalSiteAndSincom(pool, {
+        mainSincom: '0073741', market: '1000', brand: 'ft', pairedOicCode: '00000357',
+      });
+
+      expect(result).toEqual({ physicalSiteId: 'SITE001', dealerNumberIdSource: '0062230', dealerArcadCode: 'ARC001', arcadBrand: 'FT' });
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('AND s.cd_paired_oic_code = $4'),
+        ['0073741', '1000', 'FT', '00000357'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND s.fl_is_deleted_flag = 0'));
+    });
+
+    it('does not add the cd_paired_oic_code condition when pairedOicCode is not provided (backward compatible)', async () => {
+      const pool = makePool(async () => ({
+        rows: [{ cd_paired_oic_code: 'SITE001', cd_sincom_code: '0062230', cd_dealer_arcad_code: 'ARC001' }],
+      }));
+
+      await getPhysicalSiteAndSincom(pool, {
+        mainSincom: '0073741', market: '1000', brand: 'ft',
+      });
+
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.not.stringContaining('cd_paired_oic_code = $4'),
+        ['0073741', '1000', 'FT'],
+      );
+    });
   });
 
   describe('getPhysicalSiteAndPdvId', () => {

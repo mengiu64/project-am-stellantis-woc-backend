@@ -249,6 +249,19 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > `config.sender` default if not overridden) — **swapped compared to the
 > internal names** used for the DB/XF-XP resolution above.
 >
+> **`pairedOicCode` (optional filter on `cd_paired_oic_code`)**: when the
+> `sender` passed to `postDmsInquiry` also includes `pairedOicCode`, the
+> `getPhysicalSiteAndSincom` query adds the condition
+> `AND cd_paired_oic_code = pairedOicCode`, to disambiguate between multiple
+> rows that would otherwise match on `mainSincom`+`market`+`brand` but belong
+> to different physical sites/OICs. It's a **lookup-only** field (like
+> `market`): never forwarded to the DML. Today only
+> `jobcard/jobCardService.js::buildDmsSender` supplies it, from
+> `jobCardDetail.roInfo.pairedOicCode` of an already-available jobCardDetails
+> (fetched via DGT or from the shared DynamoDB cache `TmpCacheTable`, see the
+> `jobcard` section); `pkManager`/`pkFavorite` don't know it and keep working
+> exactly as before (no additional filter on the query) — backward compatible.
+>
 > **Automatic resolution of `dealerNumberId`/`market`/`brand`/language/country
 > (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
 > `dealerCountryCode` and `brand` **must never be supplied by the frontend**

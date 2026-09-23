@@ -953,6 +953,36 @@ describe('jobCardService', () => {
       });
     });
 
+    test('includes pairedOicCode from jobCardDetail.roInfo.pairedOicCode (pass-through key for dms centralized lookup)', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { pairedOicCode: '00000357' },
+      };
+      resolveDynamicSenderFields.mockResolvedValue({ mainSincom: '0062219', market: 'FR', brand: 'FT' });
+
+      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
+
+      expect(result).toEqual({
+        dealerNumberId: '0062219',
+        market: 'FR',
+        brand: 'FT',
+        pairedOicCode: '00000357',
+      });
+    });
+
+    test('omits pairedOicCode when jobCardDetail.roInfo.pairedOicCode is not available', async () => {
+      const jobCardDetail = { vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } }, roInfo: {} };
+      resolveDynamicSenderFields.mockResolvedValue({ mainSincom: '0062219', market: 'FR', brand: 'FT' });
+
+      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
+
+      expect(result).toEqual({
+        dealerNumberId: '0062219',
+        market: 'FR',
+        brand: 'FT',
+      });
+    });
+
     test('omits market/brand when not available', async () => {
       const result = await buildDmsSender({}, { mainSincom: '0062219' });
 

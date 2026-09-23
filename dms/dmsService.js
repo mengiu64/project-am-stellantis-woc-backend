@@ -364,8 +364,15 @@ async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
  *                     sovrascrivere per questa richiesta (stessi nomi campo:
  *                     componentId, dealerNumberId, dealerNumberIdSource,
  *                     dealerCountryCode, languageCode, physicalSiteId,
- *                     serviceId, currencyId, brand), più `market` (solo chiave
- *                     di lookup woc.ang_snowflakes, mai inviato al DML).
+ *                     serviceId, currencyId, brand), più `market` e
+ *                     `pairedOicCode` (solo chiavi di lookup woc.ang_snowflakes,
+ *                     mai inviate al DML). pairedOicCode è opzionale: se
+ *                     fornito (tipicamente da jobCardDetail.roInfo.pairedOicCode
+ *                     - v. jobcard/jobCardService.js::buildDmsSender) restringe
+ *                     ulteriormente il lookup su cd_paired_oic_code; se assente
+ *                     il lookup si comporta come prima (nessun filtro
+ *                     aggiuntivo) — retrocompatibile per i chiamanti che non
+ *                     lo conoscono (pkManager, pkFavorite).
  *                     Valori undefined/null vengono ignorati (resta il
  *                     default di config.sender).
  * @returns {Promise<object>} ApplicationArea
@@ -383,7 +390,9 @@ async function buildApplicationArea(senderOverrides = {}) {
   // stesso criterio già applicato dalle implementazioni precedenti in
   // jobcard/pkManager (dove il controllo era sui dati locali, non su un
   // eventuale default env-based).
-  const { dealerNumberId, market, brand } = senderOverrides || {};
+  const {
+    dealerNumberId, market, brand, pairedOicCode,
+  } = senderOverrides || {};
   if (dealerNumberId && market && brand) {
     try {
       const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
@@ -395,6 +404,7 @@ async function buildApplicationArea(senderOverrides = {}) {
         mainSincom: dealerNumberId,
         market,
         brand,
+        pairedOicCode,
       });
       if (physicalSiteId) s.physicalSiteId = physicalSiteId;
       if (dealerNumberIdSource) s.dealerNumberIdSource = dealerNumberIdSource;
