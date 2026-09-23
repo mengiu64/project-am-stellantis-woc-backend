@@ -353,6 +353,13 @@ async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
  * qualunque errore (S3 non raggiungibile, brand assente dal registro, ...)
  * lascia invariato il valore già risolto (CD_SINCOM_CODE).
  *
+ * NB: nell'oggetto Sender restituito, DealerNumberID/DealerNumberIDSource sono
+ * INVERTITI rispetto ai nomi interni usati sopra: Sender.DealerNumberID riceve
+ * il valore risolto da woc.ang_snowflakes (dealerNumberIdSource — CD_SINCOM_CODE
+ * o, per owner XP, CD_DEALER_ARCAD_CODE), Sender.DealerNumberIDSource riceve il
+ * mainSincom passato dal chiamante (dealerNumberId, o il default statico di
+ * config.sender) — v. mapping finale del Sender più sotto.
+ *
  * @param {object} [senderOverrides] - Sottoinsieme di config.sender da
  *                     sovrascrivere per questa richiesta (stessi nomi campo:
  *                     componentId, dealerNumberId, dealerNumberIdSource,
@@ -410,8 +417,12 @@ async function buildApplicationArea(senderOverrides = {}) {
   return {
     Sender: {
       ComponentID: s.componentId,
-      DealerNumberID: s.dealerNumberId,
-      DealerNumberIDSource: s.dealerNumberIdSource,
+      // Invertiti rispetto ai nomi interni "dealerNumberId"/"dealerNumberIdSource":
+      // DealerNumberID riceve il codice risolto da woc.ang_snowflakes (CD_SINCOM_CODE,
+      // o CD_DEALER_ARCAD_CODE per owner XP), DealerNumberIDSource riceve il
+      // mainSincom passato dal chiamante (o il default statico di config.sender).
+      DealerNumberID: s.dealerNumberIdSource,
+      DealerNumberIDSource: s.dealerNumberId,
       DealerCountryCode: s.dealerCountryCode,
       LanguageCode: s.languageCode,
       PhysicalSiteID: s.physicalSiteId,

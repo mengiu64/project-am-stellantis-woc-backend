@@ -241,6 +241,14 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > resolved (`CD_SINCOM_CODE`) — just a log warning, never an exception that
 > blocks the call to the DML gateway.
 >
+> **`Sender.DealerNumberID`/`Sender.DealerNumberIDSource` swapped**: in the
+> final Sender mapping, `Sender.DealerNumberID` receives the value resolved
+> above (internal `dealerNumberIdSource`: `CD_SINCOM_CODE` or, for owner `XP`,
+> `CD_DEALER_ARCAD_CODE`), while `Sender.DealerNumberIDSource` receives the
+> caller-supplied `mainSincom` (internal `dealerNumberId`, or the static
+> `config.sender` default if not overridden) — **swapped compared to the
+> internal names** used for the DB/XF-XP resolution above.
+>
 > **Automatic resolution of `dealerNumberId`/`market`/`brand`/language/country
 > (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
 > `dealerCountryCode` and `brand` **must never be supplied by the frontend**

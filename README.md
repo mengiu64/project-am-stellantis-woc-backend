@@ -249,6 +249,14 @@ Stesse credenziali/autenticazione di `settings` (bearer token PingFederate, `X-I
 > (`CD_SINCOM_CODE`) — solo un warning in log, mai un'eccezione che blocchi la
 > chiamata al gateway DML.
 >
+> **`Sender.DealerNumberID`/`Sender.DealerNumberIDSource` invertiti**: nel
+> mapping finale del Sender, `Sender.DealerNumberID` riceve il valore risolto
+> sopra (`dealerNumberIdSource` interno: `CD_SINCOM_CODE` o, per owner `XP`,
+> `CD_DEALER_ARCAD_CODE`), mentre `Sender.DealerNumberIDSource` riceve il
+> `mainSincom` passato dal chiamante (`dealerNumberId` interno, o il default
+> statico di `config.sender` se non sovrascritto) — **invertiti rispetto ai
+> nomi interni** usati per la risoluzione DB/XF-XP sopra.
+>
 > **Risoluzione automatica del `dealerNumberId`/`market`/`brand`/lingua/country
 > (`resolveDynamicSenderFields`)**: `mainSincom`, `market`, `language`,
 > `dealerCountryCode` e `brand` **non devono mai essere passati dal frontend**

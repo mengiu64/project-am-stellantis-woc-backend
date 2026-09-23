@@ -609,7 +609,11 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
       brand: 'FT',
     });
     expect(area.Sender.PhysicalSiteID).toBe('SITE-DYN');
-    expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+    // DealerNumberID/DealerNumberIDSource sono invertiti rispetto ai nomi interni:
+    // DealerNumberID riceve il valore risolto da woc.ang_snowflakes, DealerNumberIDSource
+    // il mainSincom passato dal chiamante.
+    expect(area.Sender.DealerNumberID).toBe('SRC-DYN');
+    expect(area.Sender.DealerNumberIDSource).toBe('0710740');
   });
 
   test('does not send `market` on the wire as a Sender field', async () => {
@@ -640,8 +644,10 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
   });
 
   // ── DealerNumberIDSource: CD_SINCOM_CODE (owner XF, default) vs CD_DEALER_ARCAD_CODE (owner XP) ──
+  // Nota: il valore risolto qui finisce nel campo Sender.DealerNumberID (invertito
+  // rispetto al nome interno "dealerNumberIdSource" — v. buildApplicationArea).
   describe('DealerNumberIDSource per brand owner (config/brandowner.json)', () => {
-    test('owner XF keeps the CD_SINCOM_CODE-derived dealerNumberIdSource (default behaviour)', async () => {
+    test('owner XF keeps the CD_SINCOM_CODE-derived value (default behaviour)', async () => {
       getPhysicalSiteAndSincom.mockResolvedValue({
         physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: 'ARC-DYN', arcadBrand: 'FT',
       });
@@ -649,10 +655,11 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
 
       const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
 
-      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+      expect(area.Sender.DealerNumberID).toBe('SRC-DYN');
+      expect(area.Sender.DealerNumberIDSource).toBe('0710740');
     });
 
-    test('owner XP overrides dealerNumberIdSource with CD_DEALER_ARCAD_CODE', async () => {
+    test('owner XP overrides the value with CD_DEALER_ARCAD_CODE', async () => {
       getPhysicalSiteAndSincom.mockResolvedValue({
         physicalSiteId: 'SITE-DYN', dealerNumberIdSource: 'SRC-DYN', dealerArcadCode: 'ARC-DYN', arcadBrand: 'AC',
       });
@@ -660,7 +667,8 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
 
       const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'AC' });
 
-      expect(area.Sender.DealerNumberIDSource).toBe('ARC-DYN');
+      expect(area.Sender.DealerNumberID).toBe('ARC-DYN');
+      expect(area.Sender.DealerNumberIDSource).toBe('0710740');
     });
 
     test('brand not found in brandowner.json falls back to the CD_SINCOM_CODE-derived value', async () => {
@@ -671,7 +679,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
 
       const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'ZZ' });
 
-      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+      expect(area.Sender.DealerNumberID).toBe('SRC-DYN');
     });
 
     test('brandowner.json lookup failure falls back to the CD_SINCOM_CODE-derived value, without throwing', async () => {
@@ -682,7 +690,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
 
       const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'AC' });
 
-      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+      expect(area.Sender.DealerNumberID).toBe('SRC-DYN');
       expect(console.warn).toHaveBeenCalled();
     });
 
@@ -694,7 +702,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
       const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'AC' });
 
       expect(mockGetBrandOwners).not.toHaveBeenCalled();
-      expect(area.Sender.DealerNumberIDSource).toBe('SRC-DYN');
+      expect(area.Sender.DealerNumberID).toBe('SRC-DYN');
     });
   });
 
