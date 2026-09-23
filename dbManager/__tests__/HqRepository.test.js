@@ -161,7 +161,7 @@ describe('HqRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('returns the rows from the query', async () => {
+    it('filters on market = $2 (in AND with type/deleted=0) when market is provided', async () => {
       const rows = [
         { id: 1, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria', visible: 1, deleted: 0 },
       ];
@@ -172,11 +172,31 @@ describe('HqRepository', () => {
       expect(result).toBe(rows);
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('FROM woc.hq_vehicle_inspection t'),
-        ['1000', 'EXTERIOR'],
+        expect.stringContaining('FROM woc.hq_vehicle_inspection'),
+        ['EXTERIOR', '1000'],
       );
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('PARTITION BY descr, type'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ORDER BY id'));
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('WHERE type = $1'));
+      expect(sql).toEqual(expect.stringContaining('AND deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('AND market = $2'));
+      expect(sql).not.toEqual(expect.stringContaining('market IS NULL'));
+      expect(sql).toEqual(expect.stringContaining('ORDER BY id'));
+    });
+
+    it.each([
+      ['undefined', undefined],
+      ['null', null],
+      ['empty string', ''],
+    ])('filters on market IS NULL OR market = \'\' when market is %s', async (_label, marketValue) => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await getVehicleInspection(pool, marketValue, 'EXTERIOR');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining("(market IS NULL OR market = '')"),
+        ['EXTERIOR'],
+      );
     });
 
     it('returns an empty array when no rows are found', async () => {
