@@ -21,12 +21,12 @@
  * (market, oic) gia' presente.
  *
  * getVehicleInspection(market, type) legge da woc.hq_vehicle_inspection le
- * voci di controllo veicolo non cancellate per il "type" richiesto, con
- * priorita' alla riga specifica del mercato ("market") su quella comune
- * (market NULL): per ogni coppia (descr, type) viene tenuta una sola riga
- * (ROW_NUMBER() PARTITION BY descr, type) scegliendo, in ordine, il match sul
- * mercato, poi la riga condivisa (market NULL), scartando eventuali righe di
- * altri mercati.
+ * voci di controllo veicolo non cancellate (deleted = 0) per il "type"
+ * richiesto: se "market" e' valorizzato (non undefined/null/stringa vuota)
+ * vengono selezionate SOLO le righe di quel mercato (market = market); se
+ * "market" e' assente/vuoto vengono selezionate SOLO le righe comuni, senza
+ * mercato (market IS NULL OR market = ''). Nessun fallback/merge tra le due
+ * casistiche: sono due insiemi di risultati mutuamente esclusivi.
  *
  * setVehicleInspectionVisible(id, value) e
  * deletetVehicleInspection(id, value) aggiornano rispettivamente i
@@ -164,12 +164,19 @@ async function setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableS
 
 /**
  * @param {import('pg').Pool} pool
- * @param {string} market
+ * @param {string} [market] - se valorizzato, filtra sulle sole righe di questo
+ *                            mercato (market = market); se assente/vuoto,
+ *                            filtra sulle sole righe comuni senza mercato
+ *                            (market IS NULL OR market = '')
  * @param {string} type
  * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
  */
 async function getVehicleInspection(pool, market, type) {
   if (!type) throw new Error('"type" is required');
+
+  const hasMarket = market !== undefined && market !== null && market !== '';
+  const marketCondition = hasMarket ? 'market = $2' : "(market IS NULL OR market = '')";
+  const params = hasMarket ? [type, market] : [type];
 
   const { rows } = await pool.query(
     `SELECT id,
@@ -178,24 +185,12 @@ async function getVehicleInspection(pool, market, type) {
             descr,
             visible,
             deleted
-       FROM (
-         SELECT t.*,
-                ROW_NUMBER() OVER (
-                    PARTITION BY descr, type
-                    ORDER BY CASE
-                               WHEN market = $1 THEN 1
-                               WHEN market IS NULL THEN 2
-                               ELSE 3
-                             END
-                ) rn
-           FROM woc.hq_vehicle_inspection t
-          WHERE t.type = $2
-            AND t.deleted = 0
-            AND (t.market = $1 OR t.market IS NULL)
-       ) x
-      WHERE rn = 1
+       FROM woc.hq_vehicle_inspection
+      WHERE type = $1
+        AND deleted = 0
+        AND ${marketCondition}
       ORDER BY id`,
-    [market, type],
+    params,
   );
 
   return rows;
