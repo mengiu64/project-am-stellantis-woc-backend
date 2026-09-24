@@ -586,9 +586,13 @@ async function getPackageList(pool, market, oic) {
                           , pk.pricewithvat
                           , pk.visible AS pkvisible
                        FROM woc.hq_pk_market mk
-                       LEFT JOIN woc.hq_pk_oic oi ON mk.market = oi.market AND oi.deleted = 0
-                       LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-                       LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
+                         LEFT JOIN woc.hq_pk_oic oi ON mk.market = oi.market AND oi.deleted = 0
+                         LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market
+                         AND dom.oic IS NOT DISTINCT FROM oi.oic
+                         AND dom.deleted = 0
+                         LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market
+                         AND pk.oic IS NOT DISTINCT FROM oi.oic
+                         AND pk.iddomain = dom.iddomain
                       WHERE mk.market = $1`;
 
   const { rows } = oic
