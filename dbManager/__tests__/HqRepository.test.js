@@ -659,7 +659,7 @@ describe('HqRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('filters on oi.oic = $2 and maps the joined rows when oic is provided', async () => {
+    it('joins on hq_pk_oic and filters dom/pk on oic = $2 when oic is provided', async () => {
       const pool = makePool(async () => ({
         rows: [
           {
@@ -695,28 +695,27 @@ describe('HqRepository', () => {
       ]);
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('AND oi.oic = $2'),
+        expect.stringContaining('JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0'),
         ['1000', '00006821'],
       );
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('FROM woc.hq_pk_market mk'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_oic oi'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('AND dom.deleted = 0'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('dom.visible AS domvisible'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('pk.visible AS pkvisible'));
-      expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('pk.oic IS NULL'));
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('FROM woc.hq_pk_market mk'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain'));
+      expect(sql).toEqual(expect.stringContaining('dom.visible AS domvisible'));
+      expect(sql).toEqual(expect.stringContaining('pk.visible AS pkvisible'));
+      expect(sql).not.toEqual(expect.stringContaining('IS NULL'));
     });
 
-    it('filters on pk.oic IS NULL (market-level configuration) when oic is null/undefined', async () => {
+    it('does not join hq_pk_oic and filters dom/pk on oic IS NULL (market-level configuration) when oic is null/undefined', async () => {
       const pool = makePool(async () => ({
         rows: [
           {
             market: '1000',
             oic: null,
-            iddomain: null,
-            domaindescr: null,
-            domvisible: null,
+            iddomain: 9,
+            domaindescr: 'test1',
+            domvisible: 1,
             idpackage: null,
             packagedescr: null,
             timeop: null,
@@ -730,15 +729,18 @@ describe('HqRepository', () => {
 
       expect(result).toEqual([
         {
-          market: '1000', oic: null, iddomain: null, domainDescr: null, domVisible: null, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null, pkVisible: null,
+          market: '1000', oic: null, iddomain: 9, domainDescr: 'test1', domVisible: 1, idpackage: null, packageDescr: null, timeop: null, pricewithvat: null, pkVisible: null,
         },
       ]);
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('AND pk.oic IS NULL'),
+        expect.stringContaining('SELECT mk.market, NULL::varchar AS oic'),
         ['1000'],
       );
-      expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('oi.oic = $2'));
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain'));
+      expect(sql).not.toEqual(expect.stringContaining('hq_pk_oic'));
     });
 
     it('returns an empty array when no rows are found', async () => {
