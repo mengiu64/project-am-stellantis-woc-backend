@@ -736,7 +736,10 @@ function resolveDmlPartSource(partsItem) {
  * sconto DMS (dmsDiscountPercentage) di ogni part/labor (v.
  * reconcileDiscountPercentages). I prezzi di ciascun part/labor vengono poi
  * ricalcolati (v. computePartPriceFields/computeLaborPriceFields) usando la
- * somma dei due sconti.
+ * somma dei due sconti — ma solo se itemQuantity/unitaryPriceExclVat (part) o
+ * laborDuration/UnitaryTimeAmount (labor) sono entrambi definiti e diversi da
+ * zero, per evitare di sovrascrivere i campi prezzo con zeri quando manca
+ * quantita' o prezzo/tariffa unitaria (v. computePartPriceFields).
  *
  * @param {object} jobCardDetail - jobCardDetail (jobs[].partInfo[]/laborInfo[]),
  *                                 modificato in place
@@ -930,13 +933,15 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
 
       reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
 
-      Object.assign(part, computePartPriceFields(
-        part.itemQuantity,
-        part.unitaryPriceExclVat,
-        part.appDiscountPercentage,
-        part.dmsDiscountPercentage,
-        part.vatPercentage,
-      ));
+      if (part.itemQuantity && part.unitaryPriceExclVat) {
+        Object.assign(part, computePartPriceFields(
+          part.itemQuantity,
+          part.unitaryPriceExclVat,
+          part.appDiscountPercentage,
+          part.dmsDiscountPercentage,
+          part.vatPercentage,
+        ));
+      }
     }
 
     for (const labor of job?.laborInfo ?? []) {
@@ -947,13 +952,15 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
 
       reconcileDiscountPercentages(labor, wlDiscount, laborItem.DiscountPercentage);
 
-      Object.assign(labor, computeLaborPriceFields(
-        labor.laborDuration,
-        laborItem.UnitaryTimeAmount,
-        labor.appDiscountPercentage,
-        labor.dmsDiscountPercentage,
-        labor.vatPercentage,
-      ));
+      if (labor.laborDuration && laborItem.UnitaryTimeAmount) {
+        Object.assign(labor, computeLaborPriceFields(
+          labor.laborDuration,
+          laborItem.UnitaryTimeAmount,
+          labor.appDiscountPercentage,
+          labor.dmsDiscountPercentage,
+          labor.vatPercentage,
+        ));
+      }
     }
   }
 
