@@ -1438,7 +1438,7 @@ describe('jobCardService', () => {
       expect(labor.discountInAmountOnPriceWithVat).toBeCloseTo(12.2, 5); // 122 - 109.8
     });
 
-    test('leaves partInfo/laborInfo untouched when no matching PartNumber/LaborOperationID is found', () => {
+    test('sets part.dmsunknown=1 and leaves partInfo/laborInfo otherwise untouched when no matching PartNumber/LaborOperationID is found', () => {
       const jobCardDetail = {
         jobs: [
           {
@@ -1450,8 +1450,25 @@ describe('jobCardService', () => {
 
       applyDataFromDml(jobCardDetail, { WorkLines: [] });
 
-      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual({ partNumber: 'UNMATCHED', originalPriceExclVat: 1 });
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual({ partNumber: 'UNMATCHED', originalPriceExclVat: 1, dmsunknown: 1 });
       expect(jobCardDetail.jobs[0].laborInfo[0]).toEqual({ laborOperationCode: 'UNMATCHED', laborDuration: 1 });
+    });
+
+    test('sets part.dmsunknown=0 when a matching PartNumber is found', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1 }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsunknown).toBe(0);
     });
 
     test('is a no-op (returns jobCardDetail unchanged) when jobs is not an array', () => {

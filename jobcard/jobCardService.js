@@ -725,6 +725,10 @@ function resolveDmlPartSource(partsItem) {
  *  - partInfo[].partNumber       <-> WorkLines[].PartsItem[].PartNumber
  *  - laborInfo[].laborOperationCode <-> WorkLines[].LaborItems[].LaborOperationID
  *
+ * Ogni part riceve inoltre il flag part.dmsunknown: 1 se il partNumber non
+ * trova corrispondenza in nessun PartsItem della risposta DML (il ricambio
+ * non e' quindi arricchito con prezzo/sconto/disponibilita), 0 altrimenti.
+ *
  * Per i ricambi (partInfo), se il PartsItem corrispondente porta un
  * ReplacementItem (ricambio sostitutivo proposto dal DMS), i dati vengono
  * letti da li invece che dal PartsItem originale (v. resolveDmlPartSource).
@@ -924,7 +928,11 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
 
     for (const part of job?.partInfo ?? []) {
       const partsItem = partsItemsByPartNumber.get(part?.partNumber);
-      if (!partsItem) continue;
+      if (!partsItem) {
+        part.dmsunknown = 1;
+        continue;
+      }
+      part.dmsunknown = 0;
 
       const { source } = resolveDmlPartSource(partsItem);
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
