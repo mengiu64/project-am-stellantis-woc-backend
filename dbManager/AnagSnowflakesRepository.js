@@ -280,10 +280,15 @@ async function getBrandsByOics(pool, { oics } = {}) {
  *
  * NOTA: `gn_country_name` NON esiste su woc.ang_snowflakes (colonna presente
  * solo su woc.addr_snowflakes): la descrizione del mercato viene quindi
- * risolta con un LEFT JOIN su woc.addr_snowflakes (stesso cd_market_code,
- * fl_is_deleted_flag = 0), cosi' da restituire comunque tutti i mercati noti
- * ad ang_snowflakes anche quando addr_snowflakes non ha (ancora) righe per
- * quel mercato (description: null in quel caso, mai un errore).
+ * risolta con una LATERAL JOIN su woc.addr_snowflakes (stesso cd_market_code),
+ * che preferisce una riga non cancellata logicamente (fl_is_deleted_flag = 0)
+ * ma ricade su una riga cancellata (fl_is_deleted_flag = 1, la piu' recente
+ * per dt_ingestion_timestamp) quando per quel mercato non esiste ancora
+ * nessuna riga attiva in addr_snowflakes — evita description: null anche nei
+ * mercati la cui unica estrazione disponibile e' stata marcata come
+ * cancellata dalla sorgente Snowflake, cosi' da restituire comunque tutti i
+ * mercati noti ad ang_snowflakes (description: null solo se addr_snowflakes
+ * non ha proprio nessuna riga per quel mercato, mai un errore).
  *
  * @param {import('pg').Pool} pool
  * @param {{ markets?: string[] }} [params] - se valorizzato, filtra solo questi cd_market_code
@@ -295,8 +300,13 @@ async function getMarkets(pool, { markets } = {}) {
   const { rows } = await pool.query(
     `SELECT DISTINCT a.cd_market_code AS market, ad.gn_country_name AS description
        FROM woc.ang_snowflakes a
-       LEFT JOIN woc.addr_snowflakes ad
-         ON ad.cd_market_code = a.cd_market_code AND ad.fl_is_deleted_flag = 0
+       LEFT JOIN LATERAL (
+         SELECT ad2.gn_country_name
+           FROM woc.addr_snowflakes ad2
+          WHERE ad2.cd_market_code = a.cd_market_code
+          ORDER BY ad2.fl_is_deleted_flag ASC, ad2.dt_ingestion_timestamp DESC
+          LIMIT 1
+       ) ad ON true
       WHERE a.fl_is_deleted_flag = 0
         ${hasFilter ? 'AND a.cd_market_code = ANY($1::varchar[])' : ''}
       ORDER BY a.cd_market_code`,

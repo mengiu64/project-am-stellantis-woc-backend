@@ -319,8 +319,9 @@ describe('AnagSnowflakesRepository', () => {
       expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('FROM woc.ang_snowflakes'), []);
       const [sql] = pool.query.mock.calls[0];
       expect(sql).toEqual(expect.stringContaining('SELECT DISTINCT a.cd_market_code AS market, ad.gn_country_name AS description'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.addr_snowflakes ad'));
-      expect(sql).toEqual(expect.stringContaining('ON ad.cd_market_code = a.cd_market_code AND ad.fl_is_deleted_flag = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN LATERAL'));
+      expect(sql).toEqual(expect.stringContaining('WHERE ad2.cd_market_code = a.cd_market_code'));
+      expect(sql).toEqual(expect.stringContaining('ORDER BY ad2.fl_is_deleted_flag ASC, ad2.dt_ingestion_timestamp DESC'));
       expect(sql).toEqual(expect.stringContaining('WHERE a.fl_is_deleted_flag = 0'));
       expect(sql).not.toEqual(expect.stringContaining('cd_market_code = ANY'));
     });
