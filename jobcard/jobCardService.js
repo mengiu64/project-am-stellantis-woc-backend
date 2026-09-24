@@ -990,7 +990,10 @@ async function getDataFromDML(jobCardDetail, sessionContext) {
  * saveJobCardDetailsToTmp, arricchendolo già con getDataFromDML) e si
  * ritenta la lettura appena dopo; in tal caso getDataFromDML NON viene
  * richiamato una seconda volta qui sotto (evita una doppia chiamata al
- * gateway DML).
+ * gateway DML). Se anche la rilettura fallisce (es. DYNAMO_CACHE_TABLE_NAME
+ * non configurato, come in locale/CLI, o scrittura DynamoDB fallita/in
+ * ritardo), si usa direttamente il risultato appena calcolato da
+ * getJobCardDetails invece di sollevare un'eccezione.
  * @param {string|number} jobCardId  - usato per risolvere la cache key
  * @param {string} [bearerToken]     - ****** da PingFederate, usato solo per
  *                                     rigenerare l'item via getJobCardDetails
@@ -1020,12 +1023,13 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
     // scrive il risultato in cache: evitiamo quindi di richiamare
     // getDataFromDML una seconda volta qui sotto.
     const token = bearerToken ?? await getBearerToken();
-    await getJobCardDetails(token, jobCardId, sessionContext);
+    const regenerated = await getJobCardDetails(token, jobCardId, sessionContext);
     alreadyEnriched = true;
 
     body = await getCacheItem(cacheKey);
     if (!body) {
-      throw new Error(`[jobCard] impossibile leggere ${cacheKey} dalla cache dopo rigenerazione`);
+      console.warn(`[jobCard] ${cacheKey} non rileggibile dalla cache dopo rigenerazione: uso il risultato appena calcolato`);
+      body = regenerated;
     }
   }
 

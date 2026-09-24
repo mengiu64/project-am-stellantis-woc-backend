@@ -1532,12 +1532,22 @@ describe('jobCardService', () => {
       expect(result).toEqual(regeneratedBody);
     });
 
-    test('throws if the DynamoDB cache still cannot be read after regeneration', async () => {
-      getCacheItem.mockResolvedValue(null);
-      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+    test('falls back to the freshly regenerated result if the DynamoDB cache still cannot be read after regeneration', async () => {
+      const regeneratedBody = {
+        jobCardDetail: {
+          roInfo: { jobCardSrpId: 'JCID-79' },
+          vehicleInfo: { identification: { vin: 'VIN79' } },
+          jobs: [],
+        },
+      };
+      getCacheItem.mockResolvedValue(null); // sempre null: DYNAMO_CACHE_TABLE_NAME non configurato/scrittura fallita
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: regeneratedBody });
+      postDmsInquiry.mockResolvedValue({ WorkLines: [] });
 
-      await expect(getDataFromDMLFromTmp('79')).rejects.toThrow('impossibile leggere');
+      const result = await getDataFromDMLFromTmp('79');
+
       expect(getDgtBearerToken).toHaveBeenCalledTimes(1);
+      expect(result).toEqual(regeneratedBody);
     });
 
     test('uses the bearerToken passed explicitly instead of requesting a new one, when regenerating', async () => {
