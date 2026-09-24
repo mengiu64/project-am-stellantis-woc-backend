@@ -261,7 +261,7 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.message).toBe('Event successfully updated');
+      expect(body.message).toBe('Event successfully received');
       expect(body.success).toBe(true);
       expect(body.response).toBeUndefined();
     });
@@ -290,7 +290,7 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.message).toBe('Event successfully updated');
+      expect(body.message).toBe('Event successfully received');
     });
 
     it('DEVE registrare evento DMS_PUSH_REFUSAL con error_code', async () => {
@@ -317,7 +317,7 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.message).toBe('Event successfully updated');
+      expect(body.message).toBe('Event successfully received');
     });
 
     it('DEVE registrare evento DMS_PUSH_FAILURE con error_code', async () => {
@@ -344,10 +344,10 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.message).toBe('Event successfully updated');
+      expect(body.message).toBe('Event successfully received');
     });
 
-    it('DEVE ritornare 400 se eventType non supportato', async () => {
+    it('DEVE normalizzare a 200/success per eventType non supportato (4xx)', async () => {
       const event = {
         httpMethod: 'POST',
         rawPath: '/api/synch-status',
@@ -361,13 +361,13 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       const response = await handler(event, {});
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.success).toBe(false);
-      expect(body.message).toBe('Event not updated');
+      expect(body.success).toBe(true);
+      expect(body.message).toBe('Event successfully received');
     });
 
-    it('DEVE ritornare 400 se payload JSON non valido', async () => {
+    it('DEVE normalizzare a 200/success se payload JSON non valido (4xx)', async () => {
       const event = {
         httpMethod: 'POST',
         rawPath: '/api/synch-status',
@@ -377,10 +377,10 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       const response = await handler(event, {});
 
-      expect(response.statusCode).toBe(400);
+      expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.success).toBe(false);
-      expect(body.message).toBe('Event not updated');
+      expect(body.success).toBe(true);
+      expect(body.message).toBe('Event successfully received');
     });
 
     it('DEVE gestire UPDATE se stesso evento arriva due volte (ON CONFLICT)', async () => {
@@ -409,13 +409,13 @@ describe('synch-status Lambda - 4 Event Types', () => {
       const response1 = await handler(event, {});
       expect(response1.statusCode).toBe(200);
       const body1 = JSON.parse(response1.body);
-      expect(body1.message).toBe('Event successfully updated');
+      expect(body1.message).toBe('Event successfully received');
 
       // Secondo call (stesso payload)
       const response2 = await handler(event, {});
       expect(response2.statusCode).toBe(200);
       const body2 = JSON.parse(response2.body);
-      expect(body2.message).toBe('Event successfully updated');
+      expect(body2.message).toBe('Event successfully received');
     });
 
     it('DEVE ritornare 503 se Aurora non disponibile', async () => {
@@ -438,7 +438,7 @@ describe('synch-status Lambda - 4 Event Types', () => {
       expect(response.statusCode).toBe(503);
       const body = JSON.parse(response.body);
       expect(body.success).toBe(false);
-      expect(body.message).toBe('Event not updated');
+      expect(body.message).toBe('Event not received');
     });
 
     it('DEVE ritornare 504 se query database timeout', async () => {
@@ -461,10 +461,10 @@ describe('synch-status Lambda - 4 Event Types', () => {
       expect(response.statusCode).toBe(504);
       const body = JSON.parse(response.body);
       expect(body.success).toBe(false);
-      expect(body.message).toBe('Event not updated');
+      expect(body.message).toBe('Event not received');
     });
 
-    it('DEVE ritornare 404 se record non trovato in UPDATE', async () => {
+    it('DEVE normalizzare a 200/success se record non trovato in UPDATE (404)', async () => {
       // Mock: UPDATE fallisce (nessuna riga perché il record non esiste)
       mockPool.query.mockResolvedValue({ rows: [] });
 
@@ -481,10 +481,10 @@ describe('synch-status Lambda - 4 Event Types', () => {
 
       const response = await handler(event, {});
 
-      expect(response.statusCode).toBe(404);
+      expect(response.statusCode).toBe(200);
       const body = JSON.parse(response.body);
-      expect(body.success).toBe(false);
-      expect(body.message).toBe('Event not updated');
+      expect(body.success).toBe(true);
+      expect(body.message).toBe('Event successfully received');
     });
   });
 

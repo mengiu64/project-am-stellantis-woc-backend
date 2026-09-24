@@ -63,11 +63,7 @@ exports.handler = async (event, context) => {
         payload = JSON.parse(payload);
       } catch (parseError) {
         logger.error('❌ Errore parsing JSON body', parseError);
-        return exports._buildResponse(400, {
-          statusCode: 400,
-          success: false,
-          message: 'Event not updated'
-        }, logger.getTraceId());
+        return exports._buildFinalResponse(400, logger.getTraceId());
       }
     }
 
@@ -84,11 +80,7 @@ exports.handler = async (event, context) => {
         errors: validation.errors,
         traceId: logger.getTraceId()
       });
-      return exports._buildResponse(400, {
-        statusCode: 400,
-        success: false,
-        message: 'Event not updated'
-      }, logger.getTraceId());
+      return exports._buildFinalResponse(400, logger.getTraceId());
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -115,11 +107,7 @@ exports.handler = async (event, context) => {
       logger.info('🔗 Connessione Aurora PostgreSQL acquisita');
     } catch (dbConnectError) {
       logger.error('❌ Errore connessione Aurora', dbConnectError);
-      return exports._buildResponse(503, {
-        statusCode: 503,
-        success: false,
-        message: 'Event not updated'
-      }, logger.getTraceId());
+      return exports._buildFinalResponse(503, logger.getTraceId());
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -252,15 +240,11 @@ exports.handler = async (event, context) => {
       }, null, 2));
 
       // 🔴 MODIFICATO: Struttura risposta allineata con swagger (solo statusCode/success/message)
-      const responseBody = {
-        statusCode: 200,
-        success: true,
-        message: 'Event successfully updated'
-      };
-      
+      const responseBody = _finalResponseBody(200);
+
       // 🔴 NUOVO: Log della risposta inviata a DJC
       logger.info('📤 RESPONSE INVIATA A DJC:', JSON.stringify(responseBody, null, 2));
-      
+
       return exports._buildResponse(200, responseBody, logger.getTraceId());
     } catch (upsertError) {
       // 🔴 MODIFICATO: Gestione errori per UPDATE-ONLY
@@ -283,16 +267,12 @@ exports.handler = async (event, context) => {
           }
         });
         
-        const errorResponse = {
-          statusCode: 404,
-          success: false,
-          message: 'Event not updated'
-        };
-        
+        const errorResponse = _finalResponseBody(404);
+
         // 🔴 NUOVO: Log della risposta di errore
         logger.info('📤 RESPONSE INVIATA A DJC (404):', JSON.stringify(errorResponse, null, 2));
-        
-        return exports._buildResponse(404, errorResponse, logger.getTraceId());
+
+        return exports._buildFinalResponse(404, logger.getTraceId());
       }
       
       // 🔴 MODIFICATO: Log generico di errore durante UPDATE
@@ -313,11 +293,7 @@ exports.handler = async (event, context) => {
           timestamp,
           traceId: logger.getTraceId()
         });
-        return exports._buildResponse(503, {
-          statusCode: 503,
-          success: false,
-          message: 'Event not updated'
-        }, logger.getTraceId());
+        return exports._buildFinalResponse(503, logger.getTraceId());
       } 
       // Gestione errore timeout query
       else if (upsertError.message && upsertError.message.includes('statement timeout')) {
@@ -327,11 +303,7 @@ exports.handler = async (event, context) => {
           timestamp,
           traceId: logger.getTraceId()
         });
-        return exports._buildResponse(504, {
-          statusCode: 504,
-          success: false,
-          message: 'Event not updated'
-        }, logger.getTraceId());
+        return exports._buildFinalResponse(504, logger.getTraceId());
       }
       // Errore generico durante UPDATE
       else {
@@ -341,20 +313,12 @@ exports.handler = async (event, context) => {
           timestamp,
           traceId: logger.getTraceId()
         });
-        return exports._buildResponse(500, {
-          statusCode: 500,
-          success: false,
-          message: 'Event not updated'
-        }, logger.getTraceId());
+        return exports._buildFinalResponse(500, logger.getTraceId());
       }
     }
   } catch (handlerError) {
     logger.error('❌ Errore non gestito in handler', handlerError);
-    return exports._buildResponse(500, {
-      statusCode: 500,
-      success: false,
-      message: 'Event not updated'
-    }, logger.getTraceId());
+    return exports._buildFinalResponse(500, logger.getTraceId());
   }
 };
 
@@ -433,8 +397,31 @@ exports._buildResponse = (statusCode, body, traceId = '') => {
   };
 };
 
+// 🔴 NUOVO: Normalizza qualunque esito 2xx/3xx/4xx come successo (200),
+//           mantenendo il vero statusCode solo per gli errori 5xx.
+function _finalResponseBody(originalStatusCode) {
+  if (originalStatusCode >= 500) {
+    return {
+      statusCode: originalStatusCode,
+      success: false,
+      message: 'Event not received'
+    };
+  }
+  return {
+    statusCode: 200,
+    success: true,
+    message: 'Event successfully received'
+  };
+}
+
+exports._buildFinalResponse = (originalStatusCode, traceId = '') => {
+  const body = _finalResponseBody(originalStatusCode);
+  return exports._buildResponse(body.statusCode, body, traceId);
+};
+
 module.exports.SUPPORTED_EVENT_TYPES = SUPPORTED_EVENT_TYPES;
 module.exports.EVENT_TYPE_TO_DB_STATUS = EVENT_TYPE_TO_DB_STATUS;
 module.exports._getErrorCode = _getErrorCode;
 module.exports._getErrorMessage = _getErrorMessage;
 module.exports._validatePayload = _validatePayload;
+module.exports._finalResponseBody = _finalResponseBody;
