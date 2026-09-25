@@ -979,16 +979,34 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
  * Interroga il gateway DML (getCartPriceAndAvailability) per prezzo/
  * disponibilita di ricambi e manodopera e applica il risultato (in place)
  * al jobCardDetail tramite applyDataFromDml.
+ *
+ * Se il gateway DML risponde con un errore applicativo (es. HTTP 400
+ * DML_AFTERSALES_ERR_002_400 "No data found in dispatching table", quando il
+ * DMS non ha ancora dati di dispatching per questo RO) l'errore viene
+ * loggato ma NON propagato: jobCardDetails/dml devono comunque restituire i
+ * dati della Job Card, semplicemente senza l'arricchimento prezzo/
+ * disponibilita DML, invece di bloccare l'intera risposta con un HTTP 502
+ * che espone il messaggio grezzo del DMS al chiamante. L'esito (successo o
+ * fallimento) viene riportato al chiamante tramite `dmsSync`, cosi' da poter
+ * essere esposto in cima al messaggio restituito da getJobCardDetails/
+ * getDataFromDMLFromTmp senza dover fare parsing di un eventuale errore.
  * @param {object} jobCardDetail - jobCardDetail (stesso formato di
  *                                 sanitized.jobCardDetail in getJobCardDetails)
  * @param {object} [sessionContext] - dati di sessione gia' disponibili al
  *                                 chiamante, propagati a getCartPriceAndAvailability
  *                                 per il Sender dinamico — v. buildDmsSender()
- * @returns {Promise<object>} il jobCardDetail arricchito con i dati DML
+ * @returns {Promise<{jobCardDetail: object, dmsSync: boolean}>} il jobCardDetail
+ *          (arricchito con i dati DML se `dmsSync` e' true, invariato altrimenti)
+ *          e l'esito della sincronizzazione con il gateway DML
  */
 async function getDataFromDML(jobCardDetail, sessionContext) {
-  const dataFromDml = await getCartPriceAndAvailability(jobCardDetail, sessionContext);
-  return applyDataFromDml(jobCardDetail, dataFromDml);
+  try {
+    const dataFromDml = await getCartPriceAndAvailability(jobCardDetail, sessionContext);
+    return { jobCardDetail: applyDataFromDml(jobCardDetail, dataFromDml), dmsSync: true };
+  } catch (err) {
+    console.warn(`[jobCard] getDataFromDML (gateway DML) fallita, restituisco jobCardDetail senza arricchimento prezzo/disponibilita: ${err.message}`);
+    return { jobCardDetail, dmsSync: false };
+  }
 }
 
 /**
@@ -1020,7 +1038,9 @@ async function getDataFromDML(jobCardDetail, sessionContext) {
  *                                 language/dealerCountryCode), propagati fino a
  *                                 getCartPriceAndAvailability per il Sender
  *                                 dinamico — v. buildDmsSender()
- * @returns {Promise<object>} il body letto dalla cache con jobCardDetail arricchito
+ * @returns {Promise<object>} il body letto dalla cache con jobCardDetail
+ *          arricchito e `dmsSync` in cima, che riporta l'esito dell'ultima
+ *          sincronizzazione con il gateway DML (v. getDataFromDML)
  */
 async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
@@ -1034,9 +1054,9 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   if (!body) {
     console.warn(`[jobCard] ${cacheKey} non trovato in cache: rigenero tramite getJobCardDetails`);
 
-    // getJobCardDetails arricchisce già con getDataFromDML (v. sopra) e
-    // scrive il risultato in cache: evitiamo quindi di richiamare
-    // getDataFromDML una seconda volta qui sotto.
+    // getJobCardDetails arricchisce già con getDataFromDML (v. sopra), scrive
+    // il risultato (già comprensivo di `dmsSync`) in cache e lo restituisce:
+    // evitiamo quindi di richiamare getDataFromDML una seconda volta qui sotto.
     const token = bearerToken ?? await getBearerToken();
     const regenerated = await getJobCardDetails(token, jobCardId, sessionContext);
     alreadyEnriched = true;
@@ -1051,7 +1071,12 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   const jobCardDetail = body?.jobCardDetail ?? body;
 
   if (!alreadyEnriched) {
-    await getDataFromDML(jobCardDetail, sessionContext);
+    // Item già presente in cache: viene comunque richiamato il gateway DML
+    // per un dato aggiornato (prezzo/disponibilita possono cambiare), quindi
+    // `dmsSync` va ricalcolato qui e riportato in cima al body restituito
+    // (v. getDataFromDML — non blocca la risposta in caso di errore DML).
+    const { dmsSync } = await getDataFromDML(jobCardDetail, sessionContext);
+    body = { dmsSync, ...body };
   }
 
   return body;
@@ -1066,7 +1091,9 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
  *                                 language/dealerCountryCode), propagati a
  *                                 getDataFromDML/getCartPriceAndAvailability
  *                                 per il Sender dinamico — v. buildDmsSender()
- * @returns {Promise<object>} parsed response body, arricchito con i dati DML
+ * @returns {Promise<object>} parsed response body, con `dmsSync` (esito della
+ *          sincronizzazione con il gateway DML) in cima, seguito dal resto
+ *          della risposta arricchita con i dati DML quando `dmsSync` e' true
  */
 async function getJobCardDetails(bearerToken, jobCardId, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
@@ -1088,9 +1115,14 @@ async function getJobCardDetails(bearerToken, jobCardId, sessionContext) {
   const sanitized = sanitizeJobCardDetails(response.body);
 
   const jobCardDetail = sanitized?.jobCardDetail ?? sanitized;
-  await getDataFromDML(jobCardDetail, sessionContext);
+  const { dmsSync } = await getDataFromDML(jobCardDetail, sessionContext);
 
-  return await saveJobCardDetailsToTmp(jobCardId, sanitized);
+  // `dmsSync` in cima al messaggio: indica se l'arricchimento con i dati del
+  // gateway DML (prezzo/disponibilita) e' andato a buon fine, cosi' il
+  // chiamante puo' distinguerlo senza fare parsing di un eventuale errore.
+  const bodyWithSyncStatus = { dmsSync, ...sanitized };
+
+  return await saveJobCardDetailsToTmp(jobCardId, bodyWithSyncStatus);
 }
 
 /**

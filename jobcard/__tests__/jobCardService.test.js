@@ -200,7 +200,7 @@ describe('jobCardService', () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
 
     const result = await getJobCardDetails('token', '79');
-    expect(result).toEqual(body);
+    expect(result).toEqual({ dmsSync: true, ...body });
   });
 
   test('throws on HTTP error', async () => {
@@ -252,7 +252,24 @@ describe('jobCardService', () => {
   test('does not fail when jobCardDetail or customerInfo is missing', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
+    await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsSync: true });
+  });
+
+  test('does not block/fail the "details" response when the DML gateway (postDmsInquiry) errors out', async () => {
+    const body = { jobCardDetail: { roInfo: {}, jobs: [] } };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+    postDmsInquiry.mockRejectedValue(new Error(
+      '[dms] inquiry failed: HTTP 400 - {"success":false,"errorCode":"DML_AFTERSALES_ERR_002_400","message":"No data found in dispatching table"}'
+    ));
+
+    const result = await getJobCardDetails('token', '79');
+
+    expect(result.jobCardDetail).toEqual(body.jobCardDetail);
+    // dmsSync = false segnala al chiamante, in cima al messaggio, che
+    // l'arricchimento DML non e' andato a buon fine (senza dover fare
+    // parsing dell'errore del DMS, che non viene esposto nella risposta).
+    expect(result.dmsSync).toBe(false);
+    expect(Object.keys(result)[0]).toBe('dmsSync');
   });
 
   test('calls getDataFromDML (gateway DML) with the given sessionContext before persisting to cache', async () => {
@@ -455,7 +472,7 @@ describe('jobCardService', () => {
 
     test('does not fail when roInfo or sourceApplication is missing', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsSync: true, jobCardDetail: {} });
 
       const body = { jobCardDetail: { roInfo: { dealerId: '017721L' } } };
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
@@ -553,7 +570,7 @@ describe('jobCardService', () => {
 
     test('does not fail when jobs is missing or not an array', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsSync: true, jobCardDetail: {} });
     });
 
     test('places packageType/packageCharge before partInfo when partInfo is present', async () => {
@@ -666,7 +683,7 @@ describe('jobCardService', () => {
 
     test('does not fail when jobs is missing or not an array', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsSync: true, jobCardDetail: {} });
     });
   });
 
@@ -699,7 +716,7 @@ describe('jobCardService', () => {
 
     test('does not fail when workshopReturn is missing', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsSync: true, jobCardDetail: {} });
     });
 
     test('leaves the rest of jobCardDetail untouched', async () => {
@@ -730,7 +747,7 @@ describe('jobCardService', () => {
     expect(setCacheItem).toHaveBeenCalledTimes(1);
     const [cacheKey, value, ttlSeconds] = setCacheItem.mock.calls[0];
     expect(cacheKey).toBe('jobcard:jobcarddetails:79');
-    expect(value).toEqual(body);
+    expect(value).toEqual({ dmsSync: true, ...body });
     expect(ttlSeconds).toBe(3600);
   });
 
@@ -748,7 +765,7 @@ describe('jobCardService', () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
     setCacheItem.mockResolvedValueOnce(body);
 
-    await expect(getJobCardDetails('token', '79')).resolves.toEqual(body);
+    await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsSync: true, ...body });
   });
 
   test('does not write to the cache when the request fails', async () => {
@@ -1501,18 +1518,36 @@ describe('jobCardService', () => {
 
       const result = await getDataFromDML(jobCardDetail);
 
-      expect(result.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+      expect(result.dmsSync).toBe(true);
+      expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
         unitaryPriceExclVat: 42, // da source.OriginalPriceExclVAT
         originalPriceExclVat: 84, // itemQuantity(2) * unitaryPriceExclVat(42)
         dmsDiscountPercentage: 1,
         QuantityAvailable: 2,
         availability: 'orange',
       }));
-      expect(result.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
+      expect(result.jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
         laborDuration: 0.5,
         dmsDiscountPercentage: 1,
         laborRateAmount: 70,
       }));
+    });
+
+    test('does not throw/block when the DML gateway fails (e.g. DML_AFTERSALES_ERR_002_400): returns jobCardDetail unchanged', async () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        vehicleInfo: { identification: { vin: 'VIN1' } },
+        jobs: [{ partInfo: [{ partNumber: 'P1' }], laborInfo: [] }],
+      };
+      postDmsInquiry.mockRejectedValue(new Error(
+        '[dms] inquiry failed: HTTP 400 - {"success":false,"errorCode":"DML_AFTERSALES_ERR_002_400","message":"No data found in dispatching table"}'
+      ));
+
+      const result = await getDataFromDML(jobCardDetail);
+
+      expect(result.jobCardDetail).toBe(jobCardDetail);
+      expect(result.dmsSync).toBe(false);
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('DML_AFTERSALES_ERR_002_400'));
     });
   });
 
@@ -1564,7 +1599,7 @@ describe('jobCardService', () => {
       const result = await getDataFromDMLFromTmp('79');
 
       expect(getDgtBearerToken).toHaveBeenCalledTimes(1);
-      expect(result).toEqual(regeneratedBody);
+      expect(result).toEqual({ dmsSync: true, ...regeneratedBody });
     });
 
     test('uses the bearerToken passed explicitly instead of requesting a new one, when regenerating', async () => {
@@ -1631,7 +1666,7 @@ describe('jobCardService', () => {
       expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-2', VehicleID: 'VIN2' }),
       }));
-      expect(result).toEqual(jobCardDetail);
+      expect(result).toEqual({ dmsSync: true, ...jobCardDetail });
     });
   });
 });
