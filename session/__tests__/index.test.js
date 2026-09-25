@@ -45,7 +45,11 @@ describe('session/src/index — handler', () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000', sincom: '0073741' });
     const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
 
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null);
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null, {
+      hqCentral: 0,
+      hqMarket: 0,
+      dealer: 1,
+    });
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({
@@ -102,6 +106,13 @@ describe('session/src/index — handler', () => {
       requestContext: { authorizer: { sub: '0073741.d235', roles: 'ZWRT.WOC.PROD.hqcentral' } },
     });
     expect(JSON.parse(res.body)).toMatchObject({ hqCentral: 1, hqMarket: 0, dealer: 0 });
+    // I roleFlags (gia' hqCentral=1) vengono passati al repository PRIMA di
+    // interpellare myPeople, cosi' getSessionData puo' saltarlo del tutto.
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null, {
+      hqCentral: 1,
+      hqMarket: 0,
+      dealer: 0,
+    });
   });
 
   it('valorizza hqMarket=1 quando un ruolo contiene HQNSC + 4 cifre del mercato', async () => {
@@ -110,6 +121,11 @@ describe('session/src/index — handler', () => {
       requestContext: { authorizer: { sub: '0073741.d235', roles: 'ZWRT.WOC.NONPROD.HQNSC3109' } },
     });
     expect(JSON.parse(res.body)).toMatchObject({ hqCentral: 0, hqMarket: 1, dealer: 0 });
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null, {
+      hqCentral: 0,
+      hqMarket: 1,
+      dealer: 0,
+    });
   });
 
   it('valorizza dealer=1 quando nessun ruolo e\' HQCENTRAL/HQNSC (default)', async () => {
@@ -138,7 +154,11 @@ describe('session/src/index — handler', () => {
       pathParameters: { username: 'altro.utente', codmarket: '3109' },
       criteria: { username: 'altro.utente', codmarket: '3109' },
     });
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null);
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('0073741.d235', null, {
+      hqCentral: 0,
+      hqMarket: 0,
+      dealer: 1,
+    });
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
   });
 
@@ -148,7 +168,11 @@ describe('session/src/index — handler', () => {
     await handler({
       requestContext: { authorizer: { sub: 'SF48816', profile: JSON.stringify(profile) } },
     });
-    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('SF48816', profile);
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('SF48816', profile, {
+      hqCentral: 0,
+      hqMarket: 0,
+      dealer: 1,
+    });
   });
 
   it('valorizza hqMarketsList con l\'elenco ritornato da resolveHqMarketsList per un utente HQ centrale', async () => {

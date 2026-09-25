@@ -331,6 +331,47 @@ describe('MyPeopleDmsSessionRepository', () => {
     });
   });
 
+  test('salta del tutto la chiamata a myPeople quando roleFlags.hqCentral=1 (ruolo gia\' riconosciuto come HQ)', async () => {
+    const readUserProfilesFn = jest.fn();
+    const repository = buildRepository({ readUserProfilesFn });
+
+    const data = await repository.getSessionData('SF48816', null, { hqCentral: 1, hqMarket: 0, dealer: 0 });
+
+    expect(readUserProfilesFn).not.toHaveBeenCalled();
+    expect(data.usertype).toBe('HQ');
+    expect(data.username).toBe('SF48816');
+  });
+
+  test('salta del tutto la chiamata a myPeople quando roleFlags.hqMarket=1 (ruolo gia\' riconosciuto come HQ)', async () => {
+    const readUserProfilesFn = jest.fn();
+    const repository = buildRepository({ readUserProfilesFn });
+
+    const data = await repository.getSessionData('SF48816', null, { hqCentral: 0, hqMarket: 1, dealer: 0 });
+
+    expect(readUserProfilesFn).not.toHaveBeenCalled();
+    expect(data.usertype).toBe('HQ');
+  });
+
+  test('con roleFlags HQ, un eventuale errore/timeout di myPeople non puo\' mai bloccare la sessione (non viene proprio chiamato)', async () => {
+    const readUserProfilesFn = jest.fn().mockRejectedValue(new Error('ETIMEDOUT'));
+    const repository = buildRepository({ readUserProfilesFn });
+
+    const data = await repository.getSessionData('SF48816', null, { hqCentral: 1, hqMarket: 0 });
+
+    expect(readUserProfilesFn).not.toHaveBeenCalled();
+    expect(data.usertype).toBe('HQ');
+  });
+
+  test('con roleFlags tutti a 0 (dealer) myPeople viene comunque chiamato normalmente', async () => {
+    const repository = buildRepository({
+      readUserProfilesFn: jest.fn().mockResolvedValue(MYPEOPLE_SUCCESS_RESPONSE),
+    });
+
+    const data = await repository.getSessionData('0073741.d235', null, { hqCentral: 0, hqMarket: 0, dealer: 1 });
+
+    expect(data.usertype).not.toBe('HQ');
+  });
+
   test('riconosce RC=121 come stringa ("121") come utente HQ', async () => {
     const repository = buildRepository({
       readUserProfilesFn: jest.fn().mockResolvedValue({
