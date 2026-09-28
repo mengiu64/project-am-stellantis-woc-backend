@@ -583,7 +583,7 @@ describe('jobCardService', () => {
         },
       ]);
       expect(Object.keys(job)).toEqual([
-        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo',
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'dmsOverride',
       ]);
     });
 
@@ -596,7 +596,7 @@ describe('jobCardService', () => {
         },
       ]);
       expect(Object.keys(job)).toEqual([
-        'jobInternalId', 'jobType', 'packageType', 'packageCharge', 'laborInfo',
+        'jobInternalId', 'jobType', 'packageType', 'packageCharge', 'laborInfo', 'dmsOverride',
       ]);
     });
 
@@ -611,13 +611,13 @@ describe('jobCardService', () => {
         },
       ]);
       expect(Object.keys(job)).toEqual([
-        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'laborInfo',
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'laborInfo', 'dmsOverride',
       ]);
     });
 
     test('appends packageType/packageCharge at the end when neither partInfo nor laborInfo is present', async () => {
       const [job] = await detailsFor([{ jobInternalId: 'j1', jobType: 'STD' }]);
-      expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge']);
+      expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge', 'dmsOverride']);
     });
   });
 
@@ -1455,7 +1455,7 @@ describe('jobCardService', () => {
       expect(labor.discountInAmountOnPriceWithVat).toBeCloseTo(12.2, 5); // 122 - 109.8
     });
 
-    test('sets part.dmsunknown=1 and leaves partInfo/laborInfo otherwise untouched when no matching PartNumber/LaborOperationID is found', () => {
+    test('sets part.dmsunknown=1 and job.dmsOverride=false when no matching PartNumber/LaborOperationID is found for any part/labor of the job', () => {
       const jobCardDetail = {
         jobs: [
           {
@@ -1469,9 +1469,10 @@ describe('jobCardService', () => {
 
       expect(jobCardDetail.jobs[0].partInfo[0]).toEqual({ partNumber: 'UNMATCHED', originalPriceExclVat: 1, dmsunknown: 1 });
       expect(jobCardDetail.jobs[0].laborInfo[0]).toEqual({ laborOperationCode: 'UNMATCHED', laborDuration: 1 });
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
     });
 
-    test('sets part.dmsunknown=0 when a matching PartNumber is found', () => {
+    test('sets part.dmsunknown=0 and job.dmsOverride=true when a matching PartNumber is found', () => {
       const jobCardDetail = {
         jobs: [
           {
@@ -1486,6 +1487,44 @@ describe('jobCardService', () => {
       });
 
       expect(jobCardDetail.jobs[0].partInfo[0].dmsunknown).toBe(0);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('sets job.dmsOverride=true when a matching LaborOperationID is found', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [],
+            laborInfo: [{ laborOperationCode: 'OP1' }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [], LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 1, UnitaryTimeAmount: 10, DiscountPercentage: 0 }] }],
+      });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('sets job.dmsOverride=true when at least one part matches even if others/labor do not', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [
+              { partNumber: 'MATCHED', itemQuantity: 1 },
+              { partNumber: 'UNMATCHED', itemQuantity: 1 },
+            ],
+            laborInfo: [{ laborOperationCode: 'UNMATCHED-LABOR' }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'MATCHED', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
     });
 
     test('is a no-op (returns jobCardDetail unchanged) when jobs is not an array', () => {

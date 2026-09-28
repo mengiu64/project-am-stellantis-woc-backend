@@ -187,6 +187,8 @@ Aggiunto subito dopo `roInfo.sourceApplication`, con lo **stesso valore** di que
 
 Dopo `sanitizeJobCardDetails` ma **prima** di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene ulteriormente arricchita da `getDataFromDML` (v. `getCartPriceAndAvailability`/`applyDataFromDml`), che interroga il gateway DML (`dms/dmsService.js::postDmsInquiry`) per prezzo/disponibilità/sconto aggiornati di ricambi e manodopera. `getJobCardDetails` accetta un terzo parametro opzionale `sessionContext` (username/mainSincom/market/language/dealerCountryCode), propagato a `getDataFromDML` per costruire il Sender dinamico dell'inquiry DMS (v. `buildDmsSender`) — v. anche sezione `getCartPriceAndAvailability` nel README principale. Best-effort: eventuali problemi verso `dms` non fanno fallire la risposta di `getJobCardDetails`.
 
+Ogni elemento di `partInfo[]`/`laborInfo[]` mantiene `dmsunknown` (solo per i ricambi: 1 se il partNumber non trova corrispondenza, 0 altrimenti). A livello di ciascun `job` viene inoltre aggiunto il flag `dmsOverride` (booleano): `true` se **almeno uno** dei suoi `partInfo[]`/`laborInfo[]` ha trovato un match nella risposta DML (PartsItem/LaborItem, tramite PartNumber/laborOperationCode) ed e' stato quindi ricalcolato/sovrascritto con i dati del DMS; `false` se nessun part/labor del job ha trovato match e il job resta quindi invariato rispetto al jobCardDetail originale (v. `applyDataFromDml`).
+
 ---
 
 ## Configurazione

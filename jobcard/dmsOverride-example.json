@@ -1,0 +1,79 @@
+{
+  "jobs": [
+    {
+      "jobType": "MAINTENANCE",
+      "packageCode": "P1",
+      "dmsOverride": true,
+      "partInfo": [
+        {
+          "partNumber": "735712563",
+          "partDescription": "FILTRO OLIO",
+          "itemQuantity": 2,
+          "unitaryPriceExclVat": 493.71,
+          "appDiscountPercentage": -5,
+          "dmsDiscountPercentage": 5,
+          "vatPercentage": 22,
+          "originalPriceExclVat": 987.42,
+          "originalPriceWithVat": 1204.65,
+          "priceExclVatAfterDiscount": 938.05,
+          "priceWithVatAfterDiscount": 1144.42,
+          "discountInAmountOnPriceWithVat": 60.23,
+          "QuantityAvailable": 3,
+          "availability": "green",
+          "dmsunknown": 0
+        },
+        {
+          "partNumber": "999999999",
+          "partDescription": "RICAMBIO NON TROVATO SU DMS",
+          "itemQuantity": 1,
+          "unitaryPriceExclVat": 25.00,
+          "vatPercentage": 22,
+          "dmsunknown": 1
+        }
+      ],
+      "laborInfo": [
+        {
+          "laborOperationCode": "4110A10",
+          "laborDescription": "SOSTITUZIONE OLIO MOTORE",
+          "laborDuration": 0.25,
+          "laborRateAmount": 60,
+          "appDiscountPercentage": 0,
+          "dmsDiscountPercentage": 0,
+          "vatPercentage": 22,
+          "originalPriceExclVat": 15,
+          "originalPriceWithVat": 18.3,
+          "priceExclVatAfterDiscount": 15,
+          "priceWithVatAfterDiscount": 18.3,
+          "discountInAmountOnPriceWithVat": 0
+        },
+        {
+          "laborOperationCode": "OP-SCONOSCIUTA",
+          "laborDescription": "OPERAZIONE NON PRESENTE NEL DML",
+          "laborDuration": 0.5
+        }
+      ]
+    },
+    {
+      "jobType": "REPAIR",
+      "packageCode": "P2",
+      "dmsOverride": false,
+      "partInfo": [
+        {
+          "partNumber": "888888888",
+          "partDescription": "RICAMBIO NON TROVATO SU DMS",
+          "itemQuantity": 1,
+          "unitaryPriceExclVat": 40,
+          "vatPercentage": 22,
+          "dmsunknown": 1
+        }
+      ],
+      "laborInfo": [
+        {
+          "laborOperationCode": "OP-ALTRA-SCONOSCIUTA",
+          "laborDescription": "OPERAZIONE NON PRESENTE NEL DML",
+          "laborDuration": 0.5
+        }
+      ]
+    }
+  ]
+}

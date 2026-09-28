@@ -729,6 +729,12 @@ function resolveDmlPartSource(partsItem) {
  * trova corrispondenza in nessun PartsItem della risposta DML (il ricambio
  * non e' quindi arricchito con prezzo/sconto/disponibilita), 0 altrimenti.
  *
+ * Ogni job (workline) riceve anche il flag job.dmsOverride: true se ALMENO
+ * uno dei suoi partInfo[]/laborInfo[] ha trovato un match nella risposta DML
+ * (PartsItem/LaborItem) ed e' stato quindi ricalcolato/sovrascritto con i
+ * dati del DMS, false se nessun part/labor del job ha trovato match e il
+ * job resta quindi invariato rispetto al jobCardDetail originale.
+ *
  * Per i ricambi (partInfo), se il PartsItem corrispondente porta un
  * ReplacementItem (ricambio sostitutivo proposto dal DMS), i dati vengono
  * letti da li invece che dal PartsItem originale (v. resolveDmlPartSource).
@@ -925,6 +931,9 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
     // Sconto a livello di workline: guida reconcileDiscountPercentages per
     // ciascun part/labor di questo job (v. hasWorkLineDiscount).
     const wlDiscount = hasWorkLineDiscount(job);
+    // true se almeno un part/labor del job trova corrispondenza nel DML
+    // (v. sotto), guida job.dmsOverride assegnato a fine ciclo del job.
+    let jobHasDmsMatch = false;
 
     for (const part of job?.partInfo ?? []) {
       const partsItem = partsItemsByPartNumber.get(part?.partNumber);
@@ -933,6 +942,7 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
         continue;
       }
       part.dmsunknown = 0;
+      jobHasDmsMatch = true;
 
       const { source } = resolveDmlPartSource(partsItem);
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
@@ -955,6 +965,7 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
     for (const labor of job?.laborInfo ?? []) {
       const laborItem = laborItemsByOperationId.get(labor?.laborOperationCode);
       if (!laborItem) continue;
+      jobHasDmsMatch = true;
 
       labor.laborDuration = laborItem.TimeUnit;
 
@@ -970,6 +981,8 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
         ));
       }
     }
+
+    job.dmsOverride = jobHasDmsMatch;
   }
 
   return jobCardDetail;
