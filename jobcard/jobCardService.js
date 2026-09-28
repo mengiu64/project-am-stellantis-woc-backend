@@ -1255,17 +1255,38 @@ async function getJobCardDetails(bearerToken, jobCardId, sessionContext) {
 }
 
 /**
+ * Returns a copy of a partInfo entry without the dmsunknown/QuantityAvailable/
+ * availability fields added by applyDataFromDml (arricchimento DML) alle
+ * risposte GET di jobCardDetails. Sono derivati solo per la UI: se il FE
+ * ri-sottomette a saveJobCard un partInfo proveniente da una precedente GET
+ * arricchita, DGT li rifiuta in POST /jobCard con "is not allowed".
+ * @param {object} part - partInfo entry (possibly enriched)
+ * @returns {object} partInfo entry without dmsunknown/QuantityAvailable/availability
+ */
+function stripDmlPartEnrichment(part) {
+  if (!part || typeof part !== 'object') return part;
+  const { dmsunknown, QuantityAvailable, availability, ...rest } = part;
+  return rest;
+}
+
+/**
  * Returns a copy of a job entry without the packageType/packageCharge fields
- * added by enrichJobsWithPackageInfo to jobCardDetails GET responses. Those
- * are derived only for UI display: if a caller round-trips a previously
- * fetched jobCardDetail.jobs entry back into saveJobCard, the DGT API
- * rejects them with "is not allowed" validation errors.
+ * added by enrichJobsWithPackageInfo and the dmsOverride field added by
+ * applyDataFromDml to jobCardDetails GET responses. Those are derived only
+ * for UI display: if a caller round-trips a previously fetched
+ * jobCardDetail.jobs entry back into saveJobCard, the DGT API rejects them
+ * with "is not allowed" validation errors. partInfo entries are also
+ * sanitized (v. stripDmlPartEnrichment).
  * @param {object} job - job entry (possibly enriched)
- * @returns {object} job entry without packageType/packageCharge
+ * @returns {object} job entry without packageType/packageCharge/dmsOverride,
+ *          with sanitized partInfo entries
  */
 function stripPackageEnrichment(job) {
   if (!job || typeof job !== 'object') return job;
-  const { packageType, packageCharge, ...rest } = job;
+  const { packageType, packageCharge, dmsOverride, ...rest } = job;
+  if (Array.isArray(rest.partInfo)) {
+    rest.partInfo = rest.partInfo.map(stripDmlPartEnrichment);
+  }
   return rest;
 }
 
@@ -1277,10 +1298,11 @@ function stripPackageEnrichment(job) {
  * only the HTTP method and path differ (POST /jobCard vs GET /jobCardList|
  * /jobCardDetails).
  *
- * Difensivo: se payload.jobs porta ancora packageType/packageCharge (es.
- * round-trip di una jobCardDetails GET arricchita — v. enrichJobsWithPackageInfo
- * sopra), vengono rimossi prima di inoltrare a DGT, che li rifiuta in
- * POST /jobCard con "is not allowed".
+ * Difensivo: se payload.jobs porta ancora packageType/packageCharge/dmsOverride
+ * o partInfo[].dmsunknown/QuantityAvailable/availability (es. round-trip di
+ * una jobCardDetails GET arricchita — v. enrichJobsWithPackageInfo/
+ * applyDataFromDml sopra), vengono rimossi prima di inoltrare a DGT, che li
+ * rifiuta in POST /jobCard con "is not allowed".
  * @param {string} bearerToken - Bearer token from PingFederate
  * @param {object} payload     - Digital Job Card payload to persist
  * @returns {Promise<object>} parsed response body

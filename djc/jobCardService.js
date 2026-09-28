@@ -39,12 +39,58 @@ async function buildDgtOptions(path, method, extraHeaders, bearerToken) {
 }
 
 /**
+ * Returns a copy of a partInfo entry without the dmsunknown/QuantityAvailable/
+ * availability fields added by jobcard/jobCardService.js::applyDataFromDml
+ * (arricchimento DML) alle risposte GET di jobCardDetails. Sono derivati solo
+ * per la UI: se il FE ri-sottomette a saveJobCard un partInfo proveniente da
+ * una precedente GET arricchita, DGT li rifiuta in POST /jobCard con
+ * "is not allowed".
+ * @param {object} part - partInfo entry (possibly enriched)
+ * @returns {object} partInfo entry without dmsunknown/QuantityAvailable/availability
+ */
+function stripDmlPartEnrichment(part) {
+  if (!part || typeof part !== 'object') return part;
+  const { dmsunknown, QuantityAvailable, availability, ...rest } = part;
+  return rest;
+}
+
+/**
+ * Returns a copy of a job entry without the packageType/packageCharge fields
+ * (v. jobcard/jobCardService.js::enrichJobsWithPackageInfo) and the
+ * dmsOverride field (v. jobcard/jobCardService.js::applyDataFromDml) added
+ * alle risposte GET di jobCardDetails. Those are derived only for UI
+ * display: if a caller round-trips a previously fetched jobCardDetail.jobs
+ * entry back into saveJobCard, the DGT API rejects them with "is not
+ * allowed" validation errors. partInfo entries are also sanitized (v.
+ * stripDmlPartEnrichment).
+ * @param {object} job - job entry (possibly enriched)
+ * @returns {object} job entry without packageType/packageCharge/dmsOverride,
+ *          with sanitized partInfo entries
+ */
+function stripPackageEnrichment(job) {
+  if (!job || typeof job !== 'object') return job;
+  const { packageType, packageCharge, dmsOverride, ...rest } = job;
+  if (Array.isArray(rest.partInfo)) {
+    rest.partInfo = rest.partInfo.map(stripDmlPartEnrichment);
+  }
+  return rest;
+}
+
+/**
  * Calls the jobCard (POST) endpoint to persist a Digital Job Card payload —
  * il json_mod costruito dai metodi Save* di DjcManager (SaveRoInfo,
  * SaveDmsSync, SaveCustomer, SaveVehicle, SaveJobs, SaveConsents,
  * SaveAppointments). Stesso client PingFederate/DGT usato da jobcard per le
  * GET /jobCardList e /jobCardDetails: cambiano solo metodo HTTP e path
  * (POST /jobCard).
+ *
+ * Difensivo: se payload.jobs porta ancora packageType/packageCharge/dmsOverride
+ * o partInfo[].dmsunknown/QuantityAvailable/availability (es. round-trip di
+ * una jobCardDetails GET arricchita restituita da jobcard/djc - v.
+ * enrichJobsWithPackageInfo/applyDataFromDml in jobcard/jobCardService.js),
+ * vengono rimossi prima di inoltrare a DGT, che li rifiuta in POST /jobCard
+ * con "is not allowed" (stesso comportamento di jobcard/jobCardService.js,
+ * mantenuto in sync).
  * @param {string} bearerToken - Bearer token from PingFederate
  * @param {object} payload     - Digital Job Card payload to persist
  * @returns {Promise<object>} parsed response body
@@ -54,7 +100,11 @@ async function saveJobCard(bearerToken, payload) {
     throw new Error('[djc] payload is required');
   }
 
-  const body = JSON.stringify(payload);
+  const sanitizedPayload = Array.isArray(payload.jobs)
+    ? { ...payload, jobs: payload.jobs.map(stripPackageEnrichment) }
+    : payload;
+
+  const body = JSON.stringify(sanitizedPayload);
   const options = await buildDgtOptions(
     '/jobCard',
     'POST',

@@ -879,6 +879,66 @@ describe('jobCardService', () => {
       expect(payload.jobs[0]).toHaveProperty('packageType', 'GC');
     });
 
+    test('strips dmsOverride from payload.jobs and dmsunknown/QuantityAvailable/availability from partInfo (DGT rejects them with "is not allowed")', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          {
+            jobInternalId: 'JOB-1',
+            jobType: 'STD',
+            dmsOverride: true,
+            partInfo: [
+              {
+                partNumber: '735712563',
+                itemQuantity: 2,
+                dmsunknown: 0,
+                QuantityAvailable: 3,
+                availability: 'green',
+              },
+              { partNumber: '999999999', itemQuantity: 1, dmsunknown: 1 },
+            ],
+          },
+        ],
+      };
+      await saveJobCard('token', payload);
+
+      const [, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual({
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          {
+            jobInternalId: 'JOB-1',
+            jobType: 'STD',
+            partInfo: [
+              { partNumber: '735712563', itemQuantity: 2 },
+              { partNumber: '999999999', itemQuantity: 1 },
+            ],
+          },
+        ],
+      });
+      // The original payload passed in is left untouched
+      expect(payload.jobs[0]).toHaveProperty('dmsOverride', true);
+      expect(payload.jobs[0].partInfo[0]).toHaveProperty('dmsunknown', 0);
+    });
+
+    test('leaves a job without partInfo untouched (no partInfo array to sanitize)', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [{ jobInternalId: 'JOB-1', dmsOverride: false }],
+      };
+      await saveJobCard('token', payload);
+
+      const [, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual({
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [{ jobInternalId: 'JOB-1' }],
+      });
+    });
+
     test('leaves payload without a jobs array untouched', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
