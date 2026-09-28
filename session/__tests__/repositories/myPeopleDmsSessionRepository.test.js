@@ -83,6 +83,7 @@ function buildRepository(overrides = {}) {
     getPhysicalSiteAndPdvIdFn: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
     getBrandsByOicsFn: jest.fn().mockResolvedValue(new Map()),
     getDisabledOicsFn: jest.fn().mockResolvedValue(new Set()),
+    getEnableSignatureByOicsFn: jest.fn().mockResolvedValue(new Map()),
     getAddressByOicsFn: jest.fn().mockResolvedValue(new Map()),
     ...overrides,
   });
@@ -179,6 +180,7 @@ describe('MyPeopleDmsSessionRepository', () => {
           ],
           main: 'N',
           djcListParameter: '1000_00010925',
+          feaEnabled: false,
           address: null,
           zipcode: null,
           city: null,
@@ -197,6 +199,7 @@ describe('MyPeopleDmsSessionRepository', () => {
           zipcode: null,
           city: null,
           djcListParameter: '1000_00007584',
+          feaEnabled: false,
         },
       ],
       applications: [],
@@ -711,6 +714,7 @@ describe('MyPeopleDmsSessionRepository', () => {
         type: 'AFTERSALES',
         main: 'N',
         djcListParameter: '1000_00010925',
+        feaEnabled: false,
       },
       {
         market: '1000',
@@ -728,6 +732,7 @@ describe('MyPeopleDmsSessionRepository', () => {
         type: 'AFTERSALES',
         main: 'Y',
         djcListParameter: '1000_00007584',
+        feaEnabled: false,
       },
     ]);
     // brandLogos deve comparire subito dopo brands, non in coda all'oggetto.
@@ -737,6 +742,10 @@ describe('MyPeopleDmsSessionRepository', () => {
     // djcListParameter deve comparire subito dopo code, non in coda all'oggetto.
     expect(Object.keys(data.oics[0]).indexOf('djcListParameter')).toBe(
       Object.keys(data.oics[0]).indexOf('code') + 1,
+    );
+    // feaEnabled deve comparire subito dopo djcListParameter.
+    expect(Object.keys(data.oics[0]).indexOf('feaEnabled')).toBe(
+      Object.keys(data.oics[0]).indexOf('djcListParameter') + 1,
     );
   });
 
@@ -776,7 +785,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([
-      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '', brandLogos: [], main: 'N', djcListParameter: '1000_00010925', address: null, zipcode: null, city: null },
+      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '', brandLogos: [], main: 'N', djcListParameter: '1000_00010925', feaEnabled: false, address: null, zipcode: null, city: null },
     ]);
     // Nessun codice brand da risolvere: non deve nemmeno interrogare il DB.
     expect(getBrandLogosFn).not.toHaveBeenCalled();
@@ -800,7 +809,7 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.oics).toEqual([
-      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N', djcListParameter: '1000_00010925', address: null, zipcode: null, city: null },
+      { market: '1000', code: '00010925', state: 'ACTIVE', brands: '30,99', brandLogos: [], main: 'N', djcListParameter: '1000_00010925', feaEnabled: false, address: null, zipcode: null, city: null },
     ]);
     expect(getBrandLogosFn).toHaveBeenCalledWith({ codes: ['30', '99'] });
   });

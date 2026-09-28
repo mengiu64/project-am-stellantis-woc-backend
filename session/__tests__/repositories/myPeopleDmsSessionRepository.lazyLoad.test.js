@@ -54,6 +54,7 @@ jest.mock('../../../dbManager/AnagSnowflakesRepository', () => ({
 
 jest.mock('../../../dbManager/HqRepository', () => ({
   getDisabledOics: jest.fn().mockResolvedValue(new Set()),
+  getEnableSignatureByOics: jest.fn().mockResolvedValue(new Map()),
   getAddressByOics: jest.fn().mockResolvedValue(new Map()),
 }));
 
@@ -81,6 +82,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
       { oics: ['00007584'] },
     );
     expect(hqRepository.getDisabledOics).not.toHaveBeenCalled();
+    expect(hqRepository.getEnableSignatureByOics).not.toHaveBeenCalled();
     expect(hqRepository.getAddressByOics).toHaveBeenCalledWith(
       { __fakeDbManagerPool: true, query: expect.any(Function) },
       { oics: ['00007584'] },
@@ -129,6 +131,7 @@ describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeop
         ],
         main: 'Y',
         djcListParameter: null,
+        feaEnabled: false,
         address: null,
         zipcode: null,
         city: null,

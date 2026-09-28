@@ -274,6 +274,33 @@ async function getDisabledOics(pool, pairs) {
 
 /**
  * @param {import('pg').Pool} pool
+ * @param {{ market: string, oic: string }[]} pairs - coppie (market, oic) da verificare
+ * @returns {Promise<Map<string, boolean>>} mappa "market|oic" -> enablesignature
+ *          (true se enablesignature = 1); le coppie assenti dalla mappa
+ *          (nessuna riga in hq_application_enabling) sono da considerarsi
+ *          NON abilitate (default false, opt-in — a differenza di
+ *          getDisabledOics/enablewoc che e' opt-out)
+ */
+async function getEnableSignatureByOics(pool, pairs) {
+  if (!Array.isArray(pairs) || pairs.length === 0) return new Map();
+
+  const markets = pairs.map((p) => p.market);
+  const oics = pairs.map((p) => p.oic);
+
+  const { rows } = await pool.query(
+    `SELECT pairs.market, pairs.oic, hae.enablesignature
+       FROM unnest($1::varchar[], $2::varchar[]) AS pairs(market, oic)
+       JOIN woc.hq_application_enabling hae
+         ON hae.market = pairs.market
+        AND hae.oic = pairs.oic`,
+    [markets, oics],
+  );
+
+  return new Map(rows.map((row) => [`${row.market}|${row.oic}`, Number(row.enablesignature) === 1]));
+}
+
+/**
+ * @param {import('pg').Pool} pool
  * @param {{ oics: string[] }} params - elenco di cd_paired_oic_code da risolvere
  * @returns {Promise<Map<string, { address: string|null, zipcode: string|null, city: string|null }>>}
  *          mappa oic -> indirizzo del sito; un oic senza riga corrispondente
@@ -732,6 +759,7 @@ module.exports = {
   deletetVehicleInspection,
   insertVehicleInspection,
   getDisabledOics,
+  getEnableSignatureByOics,
   getAddressByOics,
   setMarketEnable,
   setMarketDisable,

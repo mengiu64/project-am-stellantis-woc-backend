@@ -17,6 +17,7 @@ const {
   deletetVehicleInspection,
   insertVehicleInspection,
   getDisabledOics,
+  getEnableSignatureByOics,
   getAddressByOics,
   setMarketEnable,
   setMarketDisable,
@@ -312,6 +313,49 @@ describe('HqRepository', () => {
       const result = await getDisabledOics(pool, [{ market: '1000', oic: '00010925' }]);
 
       expect(result).toEqual(new Set());
+    });
+  });
+
+  describe('getEnableSignatureByOics', () => {
+    it('returns an empty map without querying when pairs is missing/empty', async () => {
+      const pool = makePool();
+
+      expect(await getEnableSignatureByOics(pool, [])).toEqual(new Map());
+      expect(await getEnableSignatureByOics(pool, undefined)).toEqual(new Map());
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns a map "market|oic" -> boolean letto da hae.enablesignature (1/0)', async () => {
+      const pool = makePool(async () => ({
+        rows: [
+          { market: '1000', oic: '00010925', enablesignature: 1 },
+          { market: '1000', oic: '00007584', enablesignature: 0 },
+        ],
+      }));
+
+      const result = await getEnableSignatureByOics(pool, [
+        { market: '1000', oic: '00010925' },
+        { market: '1000', oic: '00007584' },
+      ]);
+
+      expect(result).toEqual(new Map([
+        ['1000|00010925', true],
+        ['1000|00007584', false],
+      ]));
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM unnest($1::varchar[], $2::varchar[])'),
+        [['1000', '1000'], ['00010925', '00007584']],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('JOIN woc.hq_application_enabling'));
+    });
+
+    it('returns an empty map when no pair has a matching row (default: feaEnabled = false lato chiamante)', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getEnableSignatureByOics(pool, [{ market: '1000', oic: '00010925' }]);
+
+      expect(result).toEqual(new Map());
     });
   });
 
