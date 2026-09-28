@@ -751,6 +751,14 @@ function resolveDmlPartSource(partsItem) {
  * zero, per evitare di sovrascrivere i campi prezzo con zeri quando manca
  * quantita' o prezzo/tariffa unitaria (v. computePartPriceFields).
  *
+ * Per ogni job con dmsOverride===true, i totali a livello di job vengono
+ * ricalcolati sommando i partInfo[]/laborInfo[] correnti (v.
+ * recalculateJobTotals); se almeno un job ha dmsOverride===true, anche
+ * roInfo.totalPrice viene ricalcolato sommando i totali di tutti i jobs[]
+ * (v. recalculateRoInfoTotals). Se nessun part/labor di nessun job trova
+ * match nel DML, ne' i job ne' roInfo.totalPrice vengono toccati (restano i
+ * totali originali, tipicamente da DGT).
+ *
  * @param {object} jobCardDetail - jobCardDetail (jobs[].partInfo[]/laborInfo[]),
  *                                 modificato in place
  * @param {object} dmlResponse   - risposta di getCartPriceAndAvailability (con WorkLines[])
@@ -909,6 +917,102 @@ function computeLaborPriceFields(laborDuration, laborRate, appDiscountPercentage
   };
 }
 
+/**
+ * Somma un campo numerico su un array di elementi (partInfo[]/laborInfo[]/
+ * jobs[]), trattando valori assenti/non numerici come 0 (Number(x)||0).
+ * @param {Array<object>} items - elementi da sommare
+ * @param {string} field - nome del campo da sommare su ciascun elemento
+ * @returns {number}
+ */
+function sumField(items, field) {
+  return (items ?? []).reduce((acc, item) => acc + (Number(item?.[field]) || 0), 0);
+}
+
+/**
+ * Ricalcola, in place, i totali a livello di job (jobs[]) sommando i valori
+ * correnti di partInfo[]/laborInfo[] (gia' eventualmente sovrascritti con i
+ * dati DML da applyDataFromDml): originalPriceExclVat/originalPriceWithVat/
+ * priceExclVatAfterDiscount/priceWithVatAfterDiscount sono la somma dei
+ * rispettivi campi di TUTTI i partInfo[]+laborInfo[] del job (matchati o
+ * meno nel DML, usando il valore correntemente presente su ciascuno);
+ * discountInAmountOnPriceWithVat = originalPriceWithVat -
+ * priceWithVatAfterDiscount (coerente con computePartPriceFields/
+ * computeLaborPriceFields). totalPartsAmountRequested/
+ * totalLaborAmountRequested sono la somma di originalPriceExclVat
+ * (l'importo "richiesto", cioe' prima dello sconto) rispettivamente di
+ * partInfo[]/laborInfo[]; totalLaborDurationRequested e' la somma di
+ * laborInfo[].laborDuration. Invocata da applyDataFromDml SOLO per i job
+ * con almeno un match DML (job.dmsOverride === true): se nessun part/labor
+ * del job e' stato arricchito, i totali restano quelli originali (in
+ * genere quelli restituiti da DGT).
+ * @param {object} job - elemento di jobCardDetail.jobs[], modificato in place
+ */
+function recalculateJobTotals(job) {
+  const parts = job?.partInfo ?? [];
+  const labors = job?.laborInfo ?? [];
+
+  const originalPriceExclVat = sumField(parts, 'originalPriceExclVat') + sumField(labors, 'originalPriceExclVat');
+  const originalPriceWithVat = sumField(parts, 'originalPriceWithVat') + sumField(labors, 'originalPriceWithVat');
+  const priceExclVatAfterDiscount = sumField(parts, 'priceExclVatAfterDiscount') + sumField(labors, 'priceExclVatAfterDiscount');
+  const priceWithVatAfterDiscount = sumField(parts, 'priceWithVatAfterDiscount') + sumField(labors, 'priceWithVatAfterDiscount');
+
+  job.originalPriceExclVat = originalPriceExclVat;
+  job.originalPriceWithVat = originalPriceWithVat;
+  job.priceExclVatAfterDiscount = priceExclVatAfterDiscount;
+  job.priceWithVatAfterDiscount = priceWithVatAfterDiscount;
+  job.discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+
+  job.totalPartsAmountRequested = sumField(parts, 'originalPriceExclVat');
+  job.totalLaborAmountRequested = sumField(labors, 'originalPriceExclVat');
+  job.totalLaborDurationRequested = sumField(labors, 'laborDuration');
+}
+
+/**
+ * Somma job.priceWithVatAfterDiscount dei jobs[] la cui modalita' di
+ * pagamento (job.paymentType, o job.packageCharge quando paymentType non e'
+ * valorizzato — stessa risoluzione di enrichJobsWithPackageInfo) corrisponde
+ * a `paymentType`.
+ * @param {Array<object>} jobs - jobCardDetail.jobs[]
+ * @param {'CUSTOMER'|'INSURANCE'|'MANUFACTURER'|'INTERNAL'} paymentType
+ * @returns {number}
+ */
+function sumPriceWithVatByPaymentType(jobs, paymentType) {
+  return jobs
+    .filter(job => (job?.paymentType || job?.packageCharge) === paymentType)
+    .reduce((acc, job) => acc + (Number(job?.priceWithVatAfterDiscount) || 0), 0);
+}
+
+/**
+ * Ricalcola, in place, roInfo.totalPrice sommando i totali di TUTTI i
+ * jobs[] (gia' ricalcolati da recalculateJobTotals dove applicabile):
+ * originalPriceExclVat/originalPriceWithVat/priceExclVatAfterDiscount/
+ * priceWithVatAfterDiscount, piu' il breakdown per modalita' di pagamento
+ * (totalCustomerWithVat/totalInsuranceWithVat/totalManufacturerWithVat/
+ * totalInternalWithVat, v. sumPriceWithVatByPaymentType). Invocata da
+ * applyDataFromDml SOLO se almeno un job ha dmsOverride === true. Non
+ * tocca roInfo.discounts (concetto distinto, non derivato dai part/labor).
+ * No-op se jobCardDetail.roInfo non e' un oggetto.
+ * @param {object} jobCardDetail - modificato in place
+ */
+function recalculateRoInfoTotals(jobCardDetail) {
+  const roInfo = jobCardDetail?.roInfo;
+  if (!roInfo || typeof roInfo !== 'object') return;
+
+  const jobs = jobCardDetail.jobs ?? [];
+
+  roInfo.totalPrice = {
+    ...roInfo.totalPrice,
+    originalPriceExclVat: sumField(jobs, 'originalPriceExclVat'),
+    originalPriceWithVat: sumField(jobs, 'originalPriceWithVat'),
+    priceExclVatAfterDiscount: sumField(jobs, 'priceExclVatAfterDiscount'),
+    priceWithVatAfterDiscount: sumField(jobs, 'priceWithVatAfterDiscount'),
+    totalCustomerWithVat: sumPriceWithVatByPaymentType(jobs, 'CUSTOMER'),
+    totalInsuranceWithVat: sumPriceWithVatByPaymentType(jobs, 'INSURANCE'),
+    totalManufacturerWithVat: sumPriceWithVatByPaymentType(jobs, 'MANUFACTURER'),
+    totalInternalWithVat: sumPriceWithVatByPaymentType(jobs, 'INTERNAL'),
+  };
+}
+
 function applyDataFromDml(jobCardDetail, dmlResponse) {
   const jobs = jobCardDetail?.jobs;
   if (!Array.isArray(jobs)) return jobCardDetail;
@@ -926,6 +1030,10 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       if (laborItem?.LaborOperationID) laborItemsByOperationId.set(laborItem.LaborOperationID, laborItem);
     }
   }
+
+  // true se almeno un job ha dmsOverride===true (v. sotto): guida
+  // recalculateRoInfoTotals a fine funzione.
+  let anyJobOverride = false;
 
   for (const job of jobs) {
     // Sconto a livello di workline: guida reconcileDiscountPercentages per
@@ -983,6 +1091,14 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
     }
 
     job.dmsOverride = jobHasDmsMatch;
+    if (jobHasDmsMatch) {
+      recalculateJobTotals(job);
+      anyJobOverride = true;
+    }
+  }
+
+  if (anyJobOverride) {
+    recalculateRoInfoTotals(jobCardDetail);
   }
 
   return jobCardDetail;

@@ -1527,6 +1527,132 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
     });
 
+    // ── ricalcolo totali job/roInfo.totalPrice ──────────────────────────────
+
+    test('recalculates job-level totals (sum of partInfo[]/laborInfo[]) when job.dmsOverride=true', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 2, unitaryPriceExclVat: 100, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 22 }],
+            laborInfo: [{ laborOperationCode: 'OP1', appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 22 }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{
+          PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }],
+          LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 1, UnitaryTimeAmount: 50, DiscountPercentage: 0 }],
+        }],
+      });
+
+      const job = jobCardDetail.jobs[0];
+      const part = job.partInfo[0]; // originalPriceExclVat = 200, originalPriceWithVat = 244
+      const labor = job.laborInfo[0]; // originalPriceExclVat = 50, originalPriceWithVat = 61
+
+      expect(job.originalPriceExclVat).toBeCloseTo(part.originalPriceExclVat + labor.originalPriceExclVat, 5);
+      expect(job.originalPriceWithVat).toBeCloseTo(part.originalPriceWithVat + labor.originalPriceWithVat, 5);
+      expect(job.priceExclVatAfterDiscount).toBeCloseTo(part.priceExclVatAfterDiscount + labor.priceExclVatAfterDiscount, 5);
+      expect(job.priceWithVatAfterDiscount).toBeCloseTo(part.priceWithVatAfterDiscount + labor.priceWithVatAfterDiscount, 5);
+      expect(job.discountInAmountOnPriceWithVat).toBeCloseTo(job.originalPriceWithVat - job.priceWithVatAfterDiscount, 5);
+      expect(job.totalPartsAmountRequested).toBeCloseTo(part.originalPriceExclVat, 5);
+      expect(job.totalLaborAmountRequested).toBeCloseTo(labor.originalPriceExclVat, 5);
+      expect(job.totalLaborDurationRequested).toBe(labor.laborDuration);
+    });
+
+    test('does not touch job-level totals when job.dmsOverride=false (no match found)', () => {
+      const jobCardDetail = {
+        jobs: [{
+          originalPriceExclVat: 999,
+          partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1, unitaryPriceExclVat: 10 }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, { WorkLines: [] });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+      expect(jobCardDetail.jobs[0].originalPriceExclVat).toBe(999); // invariato
+      expect(jobCardDetail.jobs[0].totalPartsAmountRequested).toBeUndefined();
+    });
+
+    test('recalculates roInfo.totalPrice summing all jobs when at least one job has dmsOverride=true', () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          {
+            paymentType: 'CUSTOMER',
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, vatPercentage: 22 }],
+            laborInfo: [],
+          },
+          {
+            paymentType: 'INTERNAL',
+            partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1, unitaryPriceExclVat: 50, vatPercentage: 22 }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      const [job1, job2] = jobCardDetail.jobs;
+      expect(job1.dmsOverride).toBe(true);
+      expect(job2.dmsOverride).toBe(false);
+
+      // roInfo.totalPrice viene comunque ricalcolato (almeno un job ha dmsOverride=true),
+      // sommando i totali CORRENTI di entrambi i job (job2 non ricalcolato, resta com'era).
+      const { totalPrice } = jobCardDetail.roInfo;
+      expect(totalPrice.originalPriceExclVat).toBeCloseTo(job1.originalPriceExclVat + (job2.originalPriceExclVat || 0), 5);
+      expect(totalPrice.priceWithVatAfterDiscount).toBeCloseTo(job1.priceWithVatAfterDiscount + (job2.priceWithVatAfterDiscount || 0), 5);
+      expect(totalPrice.totalCustomerWithVat).toBeCloseTo(job1.priceWithVatAfterDiscount, 5);
+      expect(totalPrice.totalInternalWithVat).toBeCloseTo(job2.priceWithVatAfterDiscount || 0, 5);
+      expect(totalPrice.totalInsuranceWithVat).toBe(0);
+      expect(totalPrice.totalManufacturerWithVat).toBe(0);
+    });
+
+    test('uses job.packageCharge as payment type fallback when job.paymentType is not set', () => {
+      const jobCardDetail = {
+        roInfo: {},
+        jobs: [{
+          packageCharge: 'MANUFACTURER',
+          partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, vatPercentage: 22 }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.roInfo.totalPrice.totalManufacturerWithVat)
+        .toBeCloseTo(jobCardDetail.jobs[0].priceWithVatAfterDiscount, 5);
+    });
+
+    test('does not touch roInfo.totalPrice when no job has dmsOverride=true', () => {
+      const jobCardDetail = {
+        roInfo: { totalPrice: { originalPriceExclVat: 123 } },
+        jobs: [{ partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1 }], laborInfo: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, { WorkLines: [] });
+
+      expect(jobCardDetail.roInfo.totalPrice).toEqual({ originalPriceExclVat: 123 });
+    });
+
+    test('is a no-op on roInfo when jobCardDetail.roInfo is missing, even if a job matches', () => {
+      const jobCardDetail = {
+        jobs: [{ partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 10 }], laborInfo: [] }],
+      };
+
+      const result = applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(result.roInfo).toBeUndefined();
+    });
+
     test('is a no-op (returns jobCardDetail unchanged) when jobs is not an array', () => {
       const jobCardDetail = { roInfo: {} };
 
