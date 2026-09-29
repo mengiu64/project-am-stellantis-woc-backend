@@ -1161,6 +1161,61 @@ describe('jobCardService', () => {
 
       expect(result).toEqual({ dealerNumberId: '0062219' });
     });
+
+    test('passes jobCardDetail.roInfo.stellantisBrand as brand override to resolveDynamicSenderFields, avoiding the v360 lookup', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { stellantisBrand: 'OV' },
+      };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe', mainSincom: '0062219', market: 'FR' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe', mainSincom: '0062219', market: 'FR', brand: 'OV' },
+      );
+    });
+
+    test('uses jobCardDetail.roInfo.stellantisBrand as the sender brand when resolveDynamicSenderFields echoes it back (no v360 override needed)', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { stellantisBrand: 'OV' },
+      };
+      resolveDynamicSenderFields.mockImplementation((_identifiers, overrides) => Promise.resolve({ ...overrides }));
+
+      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
+
+      expect(result).toEqual({
+        dealerNumberId: '0062219',
+        market: 'FR',
+        brand: 'OV',
+      });
+    });
+
+    test('sessionContext.brand (explicit override) takes priority over jobCardDetail.roInfo.stellantisBrand', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { stellantisBrand: 'OV' },
+      };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe', brand: 'FT' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe', brand: 'FT' },
+      );
+    });
+
+    test('falls back to resolveDynamicSenderFields (v360) when jobCardDetail.roInfo.stellantisBrand is missing', async () => {
+      const jobCardDetail = { vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } }, roInfo: {} };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe' },
+      );
+    });
   });
 
   // ── applyDataFromDml ─────────────────────────────────────────────────────

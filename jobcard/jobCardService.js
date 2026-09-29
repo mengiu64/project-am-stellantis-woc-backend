@@ -554,10 +554,15 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * dell'inquiry DMS risolvano il Sender dinamico con gli identici criteri:
  *  - mainSincom/market/language/dealerCountryCode <- username (authorizer.sub),
  *    tramite session/src/sessionContextCache.js (myPeople, cache /tmp)
- *  - brand <- VIN, tramite v360/v360Service.js::getCachedBrand (v360
+ *  - brand <- jobCardDetail.roInfo.stellantisBrand (gia' disponibile dalla
+ *    jobCardDetails DGT appena recuperata, nessuna chiamata aggiuntiva); solo
+ *    se assente si ricade su VIN + v360/v360Service.js::getCachedBrand (v360
  *    getdetails, campo data.brandCode, cache /tmp) — il brand del VEICOLO,
  *    non quello (di default) del dealer/sessione: un dealer multi-brand può
- *    servire un veicolo di un brand diverso dal proprio.
+ *    servire un veicolo di un brand diverso dal proprio. Solo jobcard
+ *    conosce roInfo.stellantisBrand (dalla propria jobCardDetails), quindi
+ *    questa scorciatoia e' locale a jobcard: pkFavorite/pkManager continuano
+ *    a risolvere il brand solo tramite v360.
  *
  * componentId e currencyId NON vengono sovrascritti qui: restano i valori
  * statici configurati via env in dms/config.js (config.sender), come da
@@ -567,7 +572,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  *  - serviceId               <- sessionContext.username (da authorizer.sub)
  *  - languageCode            <- sessionContext.language, o (fallback automatico) session.language
  *  - dealerCountryCode       <- sessionContext.dealerCountryCode, o (fallback automatico) session.marketIso
- *  - brand                   <- sessionContext.brand, o (fallback automatico) v360 getdetails.data.brandCode per il VIN di jobCardDetail
+ *  - brand                   <- sessionContext.brand, o (fallback automatico) jobCardDetail.roInfo.stellantisBrand, o (ultimo fallback) v360 getdetails.data.brandCode per il VIN
  *  - market                  <- sessionContext.market, o (fallback automatico) session.codmarket (solo chiave di lookup, non un campo Sender)
  *
  * physicalSiteId/dealerNumberIdSource NON vengono più risolti qui: il lookup
@@ -591,7 +596,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * @param {string} [sessionContext.username]         - da event.requestContext.authorizer.sub — usato sia come serviceId sia come chiave per la risoluzione automatica via session
  * @param {string} [sessionContext.mainSincom]       - override esplicito (opzionale); se assente, risolto da session.sincom
  * @param {string} [sessionContext.market]           - override esplicito (opzionale); se assente, risolto da session.codmarket (solo per il lookup DB lato dms, non inviato al DML)
- * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da v360 getdetails.data.brandCode per il VIN
+ * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da jobCardDetail.roInfo.stellantisBrand, o (ultimo fallback) da v360 getdetails.data.brandCode per il VIN
  * @param {string} [sessionContext.language]         - override esplicito (opzionale); se assente, risolto da session.language
  * @param {string} [sessionContext.dealerCountryCode] - override esplicito (opzionale); se assente, risolto da session.marketIso
  * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
@@ -600,11 +605,24 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   const { username } = sessionContext;
   const vin = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
   const pairedOicCode = jobCardDetail?.roInfo?.pairedOicCode ?? null;
+  const stellantisBrand = jobCardDetail?.roInfo?.stellantisBrand ?? null;
+
+  // Se sessionContext non porta gia' un brand esplicito, uso quello gia'
+  // presente nel jobCardDetail (roInfo.stellantisBrand, valorizzato da DGT
+  // nella jobCardDetails appena recuperata): evita una chiamata v360
+  // (getdetails) altrimenti sempre necessaria per il solo brand, e con essa
+  // il rischio che un v360 lento/irraggiungibile blocchi l'intera richiesta
+  // (v. resolveDynamicSenderFields, che ricade su v360 solo se anche
+  // roInfo.stellantisBrand e' assente).
+  const overrides = { ...sessionContext };
+  if (!overrides.brand && stellantisBrand) {
+    overrides.brand = stellantisBrand;
+  }
 
   const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
   const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
     { username, vin },
-    sessionContext,
+    overrides,
   );
 
   const sender = {};
