@@ -37,10 +37,17 @@ async function handler(event = {}) {
 
   try {
     const repository = buildMyPeopleDmsRepository();
+    // I ruoli vengono verificati PRIMA di interpellare myPeople: se indicano gia'
+    // un utente HQ (hqCentral/hqMarket), il repository salta del tutto la
+    // chiamata a myPeople (che comunque non modella utenti HQ, v.
+    // MyPeopleDmsSessionRepository::getSessionData) e costruisce direttamente
+    // la sessione "vuota" HQ, cosi' un eventuale errore/timeout/risposta
+    // inattesa di myPeople non blocca mai un utente HQ legittimo.
+    const roleFlags = resolveRoleFlags(roles);
     // `profile` (parsato da authorizer.profile, v. getAuthContext) viene passato
     // solo per valorizzare firstname/lastname degli utenti HQ (given_name/family_name),
     // che altrimenti resterebbero null: v. MyPeopleDmsSessionRepository::buildHqSessionData.
-    const data = await repository.getSessionData(sub, profile);
+    const data = await repository.getSessionData(sub, profile, roleFlags);
     // `userroles` (array) e' il ruolo/i ruoli dell'utente autenticato, presi
     // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di

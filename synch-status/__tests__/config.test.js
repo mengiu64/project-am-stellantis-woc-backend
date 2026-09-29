@@ -1,18 +1,13 @@
-jest.mock('aws-sdk', () => {
+// Mock del client SSM (SDK v3): `send()` sostituisce il pattern
+// `.getParameter(...).promise()` del vecchio SDK v2. `GetParameterCommand` è
+// mockato come una semplice classe che espone l'input passato, così i test
+// possono ispezionare i parametri richiesti tramite `send.mock.calls`.
+jest.mock('@aws-sdk/client-ssm', () => {
   return {
-    SSM: jest.fn(() => ({
-      getParameter: jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({ Parameter: { Value: 'test-value' } })
-      }),
-      getParameters: jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({ Parameters: [] })
-      })
+    SSMClient: jest.fn(() => ({
+      send: jest.fn().mockResolvedValue({ Parameter: { Value: 'test-value' } })
     })),
-    SecretsManager: jest.fn(() => ({
-      getSecretValue: jest.fn().mockReturnValue({
-        promise: jest.fn().mockResolvedValue({ SecretString: '{}' })
-      })
-    }))
+    GetParameterCommand: jest.fn(function (input) { return { input }; })
   };
 });
 
@@ -310,22 +305,18 @@ describe('config.js - _loadParameters() (scenari SSM)', () => {
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
     jest.resetModules();
-    jest.dontMock('aws-sdk');
+    jest.dontMock('@aws-sdk/client-ssm');
   });
 
-  function loadConfigWithSsm(getParameterImpl) {
+  function loadConfigWithSsm(sendImpl) {
     let freshConfig;
     jest.isolateModules(() => {
-      // Sostituisce esplicitamente il mock hoisted di aws-sdk in cima al file
-      // con un'implementazione SSM dedicata a questo scenario.
+      // Sostituisce esplicitamente il mock hoisted di @aws-sdk/client-ssm in
+      // cima al file con un'implementazione `send` dedicata a questo scenario.
       jest.resetModules();
-      jest.doMock('aws-sdk', () => ({
-        SSM: jest.fn(() => ({ getParameter: getParameterImpl })),
-        SecretsManager: jest.fn(() => ({
-          getSecretValue: jest.fn().mockReturnValue({
-            promise: jest.fn().mockResolvedValue({ SecretString: '{}' })
-          })
-        }))
+      jest.doMock('@aws-sdk/client-ssm', () => ({
+        SSMClient: jest.fn(() => ({ send: sendImpl })),
+        GetParameterCommand: jest.fn(function (input) { return { input }; })
       }));
       freshConfig = require('../config');
     });
@@ -341,16 +332,14 @@ describe('config.js - _loadParameters() (scenari SSM)', () => {
     process.env.IBM_APIC_CLIENT_ID = 'env-apic-id';
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const getParameter = jest.fn().mockReturnValue({
-      promise: jest.fn().mockRejectedValue(new Error('ParameterNotFound'))
-    });
-    const config = loadConfigWithSsm(getParameter);
+    const send = jest.fn().mockRejectedValue(new Error('ParameterNotFound'));
+    const config = loadConfigWithSsm(send);
 
     const cfg = await config.getInstance();
 
-    // getParameter è stato interrogato per ciascuno dei 4 parametri, tutti
+    // send() è stato interrogato per ciascuno dei 4 parametri, tutti
     // falliti -> ciascuno logga un warn e ricade sulla env variable.
-    expect(getParameter).toHaveBeenCalledTimes(4);
+    expect(send).toHaveBeenCalledTimes(4);
     expect(warnSpy).toHaveBeenCalledTimes(4);
     expect(cfg.configuration.oauth.clientId).toBe('env-client-id');
     expect(cfg.configuration.apic.clientId).toBe('env-apic-id');
@@ -365,15 +354,13 @@ describe('config.js - _loadParameters() (scenari SSM)', () => {
     process.env.OAUTH_TOKEN_URL = 'p';
     process.env.IBM_APIC_CLIENT_ID = 'p';
 
-    const getParameter = jest.fn().mockReturnValue({
-      promise: jest.fn().mockResolvedValue({ Parameter: { Value: 'from-ssm' } })
-    });
-    const config = loadConfigWithSsm(getParameter);
+    const send = jest.fn().mockResolvedValue({ Parameter: { Value: 'from-ssm' } });
+    const config = loadConfigWithSsm(send);
 
     await config.getInstance();
 
     // Il path prod NON contiene il suffisso ambiente (nessun "-produzione")
-    const calledPaths = getParameter.mock.calls.map((c) => c[0].Name);
+    const calledPaths = send.mock.calls.map((c) => c[0].input.Name);
     expect(calledPaths).toContain('/stellantis/synch-status/oauth_client_id');
     expect(calledPaths.every((p) => !p.includes('-produzione'))).toBe(true);
   });
@@ -381,15 +368,13 @@ describe('config.js - _loadParameters() (scenari SSM)', () => {
   it('DEVE valorizzare i parametri OAuth/APIC letti da SSM', async () => {
     process.env.ENVIRONMENT = 'stage';
 
-    const getParameter = jest.fn().mockReturnValue({
-      promise: jest.fn().mockResolvedValue({ Parameter: { Value: 'ssm-value' } })
-    });
-    const config = loadConfigWithSsm(getParameter);
+    const send = jest.fn().mockResolvedValue({ Parameter: { Value: 'ssm-value' } });
+    const config = loadConfigWithSsm(send);
 
     const cfg = await config.getInstance();
 
     // Path stage-specifico
-    const calledPaths = getParameter.mock.calls.map((c) => c[0].Name);
+    const calledPaths = send.mock.calls.map((c) => c[0].input.Name);
     expect(calledPaths).toContain('/stellantis/synch-status/oauth_client_id-stage');
     expect(cfg.configuration.oauth.clientId).toBe('ssm-value');
     expect(cfg.configuration.oauth.tokenUrl).toBe('ssm-value');
@@ -403,12 +388,12 @@ describe('config.js - _loadParameters() (scenari SSM)', () => {
     process.env.OAUTH_TOKEN_URL = 'x';
     process.env.IBM_APIC_CLIENT_ID = 'x';
 
-    // getParameter che lancia in modo SINCRONO: non intercettato dal try/catch
+    // send() che lancia in modo SINCRONO: non intercettato dal try/catch
     // interno del ciclo (che avvolge solo l'await della promise), viene invece
     // catturato dal catch esterno di _loadParameters -> ritorna params parziali;
-    // per forzare il catch di initialize() rendiamo getParameter stesso non-callable.
-    const getParameter = jest.fn(() => { throw new Error('SSM boom'); });
-    const config = loadConfigWithSsm(getParameter);
+    // per forzare il catch di initialize() rendiamo send stesso non-callable.
+    const send = jest.fn(() => { throw new Error('SSM boom'); });
+    const config = loadConfigWithSsm(send);
 
     // Il throw sincrono avviene dentro il for: catturato dal catch esterno di
     // _loadParameters (console.error) e la init prosegue coi fallback env.

@@ -200,7 +200,7 @@ describe('jobCardService', () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
 
     const result = await getJobCardDetails('token', '79');
-    expect(result).toEqual(body);
+    expect(result).toEqual({ dmsAvailable: true, ...body });
   });
 
   test('throws on HTTP error', async () => {
@@ -252,7 +252,24 @@ describe('jobCardService', () => {
   test('does not fail when jobCardDetail or customerInfo is missing', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 
-    await expect(getJobCardDetails('token', '79')).resolves.toEqual({});
+    await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsAvailable: true });
+  });
+
+  test('does not block/fail the "details" response when the DML gateway (postDmsInquiry) errors out', async () => {
+    const body = { jobCardDetail: { roInfo: {}, jobs: [] } };
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
+    postDmsInquiry.mockRejectedValue(new Error(
+      '[dms] inquiry failed: HTTP 400 - {"success":false,"errorCode":"DML_AFTERSALES_ERR_002_400","message":"No data found in dispatching table"}'
+    ));
+
+    const result = await getJobCardDetails('token', '79');
+
+    expect(result.jobCardDetail).toEqual(body.jobCardDetail);
+    // dmsAvailable = false segnala al chiamante, in cima al messaggio, che
+    // l'arricchimento DML non e' andato a buon fine (senza dover fare
+    // parsing dell'errore del DMS, che non viene esposto nella risposta).
+    expect(result.dmsAvailable).toBe(false);
+    expect(Object.keys(result)[0]).toBe('dmsAvailable');
   });
 
   test('calls getDataFromDML (gateway DML) with the given sessionContext before persisting to cache', async () => {
@@ -455,7 +472,7 @@ describe('jobCardService', () => {
 
     test('does not fail when roInfo or sourceApplication is missing', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsAvailable: true, jobCardDetail: {} });
 
       const body = { jobCardDetail: { roInfo: { dealerId: '017721L' } } };
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
@@ -553,7 +570,7 @@ describe('jobCardService', () => {
 
     test('does not fail when jobs is missing or not an array', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsAvailable: true, jobCardDetail: {} });
     });
 
     test('places packageType/packageCharge before partInfo when partInfo is present', async () => {
@@ -566,7 +583,7 @@ describe('jobCardService', () => {
         },
       ]);
       expect(Object.keys(job)).toEqual([
-        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo',
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'dmsOverride',
       ]);
     });
 
@@ -579,7 +596,7 @@ describe('jobCardService', () => {
         },
       ]);
       expect(Object.keys(job)).toEqual([
-        'jobInternalId', 'jobType', 'packageType', 'packageCharge', 'laborInfo',
+        'jobInternalId', 'jobType', 'packageType', 'packageCharge', 'laborInfo', 'dmsOverride',
       ]);
     });
 
@@ -594,13 +611,13 @@ describe('jobCardService', () => {
         },
       ]);
       expect(Object.keys(job)).toEqual([
-        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'laborInfo',
+        'jobInternalId', 'jobType', 'packageCode', 'packageType', 'packageCharge', 'partInfo', 'laborInfo', 'dmsOverride',
       ]);
     });
 
     test('appends packageType/packageCharge at the end when neither partInfo nor laborInfo is present', async () => {
       const [job] = await detailsFor([{ jobInternalId: 'j1', jobType: 'STD' }]);
-      expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge']);
+      expect(Object.keys(job)).toEqual(['jobInternalId', 'jobType', 'packageType', 'packageCharge', 'dmsOverride']);
     });
   });
 
@@ -666,7 +683,7 @@ describe('jobCardService', () => {
 
     test('does not fail when jobs is missing or not an array', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsAvailable: true, jobCardDetail: {} });
     });
   });
 
@@ -699,7 +716,7 @@ describe('jobCardService', () => {
 
     test('does not fail when workshopReturn is missing', async () => {
       httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: { jobCardDetail: {} } });
-      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ jobCardDetail: {} });
+      await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsAvailable: true, jobCardDetail: {} });
     });
 
     test('leaves the rest of jobCardDetail untouched', async () => {
@@ -730,7 +747,7 @@ describe('jobCardService', () => {
     expect(setCacheItem).toHaveBeenCalledTimes(1);
     const [cacheKey, value, ttlSeconds] = setCacheItem.mock.calls[0];
     expect(cacheKey).toBe('jobcard:jobcarddetails:79');
-    expect(value).toEqual(body);
+    expect(value).toEqual({ dmsAvailable: true, ...body });
     expect(ttlSeconds).toBe(3600);
   });
 
@@ -748,7 +765,7 @@ describe('jobCardService', () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body });
     setCacheItem.mockResolvedValueOnce(body);
 
-    await expect(getJobCardDetails('token', '79')).resolves.toEqual(body);
+    await expect(getJobCardDetails('token', '79')).resolves.toEqual({ dmsAvailable: true, ...body });
   });
 
   test('does not write to the cache when the request fails', async () => {
@@ -860,6 +877,66 @@ describe('jobCardService', () => {
       });
       // The original payload passed in is left untouched
       expect(payload.jobs[0]).toHaveProperty('packageType', 'GC');
+    });
+
+    test('strips dmsOverride from payload.jobs and dmsunknown/QuantityAvailable/availability from partInfo (DGT rejects them with "is not allowed")', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          {
+            jobInternalId: 'JOB-1',
+            jobType: 'STD',
+            dmsOverride: true,
+            partInfo: [
+              {
+                partNumber: '735712563',
+                itemQuantity: 2,
+                dmsunknown: 0,
+                QuantityAvailable: 3,
+                availability: 'green',
+              },
+              { partNumber: '999999999', itemQuantity: 1, dmsunknown: 1 },
+            ],
+          },
+        ],
+      };
+      await saveJobCard('token', payload);
+
+      const [, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual({
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          {
+            jobInternalId: 'JOB-1',
+            jobType: 'STD',
+            partInfo: [
+              { partNumber: '735712563', itemQuantity: 2 },
+              { partNumber: '999999999', itemQuantity: 1 },
+            ],
+          },
+        ],
+      });
+      // The original payload passed in is left untouched
+      expect(payload.jobs[0]).toHaveProperty('dmsOverride', true);
+      expect(payload.jobs[0].partInfo[0]).toHaveProperty('dmsunknown', 0);
+    });
+
+    test('leaves a job without partInfo untouched (no partInfo array to sanitize)', async () => {
+      httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+      const payload = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [{ jobInternalId: 'JOB-1', dmsOverride: false }],
+      };
+      await saveJobCard('token', payload);
+
+      const [, body] = httpsRequest.mock.calls[0];
+      expect(JSON.parse(body)).toEqual({
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [{ jobInternalId: 'JOB-1' }],
+      });
     });
 
     test('leaves payload without a jobs array untouched', async () => {
@@ -1083,6 +1160,61 @@ describe('jobCardService', () => {
       const result = await buildDmsSender({}, { mainSincom: '0062219' });
 
       expect(result).toEqual({ dealerNumberId: '0062219' });
+    });
+
+    test('passes jobCardDetail.roInfo.stellantisBrand as brand override to resolveDynamicSenderFields, avoiding the v360 lookup', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { stellantisBrand: 'OV' },
+      };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe', mainSincom: '0062219', market: 'FR' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe', mainSincom: '0062219', market: 'FR', brand: 'OV' },
+      );
+    });
+
+    test('uses jobCardDetail.roInfo.stellantisBrand as the sender brand when resolveDynamicSenderFields echoes it back (no v360 override needed)', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { stellantisBrand: 'OV' },
+      };
+      resolveDynamicSenderFields.mockImplementation((_identifiers, overrides) => Promise.resolve({ ...overrides }));
+
+      const result = await buildDmsSender(jobCardDetail, { mainSincom: '0062219', market: 'FR' });
+
+      expect(result).toEqual({
+        dealerNumberId: '0062219',
+        market: 'FR',
+        brand: 'OV',
+      });
+    });
+
+    test('sessionContext.brand (explicit override) takes priority over jobCardDetail.roInfo.stellantisBrand', async () => {
+      const jobCardDetail = {
+        vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } },
+        roInfo: { stellantisBrand: 'OV' },
+      };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe', brand: 'FT' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe', brand: 'FT' },
+      );
+    });
+
+    test('falls back to resolveDynamicSenderFields (v360) when jobCardDetail.roInfo.stellantisBrand is missing', async () => {
+      const jobCardDetail = { vehicleInfo: { identification: { vin: 'VF3CABHW6GT204366' } }, roInfo: {} };
+
+      await buildDmsSender(jobCardDetail, { username: 'jdoe' });
+
+      expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
+        { username: 'jdoe', vin: 'VF3CABHW6GT204366' },
+        { username: 'jdoe' },
+      );
     });
   });
 
@@ -1438,7 +1570,7 @@ describe('jobCardService', () => {
       expect(labor.discountInAmountOnPriceWithVat).toBeCloseTo(12.2, 5); // 122 - 109.8
     });
 
-    test('leaves partInfo/laborInfo untouched when no matching PartNumber/LaborOperationID is found', () => {
+    test('sets part.dmsunknown=1 and job.dmsOverride=false when no matching PartNumber/LaborOperationID is found for any part/labor of the job', () => {
       const jobCardDetail = {
         jobs: [
           {
@@ -1450,8 +1582,275 @@ describe('jobCardService', () => {
 
       applyDataFromDml(jobCardDetail, { WorkLines: [] });
 
-      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual({ partNumber: 'UNMATCHED', originalPriceExclVat: 1 });
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual({ partNumber: 'UNMATCHED', originalPriceExclVat: 1, dmsunknown: 1 });
       expect(jobCardDetail.jobs[0].laborInfo[0]).toEqual({ laborOperationCode: 'UNMATCHED', laborDuration: 1 });
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+    });
+
+    test('sets part.dmsunknown=0 and job.dmsOverride=true when a matching PartNumber is found', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1 }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsunknown).toBe(0);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('sets job.dmsOverride=true when a matching LaborOperationID is found', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [],
+            laborInfo: [{ laborOperationCode: 'OP1' }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [], LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 1, UnitaryTimeAmount: 10, DiscountPercentage: 0 }] }],
+      });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('does NOT set job.dmsOverride=true when the matching PartsItem/LaborItem carries only availability/stock data, no price nor discount (e.g. BinLocation-only response)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10 }],
+            laborInfo: [{ laborOperationCode: 'OP1', originalPriceExclVat: 20 }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{
+          PartsItem: [{ PartNumber: 'P1', BinLocation: [{ QuantityAvailable: 5 }] }],
+          LaborItems: [{ LaborOperationID: 'OP1', LaborType: 'L' }],
+        }],
+      });
+
+      // Il part/labor sono comunque "conosciuti" (dmsunknown=0) e arricchiti con
+      // disponibilita', ma senza prezzo/sconto dal DMS non c'e' un vero override.
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsunknown).toBe(0);
+      expect(jobCardDetail.jobs[0].partInfo[0].QuantityAvailable).toBe(5);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+    });
+
+    test('sets job.dmsOverride=true when the DML price differs from the previous one, even with DiscountPercentage=0 (price-only override)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 0,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 25, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0].originalPriceExclVat).toBe(25);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(0);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('sets job.dmsOverride=true when DiscountPercentage!=0 even if the recalculated price is (numerically) unchanged', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 0,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 15 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0].originalPriceExclVat).toBe(10);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(15);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('does not set job.dmsOverride=true when price and discount are both unchanged (0 vs 0)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 0,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+    });
+
+    test('sets job.dmsOverride=true when at least one part matches even if others/labor do not', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [
+              { partNumber: 'MATCHED', itemQuantity: 1 },
+              { partNumber: 'UNMATCHED', itemQuantity: 1 },
+            ],
+            laborInfo: [{ laborOperationCode: 'UNMATCHED-LABOR' }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'MATCHED', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    // ── ricalcolo totali job/roInfo.totalPrice ──────────────────────────────
+
+    test('recalculates job-level totals (sum of partInfo[]/laborInfo[]) when job.dmsOverride=true', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 2, unitaryPriceExclVat: 100, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 22 }],
+            laborInfo: [{ laborOperationCode: 'OP1', appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 22 }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{
+          PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }],
+          LaborItems: [{ LaborOperationID: 'OP1', TimeUnit: 1, UnitaryTimeAmount: 50, DiscountPercentage: 0 }],
+        }],
+      });
+
+      const job = jobCardDetail.jobs[0];
+      const part = job.partInfo[0]; // originalPriceExclVat = 200, originalPriceWithVat = 244
+      const labor = job.laborInfo[0]; // originalPriceExclVat = 50, originalPriceWithVat = 61
+
+      expect(job.originalPriceExclVat).toBeCloseTo(part.originalPriceExclVat + labor.originalPriceExclVat, 5);
+      expect(job.originalPriceWithVat).toBeCloseTo(part.originalPriceWithVat + labor.originalPriceWithVat, 5);
+      expect(job.priceExclVatAfterDiscount).toBeCloseTo(part.priceExclVatAfterDiscount + labor.priceExclVatAfterDiscount, 5);
+      expect(job.priceWithVatAfterDiscount).toBeCloseTo(part.priceWithVatAfterDiscount + labor.priceWithVatAfterDiscount, 5);
+      expect(job.discountInAmountOnPriceWithVat).toBeCloseTo(job.originalPriceWithVat - job.priceWithVatAfterDiscount, 5);
+      expect(job.totalPartsAmountRequested).toBeCloseTo(part.originalPriceExclVat, 5);
+      expect(job.totalLaborAmountRequested).toBeCloseTo(labor.originalPriceExclVat, 5);
+      expect(job.totalLaborDurationRequested).toBe(labor.laborDuration);
+    });
+
+    test('does not touch job-level totals when job.dmsOverride=false (no match found)', () => {
+      const jobCardDetail = {
+        jobs: [{
+          originalPriceExclVat: 999,
+          partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1, unitaryPriceExclVat: 10 }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, { WorkLines: [] });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+      expect(jobCardDetail.jobs[0].originalPriceExclVat).toBe(999); // invariato
+      expect(jobCardDetail.jobs[0].totalPartsAmountRequested).toBeUndefined();
+    });
+
+    test('recalculates roInfo.totalPrice summing all jobs when at least one job has dmsOverride=true', () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        jobs: [
+          {
+            paymentType: 'CUSTOMER',
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, vatPercentage: 22 }],
+            laborInfo: [],
+          },
+          {
+            paymentType: 'INTERNAL',
+            partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1, unitaryPriceExclVat: 50, vatPercentage: 22 }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      const [job1, job2] = jobCardDetail.jobs;
+      expect(job1.dmsOverride).toBe(true);
+      expect(job2.dmsOverride).toBe(false);
+
+      // roInfo.totalPrice viene comunque ricalcolato (almeno un job ha dmsOverride=true),
+      // sommando i totali CORRENTI di entrambi i job (job2 non ricalcolato, resta com'era).
+      const { totalPrice } = jobCardDetail.roInfo;
+      expect(totalPrice.originalPriceExclVat).toBeCloseTo(job1.originalPriceExclVat + (job2.originalPriceExclVat || 0), 5);
+      expect(totalPrice.priceWithVatAfterDiscount).toBeCloseTo(job1.priceWithVatAfterDiscount + (job2.priceWithVatAfterDiscount || 0), 5);
+      expect(totalPrice.totalCustomerWithVat).toBeCloseTo(job1.priceWithVatAfterDiscount, 5);
+      expect(totalPrice.totalInternalWithVat).toBeCloseTo(job2.priceWithVatAfterDiscount || 0, 5);
+      expect(totalPrice.totalInsuranceWithVat).toBe(0);
+      expect(totalPrice.totalManufacturerWithVat).toBe(0);
+    });
+
+    test('uses job.packageCharge as payment type fallback when job.paymentType is not set', () => {
+      const jobCardDetail = {
+        roInfo: {},
+        jobs: [{
+          packageCharge: 'MANUFACTURER',
+          partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, vatPercentage: 22 }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.roInfo.totalPrice.totalManufacturerWithVat)
+        .toBeCloseTo(jobCardDetail.jobs[0].priceWithVatAfterDiscount, 5);
+    });
+
+    test('does not touch roInfo.totalPrice when no job has dmsOverride=true', () => {
+      const jobCardDetail = {
+        roInfo: { totalPrice: { originalPriceExclVat: 123 } },
+        jobs: [{ partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1 }], laborInfo: [] }],
+      };
+
+      applyDataFromDml(jobCardDetail, { WorkLines: [] });
+
+      expect(jobCardDetail.roInfo.totalPrice).toEqual({ originalPriceExclVat: 123 });
+    });
+
+    test('is a no-op on roInfo when jobCardDetail.roInfo is missing, even if a job matches', () => {
+      const jobCardDetail = {
+        jobs: [{ partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 10 }], laborInfo: [] }],
+      };
+
+      const result = applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(result.roInfo).toBeUndefined();
     });
 
     test('is a no-op (returns jobCardDetail unchanged) when jobs is not an array', () => {
@@ -1484,18 +1883,36 @@ describe('jobCardService', () => {
 
       const result = await getDataFromDML(jobCardDetail);
 
-      expect(result.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+      expect(result.dmsAvailable).toBe(true);
+      expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
         unitaryPriceExclVat: 42, // da source.OriginalPriceExclVAT
         originalPriceExclVat: 84, // itemQuantity(2) * unitaryPriceExclVat(42)
         dmsDiscountPercentage: 1,
         QuantityAvailable: 2,
         availability: 'orange',
       }));
-      expect(result.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
+      expect(result.jobCardDetail.jobs[0].laborInfo[0]).toEqual(expect.objectContaining({
         laborDuration: 0.5,
         dmsDiscountPercentage: 1,
         laborRateAmount: 70,
       }));
+    });
+
+    test('does not throw/block when the DML gateway fails (e.g. DML_AFTERSALES_ERR_002_400): returns jobCardDetail unchanged', async () => {
+      const jobCardDetail = {
+        roInfo: { jobCardSrpId: 'JCID-1' },
+        vehicleInfo: { identification: { vin: 'VIN1' } },
+        jobs: [{ partInfo: [{ partNumber: 'P1' }], laborInfo: [] }],
+      };
+      postDmsInquiry.mockRejectedValue(new Error(
+        '[dms] inquiry failed: HTTP 400 - {"success":false,"errorCode":"DML_AFTERSALES_ERR_002_400","message":"No data found in dispatching table"}'
+      ));
+
+      const result = await getDataFromDML(jobCardDetail);
+
+      expect(result.jobCardDetail).toBe(jobCardDetail);
+      expect(result.dmsAvailable).toBe(false);
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('DML_AFTERSALES_ERR_002_400'));
     });
   });
 
@@ -1547,7 +1964,7 @@ describe('jobCardService', () => {
       const result = await getDataFromDMLFromTmp('79');
 
       expect(getDgtBearerToken).toHaveBeenCalledTimes(1);
-      expect(result).toEqual(regeneratedBody);
+      expect(result).toEqual({ dmsAvailable: true, ...regeneratedBody });
     });
 
     test('uses the bearerToken passed explicitly instead of requesting a new one, when regenerating', async () => {
@@ -1614,7 +2031,7 @@ describe('jobCardService', () => {
       expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-2', VehicleID: 'VIN2' }),
       }));
-      expect(result).toEqual(jobCardDetail);
+      expect(result).toEqual({ dmsAvailable: true, ...jobCardDetail });
     });
   });
 });

@@ -3,11 +3,10 @@
 // Carica parametri da AWS Parameter Store e Secrets Manager
 // Nota: Questa lambda RICEVE SOLO Kafka events e registra in Aurora - NON invia a sistemi esterni
 
-const AWS = require('aws-sdk');
+const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
 
-// Inizializza client AWS per caricamento configurazione
-const ssm = new AWS.SSM({ region: process.env.AWS_REGION || 'eu-west-1' });
-const secretsManager = new AWS.SecretsManager({ region: process.env.AWS_REGION || 'eu-west-1' });
+// Inizializza client AWS per caricamento configurazione (SDK v3)
+const ssm = new SSMClient({ region: process.env.AWS_REGION || 'eu-west-1' });
 
 // Classe singleton per gestire configurazione centralizzata
 class Config {
@@ -114,7 +113,7 @@ class Config {
         
         try {
           // Recupera parametro da SSM Parameter Store
-          const response = await ssm.getParameter({ Name: paramPath }).promise();
+          const response = await ssm.send(new GetParameterCommand({ Name: paramPath }));
           params[name] = response.Parameter.Value;
         } catch (err) {
           // Se parametro non trovato in Parameter Store, usa environment variable fallback
