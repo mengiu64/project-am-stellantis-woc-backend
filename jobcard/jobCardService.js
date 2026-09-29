@@ -730,10 +730,18 @@ function resolveDmlPartSource(partsItem) {
  * non e' quindi arricchito con prezzo/sconto/disponibilita), 0 altrimenti.
  *
  * Ogni job (workline) riceve anche il flag job.dmsOverride: true se ALMENO
- * uno dei suoi partInfo[]/laborInfo[] ha trovato un match nella risposta DML
- * (PartsItem/LaborItem) ed e' stato quindi ricalcolato/sovrascritto con i
- * dati del DMS, false se nessun part/labor del job ha trovato match e il
- * job resta quindi invariato rispetto al jobCardDetail originale.
+ * uno dei suoi partInfo[]/laborInfo[] ha subito un vero e proprio override
+ * da parte del DMS, cioe' se il prezzo (originalPriceExclVat) ricalcolato
+ * con i dati DML risulta effettivamente diverso da quello precedente (v.
+ * isPriceChanged) e/o se e' stato applicato uno sconto DMS
+ * (dmsDiscountPercentage!=0, v. reconcileDiscountPercentages) — l'override
+ * puo' quindi avvenire anche solo per il prezzo, senza alcuno sconto.
+ * Un semplice match PartNumber/LaborOperationID nella risposta DML che non
+ * porta ne' un prezzo diverso ne' uno sconto (es. solo dati di
+ * disponibilita/BinLocation, come nel caso di ricambi "in stock" senza
+ * prezzo valorizzato) NON fa scattare dmsOverride: il part/labor viene
+ * comunque arricchito con QuantityAvailable/availability (v. sotto) ma il
+ * job resta considerato invariato ai fini di dmsOverride/ricalcolo totali.
  *
  * Per i ricambi (partInfo), se il PartsItem corrispondente porta un
  * ReplacementItem (ricambio sostitutivo proposto dal DMS), i dati vengono
@@ -755,9 +763,9 @@ function resolveDmlPartSource(partsItem) {
  * ricalcolati sommando i partInfo[]/laborInfo[] correnti (v.
  * recalculateJobTotals); se almeno un job ha dmsOverride===true, anche
  * roInfo.totalPrice viene ricalcolato sommando i totali di tutti i jobs[]
- * (v. recalculateRoInfoTotals). Se nessun part/labor di nessun job trova
- * match nel DML, ne' i job ne' roInfo.totalPrice vengono toccati (restano i
- * totali originali, tipicamente da DGT).
+ * (v. recalculateRoInfoTotals). Se nessun job ha subito un vero override
+ * (prezzo diverso o sconto DMS applicato), ne' i job ne' roInfo.totalPrice
+ * vengono toccati (restano i totali originali, tipicamente da DGT).
  *
  * @param {object} jobCardDetail - jobCardDetail (jobs[].partInfo[]/laborInfo[]),
  *                                 modificato in place
@@ -929,6 +937,29 @@ function sumField(items, field) {
 }
 
 /**
+ * Tolleranza (in valuta) usata da isPriceChanged per ignorare differenze di
+ * arrotondamento tra il prezzo originale (jobCardDetail/DGT) e quello
+ * ricalcolato con i dati DML.
+ */
+const PRICE_CHANGE_EPSILON = 0.005;
+
+/**
+ * Determina se il prezzo (originalPriceExclVat) di un part/labor e'
+ * effettivamente cambiato rispetto al valore precedente (quello presente nel
+ * jobCardDetail prima dell'arricchimento DML), a meno di errori di
+ * arrotondamento (v. PRICE_CHANGE_EPSILON). Usata da applyDataFromDml per
+ * decidere se il match DML costituisce un vero e proprio override di
+ * prezzo (v. job.dmsOverride).
+ * @param {number} newPrice      - originalPriceExclVat ricalcolato con i dati DML
+ * @param {number} previousPrice - originalPriceExclVat presente prima dell'arricchimento
+ * @returns {boolean} true se non c'era un valore precedente, o se i due valori differiscono
+ */
+function isPriceChanged(newPrice, previousPrice) {
+  if (previousPrice === undefined || previousPrice === null) return true;
+  return Math.abs((Number(newPrice) || 0) - (Number(previousPrice) || 0)) > PRICE_CHANGE_EPSILON;
+}
+
+/**
  * Ricalcola, in place, i totali a livello di job (jobs[]) sommando i valori
  * correnti di partInfo[]/laborInfo[] (gia' eventualmente sovrascritti con i
  * dati DML da applyDataFromDml): originalPriceExclVat/originalPriceWithVat/
@@ -941,10 +972,10 @@ function sumField(items, field) {
  * totalLaborAmountRequested sono la somma di originalPriceExclVat
  * (l'importo "richiesto", cioe' prima dello sconto) rispettivamente di
  * partInfo[]/laborInfo[]; totalLaborDurationRequested e' la somma di
- * laborInfo[].laborDuration. Invocata da applyDataFromDml SOLO per i job
- * con almeno un match DML (job.dmsOverride === true): se nessun part/labor
- * del job e' stato arricchito, i totali restano quelli originali (in
- * genere quelli restituiti da DGT).
+ * laborInfo[].laborDuration. Invocata da applyDataFromDml SOLO per i job con
+ * un vero override DML (job.dmsOverride === true, v. isPriceChanged): se
+ * nessun part/labor del job ha un prezzo diverso o uno sconto DMS applicato,
+ * i totali restano quelli originali (in genere quelli restituiti da DGT).
  * @param {object} job - elemento di jobCardDetail.jobs[], modificato in place
  */
 function recalculateJobTotals(job) {
@@ -1039,9 +1070,13 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
     // Sconto a livello di workline: guida reconcileDiscountPercentages per
     // ciascun part/labor di questo job (v. hasWorkLineDiscount).
     const wlDiscount = hasWorkLineDiscount(job);
-    // true se almeno un part/labor del job trova corrispondenza nel DML
-    // (v. sotto), guida job.dmsOverride assegnato a fine ciclo del job.
-    let jobHasDmsMatch = false;
+    // true se almeno un part/labor del job ha subito un vero override (prezzo
+    // effettivamente diverso da quello precedente, v. isPriceChanged, oppure
+    // sconto DMS applicato, dmsDiscountPercentage!=0), guida job.dmsOverride
+    // assegnato a fine ciclo del job. Un semplice match PartNumber/
+    // LaborOperationID senza dati di prezzo/sconto (es. solo disponibilita/
+    // BinLocation) NON basta a far scattare l'override.
+    let jobHasDmsOverride = false;
 
     for (const part of job?.partInfo ?? []) {
       const partsItem = partsItemsByPartNumber.get(part?.partNumber);
@@ -1050,48 +1085,65 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
         continue;
       }
       part.dmsunknown = 0;
-      jobHasDmsMatch = true;
 
       const { source } = resolveDmlPartSource(partsItem);
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
       part.availability = computeAvailability(part.itemQuantity, part.QuantityAvailable);
+
+      const previousOriginalPriceExclVat = part.originalPriceExclVat;
       part.unitaryPriceExclVat = source.OriginalPriceExclVAT;
 
       reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
 
       if (part.itemQuantity && part.unitaryPriceExclVat) {
-        Object.assign(part, computePartPriceFields(
+        const computedFields = computePartPriceFields(
           part.itemQuantity,
           part.unitaryPriceExclVat,
           part.appDiscountPercentage,
           part.dmsDiscountPercentage,
           part.vatPercentage,
-        ));
+        );
+        Object.assign(part, computedFields);
+        if (isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat)) {
+          jobHasDmsOverride = true;
+        }
+      }
+
+      if (part.dmsDiscountPercentage) {
+        jobHasDmsOverride = true;
       }
     }
 
     for (const labor of job?.laborInfo ?? []) {
       const laborItem = laborItemsByOperationId.get(labor?.laborOperationCode);
       if (!laborItem) continue;
-      jobHasDmsMatch = true;
 
+      const previousOriginalPriceExclVat = labor.originalPriceExclVat;
       labor.laborDuration = laborItem.TimeUnit;
 
       reconcileDiscountPercentages(labor, wlDiscount, laborItem.DiscountPercentage);
 
       if (labor.laborDuration && laborItem.UnitaryTimeAmount) {
-        Object.assign(labor, computeLaborPriceFields(
+        const computedFields = computeLaborPriceFields(
           labor.laborDuration,
           laborItem.UnitaryTimeAmount,
           labor.appDiscountPercentage,
           labor.dmsDiscountPercentage,
           labor.vatPercentage,
-        ));
+        );
+        Object.assign(labor, computedFields);
+        if (isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat)) {
+          jobHasDmsOverride = true;
+        }
+      }
+
+      if (labor.dmsDiscountPercentage) {
+        jobHasDmsOverride = true;
       }
     }
 
-    job.dmsOverride = jobHasDmsMatch;
-    if (jobHasDmsMatch) {
+    job.dmsOverride = jobHasDmsOverride;
+    if (jobHasDmsOverride) {
       recalculateJobTotals(job);
       anyJobOverride = true;
     }

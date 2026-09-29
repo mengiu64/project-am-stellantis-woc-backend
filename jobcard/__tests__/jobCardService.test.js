@@ -1567,6 +1567,91 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
     });
 
+    test('does NOT set job.dmsOverride=true when the matching PartsItem/LaborItem carries only availability/stock data, no price nor discount (e.g. BinLocation-only response)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10 }],
+            laborInfo: [{ laborOperationCode: 'OP1', originalPriceExclVat: 20 }],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{
+          PartsItem: [{ PartNumber: 'P1', BinLocation: [{ QuantityAvailable: 5 }] }],
+          LaborItems: [{ LaborOperationID: 'OP1', LaborType: 'L' }],
+        }],
+      });
+
+      // Il part/labor sono comunque "conosciuti" (dmsunknown=0) e arricchiti con
+      // disponibilita', ma senza prezzo/sconto dal DMS non c'e' un vero override.
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsunknown).toBe(0);
+      expect(jobCardDetail.jobs[0].partInfo[0].QuantityAvailable).toBe(5);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+    });
+
+    test('sets job.dmsOverride=true when the DML price differs from the previous one, even with DiscountPercentage=0 (price-only override)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 0,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 25, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0].originalPriceExclVat).toBe(25);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(0);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('sets job.dmsOverride=true when DiscountPercentage!=0 even if the recalculated price is (numerically) unchanged', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 0,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 15 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0].originalPriceExclVat).toBe(10);
+      expect(jobCardDetail.jobs[0].partInfo[0].dmsDiscountPercentage).toBe(15);
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
+    test('does not set job.dmsOverride=true when price and discount are both unchanged (0 vs 0)', () => {
+      const jobCardDetail = {
+        jobs: [
+          {
+            partInfo: [{
+              partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10, appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 0,
+            }],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 10, DiscountPercentage: 0 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+    });
+
     test('sets job.dmsOverride=true when at least one part matches even if others/labor do not', () => {
       const jobCardDetail = {
         jobs: [
