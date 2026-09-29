@@ -617,6 +617,7 @@ function httpsPutBinary(presignedUrl, buffer, contentType) {
       headers: {
         'Content-Type': contentType, // Content-Type del binario caricato
         'Content-Length': buffer.length, // Lunghezza esatta del contenuto binario
+        'Content-Disposition': 'attachment', // Richiesto: e' tra gli X-Amz-SignedHeaders della PresignedUrl Mopar, senza produce 403 SignatureDoesNotMatch
       },
     };
 
