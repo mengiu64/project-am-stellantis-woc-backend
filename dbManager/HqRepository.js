@@ -71,13 +71,15 @@
  * aggiornano il flag "visible" (colonna aggiunta a hq_pk_domain/hq_pk_packages,
  * default 1) rispettivamente del dominio e del pacchetto indicato.
  *
- * getPackageList(market, oic) legge, in un'unica query con LEFT JOIN a
- * cascata mercato -> OIC -> dominio -> pacchetto, la gerarchia configurata
- * per il mercato (ed eventualmente l'OIC) richiesto: se oic e' valorizzato
- * filtra sull'OIC specifico, altrimenti sulla configurazione "a livello
- * mercato" (pk.oic IS NULL); i domini cancellati logicamente (deleted = 1)
- * sono esclusi (dom.deleted = 0). Include anche domVisible/pkVisible
- * (hq_pk_domain.visible/hq_pk_packages.visible).
+ * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
+ * pacchetto configurata per il mercato (obbligatorio) ed eventualmente l'OIC
+ * (facoltativo) richiesto: se oic e' valorizzato usa una query JOIN su
+ * hq_pk_oic (deleted = 0) e restituisce solo domini/pacchetti con
+ * dom.oic/pk.oic = oic; se oic e' omesso usa una query separata che
+ * restituisce solo domini/pacchetti "a livello mercato" (dom.oic/pk.oic IS
+ * NULL), senza toccare hq_pk_oic. I domini cancellati logicamente
+ * (deleted = 1) sono esclusi (dom.deleted = 0). Include anche
+ * domVisible/pkVisible (hq_pk_domain.visible/hq_pk_packages.visible).
  *
  * insertAudit(username, section, market, actiontype, descr) inserisce una
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
@@ -296,6 +298,33 @@ async function getDisabledOics(pool, pairs) {
   );
 
   return new Set(rows.map((row) => `${row.market}|${row.oic}`));
+}
+
+/**
+ * @param {import('pg').Pool} pool
+ * @param {{ market: string, oic: string }[]} pairs - coppie (market, oic) da verificare
+ * @returns {Promise<Map<string, boolean>>} mappa "market|oic" -> enablesignature
+ *          (true se enablesignature = 1); le coppie assenti dalla mappa
+ *          (nessuna riga in hq_application_enabling) sono da considerarsi
+ *          NON abilitate (default false, opt-in — a differenza di
+ *          getDisabledOics/enablewoc che e' opt-out)
+ */
+async function getEnableSignatureByOics(pool, pairs) {
+  if (!Array.isArray(pairs) || pairs.length === 0) return new Map();
+
+  const markets = pairs.map((p) => p.market);
+  const oics = pairs.map((p) => p.oic);
+
+  const { rows } = await pool.query(
+    `SELECT pairs.market, pairs.oic, hae.enablesignature
+       FROM unnest($1::varchar[], $2::varchar[]) AS pairs(market, oic)
+       JOIN woc.hq_application_enabling hae
+         ON hae.market = pairs.market
+        AND hae.oic = pairs.oic`,
+    [markets, oics],
+  );
+
+  return new Map(rows.map((row) => [`${row.market}|${row.oic}`, Number(row.enablesignature) === 1]));
 }
 
 /**
@@ -591,9 +620,21 @@ async function setPackageVisible(pool, idpackage, value) {
  * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
  * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
  *
- * Se oic e' valorizzato, filtra sull'OIC richiesto (oi.oic = oic); se oic e'
- * null/undefined, filtra invece sulla configurazione "a livello mercato" (non
- * legata a un OIC specifico), cioe' le righe con pk.oic IS NULL.
+ * "market" e' obbligatorio, "oic" e' facoltativo:
+ *  - se oic e' valorizzato, richiede che esista un woc.hq_pk_oic non
+ *    cancellato (deleted = 0) per (market, oic) e restituisce SOLO i domini/
+ *    pacchetti legati a quello specifico oic (dom.oic = oic, pk.oic = oic);
+ *  - se oic e' null/undefined, restituisce SOLO la configurazione "a livello
+ *    mercato" (non legata a nessun OIC), cioe' le righe con dom.oic IS NULL /
+ *    pk.oic IS NULL.
+ * Le due varianti NON passano piu' per un JOIN su woc.hq_pk_oic condiviso: in
+ * precedenza dom/pk venivano agganciati tramite "IS NOT DISTINCT FROM oi.oic"
+ * ancorato all'unico oi.oic risolto dalla LEFT JOIN su hq_pk_oic, quindi per
+ * un mercato con almeno un OIC configurato i domini "a livello mercato"
+ * (oic IS NULL) non venivano MAI raggiunti dal join, a prescindere dal filtro
+ * WHERE (bug: con oic omesso, la risposta conteneva comunque i domini
+ * dell'OIC anziche' quelli a livello mercato). I domini cancellati
+ * logicamente (dom.deleted = 1) sono sempre esclusi (dom.deleted = 0).
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
@@ -603,29 +644,33 @@ async function setPackageVisible(pool, idpackage, value) {
 async function getPackageList(pool, market, oic) {
   if (!market) throw new Error('"market" is required');
 
-  const baseQuery = `SELECT mk.market
-                          , oi.oic
-                          , dom.iddomain
+  const selectColumns = `dom.iddomain
                           , dom.descr AS domaindescr
                           , dom.visible AS domvisible
                           , pk.idpackage
                           , pk.descr AS packagedescr
                           , pk.timeop
                           , pk.pricewithvat
-                          , pk.visible AS pkvisible
-                       FROM woc.hq_pk_market mk
-                         LEFT JOIN woc.hq_pk_oic oi ON mk.market = oi.market AND oi.deleted = 0
-                         LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market
-                         AND dom.oic IS NOT DISTINCT FROM oi.oic
-                         AND dom.deleted = 0
-                         LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market
-                         AND pk.oic IS NOT DISTINCT FROM oi.oic
-                         AND pk.iddomain = dom.iddomain
-                      WHERE mk.market = $1`;
+                          , pk.visible AS pkvisible`;
 
   const { rows } = oic
-    ? await pool.query(`${baseQuery} AND oi.oic = $2`, [market, oic])
-    : await pool.query(`${baseQuery} AND pk.oic IS NULL`, [market]);
+    ? await pool.query(
+      `SELECT mk.market, oi.oic, ${selectColumns}
+         FROM woc.hq_pk_market mk
+         JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
+         LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
+         LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
+        WHERE mk.market = $1`,
+      [market, oic],
+    )
+    : await pool.query(
+      `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
+         FROM woc.hq_pk_market mk
+         LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
+         LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
+        WHERE mk.market = $1`,
+      [market],
+    );
 
   return rows.map((row) => ({
     market: row.market,
@@ -742,6 +787,7 @@ module.exports = {
   deletetVehicleInspection,
   insertVehicleInspection,
   getDisabledOics,
+  getEnableSignatureByOics,
   getAddressByOics,
   setMarketEnable,
   setMarketDisable,

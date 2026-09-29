@@ -29,6 +29,7 @@ let _getCountryIsoCode;
 let _getPhysicalSiteAndPdvId;
 let _getBrandsByOics;
 let _getDisabledOics;
+let _getEnableSignatureByOics;
 let _getAddressByOics;
 
 function loadReadUserProfiles() {
@@ -196,6 +197,27 @@ function loadGetDisabledOics() {
   return _getDisabledOics;
 }
 
+// Abilitazione firma (feature FEA) per oic (woc.hq_application_enabling,
+// colonna enablesignature): esposta in ciascun oic di session come
+// `feaEnabled` (v. buildOicWithBrandLogos), subito dopo `djcListParameter`.
+// A differenza di enablewoc (opt-out, v. getDisabledOics sopra), qui il
+// default per una coppia (market, oic) senza riga di configurazione e'
+// "non abilitato" (false), coerente con getEnablingConfiguration
+// (dbManager/HqRepository.js, COALESCE(hae.enablesignature, 0)). Stesso
+// cluster Aurora "wiadvisor", stesso pool/modulo dbManager gia'
+// impacchettato come cartella sorella di session/ (vedi Makefile).
+function loadGetEnableSignatureByOics() {
+  if (!_getEnableSignatureByOics) {
+    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
+    const { getEnableSignatureByOics } = require(path.resolve(__dirname, '../../../dbManager/HqRepository'));
+    _getEnableSignatureByOics = async (pairs) => {
+      const pool = await getPool();
+      return getEnableSignatureByOics(pool, pairs);
+    };
+  }
+  return _getEnableSignatureByOics;
+}
+
 // Indirizzo del sito (address/zipcode/city) per oic (woc.addr_snowflakes,
 // join con woc.ang_snowflakes su cd_paired_oic_code, v.
 // dbManager/HqRepository.js::getAddressByOics): sovrascrive gli stessi campi
@@ -333,14 +355,19 @@ const BRAND_CODE_TO_REFTECH = {
  *      mainSincom/market/brand/oic, se non esiste una riga corrispondente, o se
  *      la query fallisce per qualunque motivo.
  *
- *      Utenti HQ (staff Stellantis, non rete dealer, es. "SF48816"): myPeople
- *      modella solo profili IURSMA della rete dealer e per un utente HQ
- *      risponde con `RC=121`/`STATUS="HQ users are not allowed for this
- *      feature."`/`User={}` (v. HQ_USER_NOT_ALLOWED_RC). Questo NON viene
- *      trattato come utente non trovato (404): `getSessionData` ritorna invece
- *      una sessione "vuota" (v. buildHqSessionData — stessa forma/chiavi del
- *      JSON storico, campi dealer-specific `null`/`[]`, `usertype: 'HQ'`),
- *      cosi' un utente HQ legittimo puo' comunque accedere all'app.
+ *      Utenti HQ (staff Stellantis, non rete dealer, es. "SF48816"): i `roles`
+ *      dell'authorizer (v. index.js::resolveRoleFlags -> `roleFlags`
+ *      hqCentral/hqMarket) vengono verificati PRIMA di interpellare myPeople,
+ *      che modella solo profili IURSMA della rete dealer. Se un ruolo indica
+ *      gia' un utente HQ, myPeople NON viene mai chiamato: `getSessionData`
+ *      ritorna subito una sessione "vuota" (v. buildHqSessionData — stessa
+ *      forma/chiavi del JSON storico, campi dealer-specific `null`/`[]`,
+ *      `usertype: 'HQ'`), cosi' un eventuale errore/timeout/risposta
+ *      inattesa di myPeople non blocca mai un utente HQ legittimo. Come
+ *      fallback difensivo (ruoli non-HQ ma myPeople risponde comunque con
+ *      `RC=121`/`STATUS="HQ users are not allowed for this feature."`/
+ *      `User={}`, v. HQ_USER_NOT_ALLOWED_RC) si applica lo stesso trattamento
+ *      invece di un 404.
  */
 class MyPeopleDmsSessionRepository extends SessionRepository {
   constructor({
@@ -353,6 +380,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     getPhysicalSiteAndPdvIdFn,
     getBrandsByOicsFn,
     getDisabledOicsFn,
+    getEnableSignatureByOicsFn,
     getAddressByOicsFn,
   } = {}) {
     super();
@@ -365,6 +393,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     this._getPhysicalSiteAndPdvIdFn = getPhysicalSiteAndPdvIdFn;
     this._getBrandsByOicsFn = getBrandsByOicsFn;
     this._getDisabledOicsFn = getDisabledOicsFn;
+    this._getEnableSignatureByOicsFn = getEnableSignatureByOicsFn;
     this._getAddressByOicsFn = getAddressByOicsFn;
   }
 
@@ -372,17 +401,33 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
    * @param {string} username - Username IURSMA (es. "0073741.d235").
    * @param {object|null} [authProfile] - Profilo utente dall'authorizer (v.
    *   getAuthContext in index.js: sub, given_name, family_name, ...), usato
-   *   SOLO per l'utente HQ (myPeople RC=121, v. buildHqSessionData) per
-   *   valorizzare `firstname`/`lastname` (given_name/family_name) che
-   *   altrimenti resterebbero `null` (myPeople non ha alcun dato per un
-   *   utente HQ). Per gli utenti dealer questi campi restano quelli letti
-   *   da myPeople (User.Attributes.FIRSTNAME/LASTNAME), mai sovrascritti
-   *   dal profilo dell'authorizer.
+   *   SOLO per l'utente HQ (v. buildHqSessionData) per valorizzare
+   *   `firstname`/`lastname` (given_name/family_name) che altrimenti
+   *   resterebbero `null` (myPeople non ha alcun dato per un utente HQ). Per
+   *   gli utenti dealer questi campi restano quelli letti da myPeople
+   *   (User.Attributes.FIRSTNAME/LASTNAME), mai sovrascritti dal profilo
+   *   dell'authorizer.
+   * @param {{ hqCentral?: 0|1, hqMarket?: 0|1 }} [roleFlags] - Flag derivati
+   *   dai `roles` dell'authorizer (v. index.js::resolveRoleFlags), verificati
+   *   PRIMA di interpellare myPeople: se indicano gia' un utente HQ, myPeople
+   *   NON viene mai chiamato (non lo modella comunque, v. sotto) e si
+   *   costruisce subito la sessione "vuota" HQ, cosi' un eventuale
+   *   errore/timeout/RC inatteso di myPeople non blocca mai un utente HQ
+   *   legittimo.
    * @returns {Promise<object>} Dati di sessione (stessa forma di S3SessionRepository).
    */
-  async getSessionData(username, authProfile = null) {
+  async getSessionData(username, authProfile = null, roleFlags = {}) {
     if (!username) {
       throw new Error('[session] username is required');
+    }
+
+    // Utente gia' riconosciuto come HQ dai ruoli dell'authorizer: myPeople
+    // modella SOLO i profili della rete dealer (username IURSMA), quindi per
+    // un utente HQ (staff Stellantis) non ha alcun dato da restituire — si
+    // salta del tutto la chiamata esterna e si ritorna subito la sessione
+    // "vuota" (stessa forma storica, campi dealer-specific a null/[]).
+    if (roleFlags && (roleFlags.hqCentral || roleFlags.hqMarket)) {
+      return buildHqSessionData(username, authProfile);
     }
 
     const readUserProfiles = this._readUserProfilesFn || loadReadUserProfiles();
@@ -390,14 +435,10 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
 
     const result = peopleResponse && peopleResponse.Response;
 
-    // myPeople modella SOLO i profili della rete dealer (username IURSMA): per
-    // un utente HQ (staff Stellantis, es. "SF48816") risponde con RC=121,
-    // STATUS="HQ users are not allowed for this feature.", User={} — NON e'
-    // un utente inesistente/non abilitato, semplicemente myPeople non ha nulla
-    // da restituire per lui. Propagare un 404 (SessionNotFoundError) in
-    // questo caso e' quindi errato: si ritorna invece una sessione "vuota"
-    // (stessa forma storica, campi dealer-specific a null/[]), cosi' l'utente
-    // HQ può comunque accedere all'app.
+    // Fallback difensivo: se, nonostante ruoli non-HQ, myPeople risponde
+    // comunque RC=121 ("HQ users are not allowed for this feature.", User={}),
+    // si tratta comunque come utente HQ (stessa sessione "vuota") invece di un
+    // 404 — myPeople resta la fonte di verita' ultima per questo caso limite.
     if (result && Number(result.RC) === HQ_USER_NOT_ALLOWED_RC) {
       return buildHqSessionData(username, authProfile);
     }
@@ -439,6 +480,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const getPhysicalSiteAndPdvId = this._getPhysicalSiteAndPdvIdFn || loadGetPhysicalSiteAndPdvId();
     const getBrandsByOics = this._getBrandsByOicsFn || loadGetBrandsByOics();
     const getDisabledOics = this._getDisabledOicsFn || loadGetDisabledOics();
+    const getEnableSignatureByOics = this._getEnableSignatureByOicsFn || loadGetEnableSignatureByOics();
     const getAddressByOics = this._getAddressByOicsFn || loadGetAddressByOics();
     const market = attributes.MARKETCODE || null;
     const oic = mainOic.CODE || null;
@@ -463,7 +505,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // un errore di lettura non deve mai far fallire la sessione: si ritornano i
     // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
     // registra (best-effort) la combinazione per la prossima sync schedulata.
-    const [dmsSettings, dmlConfiguration, marketIso, physicalSiteAndSincom, brandsByOic, disabledOicKeys, addressByOic] = await Promise.all([
+    const [dmsSettings, dmlConfiguration, marketIso, physicalSiteAndSincom, brandsByOic, disabledOicKeys, enableSignatureByOicKey, addressByOic] = await Promise.all([
       (countryDms && brandReftech && dealer)
         ? getDmsSettingsCache({ country: countryDms, brand: brandReftech, dealer })
           .then(async (cached) => {
@@ -514,6 +556,12 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return new Set();
         })
         : Promise.resolve(new Set()),
+      oicPairs.length > 0
+        ? getEnableSignatureByOics(oicPairs).catch((err) => {
+          console.error(`[session] lettura abilitazione firma oic (woc.hq_application_enabling) fallita: ${err.message}`);
+          return new Map();
+        })
+        : Promise.resolve(new Map()),
       oicCodes.length > 0
         ? getAddressByOics({ oics: oicCodes }).catch((err) => {
           console.error(`[session] lettura indirizzo per oic (woc.addr_snowflakes) fallita: ${err.message}`);
@@ -554,6 +602,16 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       enabledOics
         .filter((o) => o && o.CODE != null)
         .map((o) => [o.CODE, resolveAddressFields(o, addressByOic)]),
+    );
+
+    // Abilitazione firma (feature FEA, woc.hq_application_enabling.enablesignature)
+    // per ciascun oic abilitato: chiave "market|oic" cercata in
+    // enableSignatureByOicKey (v. loadGetEnableSignatureByOics), default
+    // false se l'oic non ha riga di configurazione.
+    const feaEnabledByOicCode = new Map(
+      enabledOics
+        .filter((o) => o && o.CODE != null)
+        .map((o) => [o.CODE, enableSignatureByOicKey.get(`${o.MARKET}|${o.CODE}`) === true]),
     );
 
     // Tutti i codici brand (deduplicati) effettivamente usati dagli oics
@@ -613,7 +671,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       pcystellantis3: null,
       maxdiscountperc: null,
       maxdiscountval: null,
-      oics: enabledOics.map((oic) => buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvByOicCode.get(oic.CODE), addressByOicCode.get(oic.CODE))),
+      oics: enabledOics.map((oic) => buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvByOicCode.get(oic.CODE), addressByOicCode.get(oic.CODE), feaEnabledByOicCode.get(oic.CODE))),
       applications: applications.map(lowercaseKeys),
       companytypes: Array.isArray(dmlConfiguration && dmlConfiguration.companyTypes)
         ? dmlConfiguration.companyTypes
@@ -700,21 +758,26 @@ function lowercaseKeys(obj) {
  * Come lowercaseKeys, ma inserisce anche `djcListParameter` subito dopo la
  * chiave `code` (parametro richiesto dall'integrazione DJC, ottenuto
  * concatenando `market` e `code` del singolo OIC con "_", es.
- * "1000_00010925") e sovrascrive `brands` con `brandsCsvOverride` (il CSV di
- * codici brand WebDAC letto da woc.ang_snowflakes per questo oic, v.
- * resolveBrandsCsv/getBrandsByOics — fallback al CSV originale di myPeople
- * se l'override non e' disponibile), inserendo subito dopo `brandLogos`
- * (array di logo_s3_key risolti a partire dal CSV di codici brand,
- * `brandLogosByCode`: mappa codbrand -> logo_s3_key già letta da
- * woc.anag_brand). Sovrascrive inoltre `address`/`zipcode`/`city` con
- * `addressOverride` (v. resolveAddressFields/getAddressByOics — gia' con
- * fallback ai campi originali di myPeople se l'oic non ha righe in DB),
- * inserendoli anche se assenti nell'oic originale.
+ * "1000_00010925"), seguito subito da `feaEnabled` (booleano, abilitazione
+ * firma/FEA per questo oic, letta da woc.hq_application_enabling.enablesignature
+ * — v. dbManager/HqRepository.js::getEnableSignatureByOics/feaEnabledOverride,
+ * default `false` se l'oic non ha riga di configurazione), e sovrascrive
+ * `brands` con `brandsCsvOverride` (il CSV di codici brand WebDAC letto da
+ * woc.ang_snowflakes per questo oic, v. resolveBrandsCsv/getBrandsByOics —
+ * fallback al CSV originale di myPeople se l'override non e' disponibile),
+ * inserendo subito dopo `brandLogos` (array di logo_s3_key risolti a
+ * partire dal CSV di codici brand, `brandLogosByCode`: mappa codbrand ->
+ * logo_s3_key già letta da woc.anag_brand). Sovrascrive inoltre
+ * `address`/`zipcode`/`city` con `addressOverride` (v.
+ * resolveAddressFields/getAddressByOics — gia' con fallback ai campi
+ * originali di myPeople se l'oic non ha righe in DB), inserendoli anche se
+ * assenti nell'oic originale.
  */
-function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride, addressOverride) {
+function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride, addressOverride, feaEnabledOverride) {
   const lowered = lowercaseKeys(oic);
   const result = {};
   let brandsInserted = false;
+  const feaEnabled = feaEnabledOverride === true;
   const addressKeys = new Set(['address', 'zipcode', 'city']);
   for (const [key, value] of Object.entries(lowered)) {
     if (key === 'brands') {
@@ -731,6 +794,7 @@ function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride, addres
     result[key] = value;
     if (key === 'code') {
       result.djcListParameter = builddjcListParameter(lowered.market, lowered.code);
+      result.feaEnabled = feaEnabled;
     }
   }
   if (!brandsInserted) {
@@ -745,6 +809,9 @@ function buildOicWithBrandLogos(oic, brandLogosByCode, brandsCsvOverride, addres
   }
   if (!('djcListParameter' in result)) {
     result.djcListParameter = builddjcListParameter(lowered.market, lowered.code);
+  }
+  if (!('feaEnabled' in result)) {
+    result.feaEnabled = feaEnabled;
   }
   return result;
 }

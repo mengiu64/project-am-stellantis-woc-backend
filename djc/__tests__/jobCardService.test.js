@@ -55,6 +55,62 @@ describe('jobCardService (djc)', () => {
     expect(options.headers['Content-Length']).toBe(Buffer.byteLength(JSON.stringify(payload)));
   });
 
+  test('strips packageType/packageCharge/dmsOverride from payload.jobs and dmsunknown/QuantityAvailable/availability from partInfo before sending (DGT rejects them with "is not allowed")', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const payload = {
+      roInfo: { jobCardSrpId: 'JCID-1' },
+      jobs: [
+        {
+          jobInternalId: 'JOB-1',
+          jobType: 'STD',
+          packageType: 'GC',
+          packageCharge: 'CUSTOMER',
+          dmsOverride: true,
+          partInfo: [
+            {
+              partNumber: '735712563',
+              itemQuantity: 2,
+              dmsunknown: 0,
+              QuantityAvailable: 3,
+              availability: 'green',
+            },
+            { partNumber: '999999999', itemQuantity: 1, dmsunknown: 1 },
+          ],
+        },
+      ],
+    };
+    await saveJobCard('token', payload);
+
+    const [, body] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(body)).toEqual({
+      roInfo: { jobCardSrpId: 'JCID-1' },
+      jobs: [
+        {
+          jobInternalId: 'JOB-1',
+          jobType: 'STD',
+          partInfo: [
+            { partNumber: '735712563', itemQuantity: 2 },
+            { partNumber: '999999999', itemQuantity: 1 },
+          ],
+        },
+      ],
+    });
+    // The original payload passed in is left untouched
+    expect(payload.jobs[0]).toHaveProperty('dmsOverride', true);
+    expect(payload.jobs[0].partInfo[0]).toHaveProperty('dmsunknown', 0);
+  });
+
+  test('leaves payload without a jobs array untouched', async () => {
+    httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
+
+    const payload = { roInfo: { jobCardSrpId: 'JCID-1' } };
+    await saveJobCard('token', payload);
+
+    const [, body] = httpsRequest.mock.calls[0];
+    expect(JSON.parse(body)).toEqual(payload);
+  });
+
   test('includes IBM client credentials and Authorization header', async () => {
     httpsRequest.mockResolvedValue({ statusCode: 200, headers: {}, body: {} });
 

@@ -554,10 +554,15 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * dell'inquiry DMS risolvano il Sender dinamico con gli identici criteri:
  *  - mainSincom/market/language/dealerCountryCode <- username (authorizer.sub),
  *    tramite session/src/sessionContextCache.js (myPeople, cache /tmp)
- *  - brand <- VIN, tramite v360/v360Service.js::getCachedBrand (v360
+ *  - brand <- jobCardDetail.roInfo.stellantisBrand (gia' disponibile dalla
+ *    jobCardDetails DGT appena recuperata, nessuna chiamata aggiuntiva); solo
+ *    se assente si ricade su VIN + v360/v360Service.js::getCachedBrand (v360
  *    getdetails, campo data.brandCode, cache /tmp) — il brand del VEICOLO,
  *    non quello (di default) del dealer/sessione: un dealer multi-brand può
- *    servire un veicolo di un brand diverso dal proprio.
+ *    servire un veicolo di un brand diverso dal proprio. Solo jobcard
+ *    conosce roInfo.stellantisBrand (dalla propria jobCardDetails), quindi
+ *    questa scorciatoia e' locale a jobcard: pkFavorite/pkManager continuano
+ *    a risolvere il brand solo tramite v360.
  *
  * componentId e currencyId NON vengono sovrascritti qui: restano i valori
  * statici configurati via env in dms/config.js (config.sender), come da
@@ -567,7 +572,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  *  - serviceId               <- sessionContext.username (da authorizer.sub)
  *  - languageCode            <- sessionContext.language, o (fallback automatico) session.language
  *  - dealerCountryCode       <- sessionContext.dealerCountryCode, o (fallback automatico) session.marketIso
- *  - brand                   <- sessionContext.brand, o (fallback automatico) v360 getdetails.data.brandCode per il VIN di jobCardDetail
+ *  - brand                   <- sessionContext.brand, o (fallback automatico) jobCardDetail.roInfo.stellantisBrand, o (ultimo fallback) v360 getdetails.data.brandCode per il VIN
  *  - market                  <- sessionContext.market, o (fallback automatico) session.codmarket (solo chiave di lookup, non un campo Sender)
  *
  * physicalSiteId/dealerNumberIdSource NON vengono più risolti qui: il lookup
@@ -591,7 +596,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * @param {string} [sessionContext.username]         - da event.requestContext.authorizer.sub — usato sia come serviceId sia come chiave per la risoluzione automatica via session
  * @param {string} [sessionContext.mainSincom]       - override esplicito (opzionale); se assente, risolto da session.sincom
  * @param {string} [sessionContext.market]           - override esplicito (opzionale); se assente, risolto da session.codmarket (solo per il lookup DB lato dms, non inviato al DML)
- * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da v360 getdetails.data.brandCode per il VIN
+ * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da jobCardDetail.roInfo.stellantisBrand, o (ultimo fallback) da v360 getdetails.data.brandCode per il VIN
  * @param {string} [sessionContext.language]         - override esplicito (opzionale); se assente, risolto da session.language
  * @param {string} [sessionContext.dealerCountryCode] - override esplicito (opzionale); se assente, risolto da session.marketIso
  * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
@@ -600,11 +605,24 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   const { username } = sessionContext;
   const vin = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
   const pairedOicCode = jobCardDetail?.roInfo?.pairedOicCode ?? null;
+  const stellantisBrand = jobCardDetail?.roInfo?.stellantisBrand ?? null;
+
+  // Se sessionContext non porta gia' un brand esplicito, uso quello gia'
+  // presente nel jobCardDetail (roInfo.stellantisBrand, valorizzato da DGT
+  // nella jobCardDetails appena recuperata): evita una chiamata v360
+  // (getdetails) altrimenti sempre necessaria per il solo brand, e con essa
+  // il rischio che un v360 lento/irraggiungibile blocchi l'intera richiesta
+  // (v. resolveDynamicSenderFields, che ricade su v360 solo se anche
+  // roInfo.stellantisBrand e' assente).
+  const overrides = { ...sessionContext };
+  if (!overrides.brand && stellantisBrand) {
+    overrides.brand = stellantisBrand;
+  }
 
   const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
   const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
     { username, vin },
-    sessionContext,
+    overrides,
   );
 
   const sender = {};
@@ -729,6 +747,20 @@ function resolveDmlPartSource(partsItem) {
  * trova corrispondenza in nessun PartsItem della risposta DML (il ricambio
  * non e' quindi arricchito con prezzo/sconto/disponibilita), 0 altrimenti.
  *
+ * Ogni job (workline) riceve anche il flag job.dmsOverride: true se ALMENO
+ * uno dei suoi partInfo[]/laborInfo[] ha subito un vero e proprio override
+ * da parte del DMS, cioe' se il prezzo (originalPriceExclVat) ricalcolato
+ * con i dati DML risulta effettivamente diverso da quello precedente (v.
+ * isPriceChanged) e/o se e' stato applicato uno sconto DMS
+ * (dmsDiscountPercentage!=0, v. reconcileDiscountPercentages) — l'override
+ * puo' quindi avvenire anche solo per il prezzo, senza alcuno sconto.
+ * Un semplice match PartNumber/LaborOperationID nella risposta DML che non
+ * porta ne' un prezzo diverso ne' uno sconto (es. solo dati di
+ * disponibilita/BinLocation, come nel caso di ricambi "in stock" senza
+ * prezzo valorizzato) NON fa scattare dmsOverride: il part/labor viene
+ * comunque arricchito con QuantityAvailable/availability (v. sotto) ma il
+ * job resta considerato invariato ai fini di dmsOverride/ricalcolo totali.
+ *
  * Per i ricambi (partInfo), se il PartsItem corrispondente porta un
  * ReplacementItem (ricambio sostitutivo proposto dal DMS), i dati vengono
  * letti da li invece che dal PartsItem originale (v. resolveDmlPartSource).
@@ -744,6 +776,14 @@ function resolveDmlPartSource(partsItem) {
  * laborDuration/UnitaryTimeAmount (labor) sono entrambi definiti e diversi da
  * zero, per evitare di sovrascrivere i campi prezzo con zeri quando manca
  * quantita' o prezzo/tariffa unitaria (v. computePartPriceFields).
+ *
+ * Per ogni job con dmsOverride===true, i totali a livello di job vengono
+ * ricalcolati sommando i partInfo[]/laborInfo[] correnti (v.
+ * recalculateJobTotals); se almeno un job ha dmsOverride===true, anche
+ * roInfo.totalPrice viene ricalcolato sommando i totali di tutti i jobs[]
+ * (v. recalculateRoInfoTotals). Se nessun job ha subito un vero override
+ * (prezzo diverso o sconto DMS applicato), ne' i job ne' roInfo.totalPrice
+ * vengono toccati (restano i totali originali, tipicamente da DGT).
  *
  * @param {object} jobCardDetail - jobCardDetail (jobs[].partInfo[]/laborInfo[]),
  *                                 modificato in place
@@ -903,6 +943,125 @@ function computeLaborPriceFields(laborDuration, laborRate, appDiscountPercentage
   };
 }
 
+/**
+ * Somma un campo numerico su un array di elementi (partInfo[]/laborInfo[]/
+ * jobs[]), trattando valori assenti/non numerici come 0 (Number(x)||0).
+ * @param {Array<object>} items - elementi da sommare
+ * @param {string} field - nome del campo da sommare su ciascun elemento
+ * @returns {number}
+ */
+function sumField(items, field) {
+  return (items ?? []).reduce((acc, item) => acc + (Number(item?.[field]) || 0), 0);
+}
+
+/**
+ * Tolleranza (in valuta) usata da isPriceChanged per ignorare differenze di
+ * arrotondamento tra il prezzo originale (jobCardDetail/DGT) e quello
+ * ricalcolato con i dati DML.
+ */
+const PRICE_CHANGE_EPSILON = 0.005;
+
+/**
+ * Determina se il prezzo (originalPriceExclVat) di un part/labor e'
+ * effettivamente cambiato rispetto al valore precedente (quello presente nel
+ * jobCardDetail prima dell'arricchimento DML), a meno di errori di
+ * arrotondamento (v. PRICE_CHANGE_EPSILON). Usata da applyDataFromDml per
+ * decidere se il match DML costituisce un vero e proprio override di
+ * prezzo (v. job.dmsOverride).
+ * @param {number} newPrice      - originalPriceExclVat ricalcolato con i dati DML
+ * @param {number} previousPrice - originalPriceExclVat presente prima dell'arricchimento
+ * @returns {boolean} true se non c'era un valore precedente, o se i due valori differiscono
+ */
+function isPriceChanged(newPrice, previousPrice) {
+  if (previousPrice === undefined || previousPrice === null) return true;
+  return Math.abs((Number(newPrice) || 0) - (Number(previousPrice) || 0)) > PRICE_CHANGE_EPSILON;
+}
+
+/**
+ * Ricalcola, in place, i totali a livello di job (jobs[]) sommando i valori
+ * correnti di partInfo[]/laborInfo[] (gia' eventualmente sovrascritti con i
+ * dati DML da applyDataFromDml): originalPriceExclVat/originalPriceWithVat/
+ * priceExclVatAfterDiscount/priceWithVatAfterDiscount sono la somma dei
+ * rispettivi campi di TUTTI i partInfo[]+laborInfo[] del job (matchati o
+ * meno nel DML, usando il valore correntemente presente su ciascuno);
+ * discountInAmountOnPriceWithVat = originalPriceWithVat -
+ * priceWithVatAfterDiscount (coerente con computePartPriceFields/
+ * computeLaborPriceFields). totalPartsAmountRequested/
+ * totalLaborAmountRequested sono la somma di originalPriceExclVat
+ * (l'importo "richiesto", cioe' prima dello sconto) rispettivamente di
+ * partInfo[]/laborInfo[]; totalLaborDurationRequested e' la somma di
+ * laborInfo[].laborDuration. Invocata da applyDataFromDml SOLO per i job con
+ * un vero override DML (job.dmsOverride === true, v. isPriceChanged): se
+ * nessun part/labor del job ha un prezzo diverso o uno sconto DMS applicato,
+ * i totali restano quelli originali (in genere quelli restituiti da DGT).
+ * @param {object} job - elemento di jobCardDetail.jobs[], modificato in place
+ */
+function recalculateJobTotals(job) {
+  const parts = job?.partInfo ?? [];
+  const labors = job?.laborInfo ?? [];
+
+  const originalPriceExclVat = sumField(parts, 'originalPriceExclVat') + sumField(labors, 'originalPriceExclVat');
+  const originalPriceWithVat = sumField(parts, 'originalPriceWithVat') + sumField(labors, 'originalPriceWithVat');
+  const priceExclVatAfterDiscount = sumField(parts, 'priceExclVatAfterDiscount') + sumField(labors, 'priceExclVatAfterDiscount');
+  const priceWithVatAfterDiscount = sumField(parts, 'priceWithVatAfterDiscount') + sumField(labors, 'priceWithVatAfterDiscount');
+
+  job.originalPriceExclVat = originalPriceExclVat;
+  job.originalPriceWithVat = originalPriceWithVat;
+  job.priceExclVatAfterDiscount = priceExclVatAfterDiscount;
+  job.priceWithVatAfterDiscount = priceWithVatAfterDiscount;
+  job.discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+
+  job.totalPartsAmountRequested = sumField(parts, 'originalPriceExclVat');
+  job.totalLaborAmountRequested = sumField(labors, 'originalPriceExclVat');
+  job.totalLaborDurationRequested = sumField(labors, 'laborDuration');
+}
+
+/**
+ * Somma job.priceWithVatAfterDiscount dei jobs[] la cui modalita' di
+ * pagamento (job.paymentType, o job.packageCharge quando paymentType non e'
+ * valorizzato — stessa risoluzione di enrichJobsWithPackageInfo) corrisponde
+ * a `paymentType`.
+ * @param {Array<object>} jobs - jobCardDetail.jobs[]
+ * @param {'CUSTOMER'|'INSURANCE'|'MANUFACTURER'|'INTERNAL'} paymentType
+ * @returns {number}
+ */
+function sumPriceWithVatByPaymentType(jobs, paymentType) {
+  return jobs
+    .filter(job => (job?.paymentType || job?.packageCharge) === paymentType)
+    .reduce((acc, job) => acc + (Number(job?.priceWithVatAfterDiscount) || 0), 0);
+}
+
+/**
+ * Ricalcola, in place, roInfo.totalPrice sommando i totali di TUTTI i
+ * jobs[] (gia' ricalcolati da recalculateJobTotals dove applicabile):
+ * originalPriceExclVat/originalPriceWithVat/priceExclVatAfterDiscount/
+ * priceWithVatAfterDiscount, piu' il breakdown per modalita' di pagamento
+ * (totalCustomerWithVat/totalInsuranceWithVat/totalManufacturerWithVat/
+ * totalInternalWithVat, v. sumPriceWithVatByPaymentType). Invocata da
+ * applyDataFromDml SOLO se almeno un job ha dmsOverride === true. Non
+ * tocca roInfo.discounts (concetto distinto, non derivato dai part/labor).
+ * No-op se jobCardDetail.roInfo non e' un oggetto.
+ * @param {object} jobCardDetail - modificato in place
+ */
+function recalculateRoInfoTotals(jobCardDetail) {
+  const roInfo = jobCardDetail?.roInfo;
+  if (!roInfo || typeof roInfo !== 'object') return;
+
+  const jobs = jobCardDetail.jobs ?? [];
+
+  roInfo.totalPrice = {
+    ...roInfo.totalPrice,
+    originalPriceExclVat: sumField(jobs, 'originalPriceExclVat'),
+    originalPriceWithVat: sumField(jobs, 'originalPriceWithVat'),
+    priceExclVatAfterDiscount: sumField(jobs, 'priceExclVatAfterDiscount'),
+    priceWithVatAfterDiscount: sumField(jobs, 'priceWithVatAfterDiscount'),
+    totalCustomerWithVat: sumPriceWithVatByPaymentType(jobs, 'CUSTOMER'),
+    totalInsuranceWithVat: sumPriceWithVatByPaymentType(jobs, 'INSURANCE'),
+    totalManufacturerWithVat: sumPriceWithVatByPaymentType(jobs, 'MANUFACTURER'),
+    totalInternalWithVat: sumPriceWithVatByPaymentType(jobs, 'INTERNAL'),
+  };
+}
+
 function applyDataFromDml(jobCardDetail, dmlResponse) {
   const jobs = jobCardDetail?.jobs;
   if (!Array.isArray(jobs)) return jobCardDetail;
@@ -921,10 +1080,21 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
     }
   }
 
+  // true se almeno un job ha dmsOverride===true (v. sotto): guida
+  // recalculateRoInfoTotals a fine funzione.
+  let anyJobOverride = false;
+
   for (const job of jobs) {
     // Sconto a livello di workline: guida reconcileDiscountPercentages per
     // ciascun part/labor di questo job (v. hasWorkLineDiscount).
     const wlDiscount = hasWorkLineDiscount(job);
+    // true se almeno un part/labor del job ha subito un vero override (prezzo
+    // effettivamente diverso da quello precedente, v. isPriceChanged, oppure
+    // sconto DMS applicato, dmsDiscountPercentage!=0), guida job.dmsOverride
+    // assegnato a fine ciclo del job. Un semplice match PartNumber/
+    // LaborOperationID senza dati di prezzo/sconto (es. solo disponibilita/
+    // BinLocation) NON basta a far scattare l'override.
+    let jobHasDmsOverride = false;
 
     for (const part of job?.partInfo ?? []) {
       const partsItem = partsItemsByPartNumber.get(part?.partNumber);
@@ -937,18 +1107,28 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       const { source } = resolveDmlPartSource(partsItem);
       part.QuantityAvailable = source.QuantityAvailable ?? source.BinLocation?.[0]?.QuantityAvailable;
       part.availability = computeAvailability(part.itemQuantity, part.QuantityAvailable);
+
+      const previousOriginalPriceExclVat = part.originalPriceExclVat;
       part.unitaryPriceExclVat = source.OriginalPriceExclVAT;
 
       reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
 
       if (part.itemQuantity && part.unitaryPriceExclVat) {
-        Object.assign(part, computePartPriceFields(
+        const computedFields = computePartPriceFields(
           part.itemQuantity,
           part.unitaryPriceExclVat,
           part.appDiscountPercentage,
           part.dmsDiscountPercentage,
           part.vatPercentage,
-        ));
+        );
+        Object.assign(part, computedFields);
+        if (isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat)) {
+          jobHasDmsOverride = true;
+        }
+      }
+
+      if (part.dmsDiscountPercentage) {
+        jobHasDmsOverride = true;
       }
     }
 
@@ -956,20 +1136,39 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       const laborItem = laborItemsByOperationId.get(labor?.laborOperationCode);
       if (!laborItem) continue;
 
+      const previousOriginalPriceExclVat = labor.originalPriceExclVat;
       labor.laborDuration = laborItem.TimeUnit;
 
       reconcileDiscountPercentages(labor, wlDiscount, laborItem.DiscountPercentage);
 
       if (labor.laborDuration && laborItem.UnitaryTimeAmount) {
-        Object.assign(labor, computeLaborPriceFields(
+        const computedFields = computeLaborPriceFields(
           labor.laborDuration,
           laborItem.UnitaryTimeAmount,
           labor.appDiscountPercentage,
           labor.dmsDiscountPercentage,
           labor.vatPercentage,
-        ));
+        );
+        Object.assign(labor, computedFields);
+        if (isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat)) {
+          jobHasDmsOverride = true;
+        }
+      }
+
+      if (labor.dmsDiscountPercentage) {
+        jobHasDmsOverride = true;
       }
     }
+
+    job.dmsOverride = jobHasDmsOverride;
+    if (jobHasDmsOverride) {
+      recalculateJobTotals(job);
+      anyJobOverride = true;
+    }
+  }
+
+  if (anyJobOverride) {
+    recalculateRoInfoTotals(jobCardDetail);
   }
 
   return jobCardDetail;
@@ -979,16 +1178,34 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
  * Interroga il gateway DML (getCartPriceAndAvailability) per prezzo/
  * disponibilita di ricambi e manodopera e applica il risultato (in place)
  * al jobCardDetail tramite applyDataFromDml.
+ *
+ * Se il gateway DML risponde con un errore applicativo (es. HTTP 400
+ * DML_AFTERSALES_ERR_002_400 "No data found in dispatching table", quando il
+ * DMS non ha ancora dati di dispatching per questo RO) l'errore viene
+ * loggato ma NON propagato: jobCardDetails/dml devono comunque restituire i
+ * dati della Job Card, semplicemente senza l'arricchimento prezzo/
+ * disponibilita DML, invece di bloccare l'intera risposta con un HTTP 502
+ * che espone il messaggio grezzo del DMS al chiamante. L'esito (successo o
+ * fallimento) viene riportato al chiamante tramite `dmsAvailable`, cosi' da poter
+ * essere esposto in cima al messaggio restituito da getJobCardDetails/
+ * getDataFromDMLFromTmp senza dover fare parsing di un eventuale errore.
  * @param {object} jobCardDetail - jobCardDetail (stesso formato di
  *                                 sanitized.jobCardDetail in getJobCardDetails)
  * @param {object} [sessionContext] - dati di sessione gia' disponibili al
  *                                 chiamante, propagati a getCartPriceAndAvailability
  *                                 per il Sender dinamico — v. buildDmsSender()
- * @returns {Promise<object>} il jobCardDetail arricchito con i dati DML
+ * @returns {Promise<{jobCardDetail: object, dmsAvailable: boolean}>} il jobCardDetail
+ *          (arricchito con i dati DML se `dmsAvailable` e' true, invariato altrimenti)
+ *          e l'esito della sincronizzazione con il gateway DML
  */
 async function getDataFromDML(jobCardDetail, sessionContext) {
-  const dataFromDml = await getCartPriceAndAvailability(jobCardDetail, sessionContext);
-  return applyDataFromDml(jobCardDetail, dataFromDml);
+  try {
+    const dataFromDml = await getCartPriceAndAvailability(jobCardDetail, sessionContext);
+    return { jobCardDetail: applyDataFromDml(jobCardDetail, dataFromDml), dmsAvailable: true };
+  } catch (err) {
+    console.warn(`[jobCard] getDataFromDML (gateway DML) fallita, restituisco jobCardDetail senza arricchimento prezzo/disponibilita: ${err.message}`);
+    return { jobCardDetail, dmsAvailable: false };
+  }
 }
 
 /**
@@ -1020,7 +1237,9 @@ async function getDataFromDML(jobCardDetail, sessionContext) {
  *                                 language/dealerCountryCode), propagati fino a
  *                                 getCartPriceAndAvailability per il Sender
  *                                 dinamico — v. buildDmsSender()
- * @returns {Promise<object>} il body letto dalla cache con jobCardDetail arricchito
+ * @returns {Promise<object>} il body letto dalla cache con jobCardDetail
+ *          arricchito e `dmsAvailable` in cima, che riporta l'esito dell'ultima
+ *          sincronizzazione con il gateway DML (v. getDataFromDML)
  */
 async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
@@ -1034,9 +1253,9 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   if (!body) {
     console.warn(`[jobCard] ${cacheKey} non trovato in cache: rigenero tramite getJobCardDetails`);
 
-    // getJobCardDetails arricchisce già con getDataFromDML (v. sopra) e
-    // scrive il risultato in cache: evitiamo quindi di richiamare
-    // getDataFromDML una seconda volta qui sotto.
+    // getJobCardDetails arricchisce già con getDataFromDML (v. sopra), scrive
+    // il risultato (già comprensivo di `dmsAvailable`) in cache e lo restituisce:
+    // evitiamo quindi di richiamare getDataFromDML una seconda volta qui sotto.
     const token = bearerToken ?? await getBearerToken();
     const regenerated = await getJobCardDetails(token, jobCardId, sessionContext);
     alreadyEnriched = true;
@@ -1051,7 +1270,12 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
   const jobCardDetail = body?.jobCardDetail ?? body;
 
   if (!alreadyEnriched) {
-    await getDataFromDML(jobCardDetail, sessionContext);
+    // Item già presente in cache: viene comunque richiamato il gateway DML
+    // per un dato aggiornato (prezzo/disponibilita possono cambiare), quindi
+    // `dmsAvailable` va ricalcolato qui e riportato in cima al body restituito
+    // (v. getDataFromDML — non blocca la risposta in caso di errore DML).
+    const { dmsAvailable } = await getDataFromDML(jobCardDetail, sessionContext);
+    body = { dmsAvailable, ...body };
   }
 
   return body;
@@ -1066,7 +1290,9 @@ async function getDataFromDMLFromTmp(jobCardId, bearerToken, sessionContext) {
  *                                 language/dealerCountryCode), propagati a
  *                                 getDataFromDML/getCartPriceAndAvailability
  *                                 per il Sender dinamico — v. buildDmsSender()
- * @returns {Promise<object>} parsed response body, arricchito con i dati DML
+ * @returns {Promise<object>} parsed response body, con `dmsAvailable` (esito della
+ *          sincronizzazione con il gateway DML) in cima, seguito dal resto
+ *          della risposta arricchita con i dati DML quando `dmsAvailable` e' true
  */
 async function getJobCardDetails(bearerToken, jobCardId, sessionContext) {
   if (jobCardId === undefined || jobCardId === null || jobCardId === '') {
@@ -1088,23 +1314,49 @@ async function getJobCardDetails(bearerToken, jobCardId, sessionContext) {
   const sanitized = sanitizeJobCardDetails(response.body);
 
   const jobCardDetail = sanitized?.jobCardDetail ?? sanitized;
-  await getDataFromDML(jobCardDetail, sessionContext);
+  const { dmsAvailable } = await getDataFromDML(jobCardDetail, sessionContext);
 
-  return await saveJobCardDetailsToTmp(jobCardId, sanitized);
+  // `dmsAvailable` in cima al messaggio: indica se l'arricchimento con i dati del
+  // gateway DML (prezzo/disponibilita) e' andato a buon fine, cosi' il
+  // chiamante puo' distinguerlo senza fare parsing di un eventuale errore.
+  const bodyWithSyncStatus = { dmsAvailable, ...sanitized };
+
+  return await saveJobCardDetailsToTmp(jobCardId, bodyWithSyncStatus);
+}
+
+/**
+ * Returns a copy of a partInfo entry without the dmsunknown/QuantityAvailable/
+ * availability fields added by applyDataFromDml (arricchimento DML) alle
+ * risposte GET di jobCardDetails. Sono derivati solo per la UI: se il FE
+ * ri-sottomette a saveJobCard un partInfo proveniente da una precedente GET
+ * arricchita, DGT li rifiuta in POST /jobCard con "is not allowed".
+ * @param {object} part - partInfo entry (possibly enriched)
+ * @returns {object} partInfo entry without dmsunknown/QuantityAvailable/availability
+ */
+function stripDmlPartEnrichment(part) {
+  if (!part || typeof part !== 'object') return part;
+  const { dmsunknown, QuantityAvailable, availability, ...rest } = part;
+  return rest;
 }
 
 /**
  * Returns a copy of a job entry without the packageType/packageCharge fields
- * added by enrichJobsWithPackageInfo to jobCardDetails GET responses. Those
- * are derived only for UI display: if a caller round-trips a previously
- * fetched jobCardDetail.jobs entry back into saveJobCard, the DGT API
- * rejects them with "is not allowed" validation errors.
+ * added by enrichJobsWithPackageInfo and the dmsOverride field added by
+ * applyDataFromDml to jobCardDetails GET responses. Those are derived only
+ * for UI display: if a caller round-trips a previously fetched
+ * jobCardDetail.jobs entry back into saveJobCard, the DGT API rejects them
+ * with "is not allowed" validation errors. partInfo entries are also
+ * sanitized (v. stripDmlPartEnrichment).
  * @param {object} job - job entry (possibly enriched)
- * @returns {object} job entry without packageType/packageCharge
+ * @returns {object} job entry without packageType/packageCharge/dmsOverride,
+ *          with sanitized partInfo entries
  */
 function stripPackageEnrichment(job) {
   if (!job || typeof job !== 'object') return job;
-  const { packageType, packageCharge, ...rest } = job;
+  const { packageType, packageCharge, dmsOverride, ...rest } = job;
+  if (Array.isArray(rest.partInfo)) {
+    rest.partInfo = rest.partInfo.map(stripDmlPartEnrichment);
+  }
   return rest;
 }
 
@@ -1116,10 +1368,11 @@ function stripPackageEnrichment(job) {
  * only the HTTP method and path differ (POST /jobCard vs GET /jobCardList|
  * /jobCardDetails).
  *
- * Difensivo: se payload.jobs porta ancora packageType/packageCharge (es.
- * round-trip di una jobCardDetails GET arricchita — v. enrichJobsWithPackageInfo
- * sopra), vengono rimossi prima di inoltrare a DGT, che li rifiuta in
- * POST /jobCard con "is not allowed".
+ * Difensivo: se payload.jobs porta ancora packageType/packageCharge/dmsOverride
+ * o partInfo[].dmsunknown/QuantityAvailable/availability (es. round-trip di
+ * una jobCardDetails GET arricchita — v. enrichJobsWithPackageInfo/
+ * applyDataFromDml sopra), vengono rimossi prima di inoltrare a DGT, che li
+ * rifiuta in POST /jobCard con "is not allowed".
  * @param {string} bearerToken - Bearer token from PingFederate
  * @param {object} payload     - Digital Job Card payload to persist
  * @returns {Promise<object>} parsed response body
