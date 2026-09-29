@@ -216,15 +216,33 @@ describe('HqRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('runs the UPDATE with the given id/value', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
+    it('runs the UPDATE with the given id/value and writes an audit row', async () => {
+      const calls = [];
+      const pool = makePool(async (sql) => {
+        calls.push(sql);
+        if (sql.includes('SELECT')) {
+          return { rows: [{ type: 'EXTERIOR', descr: 'Test', visible: 1 }] };
+        }
+        return { rows: [] };
+      });
 
-      await setVehicleInspectionVisible(pool, 1, 1);
+      await setVehicleInspectionVisible(pool, 1, 1, 'jdoe', '1000');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('SET visible = $2'),
         [1, 1],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('SELECT'),
+        [1],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['jdoe', 'EXTERIOR', '1000', 'update', 'EXTERIOR Test enable :1'],
       );
     });
   });
@@ -237,15 +255,31 @@ describe('HqRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('runs the UPDATE with the given id/value', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
+    it('runs the UPDATE with the given id/value and writes an audit row', async () => {
+      const pool = makePool(async (sql) => {
+        if (sql.includes('SELECT')) {
+          return { rows: [{ type: 'EXTERIOR', descr: 'Test', visible: 1 }] };
+        }
+        return { rows: [] };
+      });
 
-      await deletetVehicleInspection(pool, 1, 1);
+      await deletetVehicleInspection(pool, 1, 1, 'jdoe', '1000');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('SET deleted = $2'),
         [1, 1],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('SELECT'),
+        [1],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['jdoe', 'EXTERIOR', '1000', 'delete', 'EXTERIOR Test '],
       );
     });
   });

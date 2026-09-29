@@ -200,30 +200,58 @@ async function getVehicleInspection(pool, market, type) {
  * @param {import('pg').Pool} pool
  * @param {number} id
  * @param {number} value
+ * @param {string} username
+ * @param {string} codmarket
  * @returns {Promise<void>}
  */
-async function setVehicleInspectionVisible(pool, id, value) {
+async function setVehicleInspectionVisible(pool, id, value, username, codmarket) {
   if (id === undefined || id === null) throw new Error('"id" is required');
 
   await pool.query(
     `UPDATE woc.hq_vehicle_inspection SET visible = $2 WHERE id = $1`,
     [id, value],
   );
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            descr,
+            visible
+       FROM woc.hq_vehicle_inspection
+      WHERE id = $1`,
+    [id],
+  );
+  const [{ type, descr, visible: enableSignature } = {}] = rows;
+
+  await insertAudit(pool, username, type, codmarket, 'update', `${type} ${descr} enable :${enableSignature}`);
 }
 
 /**
  * @param {import('pg').Pool} pool
  * @param {number} id
  * @param {number} value
+ * @param {string} username
+ * @param {string} codmarket
  * @returns {Promise<void>}
  */
-async function deletetVehicleInspection(pool, id, value) {
+async function deletetVehicleInspection(pool, id, value, username, codmarket) {
   if (id === undefined || id === null) throw new Error('"id" is required');
 
   await pool.query(
     `UPDATE woc.hq_vehicle_inspection SET deleted = $2 WHERE id = $1`,
     [id, value],
   );
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            descr,
+            visible
+       FROM woc.hq_vehicle_inspection
+      WHERE id = $1`,
+    [id],
+  );
+  const [{ type, descr } = {}] = rows;
+
+  await insertAudit(pool, username, type, codmarket, 'delete', `${type} ${descr} `);
 }
 
 /**
