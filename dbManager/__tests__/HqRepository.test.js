@@ -745,7 +745,7 @@ describe('HqRepository', () => {
       expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain'));
       expect(sql).toEqual(expect.stringContaining('dom.visible AS domvisible'));
       expect(sql).toEqual(expect.stringContaining('pk.visible AS pkvisible'));
-      expect(sql).toEqual(expect.stringContaining("($1 IS NOT NULL AND $1 <> '' AND mk.market = $1)"));
+      expect(sql).toEqual(expect.stringContaining("($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)"));
     });
 
     it('does not join hq_pk_oic and filters dom/pk on oic IS NULL (market-level configuration) when oic is null/undefined', async () => {
@@ -790,6 +790,30 @@ describe('HqRepository', () => {
       const result = await getPackageList(pool, '1000', '00006821');
 
       expect(result).toEqual([]);
+    });
+
+    it.each([
+      ['undefined', undefined],
+      ['empty string', ''],
+    ])('casts $1 to ::text so Postgres can infer its type when market is %s (oic branch)', async (_label, marketValue) => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await getPackageList(pool, marketValue, '00006821');
+
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('$1::text'));
+    });
+
+    it.each([
+      ['undefined', undefined],
+      ['empty string', ''],
+    ])('casts $1 to ::text so Postgres can infer its type when market is %s (no-oic branch)', async (_label, marketValue) => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await getPackageList(pool, marketValue, undefined);
+
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('$1::text'));
     });
   });
 

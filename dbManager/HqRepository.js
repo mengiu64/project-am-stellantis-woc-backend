@@ -667,9 +667,9 @@ async function getPackageList(pool, market, oic) {
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
        WHERE (
-               (($1 IS NULL OR $1 = '') AND mk.market IS NULL)
+               (($1::text IS NULL OR $1::text = '') AND mk.market IS NULL)
                  OR
-               ($1 IS NOT NULL AND $1 <> '' AND mk.market = $1)
+               ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
                )`,
       [market, oic],
     )
@@ -679,9 +679,9 @@ async function getPackageList(pool, market, oic) {
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
        WHERE (
-               (($1 IS NULL OR $1 = '') AND mk.market IS NULL)
+               (($1::text IS NULL OR $1::text = '') AND mk.market IS NULL)
                  OR
-               ($1 IS NOT NULL AND $1 <> '' AND mk.market = $1)
+               ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
                )`,
       [market],
     );
