@@ -346,6 +346,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `jobCardService` | `getJobCardList(token, params)` | Lista JobCard con filtri e paginazione |
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Dettaglio di una singola JobCard, arricchito con i dati DML (v. sotto) |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -493,19 +494,22 @@ riferimento (`get.json`).
 Azione che invia effettivamente alla Push API SRP il payload di Digital Job
 Card (tipicamente il `json_mod` prodotto da uno dei metodi `Save*`). È
 **replicata identica** nella lambda `jobcard` (stesso `jobCardService.js::
-saveJobCard`), ma **API Gateway instrada le richieste POST verso la lambda
-`djc`**, non verso `jobcard`.
+saveJobCard`). **Nota**: API Gateway instrada la POST
+`/api/repairorder/saveJobcard` (`/api/repairorder/{proxy+}`) verso la lambda
+**`jobcard`**; la versione di `djc` resta disponibile per invocazione
+diretta/CLI.
 
-Prima dell'invio a DGT, djc registra il payload (UPSERT su `jobcardid`) nella
+Prima dell'invio a DGT, sia `jobcard` sia `djc` registrano il payload (UPSERT su `jobcardid`) nella
 tabella Aurora `woc.jobcard_sync_activity` (`sql/create_table_jobcard_sync_activity.sql`):
 `jobcardid` = `roInfo.jobCardSrpId` (fallback `dmsRepairOrderId`, poi
 `jobCardLegacyId`), `creationdate` = data del primo inserimento, `payload` =
 ultimo payload inviato (sovrascritto ad ogni `saveJobcard`); `ack`/`techreason`/
 `businessreason`/`lastupdate` vengono popolati in un secondo momento. Il
 salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
-in entrambi i casi il payload non viene inviato a DGT. Solo djc scrive su
-questa tabella (la `saveJobcard` di `jobcard`, non instradata da API Gateway,
-non la aggiorna). Dettagli in `djc/README.md`.
+in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
+(`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate) nelle due
+lambda, con env `JOBCARD_DB_*` in `jobcard` e `DJC_DB_*` in `djc`. Dettagli in
+`djc/README.md`.
 
 Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
 tabella degli identificativi per array, semantica `removalAction`/update
@@ -1308,6 +1312,8 @@ JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate (dedicato jobcard)
 JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate (dedicato jobcard)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT
+JOBCARD_DB_HOST=...                # RDS Proxy Aurora "wiadvisor" — woc.jobcard_sync_activity (solo saveJobcard)
+JOBCARD_DB_SECRET_ID=...           # Secret wiadvisor_app (in locale in alternativa JOBCARD_DB_USER/JOBCARD_DB_PASSWORD); opzionali JOBCARD_DB_PORT/NAME/SSL
 # Richieste perché il codice sorgente di dms/ è incluso in-process (Makefile):
 # dms/dmsService.js::buildApplicationArea esegue il lookup best-effort di
 # physicalSiteId/dealerNumberIdSource su woc.ang_snowflakes — stesse
@@ -1621,7 +1627,8 @@ cd agendaSoa && npm run test:coverage
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
-- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP
+- **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP; `sanitizeJobCardPayload`
+- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`
 
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)

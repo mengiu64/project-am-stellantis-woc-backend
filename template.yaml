@@ -564,6 +564,14 @@ Resources:
           DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
           DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          # jobcard/db.js — woc.jobcard_sync_activity, scritta ad ogni saveJobcard
+          # prima dell'invio a DGT (API Gateway instrada la POST
+          # /api/repairorder/saveJobcard a questa lambda). Stesso Aurora/secret
+          # di DBMANAGER_DB_* (permessi secret/KMS già presenti sopra).
+          JOBCARD_DB_HOST:      !Ref DocsoaDbHost
+          JOBCARD_DB_PORT:      !Ref DocsoaDbPort
+          JOBCARD_DB_NAME:      !Ref DocsoaDbName
+          JOBCARD_DB_SECRET_ID: !Ref DocsoaDbSecretId
           # session/src/sessionContextCache.js -> myPeople/myPeopleService.js (in-process,
           # vedi Makefile): risoluzione automatica di mainSincom/market/lingua/
           # dealerCountryCode dallo username per dms/dmsService.js::resolveDynamicSenderFields.

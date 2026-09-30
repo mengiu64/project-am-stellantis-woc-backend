@@ -31,7 +31,7 @@ const { getCacheItem, setCacheItem } = require('../dynamoCache');
 const { getBearerToken: getDgtBearerToken } = require('../authService');
 const { getBearerToken } = require('../../dms/authService');
 const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -821,6 +821,25 @@ describe('jobCardService', () => {
   // ── saveJobCard ──────────────────────────────────────────────────────────────
 
   describe('saveJobCard', () => {
+    test('sanitizeJobCardPayload valida il payload e rimuove gli arricchimenti UI dai jobs', () => {
+      expect(() => sanitizeJobCardPayload(null)).toThrow('[jobCard] payload is required');
+
+      const noJobs = { roInfo: { jobCardSrpId: 'SRP-1' } };
+      expect(sanitizeJobCardPayload(noJobs)).toBe(noJobs);
+
+      const payload = {
+        roInfo: { jobCardSrpId: 'SRP-1' },
+        jobs: [{
+          jobDescription: 'x', packageType: 'P', packageCharge: 1, dmsOverride: true,
+          partInfo: [{ partNumber: 'A', dmsunknown: true, QuantityAvailable: 2, availability: 'Y' }],
+        }],
+      };
+      expect(sanitizeJobCardPayload(payload)).toEqual({
+        roInfo: { jobCardSrpId: 'SRP-1' },
+        jobs: [{ jobDescription: 'x', partInfo: [{ partNumber: 'A' }] }],
+      });
+    });
+
     test('throws if payload is missing', async () => {
       await expect(saveJobCard('token', undefined)).rejects.toThrow('[jobCard] payload is required');
       await expect(saveJobCard('token', null)).rejects.toThrow('[jobCard] payload is required');
