@@ -29,6 +29,13 @@ jest.mock('../../dbManager/HqRepository', () => ({
   getAnagSection: jest.fn(),
   getAnagAllocation: jest.fn(),
 }));
+// resolveUsername (v. HqManager.js) risolve firstname/lastname dell'utente
+// autenticato tramite session/src/sessionContextCache.js::getCachedSessionData
+// (stesso pattern di mock cross-folder di dbManager/db e dbManager/HqRepository
+// sopra: path.resolve(__dirname, '../session/src/sessionContextCache') da
+// hqManager/ risolve allo stesso file assoluto raggiunto da qui con
+// '../../session/src/sessionContextCache').
+jest.mock('../../session/src/sessionContextCache', () => ({ getCachedSessionData: jest.fn() }));
 
 const { getPool } = require('../../dbManager/db');
 const {
@@ -55,6 +62,7 @@ const {
   getAnagSection,
   getAnagAllocation,
 } = require('../../dbManager/HqRepository');
+const { getCachedSessionData } = require('../../session/src/sessionContextCache');
 const { HqManager } = require('../HqManager');
 
 describe('HqManager', () => {
@@ -63,6 +71,7 @@ describe('HqManager', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    getCachedSessionData.mockResolvedValue(null);
     getPool.mockResolvedValue(fakePool);
     manager = new HqManager();
   });
@@ -89,22 +98,36 @@ describe('HqManager', () => {
       expect(getPool).not.toHaveBeenCalled();
     });
 
-    it('resolves the pool once and delegates to HqRepository.setEnablingConfiguration for each element, with insertAudit and username from event.requestContext.authorizer.sub', async () => {
+    it('resolves the pool once and delegates to HqRepository.setEnablingConfiguration for each element, with insertAudit and username "firstname lastname" resolved from the session of event.requestContext.authorizer.sub', async () => {
       setEnablingConfiguration.mockResolvedValue(undefined);
       insertAudit.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
 
       await manager.setEnablingConfiguration([
         { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
         { codmarket: '1000', oic: '00010925', enableWOC: 1, enableSignature: 0 },
       ], { requestContext: { authorizer: { sub: 'mario.rossi' } } });
 
+      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setEnablingConfiguration).toHaveBeenCalledTimes(2);
       expect(setEnablingConfiguration).toHaveBeenNthCalledWith(1, fakePool, '1000', '00000989', 1, 1);
       expect(setEnablingConfiguration).toHaveBeenNthCalledWith(2, fakePool, '1000', '00010925', 1, 0);
       expect(insertAudit).toHaveBeenCalledTimes(2);
-      expect(insertAudit).toHaveBeenNthCalledWith(1, fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
-      expect(insertAudit).toHaveBeenNthCalledWith(2, fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:0');
+      expect(insertAudit).toHaveBeenNthCalledWith(1, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
+      expect(insertAudit).toHaveBeenNthCalledWith(2, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:0');
+    });
+
+    it('falls back to the sub itself when the session has no firstname/lastname', async () => {
+      setEnablingConfiguration.mockResolvedValue(undefined);
+      insertAudit.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue(null);
+
+      await manager.setEnablingConfiguration([
+        { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
+      ], { requestContext: { authorizer: { sub: 'mario.rossi' } } });
+
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
     });
 
     it('uses username=null when the event has no requestContext.authorizer.sub (e.g. CLI/direct invocation)', async () => {
@@ -115,6 +138,7 @@ describe('HqManager', () => {
         { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
       ]);
 
+      expect(getCachedSessionData).not.toHaveBeenCalled();
       expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
     });
   });
@@ -140,7 +164,7 @@ describe('HqManager', () => {
       expect(getPool).not.toHaveBeenCalled();
     });
 
-    it('resolves the pool once and delegates to HqRepository.setVehicleInspectionVisible for each element of "conditions"', async () => {
+    it('resolves the pool once and delegates to HqRepository.setVehicleInspectionVisible for each element of "conditions", with username=null when no event is passed', async () => {
       setVehicleInspectionVisible.mockResolvedValue(undefined);
 
       await manager.setVehicleInspectionVisible({
@@ -149,8 +173,21 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setVehicleInspectionVisible).toHaveBeenCalledTimes(2);
-      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0);
-      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1);
+      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0, null);
+      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1, null);
+    });
+
+    it('resolves the username as "firstname lastname" from the session of event.requestContext.authorizer.sub', async () => {
+      setVehicleInspectionVisible.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
+
+      await manager.setVehicleInspectionVisible(
+        { conditions: [{ id: 7, value: 0 }] },
+        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
+      );
+
+      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
+      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 7, 0, 'Mario Rossi');
     });
 
     it.each(['equipment', 'damagearea', 'receptions', 'vehicleconfiguration'])(
@@ -160,30 +197,51 @@ describe('HqManager', () => {
 
         await manager.setVehicleInspectionVisible({ [key]: [{ id: 1, value: 1 }] });
 
-        expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1);
+        expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1, null);
       },
     );
   });
 
   describe('deletetVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.deletetVehicleInspection', async () => {
+    it('resolves the pool and delegates to HqRepository.deletetVehicleInspection, with username=null when no event is passed', async () => {
       deletetVehicleInspection.mockResolvedValue(undefined);
 
       await manager.deletetVehicleInspection(1, 1);
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1);
+      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, null);
+    });
+
+    it('resolves the username as "firstname lastname" from the session of event.requestContext.authorizer.sub', async () => {
+      deletetVehicleInspection.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
+
+      await manager.deletetVehicleInspection(1, 1, { requestContext: { authorizer: { sub: 'mario.rossi' } } });
+
+      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, 'Mario Rossi');
     });
   });
 
   describe('insertVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.insertVehicleInspection', async () => {
+    it('resolves the pool and delegates to HqRepository.insertVehicleInspection, with username=null when no event is passed', async () => {
       insertVehicleInspection.mockResolvedValue(undefined);
 
       await manager.insertVehicleInspection('1000', 'EXTERIOR', 'Controllo carrozzeria');
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria');
+      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', null);
+    });
+
+    it('resolves the username as "firstname lastname" from the session of event.requestContext.authorizer.sub', async () => {
+      insertVehicleInspection.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
+
+      await manager.insertVehicleInspection(
+        '1000', 'EXTERIOR', 'Controllo carrozzeria',
+        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
+      );
+
+      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'Mario Rossi');
     });
   });
 
@@ -348,13 +406,42 @@ describe('HqManager', () => {
   });
 
   describe('insertAudit', () => {
-    it('resolves the pool and delegates to HqRepository.insertAudit', async () => {
+    it('resolves the pool and delegates to HqRepository.insertAudit, with username "firstname lastname" resolved from the session of event.requestContext.authorizer.sub, and returns the resolved username', async () => {
+      insertAudit.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
+
+      const result = await manager.insertAudit(
+        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
+        'domain', '1000', 'create', 'Nuovo dominio',
+      );
+
+      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'Mario Rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+      expect(result).toBe('Mario Rossi');
+    });
+
+    it('falls back to the sub itself when the session has no firstname/lastname', async () => {
+      insertAudit.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue(null);
+
+      const result = await manager.insertAudit(
+        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
+        'domain', '1000', 'create', 'Nuovo dominio',
+      );
+
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+      expect(result).toBe('mario.rossi');
+    });
+
+    it('uses username=null when the event has no requestContext.authorizer.sub (e.g. CLI/direct invocation)', async () => {
       insertAudit.mockResolvedValue(undefined);
 
-      await manager.insertAudit('mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+      const result = await manager.insertAudit({}, 'domain', '1000', 'create', 'Nuovo dominio');
 
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+      expect(getCachedSessionData).not.toHaveBeenCalled();
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'domain', '1000', 'create', 'Nuovo dominio');
+      expect(result).toBeNull();
     });
   });
 
