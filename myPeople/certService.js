@@ -13,7 +13,7 @@ let cachedAgentPromise = null;
  * Lambda Extension (layer), che espone una cache locale su http://localhost:<port>.
  * https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
  *
- * @param {string} secretId - nome/ARN del segreto (es. "apicCert")
+ * @param {string} secretId - nome/ARN del segreto (es. "sm-np-bsn0027990-dev-apic-cert")
  * @returns {Promise<string>} il valore SecretString del segreto
  */
 function fetchSecret(secretId) {
@@ -70,7 +70,7 @@ function extractPem(value) {
 
 /**
  * Scarica il certificato client (.cer/.pem) e la chiave privata (.key/.pem) da
- * Secrets Manager (segreti "apicCert"/"apicKey", configurabili via env) e costruisce
+ * Secrets Manager (segreti "sm-np-bsn0027990-dev-apic-cert"/"sm-np-bsn0027990-dev-apic-key", configurabili via env) e costruisce
  * un https.Agent da usare per l'autenticazione mTLS verso l'API myPeople.
  *
  * @returns {Promise<https.Agent>}

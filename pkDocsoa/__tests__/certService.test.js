@@ -115,9 +115,9 @@ describe('pkDocsoa/certService', () => {
   });
 
   describe('getHttpsAgent', () => {
-    test('builds an https.Agent from apicCert/apicKey secrets (gli stessi usati da myPeople)', async () => {
+    test('builds an https.Agent from apic-cert/apic-key secrets (gli stessi usati da myPeople)', async () => {
       http.get.mockImplementation((options, cb) => {
-        const secretId = options.path.includes('apicCert') ? 'cert-value' : 'key-value';
+        const secretId = options.path.includes('apic-cert') ? 'cert-value' : 'key-value';
         cb(buildMockRes(200, JSON.stringify({ SecretString: secretId })));
         return { on: jest.fn() };
       });

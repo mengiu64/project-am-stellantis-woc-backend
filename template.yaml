@@ -65,14 +65,6 @@ Parameters:
   AgendaSoaApiKey:
     Type: String
     NoEcho: true
-  AgendaSoaCertSecretId:
-    Type: String
-    Default: apicCert
-    Description: Secrets Manager secret id del certificato client mTLS (PEM) per le Lambda AgendaSOA
-  AgendaSoaKeySecretId:
-    Type: String
-    Default: apicKey
-    Description: Secrets Manager secret id della chiave privata mTLS (PEM) per le Lambda AgendaSOA
 
   # IBM API Connect target environment for the DML gateway (X-Target-Env header).
   # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
@@ -159,14 +151,6 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Fixed identifier value required by the readUserProfiles API (constant, not a per-call input)
-  MyPeopleCertSecretId:
-    Type: String
-    Default: apicCert
-    Description: Secrets Manager secret id holding the mTLS client certificate (PEM)
-  MyPeopleKeySecretId:
-    Type: String
-    Default: apicKey
-    Description: Secrets Manager secret id holding the mTLS client private key (PEM)
   MyPeopleExtensionLayerArn:
     Type: String
     Default: arn:aws:lambda:eu-west-1:015030872274:layer:AWS-Parameters-and-Secrets-Lambda-Extension:90
@@ -195,7 +179,7 @@ Parameters:
     Description: >-
       Secrets Manager secret id con le credenziali least-privilege (username/password)
       dell'utente applicativo Aurora ("wiadvisor_app"), letto tramite la AWS Parameters
-      and Secrets Lambda Extension (stesso meccanismo di MyPeopleCertSecretId/MyPeopleKeySecretId)
+      and Secrets Lambda Extension (stesso meccanismo dei secret mTLS sm-np-bsn0027990-<env>-apic-cert/-apic-key)
 
   # ── pkDocsoa (functionServiceDb — tabella woc.listfunctions su Aurora PostgreSQL) ──
   DocsoaDbHost:
@@ -307,8 +291,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
       Environment:
         Variables:
           AGENDA_SOA_HOST:     !Ref AgendaSoaHost
@@ -316,8 +300,8 @@ Resources:
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
           # Id dei segreti mTLS su Secrets Manager (Req 7.3).
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          AGENDA_SOA_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          AGENDA_SOA_KEY_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # Porta HTTP della Secrets Extension (localhost:2773).
           PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
@@ -352,8 +336,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
       Environment:
         Variables:
           AGENDA_SOA_HOST:     !Ref AgendaSoaHost
@@ -361,8 +345,8 @@ Resources:
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
           # Id dei segreti mTLS su Secrets Manager (Req 7.3).
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          AGENDA_SOA_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          AGENDA_SOA_KEY_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # Porta HTTP della Secrets Extension (localhost:2773).
           PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
@@ -415,9 +399,9 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -458,8 +442,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
           # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
           # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
@@ -521,14 +505,14 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
                 # agendaSoaNaga/src/certService.js (imbarcato in-process via Makefile,
                 # richiesto da jobcard/index.js::syncAppointmentsToNaga per l'azione
                 # "updatenaga") — stessi secret mTLS già usati da AgendaSoaNagaFunction.
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
             # and Secrets Extension fallisce con "HTTP 400 - an unexpected error
@@ -580,8 +564,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
           # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
           # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
@@ -607,8 +591,8 @@ Resources:
           AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          AGENDA_SOA_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          AGENDA_SOA_KEY_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   JobCardFunctionLogGroup:
@@ -663,8 +647,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
         # djc/db.js — utente applicativo Aurora "wiadvisor_app" (tabella
         # woc.jobcard_sync_activity, scritta ad ogni saveJobcard), stesso secret
         # di PkFavoriteFunction/JobCardFunction. Il secret è cifrato con una
@@ -697,8 +681,8 @@ Resources:
           AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
           AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
           AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
-          AGENDA_SOA_CERT_SECRET_ID: !Ref AgendaSoaCertSecretId
-          AGENDA_SOA_KEY_SECRET_ID:  !Ref AgendaSoaKeySecretId
+          AGENDA_SOA_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          AGENDA_SOA_KEY_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   DjcFunctionLogGroup:
@@ -874,7 +858,7 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${PkEperFunction}"
       RetentionInDays: 30
 
-  # Il certificato/chiave mTLS ("apicCert"/"apicKey", gli STESSI usati da myPeople)
+  # Il certificato/chiave mTLS ("sm-np-bsn0027990-<env>-apic-cert"/"-apic-key", gli STESSI usati da myPeople)
   # sono letti da AWS Secrets Manager tramite la AWS Parameters and Secrets Lambda
   # Extension (layer), esattamente come in MyPeopleFunction. La funzione gira in
   # VPC (Globals.Function.VpcConfig): è necessario un endpoint di rete verso
@@ -893,8 +877,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
       Environment:
         Variables:
           DOCSOA_HOST:              !Ref DocsoaHost
@@ -902,8 +886,8 @@ Resources:
           DOCSOA_PASSWORD:          !Ref DocsoaPassword
           DOCSOA_IBM_CLIENT_ID:     !Ref DocsoaIbmClientId
           DOCSOA_IBM_CLIENT_SECRET: !Ref DocsoaIbmClientSecret
-          DOCSOA_CERT_SECRET_ID:    !Ref MyPeopleCertSecretId
-          DOCSOA_KEY_SECRET_ID:     !Ref MyPeopleKeySecretId
+          DOCSOA_CERT_SECRET_ID:    !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          DOCSOA_KEY_SECRET_ID:     !Sub "sm-np-bsn0027990-${Environment}-apic-key"
 
   PkDocsoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -989,7 +973,7 @@ Resources:
       CodeUri: ./
       Handler: pkManager/index.handler
       # pkDocsoa (imbarcato in-process via Makefile) richiede l'estensione Lambda +
-      # il permesso Secrets Manager per il proprio mTLS (certificato/chiave "apicCert"/"apicKey",
+      # il permesso Secrets Manager per il proprio mTLS (certificato/chiave "sm-np-bsn0027990-<env>-apic-cert"/"-apic-key",
       # gli STESSI usati da myPeople) — vedi PkDocsoaFunction/MyPeopleFunction.
       # dbManager (anch'esso imbarcato in-process via Makefile) richiede lo stesso
       # secret Aurora "wiadvisor_app" di pkDocsoa (DocsoaDbSecretId): nessun nuovo
@@ -1010,8 +994,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # pkDocsoa/functionServiceDb e dbManager/db.js leggono da Aurora tramite
@@ -1040,8 +1024,8 @@ Resources:
           DOCSOA_PASSWORD:              !Ref DocsoaPassword
           DOCSOA_IBM_CLIENT_ID:         !Ref DocsoaIbmClientId
           DOCSOA_IBM_CLIENT_SECRET:     !Ref DocsoaIbmClientSecret
-          DOCSOA_CERT_SECRET_ID:        !Ref MyPeopleCertSecretId
-          DOCSOA_KEY_SECRET_ID:         !Ref MyPeopleKeySecretId
+          DOCSOA_CERT_SECRET_ID:        !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          DOCSOA_KEY_SECRET_ID:         !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           DOCSOA_CODBRAND:              !Ref DocsoaCodbrand
           DOCSOA_LANGUE:                !Ref DocsoaLangue
           # functionServiceDb (pkDocsoa/db.js + config.js) — lettura di woc.listfunctions
@@ -1081,8 +1065,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
           # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
           # secret di DBMANAGER_DB_*/DOCSOA_DB_* (nessun nuovo parametro CFN necessario).
@@ -1126,8 +1110,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
@@ -1160,8 +1144,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # dms (usato dallo stesso flusso, per dms/settings) — DMS_PING_*/
           # DML_IBM_*: non più variabili d'ambiente in chiaro, lette dal secret
           # condiviso via dms/config.js::getConfig() (in-process).
@@ -1195,7 +1179,7 @@ Resources:
 
   # ── myPeople (IURSMA readUserProfiles) ────────────────────────────────────
   #
-  # Il certificato/chiave mTLS ("apicCert"/"apicKey") sono letti da AWS Secrets
+  # Il certificato/chiave mTLS ("sm-np-bsn0027990-<env>-apic-cert"/"-apic-key") sono letti da AWS Secrets
   # Manager tramite la AWS Parameters and Secrets Lambda Extension (layer),
   # per non dover imbarcare l'SDK e per beneficiare della cache locale
   # dell'estensione. La funzione gira in VPC (Globals.Function.VpcConfig):
@@ -1215,8 +1199,8 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource:
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
       Environment:
         Variables:
           MYPEOPLE_HOST:            !Ref MyPeopleHost
@@ -1224,8 +1208,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
 
   MyPeopleFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -1277,8 +1261,8 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${PkFavoriteDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ServiceUrlsSecretId}-*"
             # Il secret è cifrato con una chiave KMS gestita dal cliente (non la
             # default aws/secretsmanager): senza kms:Decrypt la Lambda Parameters
@@ -1324,8 +1308,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo stesso
           # flusso username -> myPeople -> dms/settings. Riusa lo stesso Aurora/
           # secret di DBMANAGER_DB_* (nessun nuovo parametro CFN necessario).
@@ -1438,8 +1422,8 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
-                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
             # Stesso motivo di DbManagerFunction: il secret è cifrato con una
             # chiave KMS gestita dal cliente (non la default aws/secretsmanager).
             - Effect: Allow
@@ -1469,8 +1453,8 @@ Resources:
           MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
           MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
           MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
-          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
-          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
           # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo
           # stesso flusso username -> myPeople di sessionContextCache.js.
           # Riusa lo stesso Aurora/secret di DBMANAGER_DB_* (nessun nuovo
