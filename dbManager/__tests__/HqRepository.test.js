@@ -461,13 +461,6 @@ describe('HqRepository', () => {
   });
 
   describe('setMarketEnable', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(setMarketEnable(pool, undefined))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('upserts hq_pk_market (deleted = 0) and cascades deleted = 1 on hq_pk_oic', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
@@ -489,13 +482,6 @@ describe('HqRepository', () => {
   });
 
   describe('setMarketDisable', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(setMarketDisable(pool, undefined))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('upserts hq_pk_market (deleted = 1) and re-enables (deleted = 0) on hq_pk_oic', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
@@ -517,13 +503,6 @@ describe('HqRepository', () => {
   });
 
   describe('setOicEnable', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(setOicEnable(pool, undefined, '00006821'))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('throws when oic is missing', async () => {
       const pool = makePool();
       await expect(setOicEnable(pool, '1000', undefined))
@@ -546,13 +525,6 @@ describe('HqRepository', () => {
   });
 
   describe('insertDomain', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(insertDomain(pool, undefined, '00006821', 'Meccanica'))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('inserts the domain and returns the generated iddomain', async () => {
       const pool = makePool(async () => ({ rows: [{ iddomain: 42 }] }));
 
@@ -569,13 +541,6 @@ describe('HqRepository', () => {
   });
 
   describe('setDomain', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(setDomain(pool, undefined, 42, 'Meccanica'))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('throws when iddomain is missing', async () => {
       const pool = makePool();
       await expect(setDomain(pool, '1000', undefined, 'Meccanica'))
@@ -597,13 +562,6 @@ describe('HqRepository', () => {
   });
 
   describe('deleteDomain', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(deleteDomain(pool, undefined, 42))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('throws when iddomain is missing', async () => {
       const pool = makePool();
       await expect(deleteDomain(pool, '1000', undefined))
@@ -648,13 +606,6 @@ describe('HqRepository', () => {
   });
 
   describe('insertPackage', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(insertPackage(pool, undefined, '00006821', 42, 'Tagliando', 60, 100.5))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('throws when iddomain is missing', async () => {
       const pool = makePool();
       await expect(insertPackage(pool, '1000', '00006821', undefined, 'Tagliando', 60, 100.5))
@@ -749,13 +700,6 @@ describe('HqRepository', () => {
   });
 
   describe('getPackageList', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(getPackageList(pool, undefined, '00006821'))
-        .rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
     it('joins on hq_pk_oic and filters dom/pk on oic = $2 when oic is provided', async () => {
       const pool = makePool(async () => ({
         rows: [
@@ -861,13 +805,6 @@ describe('HqRepository', () => {
       const pool = makePool();
       await expect(insertAudit(pool, 'mario.rossi', undefined, '1000', 'create', 'Nuovo dominio'))
         .rejects.toThrow('"section" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
-
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(insertAudit(pool, 'mario.rossi', 'domain', undefined, 'create', 'Nuovo dominio'))
-        .rejects.toThrow('"market" is required');
       expect(pool.query).not.toHaveBeenCalled();
     });
 

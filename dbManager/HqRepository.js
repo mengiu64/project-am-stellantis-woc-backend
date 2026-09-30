@@ -387,8 +387,6 @@ async function getAddressByOics(pool, { oics } = {}) {
  * @returns {Promise<void>}
  */
 async function setMarketEnable(pool, market) {
-  if (!market) throw new Error('"market" is required');
-
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 0)
@@ -412,8 +410,6 @@ async function setMarketEnable(pool, market) {
  * @returns {Promise<void>}
  */
 async function setMarketDisable(pool, market) {
-  if (!market) throw new Error('"market" is required');
-
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 1)
@@ -437,7 +433,6 @@ async function setMarketDisable(pool, market) {
  * @returns {Promise<void>}
  */
 async function setOicEnable(pool, market, oic) {
-  if (!market) throw new Error('"market" is required');
   if (!oic) throw new Error('"oic" is required');
 
   await pool.query(
@@ -459,8 +454,6 @@ async function setOicEnable(pool, market, oic) {
  * @returns {Promise<number>} l'iddomain generato
  */
 async function insertDomain(pool, market, oic, descr) {
-  if (!market) throw new Error('"market" is required');
-
   const { rows } = await pool.query(
     `INSERT INTO woc.hq_pk_domain (market, oic, descr)
      VALUES ($1, $2, $3)
@@ -481,7 +474,6 @@ async function insertDomain(pool, market, oic, descr) {
  * @returns {Promise<void>}
  */
 async function setDomain(pool, market, iddomain, descr) {
-  if (!market) throw new Error('"market" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   await pool.query(
@@ -503,7 +495,6 @@ async function setDomain(pool, market, iddomain, descr) {
  * @returns {Promise<void>}
  */
 async function deleteDomain(pool, market, iddomain) {
-  if (!market) throw new Error('"market" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   await pool.query(
@@ -550,7 +541,6 @@ async function setDomainVisible(pool, iddomain, value) {
  * @returns {Promise<number>} l'idpackage generato
  */
 async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat) {
-  if (!market) throw new Error('"market" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   const { rows } = await pool.query(
@@ -658,8 +648,6 @@ async function setPackageVisible(pool, idpackage, value) {
  * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
 async function getPackageList(pool, market, oic) {
-  if (!market) throw new Error('"market" is required');
-
   const selectColumns = `dom.iddomain
                           , dom.descr AS domaindescr
                           , dom.visible AS domvisible
@@ -716,7 +704,6 @@ async function getPackageList(pool, market, oic) {
 async function insertAudit(pool, username, section, market, actiontype, descr) {
   if (!username) throw new Error('"username" is required');
   if (!section) throw new Error('"section" is required');
-  if (!market) throw new Error('"market" is required');
   if (!actiontype) throw new Error('"actiontype" is required');
 
   await pool.query(

@@ -164,7 +164,7 @@ describe('HqManager', () => {
       expect(getPool).not.toHaveBeenCalled();
     });
 
-    it('resolves the pool once and delegates to HqRepository.setVehicleInspectionVisible for each element of "conditions", with username=null when no event is passed', async () => {
+    it('resolves the pool once and delegates to HqRepository.setVehicleInspectionVisible for each element of "conditions", with username=null and codmarket="" when no event is passed', async () => {
       setVehicleInspectionVisible.mockResolvedValue(undefined);
 
       await manager.setVehicleInspectionVisible({
@@ -173,11 +173,24 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setVehicleInspectionVisible).toHaveBeenCalledTimes(2);
-      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0, null);
-      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1, null);
+      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0, null, '');
+      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1, null, '');
     });
 
-    it('resolves the username as "firstname lastname" from the session of event.requestContext.authorizer.sub', async () => {
+    it('resolves username and codmarket from the session of event.requestContext.authorizer.sub', async () => {
+      setVehicleInspectionVisible.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' });
+
+      await manager.setVehicleInspectionVisible(
+        { conditions: [{ id: 7, value: 0 }] },
+        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
+      );
+
+      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
+      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 7, 0, 'Mario Rossi', '1000');
+    });
+
+    it('falls back to codmarket="" when the session has no codmarket', async () => {
       setVehicleInspectionVisible.mockResolvedValue(undefined);
       getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
 
@@ -186,8 +199,7 @@ describe('HqManager', () => {
         { requestContext: { authorizer: { sub: 'mario.rossi' } } },
       );
 
-      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
-      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 7, 0, 'Mario Rossi');
+      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 7, 0, 'Mario Rossi', '');
     });
 
     it.each(['equipment', 'damagearea', 'receptions', 'vehicleconfiguration'])(
@@ -197,51 +209,51 @@ describe('HqManager', () => {
 
         await manager.setVehicleInspectionVisible({ [key]: [{ id: 1, value: 1 }] });
 
-        expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1, null);
+        expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1, null, '');
       },
     );
   });
 
   describe('deletetVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.deletetVehicleInspection, with username=null when no event is passed', async () => {
+    it('resolves the pool and delegates to HqRepository.deletetVehicleInspection, with username=null and codmarket="" when no event is passed', async () => {
       deletetVehicleInspection.mockResolvedValue(undefined);
 
       await manager.deletetVehicleInspection(1, 1);
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, null);
+      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, null, '');
     });
 
-    it('resolves the username as "firstname lastname" from the session of event.requestContext.authorizer.sub', async () => {
+    it('resolves username and codmarket from the session of event.requestContext.authorizer.sub', async () => {
       deletetVehicleInspection.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' });
 
       await manager.deletetVehicleInspection(1, 1, { requestContext: { authorizer: { sub: 'mario.rossi' } } });
 
-      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, 'Mario Rossi');
+      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, 'Mario Rossi', '1000');
     });
   });
 
   describe('insertVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.insertVehicleInspection, with username=null when no event is passed', async () => {
+    it('resolves the pool and delegates to HqRepository.insertVehicleInspection, with username=null and codmarket="" when no event is passed', async () => {
       insertVehicleInspection.mockResolvedValue(undefined);
 
       await manager.insertVehicleInspection('1000', 'EXTERIOR', 'Controllo carrozzeria');
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', null);
+      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', null, '');
     });
 
-    it('resolves the username as "firstname lastname" from the session of event.requestContext.authorizer.sub', async () => {
+    it('resolves username and codmarket from the session of event.requestContext.authorizer.sub', async () => {
       insertVehicleInspection.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' });
 
       await manager.insertVehicleInspection(
         '1000', 'EXTERIOR', 'Controllo carrozzeria',
         { requestContext: { authorizer: { sub: 'mario.rossi' } } },
       );
 
-      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'Mario Rossi');
+      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'Mario Rossi', '1000');
     });
   });
 

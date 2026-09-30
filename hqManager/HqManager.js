@@ -39,6 +39,36 @@ async function resolveUsername(event = {}, body = {}) {
 }
 
 /**
+ * Risolve il `codmarket` (mercato) dell'utente autenticato da registrare
+ * come `market` nell'audit HQ (woc.hq_audit, v.
+ * HqRepository.js::insertAudit), con lo stesso meccanismo/identificativo
+ * tecnico e la stessa sessione (session/src/sessionContextCache.js
+ * ::getCachedSessionData) usati da resolveUsername (v. sopra) per
+ * firstname/lastname.
+ *
+ * Best-effort come resolveUsername: se l'identita' non e' risolvibile o la
+ * sessione non espone un codmarket (utente HQ centrale, sessione non
+ * trovata, myPeople irraggiungibile, ecc.) si ricade su una stringa vuota
+ * ("") anziche' su null, cosi' da non violare l'obbligatorieta' di `market`
+ * lato chiamata SQL (colonna nullable, ma il valore atteso e' comunque una
+ * stringa).
+ *
+ * @param {object} [event]
+ * @param {object} [body]
+ * @returns {Promise<string>}
+ */
+async function resolveCodmarket(event = {}, body = {}) {
+  const authz = (event.requestContext && event.requestContext.authorizer) || {};
+  const usernameKey = authz.sub || body.username || null;
+  if (!usernameKey) return '';
+
+  const { getCachedSessionData } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
+  const session = (await getCachedSessionData(usernameKey)) || {};
+
+  return session.codmarket || '';
+}
+
+/**
  * HqManager.js — wrapper applicativo su dbManager/HqRepository.js (Aurora
  * PostgreSQL, db "wiadvisor", schema "woc"), stesso pattern di
  * PkManager.js/getConfigPackages: il pool ("pg") e la repository vengono
@@ -68,7 +98,9 @@ async function resolveUsername(event = {}, body = {}) {
  * insertVehicleInspection(market, type, descr, event) espongono la
  * gestione delle voci di controllo veicolo (woc.hq_vehicle_inspection);
  * ciascuna registra anche una riga di audit (woc.hq_audit, v.
- * HqRepository.js) con username risolto da resolveUsername.
+ * HqRepository.js) con username risolto da resolveUsername e, come `market`
+ * dell'audit, il codmarket risolto da resolveCodmarket (v. sotto: stessa
+ * sessione dell'utente autenticato, "" se non risolvibile).
  *
  * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
  * (che a cascata disabilita anche il mercato, v. sotto),
@@ -165,8 +197,9 @@ class HqManager {
    * chiamata), riusando lo stesso pool.
    *
    * @param {{ conditions?: Array<{id:number, value:number}>, equipment?: Array<{id:number, value:number}>, damagearea?: Array<{id:number, value:number}>, receptions?: Array<{id:number, value:number}>, vehicleconfiguration?: Array<{id:number, value:number}> }} payload
-   * @param {object} [event] - usato da resolveUsername per lo username
-   *   dell'audit (firstname+lastname della sessione dell'utente autenticato).
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   lo username (firstname+lastname) e il market ("" se non risolvibile)
+   *   dell'audit, entrambi dalla sessione dell'utente autenticato.
    * @returns {Promise<void>}
    */
   async setVehicleInspectionVisible(payload, event = {}) {
@@ -176,49 +209,54 @@ class HqManager {
     }
 
     const username = await resolveUsername(event, payload);
+    const codmarket = await resolveCodmarket(event, payload);
 
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { setVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
     for (const { id, value } of payload[key]) {
-      await setVehicleInspectionVisible(pool, id, value, username);
+      await setVehicleInspectionVisible(pool, id, value, username, codmarket);
     }
   }
 
   /**
    * @param {number} id
    * @param {number} value
-   * @param {object} [event] - usato da resolveUsername per lo username
-   *   dell'audit (firstname+lastname della sessione dell'utente autenticato).
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   lo username (firstname+lastname) e il market ("" se non risolvibile)
+   *   dell'audit, entrambi dalla sessione dell'utente autenticato.
    * @returns {Promise<void>}
    */
   async deletetVehicleInspection(id, value, event = {}) {
     const username = await resolveUsername(event);
+    const codmarket = await resolveCodmarket(event);
 
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { deletetVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return deletetVehicleInspection(pool, id, value, username);
+    return deletetVehicleInspection(pool, id, value, username, codmarket);
   }
 
   /**
    * @param {string} market
    * @param {string} type
    * @param {string} descr
-   * @param {object} [event] - usato da resolveUsername per lo username
-   *   dell'audit (firstname+lastname della sessione dell'utente autenticato).
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   lo username (firstname+lastname) e il market ("" se non risolvibile)
+   *   dell'audit, entrambi dalla sessione dell'utente autenticato.
    * @returns {Promise<void>}
    */
   async insertVehicleInspection(market, type, descr, event = {}) {
     const username = await resolveUsername(event);
+    const codmarket = await resolveCodmarket(event);
 
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { insertVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return insertVehicleInspection(pool, market, type, descr, username);
+    return insertVehicleInspection(pool, market, type, descr, username, codmarket);
   }
 
   /**
