@@ -678,7 +678,11 @@ async function getPackageList(pool, market, oic) {
          FROM woc.hq_pk_market mk
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
-        WHERE mk.market = $1`,
+       WHERE (
+               (($1 IS NULL OR $1 = '') AND mk.market IS NULL)
+                 OR
+               ($1 IS NOT NULL AND $1 <> '' AND mk.market = $1)
+               )`,
       [market],
     );
 
