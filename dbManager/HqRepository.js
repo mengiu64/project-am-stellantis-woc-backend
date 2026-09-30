@@ -85,10 +85,12 @@
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
  * automaticamente a CURRENT_DATE).
  *
- * searchAudit(market, section, datefrom, dateto, actiontype) legge da
- * woc.hq_audit le righe che soddisfano, in AND, i soli filtri effettivamente
- * valorizzati fra quelli passati (tutti opzionali), ordinate per
- * creationdate/id decrescente (piu' recenti prima).
+ * searchAudit(market, section, datefrom, dateto, actiontype, username) legge
+ * da woc.hq_audit le righe che soddisfano, in AND, i soli filtri
+ * effettivamente valorizzati fra quelli passati (tutti opzionali, username
+ * con match case-insensitive parziale), ordinate per creationdate/id
+ * decrescente (piu' recenti prima). Se nessun filtro e' valorizzato, il
+ * risultato e' limitato alle ultime 100 righe (per creationdate).
  *
  * getAnagSection()/getAnagAllocation() leggono, da S3 (bucket
  * TranslationsBucket, S3ConfigRepository.js), le anagrafiche statiche delle
@@ -253,7 +255,7 @@ async function deletetVehicleInspection(pool, id, value, username, codmarket) {
   );
   const [{ type, descr } = {}] = rows;
 
-  await insertAudit(pool, username, type, codmarket, 'delete', `${type} ${descr} `);
+  await insertAudit(pool, username, type, codmarket, 'delete', `deleted ${codmarket} ${descr} `);
 }
 
 /**
@@ -664,7 +666,11 @@ async function getPackageList(pool, market, oic) {
          JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
-        WHERE mk.market = $1`,
+       WHERE (
+               (($1 IS NULL OR $1 = '') AND mk.market IS NULL)
+                 OR
+               ($1 IS NOT NULL AND $1 <> '' AND mk.market = $1)
+               )`,
       [market, oic],
     )
     : await pool.query(
@@ -715,8 +721,13 @@ async function insertAudit(pool, username, section, market, actiontype, descr) {
 
 /**
  * Legge da woc.hq_audit le righe che soddisfano, in AND, i soli filtri
- * effettivamente valorizzati fra market/section/datefrom/dateto/actiontype
- * (tutti opzionali), ordinate per creationdate/id decrescente.
+ * effettivamente valorizzati fra market/section/datefrom/dateto/actiontype/
+ * username (tutti opzionali), ordinate per creationdate/id decrescente.
+ * `username` e' un match parziale case-insensitive (UPPER(username) LIKE
+ * UPPER('%...%')), a differenza degli altri filtri (uguaglianza esatta).
+ * Se nessun filtro e' valorizzato (ricerca senza criteri), il risultato e'
+ * limitato alle ultime 100 righe (LIMIT 100, per creationdate/id
+ * decrescente).
  *
  * @param {import('pg').Pool} pool
  * @param {string} [market]
@@ -724,9 +735,10 @@ async function insertAudit(pool, username, section, market, actiontype, descr) {
  * @param {string|Date} [datefrom]
  * @param {string|Date} [dateto]
  * @param {string} [actiontype]
+ * @param {string} [username]
  * @returns {Promise<Array<{ id: number, username: string|null, creationdate: string|null, section: string|null, market: string|null, actiontype: string|null, descr: string|null }>>}
  */
-async function searchAudit(pool, market, section, datefrom, dateto, actiontype) {
+async function searchAudit(pool, market, section, datefrom, dateto, actiontype, username) {
   const conditions = [];
   const params = [];
 
@@ -750,13 +762,18 @@ async function searchAudit(pool, market, section, datefrom, dateto, actiontype) 
     params.push(actiontype);
     conditions.push(`actiontype = $${params.length}`);
   }
+  if (username) {
+    params.push(`%${username}%`);
+    conditions.push(`UPPER(username) LIKE UPPER($${params.length})`);
+  }
 
   const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const limitClause = conditions.length ? '' : ' LIMIT 100';
 
   const { rows } = await pool.query(
     `SELECT id, username, creationdate, section, market, actiontype, descr
        FROM woc.hq_audit${whereClause}
-      ORDER BY creationdate DESC, id DESC`,
+      ORDER BY creationdate DESC, id DESC${limitClause}`,
     params,
   );
 

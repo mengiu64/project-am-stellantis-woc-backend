@@ -280,7 +280,7 @@ describe('HqRepository', () => {
       expect(pool.query).toHaveBeenNthCalledWith(
         3,
         expect.stringContaining('INSERT INTO woc.hq_audit'),
-        ['jdoe', 'EXTERIOR', '1000', 'delete', 'EXTERIOR Test '],
+        ['jdoe', 'EXTERIOR', '1000', 'delete', 'deleted 1000 Test '],
       );
     });
   });
@@ -745,7 +745,7 @@ describe('HqRepository', () => {
       expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain'));
       expect(sql).toEqual(expect.stringContaining('dom.visible AS domvisible'));
       expect(sql).toEqual(expect.stringContaining('pk.visible AS pkvisible'));
-      expect(sql).not.toEqual(expect.stringContaining('IS NULL'));
+      expect(sql).toEqual(expect.stringContaining("($1 IS NOT NULL AND $1 <> '' AND mk.market = $1)"));
     });
 
     it('does not join hq_pk_oic and filters dom/pk on oic IS NULL (market-level configuration) when oic is null/undefined', async () => {
@@ -833,7 +833,7 @@ describe('HqRepository', () => {
     it('runs a query with no WHERE clause when no filters are given', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      const result = await searchAudit(pool, undefined, undefined, undefined, undefined, undefined);
+      const result = await searchAudit(pool, undefined, undefined, undefined, undefined, undefined, undefined);
 
       expect(result).toEqual([]);
       expect(pool.query).toHaveBeenCalledTimes(1);
@@ -841,6 +841,8 @@ describe('HqRepository', () => {
         expect.not.stringContaining('WHERE'),
         [],
       );
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('LIMIT 100'));
     });
 
     it('builds a dynamic WHERE clause including only the provided filters', async () => {
@@ -849,7 +851,7 @@ describe('HqRepository', () => {
       }];
       const pool = makePool(async () => ({ rows }));
 
-      const result = await searchAudit(pool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+      const result = await searchAudit(pool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi');
 
       expect(result).toBe(rows);
       expect(pool.query).toHaveBeenCalledTimes(1);
@@ -859,7 +861,8 @@ describe('HqRepository', () => {
       expect(sql).toEqual(expect.stringContaining('creationdate >= $3'));
       expect(sql).toEqual(expect.stringContaining('creationdate <= $4'));
       expect(sql).toEqual(expect.stringContaining('actiontype = $5'));
-      expect(params).toEqual(['1000', 'domain', '2024-01-01', '2024-12-31', 'create']);
+      expect(sql).toEqual(expect.stringContaining('UPPER(username) LIKE UPPER($6)'));
+      expect(params).toEqual(['1000', 'domain', '2024-01-01', '2024-12-31', 'create', '%mario.rossi%']);
     });
 
     it('builds a WHERE clause with only market and actiontype when the other filters are missing', async () => {
@@ -871,6 +874,25 @@ describe('HqRepository', () => {
       expect(sql).toEqual(expect.stringContaining('market = $1'));
       expect(sql).toEqual(expect.stringContaining('actiontype = $2'));
       expect(params).toEqual(['1000', 'create']);
+    });
+
+    it('builds a WHERE clause with only username (case-insensitive partial match) when it is the only filter given', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await searchAudit(pool, undefined, undefined, undefined, undefined, undefined, 'mario.rossi');
+
+      const [sql, params] = pool.query.mock.calls[0];
+      expect(sql).toEqual(expect.stringContaining('UPPER(username) LIKE UPPER($1)'));
+      expect(params).toEqual(['%mario.rossi%']);
+    });
+
+    it('does not apply LIMIT 100 when at least one filter is given', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await searchAudit(pool, '1000');
+
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).not.toEqual(expect.stringContaining('LIMIT'));
     });
   });
 

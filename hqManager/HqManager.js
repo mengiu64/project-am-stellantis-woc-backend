@@ -120,9 +120,11 @@ async function resolveCodmarket(event = {}, body = {}) {
  * domVisible/pkVisible).
  *
  * insertAudit(event, section, market, actiontype, descr) e
- * searchAudit(market, section, datefrom, dateto, actiontype) (filtri tutti
- * opzionali) espongono il log di audit HQ (woc.hq_audit); insertAudit
- * risolve anch'esso lo username da registrare tramite resolveUsername.
+ * searchAudit(market, section, datefrom, dateto, actiontype, username)
+ * (filtri tutti opzionali; se nessuno e' valorizzato, il risultato e'
+ * limitato alle ultime 100 righe per creationdate) espongono il log di
+ * audit HQ (woc.hq_audit); insertAudit risolve anch'esso lo username da
+ * registrare tramite resolveUsername.
  *
  * getAnagSection()/getAnagAllocation() espongono le anagrafiche statiche
  * (sezioni HQ / tipi di azione di audit) lette da S3
@@ -173,7 +175,7 @@ class HqManager {
     const pool = await getPool();
     for (const { codmarket, oic, enableWOC, enableSignature } of configurations) {
       await setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
-      await insertAudit(pool, username, 'enablingConfiguration', codmarket, 'update', `enableWOC: ${enableWOC} enableSignature:${enableSignature}`);
+      await insertAudit(pool, username, 'enablingConfiguration', codmarket, 'update', `oic: ${oic} enabled: ${enableWOC} enableSignature:${enableSignature}`);
     }
   }
 
@@ -479,14 +481,17 @@ class HqManager {
    * @param {string} [datefrom]
    * @param {string} [dateto]
    * @param {string} [actiontype]
+   * @param {string} [username]
    * @returns {Promise<Array<{ id: number, username: string|null, creationdate: string|null, section: string|null, market: string|null, actiontype: string|null, descr: string|null }>>}
+   *   Se nessun filtro e' valorizzato, il risultato e' limitato alle ultime
+   *   100 righe (per creationdate).
    */
-  async searchAudit(market, section, datefrom, dateto, actiontype) {
+  async searchAudit(market, section, datefrom, dateto, actiontype, username) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { searchAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return searchAudit(pool, market, section, datefrom, dateto, actiontype);
+    return searchAudit(pool, market, section, datefrom, dateto, actiontype, username);
   }
 
   /**

@@ -114,8 +114,8 @@ describe('HqManager', () => {
       expect(setEnablingConfiguration).toHaveBeenNthCalledWith(1, fakePool, '1000', '00000989', 1, 1);
       expect(setEnablingConfiguration).toHaveBeenNthCalledWith(2, fakePool, '1000', '00010925', 1, 0);
       expect(insertAudit).toHaveBeenCalledTimes(2);
-      expect(insertAudit).toHaveBeenNthCalledWith(1, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
-      expect(insertAudit).toHaveBeenNthCalledWith(2, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:0');
+      expect(insertAudit).toHaveBeenNthCalledWith(1, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'oic: 00000989 enabled: 1 enableSignature:1');
+      expect(insertAudit).toHaveBeenNthCalledWith(2, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'oic: 00010925 enabled: 1 enableSignature:0');
     });
 
     it('falls back to the sub itself when the session has no firstname/lastname', async () => {
@@ -127,7 +127,7 @@ describe('HqManager', () => {
         { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
       ], { requestContext: { authorizer: { sub: 'mario.rossi' } } });
 
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'oic: 00000989 enabled: 1 enableSignature:1');
     });
 
     it('uses username=null when the event has no requestContext.authorizer.sub (e.g. CLI/direct invocation)', async () => {
@@ -139,7 +139,7 @@ describe('HqManager', () => {
       ]);
 
       expect(getCachedSessionData).not.toHaveBeenCalled();
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'enablingConfiguration', '1000', 'update', 'enableWOC: 1 enableSignature:1');
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'enablingConfiguration', '1000', 'update', 'oic: 00000989 enabled: 1 enableSignature:1');
     });
   });
 
@@ -458,16 +458,16 @@ describe('HqManager', () => {
   });
 
   describe('searchAudit', () => {
-    it('resolves the pool and delegates to HqRepository.searchAudit', async () => {
+    it('resolves the pool and delegates to HqRepository.searchAudit, including username as an additional filter', async () => {
       const audits = [{
         id: 1, username: 'mario.rossi', creationdate: '2024-01-01', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
       }];
       searchAudit.mockResolvedValue(audits);
 
-      const result = await manager.searchAudit('1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+      const result = await manager.searchAudit('1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi');
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(searchAudit).toHaveBeenCalledWith(fakePool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+      expect(searchAudit).toHaveBeenCalledWith(fakePool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi');
       expect(result).toBe(audits);
     });
   });
