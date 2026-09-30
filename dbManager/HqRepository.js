@@ -81,6 +81,14 @@
  * (deleted = 1) sono esclusi (dom.deleted = 0). Include anche
  * domVisible/pkVisible (hq_pk_domain.visible/hq_pk_packages.visible).
  *
+ * clonePk(marketTarget, marketOrig) clona, per il mercato marketOrig, tutte
+ * le righe di woc.hq_pk_oic (oic incluso eventuale NULL) e le relative
+ * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget,
+ * rigenerando iddomain/idpackage dalle rispettive sequence e rimappando gli
+ * iddomain nei pacchetti clonati per preservare la relazione dominio/
+ * pacchetto originale. Esegue tutto in un'unica transazione (BEGIN/COMMIT,
+ * ROLLBACK in caso di errore).
+ *
  * insertAudit(username, section, market, actiontype, descr) inserisce una
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
  * automaticamente a CURRENT_DATE).
@@ -701,6 +709,81 @@ async function getPackageList(pool, market, oic) {
 }
 
 /**
+ * Clona, per il mercato indicato (marketOrig), tutte le righe di
+ * woc.hq_pk_oic (comprese le eventuali righe con oic IS NULL) e le relative
+ * gerarchie hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget).
+ *
+ * iddomain/idpackage sono generati dalle rispettive sequence
+ * (hq_pk_domain_iddomain_seq/hq_pk_packages_idpackage_seq): i nuovi
+ * iddomain vengono quindi rimappati (vecchio -> nuovo) prima di clonare i
+ * pacchetti, in modo da mantenere la relazione dominio/pacchetto del
+ * mercato originale anche nel mercato clonato.
+ *
+ * L'intera operazione viene eseguita in un'unica transazione
+ * (BEGIN/COMMIT su una connessione dedicata, ROLLBACK in caso di errore),
+ * cosi' da non lasciare dati parzialmente clonati.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} marketTarget
+ * @param {string} marketOrig
+ * @returns {Promise<void>}
+ */
+async function clonePk(pool, marketTarget, marketOrig) {
+  if (!marketTarget) throw new Error('"marketTarget" is required');
+  if (!marketOrig) throw new Error('"marketOrig" is required');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: oicRows } = await client.query(
+      `SELECT oic, deleted FROM woc.hq_pk_oic WHERE market = $1`,
+      [marketOrig],
+    );
+    for (const { oic, deleted } of oicRows) {
+      await client.query(
+        `INSERT INTO woc.hq_pk_oic (market, oic, deleted) VALUES ($1, $2, $3)`,
+        [marketTarget, oic, deleted],
+      );
+    }
+
+    const { rows: domainRows } = await client.query(
+      `SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain WHERE market = $1`,
+      [marketOrig],
+    );
+    const iddomainMap = new Map();
+    for (const { iddomain, oic, descr, deleted } of domainRows) {
+      const { rows } = await client.query(
+        `INSERT INTO woc.hq_pk_domain (market, oic, descr, deleted)
+         VALUES ($1, $2, $3, $4)
+         RETURNING iddomain`,
+        [marketTarget, oic, descr, deleted],
+      );
+      iddomainMap.set(iddomain, rows[0].iddomain);
+    }
+
+    const { rows: packageRows } = await client.query(
+      `SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE market = $1`,
+      [marketOrig],
+    );
+    for (const { oic, iddomain, descr, timeop, pricewithvat } of packageRows) {
+      await client.query(
+        `INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [marketTarget, oic, iddomainMap.get(iddomain), descr, timeop, pricewithvat],
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Inserisce una riga di audit in woc.hq_audit (creationdate = CURRENT_DATE).
  *
  * @param {import('pg').Pool} pool
@@ -825,6 +908,7 @@ module.exports = {
   deletePackage,
   setPackageVisible,
   getPackageList,
+  clonePk,
   insertAudit,
   searchAudit,
   getAnagSection,

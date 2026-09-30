@@ -31,6 +31,7 @@ const {
   deletePackage,
   setPackageVisible,
   getPackageList,
+  clonePk,
   insertAudit,
   searchAudit,
   getAnagSection,
@@ -814,6 +815,100 @@ describe('HqRepository', () => {
 
       const [sql] = pool.query.mock.calls[0];
       expect(sql).toEqual(expect.stringContaining('$1::text'));
+    });
+  });
+
+  describe('clonePk', () => {
+    function makeClientPool(queryImpl) {
+      const client = { query: jest.fn(queryImpl), release: jest.fn() };
+      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      return { pool, client };
+    }
+
+    it('throws when marketTarget is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(clonePk(pool, undefined, '1000')).rejects.toThrow('"marketTarget" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('throws when marketOrig is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(clonePk(pool, '2000', undefined)).rejects.toThrow('"marketOrig" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('clones hq_pk_oic/hq_pk_domain/hq_pk_packages from marketOrig to marketTarget in a single transaction, remapping iddomain', async () => {
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT') return {};
+        if (sql.includes('SELECT oic, deleted FROM woc.hq_pk_oic')) {
+          return { rows: [{ oic: '00006821', deleted: 0 }, { oic: null, deleted: 0 }] };
+        }
+        if (sql.includes('SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain')) {
+          return { rows: [{ iddomain: 10, oic: '00006821', descr: 'Meccanica', deleted: 0 }] };
+        }
+        if (sql.includes('INSERT INTO woc.hq_pk_domain')) {
+          return { rows: [{ iddomain: 99 }] };
+        }
+        if (sql.includes('SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages')) {
+          return { rows: [{ oic: '00006821', iddomain: 10, descr: 'Tagliando', timeop: 60, pricewithvat: 100.5 }] };
+        }
+        return { rows: [] };
+      });
+
+      await clonePk(pool, '2000', '1000');
+
+      expect(pool.connect).toHaveBeenCalledTimes(1);
+      expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT oic, deleted FROM woc.hq_pk_oic WHERE market = $1'),
+        ['1000'],
+      );
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_oic (market, oic, deleted) VALUES ($1, $2, $3)'),
+        ['2000', '00006821', 0],
+      );
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_oic (market, oic, deleted) VALUES ($1, $2, $3)'),
+        ['2000', null, 0],
+      );
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain WHERE market = $1'),
+        ['1000'],
+      );
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_domain (market, oic, descr, deleted)'),
+        ['2000', '00006821', 'Meccanica', 0],
+      );
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE market = $1'),
+        ['1000'],
+      );
+      // il pacchetto clonato deve puntare al NUOVO iddomain (99), non al vecchio (10)
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)'),
+        ['2000', '00006821', 99, 'Tagliando', 60, 100.5],
+      );
+
+      expect(client.query).toHaveBeenLastCalledWith('COMMIT');
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back and releases the client when a query fails', async () => {
+      const error = new Error('boom');
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
+        if (sql.includes('SELECT oic, deleted FROM woc.hq_pk_oic')) throw error;
+        return { rows: [] };
+      });
+
+      await expect(clonePk(pool, '2000', '1000')).rejects.toThrow('boom');
+
+      expect(client.query).toHaveBeenCalledWith('BEGIN');
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalledTimes(1);
     });
   });
 
