@@ -84,8 +84,7 @@ CREATE TRIGGER update_customer_options_updated_at
 -- ============================================================================
 -- 2) HQ_SETTINGS_EMAIL
 --    PK: id (UUID)
---    UK: (oic_code, dealership_code) — una configurazione email per dealership
---    FK: oic_code -> woc.customer_options(oic_code)
+--    UK: (oic_code, market, dealership_code) — una configurazione email per dealership
 --    Email di firma (SIGNATURE_EMAIL) e DPO (DPO_EMAIL); possono essere vuote.
 -- ============================================================================
 DROP TABLE IF EXISTS woc.hq_settings_email CASCADE;
@@ -94,6 +93,7 @@ CREATE TABLE woc.hq_settings_email
 (
     id               UUID         NOT NULL DEFAULT gen_random_uuid(),
     oic_code         VARCHAR(20)  NOT NULL,
+    market           VARCHAR(10)  NOT NULL,
     dealership_code  VARCHAR(50)  NOT NULL,
     signature_email  VARCHAR(255) DEFAULT NULL,
     dpo_email        VARCHAR(255) DEFAULT NULL,
@@ -101,26 +101,23 @@ CREATE TABLE woc.hq_settings_email
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
 
     CONSTRAINT pk_hq_settings_email PRIMARY KEY (id),
-    CONSTRAINT uk_hq_settings_email_oic_dealer UNIQUE (oic_code, dealership_code),
-    CONSTRAINT fk_hq_settings_email_oic
-        FOREIGN KEY (oic_code)
-        REFERENCES woc.customer_options (oic_code)
-        ON UPDATE CASCADE
-        ON DELETE RESTRICT
+    CONSTRAINT uk_hq_settings_email_oic_dealer UNIQUE (oic_code, market, dealership_code),
+    CONSTRAINT uk_hq_settings_email_dealer_market UNIQUE (dealership_code, market)
 );
 
-CREATE INDEX idx_hq_settings_email_oic_code ON woc.hq_settings_email (oic_code);
-
 COMMENT ON TABLE  woc.hq_settings_email IS 'Email (firma e DPO) configurate dagli utenti HQ per le dealership dello stesso OIC (WOC-201)';
-COMMENT ON COLUMN woc.hq_settings_email.id               IS 'Chiave primaria tecnica auto-generata (BIGINT IDENTITY)';
-COMMENT ON COLUMN woc.hq_settings_email.oic_code         IS 'Codice OIC/IC di appartenenza della dealership (FK -> woc.customer_options.oic_code)';
+COMMENT ON COLUMN woc.hq_settings_email.id               IS 'Chiave primaria tecnica auto-generata (UUID)';
+COMMENT ON COLUMN woc.hq_settings_email.oic_code         IS 'Codice OIC/IC di appartenenza della dealership';
+COMMENT ON COLUMN woc.hq_settings_email.market          IS 'Codice mercato di appartenenza della dealership';
 COMMENT ON COLUMN woc.hq_settings_email.dealership_code  IS 'Codice della dealership';
 COMMENT ON COLUMN woc.hq_settings_email.signature_email  IS 'Email di firma per le comunicazioni (puo'' essere inizialmente NULL)';
 COMMENT ON COLUMN woc.hq_settings_email.dpo_email        IS 'Email del Data Protection Officer (puo'' essere inizialmente NULL)';
 COMMENT ON COLUMN woc.hq_settings_email.created_at       IS 'Timestamp creazione record (CREATED_DATE)';
 COMMENT ON COLUMN woc.hq_settings_email.updated_at       IS 'Timestamp ultimo aggiornamento (UPDATED_DATE)';
 COMMENT ON CONSTRAINT uk_hq_settings_email_oic_dealer ON woc.hq_settings_email
-    IS 'Una sola configurazione email per coppia (oic_code, dealership_code)';
+    IS 'Una sola configurazione email per tripla (oic_code, market, dealership_code)';
+COMMENT ON CONSTRAINT uk_hq_settings_email_dealer_market ON woc.hq_settings_email
+    IS 'Coppia (dealership_code, market) univoca: non possono esistere 2 record con stessi dealership_code e market';
 
 CREATE TRIGGER insert_hq_settings_email_created_at
     BEFORE INSERT ON woc.hq_settings_email
