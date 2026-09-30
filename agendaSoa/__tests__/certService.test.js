@@ -81,8 +81,8 @@ function makeHttpGet(responsesBySecret) {
 /** Risposte "felici" (200 + SecretString PEM) per cert e key di default. */
 function happyResponses() {
   return {
-    apicCert: { statusCode: 200, body: JSON.stringify({ SecretString: FAKE_CERT }) },
-    apicKey: { statusCode: 200, body: JSON.stringify({ SecretString: FAKE_KEY }) },
+    'sm-np-bsn0027990-dev-apic-cert': { statusCode: 200, body: JSON.stringify({ SecretString: FAKE_CERT }) },
+    'sm-np-bsn0027990-dev-apic-key': { statusCode: 200, body: JSON.stringify({ SecretString: FAKE_KEY }) },
   };
 }
 
@@ -142,8 +142,8 @@ describe('certService (agendaSoa)', () => {
 
     // Warm start: stessa istanza restituita e nessuna nuova chiamata alla Extension.
     expect(agent1).toBe(agent2);
-    expect(callCounts.apicCert).toBe(1);
-    expect(callCounts.apicKey).toBe(1);
+    expect(callCounts['sm-np-bsn0027990-dev-apic-cert']).toBe(1);
+    expect(callCounts['sm-np-bsn0027990-dev-apic-key']).toBe(1);
     expect(http.get).toHaveBeenCalledTimes(2); // 1 cert + 1 key totali
   });
 
@@ -152,13 +152,13 @@ describe('certService (agendaSoa)', () => {
   test('rejects with an error that names the secretId (without its value) on non-200, and invalidates the cache', async () => {
     // Prima risposta: cert con status 500; key ok. Deve fallire il recupero del cert.
     const failing = makeHttpGet({
-      apicCert: { statusCode: 500, body: 'internal error with SUPER-SECRET-VALUE' },
-      apicKey: { statusCode: 200, body: JSON.stringify({ SecretString: FAKE_KEY }) },
+      'sm-np-bsn0027990-dev-apic-cert': { statusCode: 500, body: 'internal error with SUPER-SECRET-VALUE' },
+      'sm-np-bsn0027990-dev-apic-key': { statusCode: 200, body: JSON.stringify({ SecretString: FAKE_KEY }) },
     });
     http.get.mockImplementation(failing.impl);
 
     // Il getHttpsAgent rigetta con messaggio che nomina il segreto ma non il valore.
-    await expect(getHttpsAgent()).rejects.toThrow(/apicCert/);
+    await expect(getHttpsAgent()).rejects.toThrow(/apic-cert/);
     await expect(getHttpsAgent().catch((e) => e.message)).resolves.not.toContain('SUPER-SECRET-VALUE');
 
     // Dopo il fallimento la cache è invalidata: un nuovo tentativo "felice" riesce.
@@ -172,32 +172,32 @@ describe('certService (agendaSoa)', () => {
 
   test('fetchSecret rejects when the response body is not valid JSON', async () => {
     const { impl } = makeHttpGet({
-      apicCert: { statusCode: 200, body: 'not-json-at-all' },
+      'sm-np-bsn0027990-dev-apic-cert': { statusCode: 200, body: 'not-json-at-all' },
     });
     http.get.mockImplementation(impl);
 
     // Il messaggio identifica il segreto ma non espone alcun valore.
-    await expect(fetchSecret('apicCert')).rejects.toThrow(/apicCert/);
+    await expect(fetchSecret('sm-np-bsn0027990-dev-apic-cert')).rejects.toThrow(/apic-cert/);
   });
 
   test('fetchSecret rejects with a message that names the secretId but not its value on non-200', async () => {
     const { impl } = makeHttpGet({
-      apicKey: { statusCode: 403, body: 'forbidden VALUE-LEAK' },
+      'sm-np-bsn0027990-dev-apic-key': { statusCode: 403, body: 'forbidden VALUE-LEAK' },
     });
     http.get.mockImplementation(impl);
 
-    const err = await fetchSecret('apicKey').catch((e) => e);
-    expect(err.message).toContain('apicKey');
+    const err = await fetchSecret('sm-np-bsn0027990-dev-apic-key').catch((e) => e);
+    expect(err.message).toContain('sm-np-bsn0027990-dev-apic-key');
     expect(err.message).not.toContain('VALUE-LEAK');
   });
 
   test('fetchSecret rejects on transport error', async () => {
     const { impl } = makeHttpGet({
-      apicCert: { transportError: new Error('ECONNREFUSED') },
+      'sm-np-bsn0027990-dev-apic-cert': { transportError: new Error('ECONNREFUSED') },
     });
     http.get.mockImplementation(impl);
 
-    await expect(fetchSecret('apicCert')).rejects.toThrow('ECONNREFUSED');
+    await expect(fetchSecret('sm-np-bsn0027990-dev-apic-cert')).rejects.toThrow('ECONNREFUSED');
   });
 
   // ── getHttpsAgent: PEM non valido → errore ──────────────────────────────────────

@@ -508,7 +508,7 @@ pkEper/
 
 ### pkDocsoa
 
-Lambda for **DocSOA packages** (Stellantis PSA), a REST client replicating the original SOAP service. The `api-cert-preprod.groupe-psa.com/api/cert-aai` gateway requires, in addition to Basic Auth/WS-Security and the `X-IBM-Client-Id`/`X-IBM-Client-Secret` headers, a **client mTLS certificate**: the certificate and key (Secrets Manager secrets `apicCert`/`apicKey`, the **same** ones used by `myPeople`) are retrieved at runtime via the [AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (see `certService.js`, same pattern as `myPeople/certService.js`).
+Lambda for **DocSOA packages** (Stellantis PSA), a REST client replicating the original SOAP service. The `api-cert-preprod.groupe-psa.com/api/cert-aai` gateway requires, in addition to Basic Auth/WS-Security and the `X-IBM-Client-Id`/`X-IBM-Client-Secret` headers, a **client mTLS certificate**: the certificate and key (Secrets Manager secrets `sm-np-bsn0027990-<env>-apic-cert`/`sm-np-bsn0027990-<env>-apic-key` per environment, the **same** ones used by `myPeople`) are retrieved at runtime via the [AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (see `certService.js`, same pattern as `myPeople/certService.js`).
 
 #### Available handlers
 
@@ -526,7 +526,7 @@ Lambda for **DocSOA packages** (Stellantis PSA), a REST client replicating the o
 pkDocsoa/
 ├── index.js               # Lambda entry-point + demo CLI
 ├── DocSOARestClient.js     # DocSOA REST client (axios) + vinParts helper
-├── certService.js          # mTLS: retrieves cert/key from Secrets Manager (apicCert/apicKey) + cached https.Agent
+├── certService.js          # mTLS: retrieves cert/key from Secrets Manager (sm-np-bsn0027990-<env>-apic-cert/-apic-key) + cached https.Agent
 ├── test.js                 # Manual smoke-test
 └── __tests__/              # Jest unit tests
 ```
@@ -970,8 +970,8 @@ DOCSOA_USERNAME=...                    # Authentication username (WS-Security / 
 DOCSOA_PASSWORD=...                    # Authentication password (WS-Security / Basic Auth)
 DOCSOA_IBM_CLIENT_ID=...               # X-IBM-Client-Id for the API Connect gateway
 DOCSOA_IBM_CLIENT_SECRET=...           # X-IBM-Client-Secret for the API Connect gateway
-DOCSOA_CERT_SECRET_ID=apicCert         # (optional) Secrets Manager secret id with the mTLS client certificate (SAME one used by myPeople)
-DOCSOA_KEY_SECRET_ID=apicKey           # (optional) Secrets Manager secret id with the mTLS client private key (SAME one used by myPeople)
+DOCSOA_CERT_SECRET_ID=sm-np-bsn0027990-dev-apic-cert # (optional) Secrets Manager secret id with the mTLS client certificate (SAME one used by myPeople)
+DOCSOA_KEY_SECRET_ID=sm-np-bsn0027990-dev-apic-key  # (optional) Secrets Manager secret id with the mTLS client private key (SAME one used by myPeople)
 PROXY_HOST=...                         # (optional) Stellantis/PSA corporate proxy
 PROXY_PORT=8080                        # (optional) proxy port
 ```
