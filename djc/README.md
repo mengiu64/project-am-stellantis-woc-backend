@@ -14,8 +14,9 @@ il payload alla Push API SRP tramite `POST /jobCard`, usando **lo stesso client
 PingFederate/DGT della lambda `jobcard`** (`config.js`/`authService.js`/`httpClient.js`,
 copie sincronizzate con quelle di `jobcard`, che usa le stesse per le `GET
 /jobCardList` e `/jobCardDetails`). `saveJobcard` è replicata identica anche in
-`jobcard` (stesso `jobCardService.js::saveJobCard`), ma **API Gateway instrada le
-richieste POST verso la lambda `djc`**, non verso `jobcard`.
+`jobcard` (stesso `jobCardService.js::saveJobCard`). **Nota**: API Gateway
+instrada la POST `/api/repairorder/saveJobcard` (`/api/repairorder/{proxy+}`)
+verso la lambda **`jobcard`**, non verso `djc`.
 
 ## Struttura
 
@@ -327,9 +328,10 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
 ```
 
 `body` è inviato tal quale come payload della `POST /jobCard` (oppure, se presente,
-`body.payload`). **API Gateway instrada le richieste POST verso la lambda `djc`**
-per questa azione; la lambda `jobcard` espone la stessa azione (`jobCardService.js::
-saveJobCard`) per chiamata diretta/CLI, ma non è il target dell'integrazione POST.
+`body.payload`). La lambda `jobcard` espone la stessa azione (`jobCardService.js::
+saveJobCard`) ed è quella effettivamente integrata da API Gateway per la POST
+`/api/repairorder/saveJobcard`; questa versione resta per invocazione diretta/CLI.
+Entrambe registrano il payload in `woc.jobcard_sync_activity` (v. sotto).
 
 #### Tracciamento su DB: `woc.jobcard_sync_activity`
 
