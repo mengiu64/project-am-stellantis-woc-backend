@@ -1384,6 +1384,14 @@ Resources:
   # config/hq_actiontype.json nello stesso bucket TranslationsBucket già
   # usato da V360Function/altre function: serve quindi S3ReadPolicy +
   # CONFIG_BUCKET_NAME come per quelle.
+  # session/src/sessionContextCache.js -> myPeople/dmlConfigSync (imbarcati
+  # in-process via Makefile, richiesti da HqManager.js::resolveUsername) sono
+  # usati per risolvere firstname/lastname dell'utente autenticato
+  # (event.requestContext.authorizer.sub) e usarli, concatenati
+  # ("firstname lastname"), come `username` leggibile registrato in ogni riga
+  # di audit (woc.hq_audit, v. HqRepository.js::insertAudit) al posto del
+  # solo identificativo tecnico (sub) — stesse variabili MyPeople/
+  # dmlConfigSync/DynamoDB già usate da SessionFunction/JobCardFunction.
   HqManagerFunction:
     Type: AWS::Serverless::Function
     Metadata:
@@ -1404,11 +1412,22 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleCertSecretId}-*"
+                - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${MyPeopleKeySecretId}-*"
             # Stesso motivo di DbManagerFunction: il secret è cifrato con una
             # chiave KMS gestita dal cliente (non la default aws/secretsmanager).
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # session/src/dynamoCache.js (in-process, vedi Makefile) — cache
+        # condivisa su TmpCacheTable (v. Resources) usata da
+        # sessionContextCache.js::getCachedSessionData.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
       Environment:
         Variables:
           DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
@@ -1416,6 +1435,28 @@ Resources:
           DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
           CONFIG_BUCKET_NAME:     !Ref TranslationsBucket
+          # session/src/sessionContextCache.js -> myPeople/myPeopleService.js
+          # (in-process, vedi Makefile): risoluzione firstname/lastname
+          # dall'username autenticato, v. HqManager.js::resolveUsername.
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          MYPEOPLE_CERT_SECRET_ID:  !Ref MyPeopleCertSecretId
+          MYPEOPLE_KEY_SECRET_ID:   !Ref MyPeopleKeySecretId
+          # dmlConfigSync/db.js (in-process, vedi Makefile) — usato dallo
+          # stesso flusso username -> myPeople di sessionContextCache.js.
+          # Riusa lo stesso Aurora/secret di DBMANAGER_DB_* (nessun nuovo
+          # parametro CFN necessario).
+          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          # session/src/dynamoCache.js (in-process, vedi Makefile) — cache
+          # condivisa su TmpCacheTable (v. Resources), stessa di
+          # JobCardFunction/SessionFunction/V360Function.
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
       # NESSUN blocco Events qui: come tutte le altre function di questo
       # template, il routing HTTP (/api/hq/{method}) è gestito dall'API
       # Gateway REST esterno/preesistente (configurato fuori da questo stack
