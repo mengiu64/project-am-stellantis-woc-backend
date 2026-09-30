@@ -77,6 +77,24 @@ function stripPackageEnrichment(job) {
 }
 
 /**
+ * Valida il payload saveJobcard e ne restituisce la versione effettivamente
+ * inviata a DGT (jobs senza gli arricchimenti di sola UI, v.
+ * stripPackageEnrichment). Usata anche da index.js per salvare lo stesso
+ * payload in woc.jobcard_sync_activity.
+ * @param {object} payload - Digital Job Card payload
+ * @returns {object} payload sanitizzato
+ */
+function sanitizeJobCardPayload(payload) {
+  if (payload === undefined || payload === null || typeof payload !== 'object') {
+    throw new Error('[djc] payload is required');
+  }
+
+  return Array.isArray(payload.jobs)
+    ? { ...payload, jobs: payload.jobs.map(stripPackageEnrichment) }
+    : payload;
+}
+
+/**
  * Calls the jobCard (POST) endpoint to persist a Digital Job Card payload —
  * il json_mod costruito dai metodi Save* di DjcManager (SaveRoInfo,
  * SaveDmsSync, SaveCustomer, SaveVehicle, SaveJobs, SaveConsents,
@@ -96,13 +114,7 @@ function stripPackageEnrichment(job) {
  * @returns {Promise<object>} parsed response body
  */
 async function saveJobCard(bearerToken, payload) {
-  if (payload === undefined || payload === null || typeof payload !== 'object') {
-    throw new Error('[djc] payload is required');
-  }
-
-  const sanitizedPayload = Array.isArray(payload.jobs)
-    ? { ...payload, jobs: payload.jobs.map(stripPackageEnrichment) }
-    : payload;
+  const sanitizedPayload = sanitizeJobCardPayload(payload);
 
   const body = JSON.stringify(sanitizedPayload);
   const options = await buildDgtOptions(
@@ -124,4 +136,4 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { saveJobCard };
+module.exports = { saveJobCard, sanitizeJobCardPayload };

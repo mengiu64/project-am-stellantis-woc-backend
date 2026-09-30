@@ -13,7 +13,7 @@ jest.mock('../config', () => ({
 jest.mock('../httpClient');
 
 const { httpsRequest } = require('../httpClient');
-const { saveJobCard } = require('../jobCardService');
+const { saveJobCard, sanitizeJobCardPayload } = require('../jobCardService');
 
 describe('jobCardService (djc)', () => {
   beforeEach(() => {
@@ -153,5 +153,24 @@ describe('jobCardService (djc)', () => {
 
     await expect(saveJobCard('token', { roInfo: {} }))
       .rejects.toThrow('[djc] jobCard failed: HTTP 500');
+  });
+
+  test('sanitizeJobCardPayload valida il payload e rimuove gli arricchimenti UI dai jobs', () => {
+    expect(() => sanitizeJobCardPayload(null)).toThrow('[djc] payload is required');
+
+    const noJobs = { roInfo: { jobCardSrpId: 'SRP-1' } };
+    expect(sanitizeJobCardPayload(noJobs)).toBe(noJobs);
+
+    const payload = {
+      roInfo: { jobCardSrpId: 'SRP-1' },
+      jobs: [{
+        jobDescription: 'x', packageType: 'P', packageCharge: 1, dmsOverride: true,
+        partInfo: [{ partNumber: 'A', dmsunknown: true, QuantityAvailable: 2, availability: 'Y' }],
+      }],
+    };
+    expect(sanitizeJobCardPayload(payload)).toEqual({
+      roInfo: { jobCardSrpId: 'SRP-1' },
+      jobs: [{ jobDescription: 'x', partInfo: [{ partNumber: 'A' }] }],
+    });
   });
 });

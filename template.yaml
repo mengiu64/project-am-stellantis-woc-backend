@@ -657,6 +657,18 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaCertSecretId}-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AgendaSoaKeySecretId}-*"
+        # djc/db.js — utente applicativo Aurora "wiadvisor_app" (tabella
+        # woc.jobcard_sync_activity, scritta ad ogni saveJobcard), stesso secret
+        # di PkFavoriteFunction/JobCardFunction. Il secret è cifrato con una
+        # chiave KMS gestita dal cliente: senza kms:Decrypt la Parameters and
+        # Secrets Extension fallisce con HTTP 400.
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           # JOBCARD_PING_*/DGT_*: non più variabili d'ambiente in chiaro, lette
@@ -664,6 +676,12 @@ Resources:
           # sync con jobcard/config.js).
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
+          # djc/db.js — Aurora "wiadvisor" via RDS Proxy (woc.jobcard_sync_activity),
+          # stesso Aurora/secret di DBMANAGER_DB_* (nessun nuovo parametro CFN).
+          DJC_DB_HOST:      !Ref DocsoaDbHost
+          DJC_DB_PORT:      !Ref DocsoaDbPort
+          DJC_DB_NAME:      !Ref DocsoaDbName
+          DJC_DB_SECRET_ID: !Ref DocsoaDbSecretId
           # agendaSoaNaga/src/clientFactory.js (in-process, vedi Makefile) —
           # richiesto da djc/index.js::syncAppointmentsToNaga per l'azione
           # "updatenaga", stessi valori usati da AgendaSoaNagaFunction/JobCardFunction.
