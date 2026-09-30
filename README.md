@@ -481,6 +481,7 @@ riferimento (`get.json`).
 | `DjcManager` | `Save*(...)` | Costruisce `json_orig`/`json_mod` per una sezione della Job Card (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`) |
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) — copia sincronizzata di `jobcard/authService.js` |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`) — copia sincronizzata di `jobcard/jobCardService.js` |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js — copia di `jobcard/httpClient.js` |
 
 > `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
@@ -494,6 +495,17 @@ Card (tipicamente il `json_mod` prodotto da uno dei metodi `Save*`). È
 **replicata identica** nella lambda `jobcard` (stesso `jobCardService.js::
 saveJobCard`), ma **API Gateway instrada le richieste POST verso la lambda
 `djc`**, non verso `jobcard`.
+
+Prima dell'invio a DGT, djc registra il payload (UPSERT su `jobcardid`) nella
+tabella Aurora `woc.jobcard_sync_activity` (`sql/create_table_jobcard_sync_activity.sql`):
+`jobcardid` = `roInfo.jobCardSrpId` (fallback `dmsRepairOrderId`, poi
+`jobCardLegacyId`), `creationdate` = data del primo inserimento, `payload` =
+ultimo payload inviato (sovrascritto ad ogni `saveJobcard`); `ack`/`techreason`/
+`businessreason`/`lastupdate` vengono popolati in un secondo momento. Il
+salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
+in entrambi i casi il payload non viene inviato a DGT. Solo djc scrive su
+questa tabella (la `saveJobcard` di `jobcard`, non instradata da API Gateway,
+non la aggiorna). Dettagli in `djc/README.md`.
 
 Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
 tabella degli identificativi per array, semantica `removalAction`/update
@@ -1315,6 +1327,11 @@ JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate — stesso client d
 JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate — stesso client di jobcard (richiesto solo per saveJobcard)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT (richiesto solo per saveJobcard)
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT (richiesto solo per saveJobcard)
+DJC_DB_HOST=...                    # Endpoint RDS Proxy Aurora "wiadvisor" (woc.jobcard_sync_activity, richiesto solo per saveJobcard)
+DJC_DB_SECRET_ID=...               # Secret Aurora wiadvisor_app (default sm-np-bsn0027990-dev-aurora-app); in locale in alternativa DJC_DB_USER/DJC_DB_PASSWORD
+DJC_DB_PORT=5432                   # opzionale (default dal secret / 5432)
+DJC_DB_NAME=wiadvisor              # opzionale (default dal secret / wiadvisor)
+DJC_DB_SSL=true                    # false solo per Postgres locale senza TLS
 ```
 
 > Non richieste per i metodi `Save*` (che costruiscono solo `json_orig`/`json_mod`
@@ -1608,7 +1625,9 @@ cd agendaSoa && npm run test:coverage
 
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
-- **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`
+- **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna solo `payload`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante)
+- **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
