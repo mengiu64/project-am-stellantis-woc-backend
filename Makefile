@@ -249,11 +249,20 @@ build-DmsFunction:
 # incrociata con woc.ang_snowflakes/woc.addr_snowflakes) — stesso identico
 # motivo/pattern di PkManagerFunction/SessionFunction/DmsFunction sopra.
 build-HqManagerFunction:
-	mkdir -p "$(ARTIFACTS_DIR)/hqManager" "$(ARTIFACTS_DIR)/dbManager"
+	mkdir -p "$(ARTIFACTS_DIR)/hqManager" "$(ARTIFACTS_DIR)/dbManager" "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/dmlConfigSync"
 	cp -r hqManager/. "$(ARTIFACTS_DIR)/hqManager/"
 	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
+	cp -r session/. "$(ARTIFACTS_DIR)/session/"
+	cp -r myPeople/. "$(ARTIFACTS_DIR)/myPeople/"
+	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
 	rm -rf \
 		"$(ARTIFACTS_DIR)"/hqManager/__tests__ "$(ARTIFACTS_DIR)"/hqManager/coverage "$(ARTIFACTS_DIR)"/hqManager/.env* \
-		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env*
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env* \
+		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
+		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
+		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/hqManager)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/myPeople)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)

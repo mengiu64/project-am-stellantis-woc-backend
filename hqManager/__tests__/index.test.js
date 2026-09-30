@@ -119,10 +119,11 @@ describe('hqManager/index.js', () => {
         setVehicleInspectionVisible: jest.fn().mockResolvedValue(undefined),
       });
       const conditions = [{ id: 1, value: 1 }];
+      const event = { action: 'setVehicleInspectionVisible', body: { conditions } };
 
-      const res = await handler({ action: 'setVehicleInspectionVisible', body: { conditions } });
+      const res = await handler(event);
 
-      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith({ conditions });
+      expect(instance.setVehicleInspectionVisible).toHaveBeenCalledWith({ conditions }, event);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, conditions });
     });
@@ -131,10 +132,11 @@ describe('hqManager/index.js', () => {
       const instance = makeManagerInstance({
         deletetVehicleInspection: jest.fn().mockResolvedValue(undefined),
       });
+      const event = { action: 'deletetVehicleInspection', body: { id: 1, value: 1 } };
 
-      const res = await handler({ action: 'deletetVehicleInspection', body: { id: 1, value: 1 } });
+      const res = await handler(event);
 
-      expect(instance.deletetVehicleInspection).toHaveBeenCalledWith(1, 1);
+      expect(instance.deletetVehicleInspection).toHaveBeenCalledWith(1, 1, event);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, id: 1, value: 1 });
     });
@@ -143,13 +145,14 @@ describe('hqManager/index.js', () => {
       const instance = makeManagerInstance({
         insertVehicleInspection: jest.fn().mockResolvedValue(undefined),
       });
-
-      const res = await handler({
+      const event = {
         action: 'insertVehicleInspection',
         body: { market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria' },
-      });
+      };
 
-      expect(instance.insertVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR', 'Controllo carrozzeria');
+      const res = await handler(event);
+
+      expect(instance.insertVehicleInspection).toHaveBeenCalledWith('1000', 'EXTERIOR', 'Controllo carrozzeria', event);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria' });
     });
@@ -340,22 +343,24 @@ describe('hqManager/index.js', () => {
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
     });
 
-    it('dispatches insertAudit (direct invocation payload)', async () => {
+    it('dispatches insertAudit (direct invocation payload), resolving the username from the session server-side and ignoring any client-supplied username', async () => {
       const instance = makeManagerInstance({
-        insertAudit: jest.fn().mockResolvedValue(undefined),
+        insertAudit: jest.fn().mockResolvedValue('Mario Rossi'),
       });
 
-      const res = await handler({
+      const event = {
         action: 'insertAudit',
         body: {
-          username: 'mario.rossi', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+          username: 'someone-else', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
         },
-      });
+      };
 
-      expect(instance.insertAudit).toHaveBeenCalledWith('mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
+      const res = await handler(event);
+
+      expect(instance.insertAudit).toHaveBeenCalledWith(event, 'domain', '1000', 'create', 'Nuovo dominio');
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
-        success: true, username: 'mario.rossi', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
+        success: true, username: 'Mario Rossi', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
       });
     });
 

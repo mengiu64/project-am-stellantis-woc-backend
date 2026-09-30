@@ -3,6 +3,42 @@
 const path = require('path');
 
 /**
+ * Risolve lo `username` "leggibile" da registrare nell'audit HQ
+ * (woc.hq_audit, v. HqRepository.js::insertAudit): l'identificativo tecnico
+ * autenticato (event.requestContext.authorizer.sub — MAI un valore fornito
+ * nel body, salvo invocazione diretta/CLI senza requestContext.authorizer,
+ * stesso pattern di session/pkFavorite) viene usato per recuperare
+ * firstname/lastname dalla sessione utente (session/src/sessionContextCache.js
+ * ::getCachedSessionData, stessa cache condivisa DynamoDB di
+ * session/jobcard/pkFavorite/pkManager — richiede session/myPeople/
+ * dmlConfigSync imbarcati come sibling da Makefile::build-HqManagerFunction,
+ * v. template.yaml), concatenati come "firstname lastname".
+ *
+ * Se firstname/lastname non sono risolvibili (sessione non trovata,
+ * myPeople irraggiungibile, utente HQ senza profilo, ecc. — resa
+ * interamente best-effort da getCachedSessionData, che non solleva mai
+ * un'eccezione) si ricade sul solo identificativo tecnico, cosi' l'audit
+ * registra comunque un `username` non nullo quando l'identita' e' nota.
+ *
+ * @param {object} [event]
+ * @param {object} [body]
+ * @returns {Promise<string|null>}
+ */
+async function resolveUsername(event = {}, body = {}) {
+  const authz = (event.requestContext && event.requestContext.authorizer) || {};
+  const usernameKey = authz.sub || body.username || null;
+  if (!usernameKey) return null;
+
+  const { getCachedSessionData } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
+  const session = (await getCachedSessionData(usernameKey)) || {};
+  const firstname = session.firstname || '';
+  const lastname = session.lastname || '';
+  const fullName = `${firstname} ${lastname}`.trim();
+
+  return fullName || usernameKey;
+}
+
+/**
  * HqManager.js — wrapper applicativo su dbManager/HqRepository.js (Aurora
  * PostgreSQL, db "wiadvisor", schema "woc"), stesso pattern di
  * PkManager.js/getConfigPackages: il pool ("pg") e la repository vengono
@@ -21,15 +57,18 @@ const path = require('path');
  * un loop, la riga di configurazione per ciascun elemento dell'array
  * configurations ({ codmarket, oic, enableWOC, enableSignature }),
  * registrando anche una riga di audit (woc.hq_audit) per ciascun elemento,
- * con username risolto da event.requestContext.authorizer.sub.
+ * con username risolto da resolveUsername (v. sopra: firstname+lastname
+ * della sessione dell'utente autenticato, event.requestContext.authorizer.sub).
  *
  * getVehicleInspection(market, type),
- * setVehicleInspectionVisible(payload) (payload contiene un array { id,
- * value } sotto una di queste chiavi: conditions, equipment, damagearea,
- * receptions, vehicleconfiguration — una sola per chiamata; loop su ciascun
- * elemento), deletetVehicleInspection(id, value) e
- * insertVehicleInspection(market, type, descr) espongono la gestione delle
- * voci di controllo veicolo (woc.hq_vehicle_inspection).
+ * setVehicleInspectionVisible(payload, event) (payload contiene un array
+ * { id, value } sotto una di queste chiavi: conditions, equipment,
+ * damagearea, receptions, vehicleconfiguration — una sola per chiamata;
+ * loop su ciascun elemento), deletetVehicleInspection(id, value, event) e
+ * insertVehicleInspection(market, type, descr, event) espongono la
+ * gestione delle voci di controllo veicolo (woc.hq_vehicle_inspection);
+ * ciascuna registra anche una riga di audit (woc.hq_audit, v.
+ * HqRepository.js) con username risolto da resolveUsername.
  *
  * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
  * (che a cascata disabilita anche il mercato, v. sotto),
@@ -48,9 +87,10 @@ const path = require('path');
  * (i domini cancellati logicamente sono esclusi, include anche
  * domVisible/pkVisible).
  *
- * insertAudit(username, section, market, actiontype, descr) e
+ * insertAudit(event, section, market, actiontype, descr) e
  * searchAudit(market, section, datefrom, dateto, actiontype) (filtri tutti
- * opzionali) espongono il log di audit HQ (woc.hq_audit).
+ * opzionali) espongono il log di audit HQ (woc.hq_audit); insertAudit
+ * risolve anch'esso lo username da registrare tramite resolveUsername.
  *
  * getAnagSection()/getAnagAllocation() espongono le anagrafiche statiche
  * (sezioni HQ / tipi di azione di audit) lette da S3
@@ -80,8 +120,9 @@ class HqManager {
    * ciascun elemento dell'array configurations, riusando lo stesso pool.
    * Per ciascun elemento registra anche una riga di audit (woc.hq_audit,
    * sezione "enablingConfiguration", actiontype "update"), con lo username
-   * risolto da event.requestContext.authorizer.sub (Lambda Authorizer;
-   * null se l'evento non lo valorizza, es. invocazione diretta/CLI).
+   * risolto da resolveUsername (v. sopra: firstname+lastname della sessione
+   * dell'utente autenticato, event.requestContext.authorizer.sub; null se
+   * l'identita' non e' risolvibile, es. invocazione diretta/CLI).
    *
    * @param {Array<{ codmarket: string, oic: string, enableWOC: number, enableSignature: number }>} configurations
    * @param {object} [event]
@@ -92,8 +133,7 @@ class HqManager {
       throw new Error('"configurations" is required');
     }
 
-    const authz = (event.requestContext && event.requestContext.authorizer) || {};
-    const username = authz.sub || null;
+    const username = await resolveUsername(event);
 
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { setEnablingConfiguration, insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
@@ -125,48 +165,60 @@ class HqManager {
    * chiamata), riusando lo stesso pool.
    *
    * @param {{ conditions?: Array<{id:number, value:number}>, equipment?: Array<{id:number, value:number}>, damagearea?: Array<{id:number, value:number}>, receptions?: Array<{id:number, value:number}>, vehicleconfiguration?: Array<{id:number, value:number}> }} payload
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (firstname+lastname della sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async setVehicleInspectionVisible(payload) {
+  async setVehicleInspectionVisible(payload, event = {}) {
     const key = HqManager.VEHICLE_INSPECTION_ARRAY_KEYS.find((k) => Array.isArray(payload && payload[k]));
     if (!key) {
       throw new Error(`"payload" must contain an array in one of: ${HqManager.VEHICLE_INSPECTION_ARRAY_KEYS.join(', ')}`);
     }
+
+    const username = await resolveUsername(event, payload);
 
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { setVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
     for (const { id, value } of payload[key]) {
-      await setVehicleInspectionVisible(pool, id, value);
+      await setVehicleInspectionVisible(pool, id, value, username);
     }
   }
 
   /**
    * @param {number} id
    * @param {number} value
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (firstname+lastname della sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async deletetVehicleInspection(id, value) {
+  async deletetVehicleInspection(id, value, event = {}) {
+    const username = await resolveUsername(event);
+
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { deletetVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return deletetVehicleInspection(pool, id, value);
+    return deletetVehicleInspection(pool, id, value, username);
   }
 
   /**
    * @param {string} market
    * @param {string} type
    * @param {string} descr
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (firstname+lastname della sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async insertVehicleInspection(market, type, descr) {
+  async insertVehicleInspection(market, type, descr, event = {}) {
+    const username = await resolveUsername(event);
+
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { insertVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return insertVehicleInspection(pool, market, type, descr);
+    return insertVehicleInspection(pool, market, type, descr, username);
   }
 
   /**
@@ -358,19 +410,29 @@ class HqManager {
   }
 
   /**
-   * @param {string} username
+   * Registra una riga di audit (woc.hq_audit) generica, usata dall'azione
+   * "insertAudit" dell'API. Lo username registrato NON e' quello passato
+   * dal chiamante (v. index.js, che non lo estrae piu' dal body): e'
+   * risolto da resolveUsername (v. sopra) a partire da
+   * event.requestContext.authorizer.sub, come firstname+lastname della
+   * sessione dell'utente autenticato.
+   *
+   * @param {object} event
    * @param {string} section
    * @param {string} market
    * @param {string} actiontype
    * @param {string} descr
-   * @returns {Promise<void>}
+   * @returns {Promise<string|null>} lo username effettivamente registrato
    */
-  async insertAudit(username, section, market, actiontype, descr) {
+  async insertAudit(event, section, market, actiontype, descr) {
+    const username = await resolveUsername(event);
+
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const { insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return insertAudit(pool, username, section, market, actiontype, descr);
+    await insertAudit(pool, username, section, market, actiontype, descr);
+    return username;
   }
 
   /**

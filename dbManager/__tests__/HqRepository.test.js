@@ -300,15 +300,34 @@ describe('HqRepository', () => {
       expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('runs the INSERT with the given market/type/descr', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
+    it('runs the INSERT with the given market/type/descr and writes an audit row', async () => {
+      const pool = makePool(async (sql) => {
+        if (sql.includes('RETURNING id')) {
+          return { rows: [{ id: 42 }] };
+        }
+        if (sql.includes('SELECT')) {
+          return { rows: [{ type: 'EXTERIOR', descr: 'Controllo carrozzeria', visible: 1 }] };
+        }
+        return { rows: [] };
+      });
 
-      await insertVehicleInspection(pool, '1000', 'EXTERIOR', 'Controllo carrozzeria');
+      await insertVehicleInspection(pool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'jdoe', '1000');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('INSERT INTO woc.hq_vehicle_inspection'),
         ['1000', 'EXTERIOR', 'Controllo carrozzeria'],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('SELECT'),
+        [42],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['jdoe', 'EXTERIOR', '1000', 'insert', 'EXTERIOR Controllo carrozzeria visible: 1'],
       );
     });
   });

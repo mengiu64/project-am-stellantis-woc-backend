@@ -261,17 +261,33 @@ async function deletetVehicleInspection(pool, id, value, username, codmarket) {
  * @param {string} market
  * @param {string} type
  * @param {string} descr
+ * @param {string} username
+ * @param {string} codmarket
  * @returns {Promise<void>}
  */
-async function insertVehicleInspection(pool, market, type, descr) {
+async function insertVehicleInspection(pool, market, type, descr, username, codmarket) {
   if (!type) throw new Error('"type" is required');
   if (!descr) throw new Error('"descr" is required');
 
-  await pool.query(
+  const { rows: insertedRows } = await pool.query(
     `INSERT INTO woc.hq_vehicle_inspection (market, type, descr)
-     VALUES ($1, $2, $3)`,
+     VALUES ($1, $2, $3)
+     RETURNING id`,
     [market, type, descr],
   );
+  const [{ id }] = insertedRows;
+
+  const { rows } = await pool.query(
+    `SELECT type,
+            descr,
+            visible
+       FROM woc.hq_vehicle_inspection
+      WHERE id = $1`,
+    [id],
+  );
+  const [{ type: insertedType, descr: insertedDescr, visible } = {}] = rows;
+
+  await insertAudit(pool, username, insertedType, codmarket, 'insert', `${insertedType} ${insertedDescr} visible: ${visible}`);
 }
 
 /**

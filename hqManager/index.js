@@ -12,17 +12,23 @@
  *     un loop, la configurazione per ciascun elemento dell'array
  *     configurations ({ codmarket, oic, enableWOC, enableSignature }),
  *     registrando anche una riga di audit (woc.hq_audit) per ciascun
- *     elemento, con username risolto da
- *     event.requestContext.authorizer.sub (Lambda Authorizer).
+ *     elemento, con username risolto da HqManager.js::resolveUsername
+ *     (firstname+lastname della sessione dell'utente autenticato,
+ *     event.requestContext.authorizer.sub).
  *   - getVehicleInspection(market, type): elenco voci di controllo veicolo
  *     non cancellate per il "type" richiesto, con priorita' al mercato.
  *   - setVehicleInspectionVisible(payload): aggiorna il flag "visible", in
  *     un loop, per ciascun elemento { id, value } dell'array presente in
  *     payload sotto una di queste chiavi (una sola per chiamata):
- *     conditions, equipment, damagearea, receptions, vehicleconfiguration.
- *   - deletetVehicleInspection(id, value): aggiorna il flag "deleted".
+ *     conditions, equipment, damagearea, receptions, vehicleconfiguration;
+ *     registra anche una riga di audit (woc.hq_audit) per ciascun
+ *     elemento, con username risolto da HqManager.js::resolveUsername.
+ *   - deletetVehicleInspection(id, value): aggiorna il flag "deleted";
+ *     registra anche una riga di audit con username risolto da
+ *     HqManager.js::resolveUsername.
  *   - insertVehicleInspection(market, type, descr): crea una nuova voce di
- *     controllo veicolo.
+ *     controllo veicolo; registra anche una riga di audit con username
+ *     risolto da HqManager.js::resolveUsername.
  *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market) e
  *     disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic).
  *   - setMarketDisable(market): disabilita il mercato e riabilita a cascata
@@ -48,8 +54,12 @@
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
  *     la configurazione "a livello mercato"), incluso il flag "visible" di
  *     dominio/pacchetto (domVisible/pkVisible).
- *   - insertAudit(username, section, market, actiontype, descr): inserisce
- *     una riga di log nell'audit HQ (woc.hq_audit).
+ *   - insertAudit(section, market, actiontype, descr): inserisce una riga
+ *     di log nell'audit HQ (woc.hq_audit), con username risolto da
+ *     HqManager.js::resolveUsername (firstname+lastname della sessione
+ *     dell'utente autenticato, event.requestContext.authorizer.sub — MAI
+ *     un valore fornito nel body, salvo invocazione diretta/CLI senza
+ *     requestContext.authorizer).
  *   - searchAudit(market, section, datefrom, dateto, actiontype): elenco
  *     righe di audit filtrate (tutti i filtri sono opzionali).
  *   - getAnagSection(): elenco delle sezioni HQ (config/hq_sections.json su
@@ -151,7 +161,7 @@ exports.handler = async (event = {}) => {
 
   const {
     codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
-    iddomain, timeop, pricewithvat, idpackage, username, section, actiontype, datefrom, dateto,
+    iddomain, timeop, pricewithvat, idpackage, section, actiontype, datefrom, dateto,
   } = body;
   const manager = new HqManager();
 
@@ -172,18 +182,18 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'setVehicleInspectionVisible') {
-      await manager.setVehicleInspectionVisible(body);
+      await manager.setVehicleInspectionVisible(body, event);
       const key = VEHICLE_INSPECTION_ARRAY_KEYS.find((k) => Array.isArray(body[k]));
       return response(200, { success: true, [key]: body[key] });
     }
 
     if (action === 'deletetVehicleInspection') {
-      await manager.deletetVehicleInspection(id, value);
+      await manager.deletetVehicleInspection(id, value, event);
       return response(200, { success: true, id, value });
     }
 
     if (action === 'insertVehicleInspection') {
-      await manager.insertVehicleInspection(market, type, descr);
+      await manager.insertVehicleInspection(market, type, descr, event);
       return response(200, { success: true, market, type, descr });
     }
 
@@ -248,8 +258,10 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'insertAudit') {
-      await manager.insertAudit(username, section, market, actiontype, descr);
-      return response(200, { success: true, username, section, market, actiontype, descr });
+      const resolvedUsername = await manager.insertAudit(event, section, market, actiontype, descr);
+      return response(200, {
+        success: true, username: resolvedUsername, section, market, actiontype, descr,
+      });
     }
 
     if (action === 'searchAudit') {
