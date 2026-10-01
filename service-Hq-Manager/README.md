@@ -17,3 +17,7 @@ Nessuna validazione token: l'identità arriva dal Lambda Authorizer (`requestCon
 Il ruolo IAM è generato da SAM con policy inline (stesse di `isStellantisBrand`). La rotta API Gateway è creata dall'infra dopo il deploy.
 
 Test: `npm ci && npm run test:coverage`.
+
+## Test manuali su AWS Lambda
+
+La directory `events/` contiene payload API Gateway v1 da usare nella scheda **Test** della Lambda. Gli esempi usano le chiavi `ZTEST-HQM-20261001` (OIC), `ZZTEST` (market) e `ZZTEST-HQM-20261001` (dealership): eseguire prima i POST, poi GET/PUT e infine DELETE. I POST creano record reali nel database e i DELETE li rimuovono; se le chiavi esistono già, sostituirle con valori di test disponibili.

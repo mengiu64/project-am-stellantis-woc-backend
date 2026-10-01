@@ -48,3 +48,6 @@ coverage/
 wiadvisor-backend-lambda-examples/
 bashscripts/
 .env.example
+
+service-Hq-Manager/node_modules/
+service-Hq-Manager/coverage/
