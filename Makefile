@@ -194,6 +194,41 @@ build-DjcFunction:
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/djc)
 	$(call npm-ci-prod,$(ARTIFACTS_DIR)/agendaSoaNaga)
 
+# SynchStatusFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
+# synch-status/jobcardSyncActivity.js richiede in-process jobcard/authService e
+# jobcard/jobCardService (jobCardDetails -> roInfo.dmsSynchroStatus, salvato in
+# woc.jobcard_sync_activity.businessreason): stesse cartelle sorelle di
+# JobCardFunction (dms/dbManager/myPeople/session/dmlConfigSync/v360), senza
+# agendaSoaNaga (usato solo da jobcard/index.js, non richiesto qui).
+build-SynchStatusFunction:
+	mkdir -p "$(ARTIFACTS_DIR)/synch-status" "$(ARTIFACTS_DIR)/jobcard" "$(ARTIFACTS_DIR)/dms" "$(ARTIFACTS_DIR)/dbManager" "$(ARTIFACTS_DIR)/myPeople" "$(ARTIFACTS_DIR)/session" "$(ARTIFACTS_DIR)/dmlConfigSync" "$(ARTIFACTS_DIR)/v360"
+	cp -r synch-status/. "$(ARTIFACTS_DIR)/synch-status/"
+	cp -r jobcard/. "$(ARTIFACTS_DIR)/jobcard/"
+	cp -r dms/. "$(ARTIFACTS_DIR)/dms/"
+	cp -r dbManager/. "$(ARTIFACTS_DIR)/dbManager/"
+	cp -r myPeople/. "$(ARTIFACTS_DIR)/myPeople/"
+	cp -r session/. "$(ARTIFACTS_DIR)/session/"
+	cp -r dmlConfigSync/. "$(ARTIFACTS_DIR)/dmlConfigSync/"
+	cp -r v360/. "$(ARTIFACTS_DIR)/v360/"
+	rm -rf \
+		"$(ARTIFACTS_DIR)"/synch-status/__tests__ "$(ARTIFACTS_DIR)"/synch-status/coverage "$(ARTIFACTS_DIR)"/synch-status/.env* \
+		"$(ARTIFACTS_DIR)"/jobcard/__tests__ "$(ARTIFACTS_DIR)"/jobcard/coverage "$(ARTIFACTS_DIR)"/jobcard/.env* \
+		"$(ARTIFACTS_DIR)"/jobcard/testCart.js "$(ARTIFACTS_DIR)"/jobcard/testCartDML.js "$(ARTIFACTS_DIR)"/jobcard/jobCardDetail-sample.json \
+		"$(ARTIFACTS_DIR)"/dms/__tests__ "$(ARTIFACTS_DIR)"/dms/coverage "$(ARTIFACTS_DIR)"/dms/.env* "$(ARTIFACTS_DIR)"/dms/test.js "$(ARTIFACTS_DIR)"/dms/README.md \
+		"$(ARTIFACTS_DIR)"/dbManager/__tests__ "$(ARTIFACTS_DIR)"/dbManager/coverage "$(ARTIFACTS_DIR)"/dbManager/.env* \
+		"$(ARTIFACTS_DIR)"/myPeople/__tests__ "$(ARTIFACTS_DIR)"/myPeople/coverage "$(ARTIFACTS_DIR)"/myPeople/.env* "$(ARTIFACTS_DIR)"/myPeople/README.md \
+		"$(ARTIFACTS_DIR)"/session/__tests__ "$(ARTIFACTS_DIR)"/session/coverage "$(ARTIFACTS_DIR)"/session/.env* \
+		"$(ARTIFACTS_DIR)"/dmlConfigSync/__tests__ "$(ARTIFACTS_DIR)"/dmlConfigSync/coverage "$(ARTIFACTS_DIR)"/dmlConfigSync/.env* "$(ARTIFACTS_DIR)"/dmlConfigSync/README.md \
+		"$(ARTIFACTS_DIR)"/v360/__tests__ "$(ARTIFACTS_DIR)"/v360/coverage "$(ARTIFACTS_DIR)"/v360/.env* "$(ARTIFACTS_DIR)"/v360/README.md
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/synch-status)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/jobcard)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dms)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dbManager)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/myPeople)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/session)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/dmlConfigSync)
+	$(call npm-ci-prod,$(ARTIFACTS_DIR)/v360)
+
 # DmlConfigSyncFunction (template.yaml) usa `Metadata: BuildMethod: makefile` perché
 # dmlConfigSync/index.js richiede il codice sorgente di dms tramite path relativi
 # (../dms/authService, ../dms/dmsService) per chiamare company-types/customer-titles

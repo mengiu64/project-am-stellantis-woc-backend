@@ -20,6 +20,7 @@ const { v4: uuidv4 } = require('uuid');
 const Logger = require('./logger');
 const configModule = require('./config');
 const { getPool } = require('./shared/dbClient');
+const { syncJobcardActivity } = require('./jobcardSyncActivity');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 🔧 COSTANTI - Definisci i 4 eventi supportati
@@ -169,6 +170,11 @@ exports.handler = async (event, context) => {
         values: updateValues,
         statement_timeout: 5000
       });
+
+      // Esito su woc.jobcard_sync_activity (techreason = djc_sync_status,
+      // businessreason = dmsSynchroStatus da jobCardDetails): best-effort, eseguito
+      // anche se il record su comunication_asyncro_djc non esiste.
+      await syncJobcardActivity({ pool, jobCardId, djcSyncStatus, logger });
 
       // 🔴 MODIFICATO: Verifica che il record sia stato trovato e aggiornato
       // Se nessuna riga ritornata → il record non esiste → errore 404

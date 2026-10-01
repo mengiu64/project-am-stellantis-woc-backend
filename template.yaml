@@ -1687,12 +1687,27 @@ Resources:
   # quindi essere già presenti su quel ruolo. Regola di naming (come per gli
   # altri nomi/ARN): "-dev" in dev, "-stage" in stage, in prod nessun suffisso
   # e nessun prefisso "np-".
+  #
+  # BuildMethod makefile: synch-status/jobcardSyncActivity.js richiede in-process
+  # jobcard/authService + jobcard/jobCardService (jobCardDetails, per salvare
+  # roInfo.dmsSynchroStatus in woc.jobcard_sync_activity.businessreason), che a
+  # loro volta richiedono dms/dbManager/myPeople/session/dmlConfigSync/v360: v.
+  # target build-SynchStatusFunction nel Makefile. Il ruolo pre-esistente deve
+  # quindi avere ANCHE i permessi di JobCardFunction usati da quel flusso:
+  # secretsmanager:GetSecretValue su ServiceUrlsSecretId, DocsoaDbSecretId e
+  # sm-np-bsn0027990-<env>-apic-cert/-key, kms:Decrypt, s3:GetObject su
+  # TranslationsBucket, dynamodb:GetItem/PutItem su TmpCacheTable.
   SynchStatusFunction:
     Type: AWS::Serverless::Function
     DependsOn: SynchStatusFunctionLogGroup
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-synch-status"
-      CodeUri: synch-status/
+      CodeUri: ./
+      Handler: synch-status/index.handler
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Role: !If
         - IsProd
         - !Sub "arn:aws:iam::${AWS::AccountId}:role/stla-rol-bsn0027990-prod-synch-status"
@@ -1707,6 +1722,29 @@ Resources:
             - IsProd
             - /app/BSN0027990/RDS_PROXY_ENDPOINT
             - !Sub /app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT
+          # jobcard/jobCardService.js::getJobCardDetails (in-process): stesse
+          # variabili di JobCardFunction per DGT/PingFederate, arricchimento DML e
+          # cache DynamoDB (v. commenti su JobCardFunction).
+          SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
+          DML_X_TARGET_ENV:       !Ref DmlXTargetEnv
+          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
+          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
+          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
+          DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          MYPEOPLE_HOST:            !Ref MyPeopleHost
+          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
+          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
+          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
+          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
+          DMLCONFIGSYNC_DB_HOST:      !Ref DocsoaDbHost
+          DMLCONFIGSYNC_DB_PORT:      !Ref DocsoaDbPort
+          DMLCONFIGSYNC_DB_NAME:      !Ref DocsoaDbName
+          DMLCONFIGSYNC_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          CONFIG_BUCKET_NAME:       !Ref TranslationsBucket
+          DYNAMO_CACHE_TABLE_NAME:  !Ref TmpCacheTable
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   SynchStatusFunctionLogGroup:
     Type: AWS::Logs::LogGroup

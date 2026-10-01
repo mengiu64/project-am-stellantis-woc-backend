@@ -1057,6 +1057,15 @@ Lambda per l'**aggiornamento dello stato di sincronizzazione DJC** di una job ca
 
 > **Sicurezza:** la security di questa Lambda è **totalmente demandata al gateway IBM API Connect (APIC)**, inclusa l'autenticazione e la **validazione del token**. La Lambda assume che ogni invocazione ricevuta sia già autorizzata e **non esegue alcun controllo di token** (nessun `authService`): si concentra solo su parsing/validazione del payload, aggiornamento dello stato in Aurora, logging e tracing.
 
+#### Esito su `woc.jobcard_sync_activity`
+
+Dopo l'UPDATE su `woc.comunication_asyncro_djc` (anche se lì il record non esiste), `jobcardSyncActivity.js` aggiorna la riga di `woc.jobcard_sync_activity` con `jobcardid` = `jobCardId` (creata da jobcard/djc ad ogni `saveJobcard`):
+
+1. `techreason` = `djc_sync_status` mappato dall'`eventType`, `lastupdate` = `now()`;
+2. richiama **in-process** `getJobCardDetails` della lambda **jobcard** (`jobcard/authService` + `jobcard/jobCardService`, imbarcati via Makefile `build-SynchStatusFunction`) e salva `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+
+Interamente **best-effort**: errori DB/DGT vengono solo loggati e la risposta verso DJC non cambia. Se la riga non esiste, `jobCardDetails` non viene richiamato. Se l'UPDATE su `comunication_asyncro_djc` fallisce (5xx), questo passo non viene eseguito.
+
 #### Endpoint (gateway IBM APIC)
 
 Esposta sul gateway IBM APIC. In ambiente **DEV** l'endpoint è:
@@ -1096,6 +1105,7 @@ I 4 `eventType` supportati (mappati sullo stato DB corrispondente):
 ```
 synch-status/
 ├── index.js                    # Lambda handler (parsing + validazione + UPDATE Aurora)
+├── jobcardSyncActivity.js      # techreason/businessreason su woc.jobcard_sync_activity (jobCardDetails in-process)
 ├── config.js                   # Configurazione centralizzata
 ├── logger.js                   # Logging strutturato + traceId
 ├── package.json                # Dipendenze (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
@@ -1113,6 +1123,8 @@ arn:aws:iam::237024525379:role/stla-rol-np-bsn0027990-dev-synch-status
 ```
 
 > Stessa regola di naming: `-dev` in dev, `-stage` in stage, in **produzione** nessun suffisso ambiente `np-` (`stla-rol-bsn0027990-prod-synch-status`). I permessi equivalenti a quelli di `isStellantisBrand` devono essere già presenti su quel ruolo (quando si valorizza `Role`, SAM ignora `Policies`).
+>
+> Per la chiamata in-process a `jobCardDetails` il ruolo deve avere **anche** i permessi di `JobCardFunction` usati da quel flusso: `secretsmanager:GetSecretValue` su `ServiceUrlsSecretId`, `DocsoaDbSecretId` e `sm-np-bsn0027990-<env>-apic-cert`/`-apic-key`, `kms:Decrypt`, `s3:GetObject` su `TranslationsBucket`, `dynamodb:GetItem`/`PutItem` su `TmpCacheTable`. Senza questi permessi `techreason` viene salvato ma `businessreason` no (errore solo nei log).
 
 #### Connessione DB (shared/dbClient.js)
 
@@ -1474,6 +1486,8 @@ RDS_PROXY_ENDPOINT_PARAM=/app/np-BSN0027990-dev/RDS_PROXY_ENDPOINT # Parametro S
 ```
 
 > **Nota:** stesse due variabili d'ambiente (e stessi valori) di `isStellantisBrand`. La Lambda legge da SSM l'ARN del secret e l'endpoint RDS Proxy, poi le credenziali da Secrets Manager; connessione TLS via RDS Proxy, in VPC. Regola di naming: `-dev` in dev, `-stage` in stage, in produzione nessun `np-` né suffisso ambiente (`/app/BSN0027990/...`).
+>
+> In più, per `jobCardDetails` in-process (aggiornamento di `businessreason`), `template.yaml` imposta le stesse variabili di `JobCardFunction` usate da quel flusso: `SERVICE_URLS_SECRET_ID`, `DML_X_TARGET_ENV`, `DBMANAGER_DB_*`, `MYPEOPLE_*`, `DMLCONFIGSYNC_DB_*`, `CONFIG_BUCKET_NAME`, `DYNAMO_CACHE_TABLE_NAME`, `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT`.
 
 ### pkFavorite
 
@@ -1562,7 +1576,7 @@ cd agendaSoa && npm run test:coverage
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **myPeople** | 4 | 39 | `httpClient`, `certService`, `myPeopleService`, `index` (handler + CLI) |
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
-| **synch-status** | 2 | 61 | `index` (handler + `_validatePayload`/`_buildResponse`), `config` |
+| **synch-status** | 3 | 76 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
 | **Totale** | **57** | **727** | |
@@ -1586,13 +1600,13 @@ cd agendaSoa && npm run test:coverage
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
 | **myPeople** | 99% ✅ | 94.59% ✅ | 100% ✅ | 100% ✅ |
 | **isStellantisBrand** | 100% ✅ | 97.87% ✅ | 100% ✅ | 100% ✅ |
-| **synch-status** | 93.83% ✅ | 93.18% ✅ | 100% ✅ | 93.83% ✅ |
+| **synch-status** | 95.13% ✅ | 94% ✅ | 100% ✅ | 95.13% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Soglia minima enforced: **90%** su tutti i criteri. La CI fallisce automaticamente se non raggiunta.
 >
-> **Nota (`synch-status`):** le 2 suite (`__tests__/config.test.js`, `index.test.js`) passano tutte (61 test). Il modulo `validator.js` (Joi) era codice morto — mai invocato da `index.js`, che valida i payload con `_validatePayload` — ed è stato rimosso insieme alla dipendenza `joi`. La copertura aggregata resta sopra il 90% su tutti i criteri (branch 93.18%, `config.js` a 100% di branch); le soglie per-file definite in `synch-status/package.json` (index 90/85, config 80/70) sono ampiamente rispettate.
+> **Nota (`synch-status`):** le 3 suite (`__tests__/config.test.js`, `index.test.js`, `jobcardSyncActivity.test.js`) passano tutte (76 test). Il modulo `validator.js` (Joi) era codice morto — mai invocato da `index.js`, che valida i payload con `_validatePayload` — ed è stato rimosso insieme alla dipendenza `joi`. La copertura aggregata resta sopra il 90% su tutti i criteri (branch 94%, `jobcardSyncActivity.js` al 100%); le soglie per-file definite in `synch-status/package.json` (index 90/85, config 80/70) sono ampiamente rispettate.
 
 ### Struttura dei test
 
@@ -1671,6 +1685,7 @@ cd agendaSoa && npm run test:coverage
 #### synch-status
 
 - **index (handler)** – parsing del `body` (stringa JSON o oggetto), 400 su body non JSON valido; validazione payload (campi obbligatori `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` tra i 4 supportati, `timestamp` ISO 8601) con 400 e dettaglio errori; mappatura `eventType` → `djc_sync_status`; **UPDATE-only** su `woc.comunication_asyncro_djc` (mai INSERT) con incremento di `version`; 404 quando il record non esiste (deve essere creato prima da un'altra Lambda); 503 su errore di connessione Aurora, 504 su timeout query, 500 su errore generico; nessuna validazione del token (security demandata al gateway IBM APIC)
+- **jobcardSyncActivity** – UPDATE `techreason`/`lastupdate` e poi `businessreason`/`lastupdate` su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus` (anche dalla risposta reale di `jobCardDetails`); record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
 - **config** – pattern singleton `getInstance()`/`reset()`, struttura della configurazione (sezioni AWS/OAuth/APIC/Logging/Timeouts/API endpoints), risoluzione ambiente da env (`ENVIRONMENT`, default `dev`), `getByPath()` (path annidati, `null` se non trovato), gestione del log level
 
 #### dmlConfigSync
