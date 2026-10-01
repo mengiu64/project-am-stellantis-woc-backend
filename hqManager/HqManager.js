@@ -467,6 +467,26 @@ class HqManager {
   }
 
   /**
+   * Clona, per il type indicato, le righe di woc.hq_vehicle_inspection dal
+   * mercato marketOrig (eventualmente null, righe comuni senza mercato) al
+   * mercato marketTarget, cancellando prima logicamente quelle gia'
+   * presenti in marketTarget per quel type. Vedi
+   * dbManager/HqRepository.cloneVeicInspection per i dettagli.
+   *
+   * @param {string} marketTarget
+   * @param {string|null} [marketOrig]
+   * @param {string} type
+   * @returns {Promise<void>}
+   */
+  async cloneVeicInspection(marketTarget, marketOrig, type) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { cloneVeicInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    await cloneVeicInspection(pool, marketTarget, marketOrig, type);
+  }
+
+  /**
    * Registra una riga di audit (woc.hq_audit) generica, usata dall'azione
    * "insertAudit" dell'API. Lo username registrato NON e' quello passato
    * dal chiamante (v. index.js, che non lo estrae piu' dal body): e'

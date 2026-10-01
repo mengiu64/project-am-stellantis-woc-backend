@@ -24,6 +24,7 @@ jest.mock('../../dbManager/HqRepository', () => ({
   deletePackage: jest.fn(),
   setPackageVisible: jest.fn(),
   clonePk: jest.fn(),
+  cloneVeicInspection: jest.fn(),
   getPackageList: jest.fn(),
   insertAudit: jest.fn(),
   searchAudit: jest.fn(),
@@ -59,6 +60,7 @@ const {
   setPackageVisible,
   getPackageList,
   clonePk,
+  cloneVeicInspection,
   insertAudit,
   searchAudit,
   getAnagSection,
@@ -427,6 +429,18 @@ describe('HqManager', () => {
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(clonePk).toHaveBeenCalledWith(fakePool, '2000', '1000');
+      expect(result).toBeUndefined();
+    });
+  });
+
+  describe('cloneVeicInspection', () => {
+    it('resolves the pool and delegates to HqRepository.cloneVeicInspection', async () => {
+      cloneVeicInspection.mockResolvedValue(undefined);
+
+      const result = await manager.cloneVeicInspection('2000', '1000', 'EXTERIOR');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(cloneVeicInspection).toHaveBeenCalledWith(fakePool, '2000', '1000', 'EXTERIOR');
       expect(result).toBeUndefined();
     });
   });
