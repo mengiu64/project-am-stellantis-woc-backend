@@ -16,7 +16,8 @@
 -- ack/techreason/businessreason/lastupdate NON sono valorizzati da djc: vengono
 -- popolati in un secondo momento da synch-status (esito asincrono della
 -- sincronizzazione): ack = OK/KO, techreason = djc_sync_status,
--- businessreason = dmsSynchroStatus da jobCardDetails.
+-- businessreason = dmsSynchroStatus e dmsReturnMessage da jobCardDetails,
+-- concatenati con " - " quando entrambi sono presenti.
 -- ============================================================================
 
 BEGIN;
