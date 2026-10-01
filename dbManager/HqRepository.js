@@ -684,18 +684,20 @@ async function getPackageList(pool, market, oic) {
     // 1) market = null, oic = null: configurazione globale (nessun mercato, nessun OIC).
     sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
              FROM woc.hq_pk_market mk
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
+               FROM woc.hq_pk_market mk
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL and dom.oic IS NULL AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
            WHERE mk.market IS NULL`;
     params = [];
   } else if (!hasMarket && hasOic) {
     // 2) market = null, oic != null: OIC non legato a nessun mercato.
     sql = `SELECT mk.market, oi.oic, ${selectColumns}
              FROM woc.hq_pk_market mk
-             JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $1 AND oi.deleted = 0
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
-           WHERE mk.market IS NULL`;
+             JOIN woc.hq_pk_oic oi ON dom.market IS NULL AND oi.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
+           WHERE mk.market IS NULL
+             AND oi.oic = $1 `;
     params = [oic];
   } else if (hasMarket && hasOic) {
     // 3) market != null, oic != null: OIC legato ad uno specifico mercato.
@@ -703,7 +705,7 @@ async function getPackageList(pool, market, oic) {
              FROM woc.hq_pk_market mk
              JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
              LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
+             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
            WHERE mk.market = $1`;
     params = [market, oic];
   } else {
