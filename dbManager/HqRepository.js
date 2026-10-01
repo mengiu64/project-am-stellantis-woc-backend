@@ -301,6 +301,68 @@ async function insertVehicleInspection(pool, market, type, descr, username, codm
 }
 
 /**
+ * Clona, per il tipo indicato (type), le righe di woc.hq_vehicle_inspection
+ * dal mercato marketOrig (eventualmente null/vuoto, cioe' le righe comuni
+ * senza mercato) al mercato marketTarget:
+ *  1) cancella logicamente (deleted = 1) le righe gia' presenti in
+ *     marketTarget per quel type;
+ *  2) clona (INSERT) tutte le righe di marketOrig per quel type (descr,
+ *     visible, deleted cosi' come sono in origine) con market = marketTarget.
+ * L'intera operazione viene eseguita in un'unica transazione (BEGIN/COMMIT
+ * su una connessione dedicata, ROLLBACK in caso di errore).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} marketTarget
+ * @param {string|null} [marketOrig] - se assente/vuoto, clona le righe comuni
+ *                                     senza mercato (market IS NULL OR market = '')
+ * @param {string} type
+ * @returns {Promise<void>}
+ */
+async function cloneVeicInspection(pool, marketTarget, marketOrig, type) {
+  if (!marketTarget) throw new Error('"marketTarget" is required');
+  if (!type) throw new Error('"type" is required');
+
+  const hasMarketOrig = marketOrig !== undefined && marketOrig !== null && marketOrig !== '';
+  const origCondition = hasMarketOrig ? 'market = $2' : "(market IS NULL OR market = '')";
+  const origParams = hasMarketOrig ? [type, marketOrig] : [type];
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `UPDATE woc.hq_vehicle_inspection
+          SET deleted = 1
+        WHERE market = $1
+          AND type = $2`,
+      [marketTarget, type],
+    );
+
+    const { rows: sourceRows } = await client.query(
+      `SELECT descr, visible, deleted
+         FROM woc.hq_vehicle_inspection
+        WHERE type = $1
+          AND ${origCondition}`,
+      origParams,
+    );
+    for (const { descr, visible, deleted } of sourceRows) {
+      await client.query(
+        `INSERT INTO woc.hq_vehicle_inspection (market, type, descr, visible, deleted)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [marketTarget, type, descr, visible, deleted],
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * @param {import('pg').Pool} pool
  * @param {{ market: string, oic: string }[]} pairs - coppie (market, oic) da verificare
  * @returns {Promise<Set<string>>} set di chiavi "market|oic" esplicitamente
@@ -641,11 +703,13 @@ async function setPackageVisible(pool, idpackage, value) {
  * delle 4 query viene eseguita (nessuna piu' costruita dinamicamente con
  * OR/cast ::text in WHERE):
  *  1) market non valorizzato, oic non valorizzato: righe "globali" (non
- *     legate a nessun mercato ne' a nessun OIC), dom.oic IS NULL / pk.oic
- *     IS NULL;
- *  2) market non valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
- *     cancellato (deleted = 0) con market IS NULL per l'oic indicato,
- *     restituisce SOLO i domini/pacchetti legati a quell'oic;
+ *     legate a nessun mercato ne' a nessun OIC); query diretta su
+ *     woc.hq_pk_domain (dom.market IS NULL AND dom.oic IS NULL), senza
+ *     passare per hq_pk_market;
+ *  2) market non valorizzato, oic valorizzato: query diretta su
+ *     woc.hq_pk_oic (oi.market IS NULL AND oi.oic = oic AND oi.deleted = 0),
+ *     senza passare per hq_pk_market, restituisce SOLO i domini/pacchetti
+ *     legati a quell'oic;
  *  3) market valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
  *     cancellato (deleted = 0) per (market, oic), restituisce SOLO i
  *     domini/pacchetti legati a quello specifico oic;
@@ -682,20 +746,21 @@ async function getPackageList(pool, market, oic) {
 
   if (!hasMarket && !hasOic) {
     // 1) market = null, oic = null: configurazione globale (nessun mercato, nessun OIC).
-    sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
-             FROM woc.hq_pk_market mk
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
-           WHERE mk.market IS NULL`;
+    sql = `SELECT dom.market, NULL::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_domain dom  
+             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
+           WHERE dom.market IS NULL
+                 AND dom.oic IS NULL AND dom.deleted = 0`;
     params = [];
   } else if (!hasMarket && hasOic) {
     // 2) market = null, oic != null: OIC non legato a nessun mercato.
-    sql = `SELECT mk.market, oi.oic, ${selectColumns}
-             FROM woc.hq_pk_market mk
-             JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $1 AND oi.deleted = 0
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
-           WHERE mk.market IS NULL`;
+    sql = `SELECT dom.market, oi.oic, ${selectColumns}
+             FROM woc.hq_pk_oic oi 
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
+           WHERE oi.market IS NULL
+             AND oi.oic = $1 
+             AND oi.deleted = 0`;
     params = [oic];
   } else if (hasMarket && hasOic) {
     // 3) market != null, oic != null: OIC legato ad uno specifico mercato.
@@ -917,6 +982,7 @@ module.exports = {
   setVehicleInspectionVisible,
   deletetVehicleInspection,
   insertVehicleInspection,
+  cloneVeicInspection,
   getDisabledOics,
   getEnableSignatureByOics,
   getAddressByOics,
