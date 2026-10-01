@@ -4690,29 +4690,15 @@ jobs:
         with:
           use-installer: true
 
-      - name: Install npm dependencies (all modules)
+      # Niente npm ci nelle cartelle sorgente: sam build non usa quei node_modules
+      # (le funzioni makefile reinstallano le dipendenze dentro $(ARTIFACTS_DIR),
+      # le altre usano npm pack + npm install), e sul runner self-hosted lo spazio
+      # disco non basta (ENOSPC durante build-SynchStatusFunction).
+      - name: Free disk space (pre-build)
         run: |
-          (cd agendaSoa     && npm ci --omit=dev)
-          (cd agendaSoaNaga && npm ci --omit=dev)
-          (cd dms           && npm ci --omit=dev)
-          (cd jobcard       && npm ci --omit=dev)
-          (cd djc           && npm ci --omit=dev)
-          (cd v360          && npm ci --omit=dev)
-          (cd pkEper        && npm ci --omit=dev)
-          (cd pkDocsoa      && npm ci --omit=dev)
-          (cd pkMenupricing && npm ci --omit=dev)
-          (cd pkManager     && npm ci --omit=dev)
-          (cd dbManager     && npm ci --omit=dev)
-          (cd hqManager     && npm ci --omit=dev)
-          (cd dmlConfigSync && npm ci --omit=dev)
-          (cd translations  && npm ci --omit=dev)
-          (cd session       && npm ci --omit=dev)
-          (cd myPeople      && npm ci --omit=dev)
-          (cd pkFavorite    && npm ci --omit=dev)
-          (cd moparDoc      && npm ci --omit=dev)
-          (cd isStellantisBrand && npm ci --omit=dev)
-          (cd service-Hq-Manager && npm ci --omit=dev)
-          (cd auroraAutoStart && npm ci --omit=dev)
+          df -h .
+          npm cache clean --force
+          rm -rf .aws-sam
 
       - name: Ensure build tools (make) are available
         run: |
@@ -4723,6 +4709,11 @@ jobs:
 
       - name: SAM Build
         run: sam build --parallel
+
+      - name: Free disk space (pre-deploy)
+        run: |
+          npm cache clean --force
+          df -h .
 
       - name: SAM Deploy — dev
         run: |
@@ -4824,29 +4815,15 @@ jobs:
         with:
           use-installer: true
 
-      - name: Install npm dependencies (all modules)
+      # Niente npm ci nelle cartelle sorgente: sam build non usa quei node_modules
+      # (le funzioni makefile reinstallano le dipendenze dentro $(ARTIFACTS_DIR),
+      # le altre usano npm pack + npm install), e sul runner self-hosted lo spazio
+      # disco non basta (ENOSPC durante build-SynchStatusFunction).
+      - name: Free disk space (pre-build)
         run: |
-          (cd agendaSoa     && npm ci --omit=dev)
-          (cd agendaSoaNaga && npm ci --omit=dev)
-          (cd dms           && npm ci --omit=dev)
-          (cd jobcard       && npm ci --omit=dev)
-          (cd djc           && npm ci --omit=dev)
-          (cd v360          && npm ci --omit=dev)
-          (cd pkEper        && npm ci --omit=dev)
-          (cd pkDocsoa      && npm ci --omit=dev)
-          (cd pkMenupricing && npm ci --omit=dev)
-          (cd pkManager     && npm ci --omit=dev)
-          (cd dbManager     && npm ci --omit=dev)
-          (cd hqManager     && npm ci --omit=dev)
-          (cd dmlConfigSync && npm ci --omit=dev)
-          (cd translations  && npm ci --omit=dev)
-          (cd session       && npm ci --omit=dev)
-          (cd myPeople      && npm ci --omit=dev)
-          (cd pkFavorite    && npm ci --omit=dev)
-          (cd moparDoc      && npm ci --omit=dev)
-          (cd isStellantisBrand && npm ci --omit=dev)
-          (cd service-Hq-Manager && npm ci --omit=dev)
-          (cd auroraAutoStart && npm ci --omit=dev)
+          df -h .
+          npm cache clean --force
+          rm -rf .aws-sam
 
       - name: Ensure build tools (make) are available
         run: |
@@ -4857,6 +4834,11 @@ jobs:
 
       - name: SAM Build
         run: sam build --parallel
+
+      - name: Free disk space (pre-deploy)
+        run: |
+          npm cache clean --force
+          df -h .
 
       - name: SAM Deploy — stage
         run: |
@@ -4960,29 +4942,15 @@ jobs:
         with:
           use-installer: true
 
-      - name: Install npm dependencies (all modules)
+      # Niente npm ci nelle cartelle sorgente: sam build non usa quei node_modules
+      # (le funzioni makefile reinstallano le dipendenze dentro $(ARTIFACTS_DIR),
+      # le altre usano npm pack + npm install), e sul runner self-hosted lo spazio
+      # disco non basta (ENOSPC durante build-SynchStatusFunction).
+      - name: Free disk space (pre-build)
         run: |
-          (cd agendaSoa     && npm ci --omit=dev)
-          (cd agendaSoaNaga && npm ci --omit=dev)
-          (cd dms           && npm ci --omit=dev)
-          (cd jobcard       && npm ci --omit=dev)
-          (cd djc           && npm ci --omit=dev)
-          (cd v360          && npm ci --omit=dev)
-          (cd pkEper        && npm ci --omit=dev)
-          (cd pkDocsoa      && npm ci --omit=dev)
-          (cd pkMenupricing && npm ci --omit=dev)
-          (cd pkManager     && npm ci --omit=dev)
-          (cd dbManager     && npm ci --omit=dev)
-          (cd hqManager     && npm ci --omit=dev)
-          (cd dmlConfigSync && npm ci --omit=dev)
-          (cd translations  && npm ci --omit=dev)
-          (cd session       && npm ci --omit=dev)
-          (cd myPeople      && npm ci --omit=dev)
-          (cd pkFavorite    && npm ci --omit=dev)
-          (cd moparDoc      && npm ci --omit=dev)
-          (cd isStellantisBrand && npm ci --omit=dev)
-          (cd service-Hq-Manager && npm ci --omit=dev)
-          (cd auroraAutoStart && npm ci --omit=dev)
+          df -h .
+          npm cache clean --force
+          rm -rf .aws-sam
 
       - name: Ensure build tools (make) are available
         run: |
@@ -4993,6 +4961,11 @@ jobs:
 
       - name: SAM Build
         run: sam build --parallel
+
+      - name: Free disk space (pre-deploy)
+        run: |
+          npm cache clean --force
+          df -h .
 
       - name: SAM Deploy — prod
         run: |
