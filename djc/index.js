@@ -186,6 +186,18 @@ async function syncAppointmentsToNaga(payload) {
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
+/**
+ * Registra in woc.jobcard_sync_activity (UPSERT su jobcardid) il payload che
+ * sta per essere inviato a DGT, PRIMA dell'invio. Bloccante: se il payload non
+ * ha un id jobcard (roInfo.jobCardSrpId/dmsRepairOrderId/jobCardLegacyId) o il
+ * DB fallisce, l'errore viene propagato e il payload NON viene inviato a DGT.
+ */
+async function recordJobCardSyncActivity(jobCardPayload) {
+  const { sanitizeJobCardPayload } = require('./jobCardService');
+  const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
+  await recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+}
+
 const VALID_ACTIONS = [
   'SaveRoInfo',
   'SaveDmsSync',
@@ -247,12 +259,15 @@ exports.handler = async (event) => {
   // (json_mod costruito lato client a partire dai metodi SaveRoInfo/SaveCustomer/...):
   // non richiede jobCardId né DjcManager, quindi viene gestito separatamente dal
   // resto del dispatcher (che invece legge /tmp/<jobCardId>.json).
+  // Prima dell'invio il payload viene registrato in woc.jobcard_sync_activity
+  // (v. recordJobCardSyncActivity): errore DB -> 502, id jobcard mancante -> 400.
   if (action === 'saveJobcard') {
     try {
       const { getBearerToken } = require('./authService');
       const { saveJobCard } = require('./jobCardService');
-      const token = await getBearerToken();
       const jobCardPayload = body.payload ?? body;
+      await recordJobCardSyncActivity(jobCardPayload);
+      const token = await getBearerToken();
       const result = await saveJobCard(token, jobCardPayload);
       await syncAppointmentsToNaga(jobCardPayload);
       return {
@@ -438,6 +453,7 @@ async function main() {
       const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
       const { getBearerToken } = require('./authService');
       const { saveJobCard } = require('./jobCardService');
+      await recordJobCardSyncActivity(payload);
       const token = await getBearerToken();
       const result = await saveJobCard(token, payload);
       await syncAppointmentsToNaga(payload);

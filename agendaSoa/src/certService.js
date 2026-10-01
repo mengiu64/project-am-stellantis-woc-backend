@@ -8,10 +8,10 @@ const https = require('https');
 // Nome del servizio usato nei log strutturati di questo modulo.
 const SERVICE = 'agendaSoa';
 
-// Identificatore del segreto che contiene il certificato client mTLS (default: apicCert). (Req 1.3)
-const CERT_SECRET_ID = process.env.AGENDA_SOA_CERT_SECRET_ID || 'apicCert';
-// Identificatore del segreto che contiene la chiave privata mTLS (default: apicKey). (Req 1.3)
-const KEY_SECRET_ID = process.env.AGENDA_SOA_KEY_SECRET_ID || 'apicKey';
+// Identificatore del segreto che contiene il certificato client mTLS (default: sm-np-bsn0027990-dev-apic-cert, per ambiente via env). (Req 1.3)
+const CERT_SECRET_ID = process.env.AGENDA_SOA_CERT_SECRET_ID || 'sm-np-bsn0027990-dev-apic-cert';
+// Identificatore del segreto che contiene la chiave privata mTLS (default: sm-np-bsn0027990-dev-apic-key, per ambiente via env). (Req 1.3)
+const KEY_SECRET_ID = process.env.AGENDA_SOA_KEY_SECRET_ID || 'sm-np-bsn0027990-dev-apic-key';
 // Porta locale su cui la Secrets Extension espone la sua cache HTTP (default: 2773). (Req 1.4)
 const EXTENSION_PORT = Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773;
 
@@ -36,7 +36,7 @@ function log(logType, fields = {}) {
  * Lambda Extension (layer), che espone una cache locale su http://localhost:<port>.
  * https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
  *
- * @param {string} secretId - nome/ARN del segreto (es. "apicCert").
+ * @param {string} secretId - nome/ARN del segreto (es. "sm-np-bsn0027990-dev-apic-cert").
  * @returns {Promise<string>} il valore SecretString del segreto, normalizzato in PEM.
  */
 function fetchSecret(secretId) {

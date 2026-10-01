@@ -49,8 +49,8 @@ module.exports = {
   // Secrets Manager (mTLS client certificate/key), read via the AWS Parameters
   // and Secrets Lambda Extension (http://localhost:<port>/secretsmanager/get)
   secrets: {
-    certSecretId: process.env.MYPEOPLE_CERT_SECRET_ID || 'apicCert',
-    keySecretId: process.env.MYPEOPLE_KEY_SECRET_ID || 'apicKey',
+    certSecretId: process.env.MYPEOPLE_CERT_SECRET_ID || 'sm-np-bsn0027990-dev-apic-cert',
+    keySecretId: process.env.MYPEOPLE_KEY_SECRET_ID || 'sm-np-bsn0027990-dev-apic-key',
     extensionPort: Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773,
   },
 };

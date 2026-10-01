@@ -81,14 +81,24 @@
  * (deleted = 1) sono esclusi (dom.deleted = 0). Include anche
  * domVisible/pkVisible (hq_pk_domain.visible/hq_pk_packages.visible).
  *
+ * clonePk(marketTarget, marketOrig) clona, per il mercato marketOrig, tutte
+ * le righe di woc.hq_pk_oic (oic incluso eventuale NULL) e le relative
+ * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget,
+ * rigenerando iddomain/idpackage dalle rispettive sequence e rimappando gli
+ * iddomain nei pacchetti clonati per preservare la relazione dominio/
+ * pacchetto originale. Esegue tutto in un'unica transazione (BEGIN/COMMIT,
+ * ROLLBACK in caso di errore).
+ *
  * insertAudit(username, section, market, actiontype, descr) inserisce una
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
  * automaticamente a CURRENT_DATE).
  *
- * searchAudit(market, section, datefrom, dateto, actiontype) legge da
- * woc.hq_audit le righe che soddisfano, in AND, i soli filtri effettivamente
- * valorizzati fra quelli passati (tutti opzionali), ordinate per
- * creationdate/id decrescente (piu' recenti prima).
+ * searchAudit(market, section, datefrom, dateto, actiontype, username) legge
+ * da woc.hq_audit le righe che soddisfano, in AND, i soli filtri
+ * effettivamente valorizzati fra quelli passati (tutti opzionali, username
+ * con match case-insensitive parziale), ordinate per creationdate/id
+ * decrescente (piu' recenti prima). Se nessun filtro e' valorizzato, il
+ * risultato e' limitato alle ultime 100 righe (per creationdate).
  *
  * getAnagSection()/getAnagAllocation() leggono, da S3 (bucket
  * TranslationsBucket, S3ConfigRepository.js), le anagrafiche statiche delle
@@ -253,7 +263,7 @@ async function deletetVehicleInspection(pool, id, value, username, codmarket) {
   );
   const [{ type, descr } = {}] = rows;
 
-  await insertAudit(pool, username, type, codmarket, 'delete', `${type} ${descr} `);
+  await insertAudit(pool, username, type, codmarket, 'delete', `deleted ${codmarket} ${descr} `);
 }
 
 /**
@@ -387,8 +397,6 @@ async function getAddressByOics(pool, { oics } = {}) {
  * @returns {Promise<void>}
  */
 async function setMarketEnable(pool, market) {
-  if (!market) throw new Error('"market" is required');
-
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 0)
@@ -412,8 +420,6 @@ async function setMarketEnable(pool, market) {
  * @returns {Promise<void>}
  */
 async function setMarketDisable(pool, market) {
-  if (!market) throw new Error('"market" is required');
-
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 1)
@@ -437,12 +443,11 @@ async function setMarketDisable(pool, market) {
  * @returns {Promise<void>}
  */
 async function setOicEnable(pool, market, oic) {
-  if (!market) throw new Error('"market" is required');
   if (!oic) throw new Error('"oic" is required');
 
   await pool.query(
     `INSERT INTO woc.hq_pk_oic (market, oic, deleted)
-     VALUES ($1, $2, 0)
+     VALUES (NULLIF($1, ''), $2, 0)
      ON CONFLICT (market, oic) DO UPDATE SET deleted = 0`,
     [market, oic],
   );
@@ -459,11 +464,9 @@ async function setOicEnable(pool, market, oic) {
  * @returns {Promise<number>} l'iddomain generato
  */
 async function insertDomain(pool, market, oic, descr) {
-  if (!market) throw new Error('"market" is required');
-
   const { rows } = await pool.query(
     `INSERT INTO woc.hq_pk_domain (market, oic, descr)
-     VALUES ($1, $2, $3)
+     VALUES (NULLIF($1, ''), $2, $3)
      RETURNING iddomain`,
     [market, oic, descr],
   );
@@ -481,7 +484,6 @@ async function insertDomain(pool, market, oic, descr) {
  * @returns {Promise<void>}
  */
 async function setDomain(pool, market, iddomain, descr) {
-  if (!market) throw new Error('"market" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   await pool.query(
@@ -503,7 +505,6 @@ async function setDomain(pool, market, iddomain, descr) {
  * @returns {Promise<void>}
  */
 async function deleteDomain(pool, market, iddomain) {
-  if (!market) throw new Error('"market" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   await pool.query(
@@ -550,12 +551,11 @@ async function setDomainVisible(pool, iddomain, value) {
  * @returns {Promise<number>} l'idpackage generato
  */
 async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat) {
-  if (!market) throw new Error('"market" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   const { rows } = await pool.query(
     `INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)
-     VALUES ($1, $2, $3, $4, $5, $6)
+     VALUES (NULLIF($1, ''), $2, $3, $4, $5, $6)
      RETURNING idpackage`,
     [market, oic, iddomain, descr, timeop, pricewithvat],
   );
@@ -658,8 +658,6 @@ async function setPackageVisible(pool, idpackage, value) {
  * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
 async function getPackageList(pool, market, oic) {
-  if (!market) throw new Error('"market" is required');
-
   const selectColumns = `dom.iddomain
                           , dom.descr AS domaindescr
                           , dom.visible AS domvisible
@@ -676,7 +674,11 @@ async function getPackageList(pool, market, oic) {
          JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
-        WHERE mk.market = $1`,
+       WHERE (
+               (($1::text IS NULL OR $1::text = '') AND mk.market IS NULL)
+                 OR
+               ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
+               )`,
       [market, oic],
     )
     : await pool.query(
@@ -684,7 +686,11 @@ async function getPackageList(pool, market, oic) {
          FROM woc.hq_pk_market mk
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
-        WHERE mk.market = $1`,
+       WHERE (
+               (($1::text IS NULL OR $1::text = '') AND dom.market IS NULL)
+                 OR
+               ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
+               )`,
       [market],
     );
 
@@ -703,6 +709,81 @@ async function getPackageList(pool, market, oic) {
 }
 
 /**
+ * Clona, per il mercato indicato (marketOrig), tutte le righe di
+ * woc.hq_pk_oic (comprese le eventuali righe con oic IS NULL) e le relative
+ * gerarchie hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget).
+ *
+ * iddomain/idpackage sono generati dalle rispettive sequence
+ * (hq_pk_domain_iddomain_seq/hq_pk_packages_idpackage_seq): i nuovi
+ * iddomain vengono quindi rimappati (vecchio -> nuovo) prima di clonare i
+ * pacchetti, in modo da mantenere la relazione dominio/pacchetto del
+ * mercato originale anche nel mercato clonato.
+ *
+ * L'intera operazione viene eseguita in un'unica transazione
+ * (BEGIN/COMMIT su una connessione dedicata, ROLLBACK in caso di errore),
+ * cosi' da non lasciare dati parzialmente clonati.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} marketTarget
+ * @param {string} marketOrig
+ * @returns {Promise<void>}
+ */
+async function clonePk(pool, marketTarget, marketOrig) {
+  if (!marketTarget) throw new Error('"marketTarget" is required');
+  if (!marketOrig) throw new Error('"marketOrig" is required');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: oicRows } = await client.query(
+      `SELECT oic, deleted FROM woc.hq_pk_oic WHERE market = $1`,
+      [marketOrig],
+    );
+    for (const { oic, deleted } of oicRows) {
+      await client.query(
+        `INSERT INTO woc.hq_pk_oic (market, oic, deleted) VALUES ($1, $2, $3)`,
+        [marketTarget, oic, deleted],
+      );
+    }
+
+    const { rows: domainRows } = await client.query(
+      `SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain WHERE market = $1`,
+      [marketOrig],
+    );
+    const iddomainMap = new Map();
+    for (const { iddomain, oic, descr, deleted } of domainRows) {
+      const { rows } = await client.query(
+        `INSERT INTO woc.hq_pk_domain (market, oic, descr, deleted)
+         VALUES ($1, $2, $3, $4)
+         RETURNING iddomain`,
+        [marketTarget, oic, descr, deleted],
+      );
+      iddomainMap.set(iddomain, rows[0].iddomain);
+    }
+
+    const { rows: packageRows } = await client.query(
+      `SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE market = $1`,
+      [marketOrig],
+    );
+    for (const { oic, iddomain, descr, timeop, pricewithvat } of packageRows) {
+      await client.query(
+        `INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [marketTarget, oic, iddomainMap.get(iddomain), descr, timeop, pricewithvat],
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Inserisce una riga di audit in woc.hq_audit (creationdate = CURRENT_DATE).
  *
  * @param {import('pg').Pool} pool
@@ -716,7 +797,6 @@ async function getPackageList(pool, market, oic) {
 async function insertAudit(pool, username, section, market, actiontype, descr) {
   if (!username) throw new Error('"username" is required');
   if (!section) throw new Error('"section" is required');
-  if (!market) throw new Error('"market" is required');
   if (!actiontype) throw new Error('"actiontype" is required');
 
   await pool.query(
@@ -728,8 +808,13 @@ async function insertAudit(pool, username, section, market, actiontype, descr) {
 
 /**
  * Legge da woc.hq_audit le righe che soddisfano, in AND, i soli filtri
- * effettivamente valorizzati fra market/section/datefrom/dateto/actiontype
- * (tutti opzionali), ordinate per creationdate/id decrescente.
+ * effettivamente valorizzati fra market/section/datefrom/dateto/actiontype/
+ * username (tutti opzionali), ordinate per creationdate/id decrescente.
+ * `username` e' un match parziale case-insensitive (UPPER(username) LIKE
+ * UPPER('%...%')), a differenza degli altri filtri (uguaglianza esatta).
+ * Se nessun filtro e' valorizzato (ricerca senza criteri), il risultato e'
+ * limitato alle ultime 100 righe (LIMIT 100, per creationdate/id
+ * decrescente).
  *
  * @param {import('pg').Pool} pool
  * @param {string} [market]
@@ -737,9 +822,10 @@ async function insertAudit(pool, username, section, market, actiontype, descr) {
  * @param {string|Date} [datefrom]
  * @param {string|Date} [dateto]
  * @param {string} [actiontype]
+ * @param {string} [username]
  * @returns {Promise<Array<{ id: number, username: string|null, creationdate: string|null, section: string|null, market: string|null, actiontype: string|null, descr: string|null }>>}
  */
-async function searchAudit(pool, market, section, datefrom, dateto, actiontype) {
+async function searchAudit(pool, market, section, datefrom, dateto, actiontype, username) {
   const conditions = [];
   const params = [];
 
@@ -763,13 +849,18 @@ async function searchAudit(pool, market, section, datefrom, dateto, actiontype) 
     params.push(actiontype);
     conditions.push(`actiontype = $${params.length}`);
   }
+  if (username) {
+    params.push(`%${username}%`);
+    conditions.push(`UPPER(username) LIKE UPPER($${params.length})`);
+  }
 
   const whereClause = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '';
+  const limitClause = conditions.length ? '' : ' LIMIT 100';
 
   const { rows } = await pool.query(
     `SELECT id, username, creationdate, section, market, actiontype, descr
        FROM woc.hq_audit${whereClause}
-      ORDER BY creationdate DESC, id DESC`,
+      ORDER BY creationdate DESC, id DESC${limitClause}`,
     params,
   );
 
@@ -817,6 +908,7 @@ module.exports = {
   deletePackage,
   setPackageVisible,
   getPackageList,
+  clonePk,
   insertAudit,
   searchAudit,
   getAnagSection,

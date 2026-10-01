@@ -508,7 +508,7 @@ pkEper/
 
 ### pkDocsoa
 
-Lambda for **DocSOA packages** (Stellantis PSA), a REST client replicating the original SOAP service. The `api-cert-preprod.groupe-psa.com/api/cert-aai` gateway requires, in addition to Basic Auth/WS-Security and the `X-IBM-Client-Id`/`X-IBM-Client-Secret` headers, a **client mTLS certificate**: the certificate and key (Secrets Manager secrets `apicCert`/`apicKey`, the **same** ones used by `myPeople`) are retrieved at runtime via the [AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (see `certService.js`, same pattern as `myPeople/certService.js`).
+Lambda for **DocSOA packages** (Stellantis PSA), a REST client replicating the original SOAP service. The `api-cert-preprod.groupe-psa.com/api/cert-aai` gateway requires, in addition to Basic Auth/WS-Security and the `X-IBM-Client-Id`/`X-IBM-Client-Secret` headers, a **client mTLS certificate**: the certificate and key (Secrets Manager secrets `sm-np-bsn0027990-<env>-apic-cert`/`sm-np-bsn0027990-<env>-apic-key` per environment, the **same** ones used by `myPeople`) are retrieved at runtime via the [AWS Parameters and Secrets Lambda Extension](https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html) (see `certService.js`, same pattern as `myPeople/certService.js`).
 
 #### Available handlers
 
@@ -526,7 +526,7 @@ Lambda for **DocSOA packages** (Stellantis PSA), a REST client replicating the o
 pkDocsoa/
 ├── index.js               # Lambda entry-point + demo CLI
 ├── DocSOARestClient.js     # DocSOA REST client (axios) + vinParts helper
-├── certService.js          # mTLS: retrieves cert/key from Secrets Manager (apicCert/apicKey) + cached https.Agent
+├── certService.js          # mTLS: retrieves cert/key from Secrets Manager (sm-np-bsn0027990-<env>-apic-cert/-apic-key) + cached https.Agent
 ├── test.js                 # Manual smoke-test
 └── __tests__/              # Jest unit tests
 ```
@@ -768,6 +768,15 @@ Lambda for **updating the DJC synchronization status** of a job card. It receive
 
 > **Security:** this Lambda's security is **fully delegated to the IBM API Connect (APIC) gateway**, including authentication and **token validation**. The Lambda assumes every incoming invocation is already authorized and performs **no token check** (no `authService`): it only handles payload parsing/validation, updating the status in Aurora, logging and tracing.
 
+#### Outcome on `woc.jobcard_sync_activity`
+
+After the UPDATE on `woc.comunication_asyncro_djc` (even when the record is missing there), `jobcardSyncActivity.js` updates the `woc.jobcard_sync_activity` row with `jobcardid` = `jobCardId` (created by jobcard/djc on every `saveJobcard`):
+
+1. `techreason` = `djc_sync_status` mapped from `eventType`, `lastupdate` = `now()`;
+2. calls the **jobcard** Lambda's `getJobCardDetails` **in-process** (`jobcard/authService` + `jobcard/jobCardService`, bundled via the `build-SynchStatusFunction` Makefile target) and stores `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+
+Fully **best-effort**: DB/DGT errors are only logged and the response to DJC is unchanged. If the row does not exist, `jobCardDetails` is not called. If the UPDATE on `comunication_asyncro_djc` fails (5xx), this step is skipped.
+
 #### Endpoint (IBM APIC gateway)
 
 Exposed on the IBM APIC gateway. In **DEV** the endpoint is:
@@ -809,6 +818,7 @@ The 4 supported `eventType` values (mapped to the corresponding DB status):
 ```
 synch-status/
 ├── index.js                    # Lambda handler (parsing + validation + Aurora UPDATE)
+├── jobcardSyncActivity.js      # techreason/businessreason on woc.jobcard_sync_activity (in-process jobCardDetails)
 ├── config.js                   # Centralized configuration
 ├── logger.js                   # Structured logging + traceId
 ├── package.json                # Dependencies (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
@@ -826,6 +836,8 @@ arn:aws:iam::237024525379:role/stla-rol-np-bsn0027990-dev-synch-status
 ```
 
 > Same naming rule: `-dev` in dev, `-stage` in stage, in **prod** no `np-` and no environment suffix (`stla-rol-bsn0027990-prod-synch-status`). Permissions equivalent to `isStellantisBrand` must already be attached to that role (when `Role` is set, SAM ignores `Policies`).
+>
+> For the in-process `jobCardDetails` call the role must **also** have the `JobCardFunction` permissions used by that flow: `secretsmanager:GetSecretValue` on `ServiceUrlsSecretId`, `DocsoaDbSecretId` and `sm-np-bsn0027990-<env>-apic-cert`/`-apic-key`, `kms:Decrypt`, `s3:GetObject` on `TranslationsBucket`, `dynamodb:GetItem`/`PutItem` on `TmpCacheTable`. Without them `techreason` is saved but `businessreason` is not (error only in the logs).
 
 #### DB connection (shared/dbClient.js)
 
@@ -970,8 +982,8 @@ DOCSOA_USERNAME=...                    # Authentication username (WS-Security / 
 DOCSOA_PASSWORD=...                    # Authentication password (WS-Security / Basic Auth)
 DOCSOA_IBM_CLIENT_ID=...               # X-IBM-Client-Id for the API Connect gateway
 DOCSOA_IBM_CLIENT_SECRET=...           # X-IBM-Client-Secret for the API Connect gateway
-DOCSOA_CERT_SECRET_ID=apicCert         # (optional) Secrets Manager secret id with the mTLS client certificate (SAME one used by myPeople)
-DOCSOA_KEY_SECRET_ID=apicKey           # (optional) Secrets Manager secret id with the mTLS client private key (SAME one used by myPeople)
+DOCSOA_CERT_SECRET_ID=sm-np-bsn0027990-dev-apic-cert # (optional) Secrets Manager secret id with the mTLS client certificate (SAME one used by myPeople)
+DOCSOA_KEY_SECRET_ID=sm-np-bsn0027990-dev-apic-key  # (optional) Secrets Manager secret id with the mTLS client private key (SAME one used by myPeople)
 PROXY_HOST=...                         # (optional) Stellantis/PSA corporate proxy
 PROXY_PORT=8080                        # (optional) proxy port
 ```
@@ -1050,6 +1062,8 @@ RDS_PROXY_ENDPOINT_PARAM=/app/np-BSN0027990-dev/RDS_PROXY_ENDPOINT # SSM paramet
 ```
 
 > **Note:** same two environment variables (and same values) as `isStellantisBrand`. The Lambda reads the secret ARN and RDS Proxy endpoint from SSM, then the credentials from Secrets Manager; TLS connection via RDS Proxy, inside the VPC. Naming rule: `-dev` in dev, `-stage` in stage, in prod no `np-` nor environment suffix (`/app/BSN0027990/...`).
+>
+> In addition, for the in-process `jobCardDetails` (`businessreason` update), `template.yaml` sets the same `JobCardFunction` variables used by that flow: `SERVICE_URLS_SECRET_ID`, `DML_X_TARGET_ENV`, `DBMANAGER_DB_*`, `MYPEOPLE_*`, `DMLCONFIGSYNC_DB_*`, `CONFIG_BUCKET_NAME`, `DYNAMO_CACHE_TABLE_NAME`, `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT`.
 
 ### dmlConfigSync
 
@@ -1110,7 +1124,7 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
-| **synch-status** | 2 | 61 | `index` (handler + `_validatePayload`/`_buildResponse`), `config` |
+| **synch-status** | 3 | 76 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
 | **Total** | **44+** | **491+** | |
@@ -1130,13 +1144,13 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
-| **synch-status** | 93.83% ✅ | 93.18% ✅ | 100% ✅ | 93.83% ✅ |
+| **synch-status** | 95.13% ✅ | 94% ✅ | 100% ✅ | 95.13% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 >
-> **Note (`synch-status`):** both suites (`__tests__/config.test.js`, `index.test.js`) pass (61 tests). The `validator.js` module (Joi) was dead code — never invoked by `index.js`, which validates payloads with `_validatePayload` — and was removed together with the `joi` dependency. Aggregate coverage remains above 90% on all criteria (branch 93.18%, `config.js` at 100% branch); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70) are comfortably met.
+> **Note (`synch-status`):** all 3 suites (`__tests__/config.test.js`, `index.test.js`, `jobcardSyncActivity.test.js`) pass (76 tests). The `validator.js` module (Joi) was dead code — never invoked by `index.js`, which validates payloads with `_validatePayload` — and was removed together with the `joi` dependency. Aggregate coverage remains above 90% on all criteria (branch 94%, `jobcardSyncActivity.js` at 100%); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70) are comfortably met.
 
 ### Test structure
 
@@ -1194,6 +1208,7 @@ cd agendaSoa && npm run test:coverage
 
 #### synch-status
 - **index (handler)** – parses the `body` (JSON string or object), 400 on invalid JSON body; payload validation (required fields `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` among the 4 supported, `timestamp` ISO 8601) with 400 and error details; `eventType` → `djc_sync_status` mapping; **UPDATE-only** on `woc.comunication_asyncro_djc` (never INSERT) with `version` increment; 404 when the record does not exist (must be created first by another Lambda); 503 on Aurora connection error, 504 on query timeout, 500 on generic error; no token validation (security delegated to the IBM APIC gateway)
+- **jobcardSyncActivity** – UPDATE of `techreason`/`lastupdate` then `businessreason`/`lastupdate` on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus` (also from the real `jobCardDetails` response); missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
 - **config** – `getInstance()`/`reset()` singleton pattern, configuration structure (AWS/OAuth/APIC/Logging/Timeouts/API endpoints sections), environment resolution from env (`ENVIRONMENT`, default `dev`), `getByPath()` (nested paths, `null` when not found), log level handling
 
 #### dmlConfigSync

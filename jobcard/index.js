@@ -76,7 +76,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { getBearerToken } = require('./authService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, getDataFromDMLFromTmp } = require('./jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getDataFromDMLFromTmp } = require('./jobCardService');
 const { getCachedSessionData } = require('../session/src/sessionContextCache');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
@@ -481,6 +481,20 @@ async function syncAppointmentsToNaga(payload, username) {
 }
 
 /**
+ * Registra in woc.jobcard_sync_activity (UPSERT su jobcardid) il payload che
+ * sta per essere inviato a DGT, PRIMA dell'invio (stessa logica di
+ * djc/index.js::recordJobCardSyncActivity: in dev/prod la POST
+ * /api/repairorder/saveJobcard è instradata da API Gateway a questa lambda).
+ * Bloccante: se il payload non ha un id jobcard (roInfo.jobCardSrpId/
+ * dmsRepairOrderId/jobCardLegacyId) o il DB fallisce, l'errore viene
+ * propagato e il payload NON viene inviato a DGT.
+ */
+async function recordJobCardSyncActivity(jobCardPayload) {
+  const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
+  await recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+}
+
+/**
  * Resolves { action, body } from either:
  *  1) A direct Lambda invocation payload:  { "action": "list", "body": { "dealerId": "..." } }
  *  2) A real API Gateway (REST API or HTTP API) proxy integration event, where the
@@ -537,6 +551,11 @@ exports.handler = async (event) => {
       // rigenerarlo, recuperando un bearerToken PingFederate solo in quel caso.
       result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id, undefined, resolveSessionContext(event, body));
     } else {
+      if (action === 'saveJobcard') {
+        // Prima dell'invio a DGT (e prima del token): errore DB -> 502,
+        // id jobcard mancante -> 400 ("is required").
+        await recordJobCardSyncActivity(body.payload ?? body);
+      }
       const token = await getBearerToken();
       if (action === 'list') {
         result = await getJobCardList(token, body);
@@ -618,6 +637,7 @@ async function runSaveJobcard(payloadJsonFile) {
   // payload.appointments[].appointmentInternalId con l'apptId restituito,
   // cosi' saveJobCard riceve il payload già aggiornato.
   await syncAppointmentsToNaga(payload);
+  await recordJobCardSyncActivity(payload);
   const result = await saveJobCard(token, payload);
   console.log(JSON.stringify(result, null, 2));
   return result;

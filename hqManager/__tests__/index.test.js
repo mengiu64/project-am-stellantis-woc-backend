@@ -364,7 +364,7 @@ describe('hqManager/index.js', () => {
       });
     });
 
-    it('dispatches searchAudit (direct invocation payload)', async () => {
+    it('dispatches searchAudit (direct invocation payload), including username as an additional filter', async () => {
       const audits = [{
         id: 1, username: 'mario.rossi', creationdate: '2024-01-01', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
       }];
@@ -375,14 +375,14 @@ describe('hqManager/index.js', () => {
       const res = await handler({
         action: 'searchAudit',
         body: {
-          market: '1000', section: 'domain', datefrom: '2024-01-01', dateto: '2024-12-31', actiontype: 'create',
+          market: '1000', section: 'domain', datefrom: '2024-01-01', dateto: '2024-12-31', actiontype: 'create', username: 'mario.rossi',
         },
       });
 
-      expect(instance.searchAudit).toHaveBeenCalledWith('1000', 'domain', '2024-01-01', '2024-12-31', 'create');
+      expect(instance.searchAudit).toHaveBeenCalledWith('1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi');
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
-        success: true, market: '1000', section: 'domain', datefrom: '2024-01-01', dateto: '2024-12-31', actiontype: 'create', audits,
+        success: true, market: '1000', section: 'domain', datefrom: '2024-01-01', dateto: '2024-12-31', actiontype: 'create', username: 'mario.rossi', audits,
       });
     });
 

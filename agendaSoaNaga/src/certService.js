@@ -8,10 +8,10 @@ const https = require('https');
 // Servizio usato nei log strutturati di questo modulo (specularmente ad agendaSoa, qui "agendaSoaNaga").
 const SERVICE = 'agendaSoaNaga';
 
-// Identificatore del segreto contenente il certificato client mTLS (PEM); default "apicCert" (Req 1.3).
-const CERT_SECRET_ID = process.env.AGENDA_SOA_CERT_SECRET_ID || 'apicCert';
-// Identificatore del segreto contenente la chiave privata mTLS (PEM); default "apicKey" (Req 1.3).
-const KEY_SECRET_ID = process.env.AGENDA_SOA_KEY_SECRET_ID || 'apicKey';
+// Identificatore del segreto contenente il certificato client mTLS (PEM); default "sm-np-bsn0027990-dev-apic-cert" (Req 1.3).
+const CERT_SECRET_ID = process.env.AGENDA_SOA_CERT_SECRET_ID || 'sm-np-bsn0027990-dev-apic-cert';
+// Identificatore del segreto contenente la chiave privata mTLS (PEM); default "sm-np-bsn0027990-dev-apic-key" (Req 1.3).
+const KEY_SECRET_ID = process.env.AGENDA_SOA_KEY_SECRET_ID || 'sm-np-bsn0027990-dev-apic-key';
 // Porta HTTP locale esposta dalla Secrets Extension; default 2773 (Req 1.4).
 const EXTENSION_PORT = Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773;
 
@@ -24,7 +24,7 @@ let cachedAgentPromise = null;
  * Lambda Extension (layer), che espone una cache locale su http://localhost:<port>.
  * https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
  *
- * @param {string} secretId - nome/ARN del segreto (es. "apicCert")
+ * @param {string} secretId - nome/ARN del segreto (es. "sm-np-bsn0027990-dev-apic-cert")
  * @returns {Promise<string>} il valore SecretString del segreto, normalizzato a PEM
  */
 function fetchSecret(secretId) {
@@ -105,7 +105,7 @@ function extractPem(value) {
 
 /**
  * Scarica il certificato client (PEM) e la chiave privata (PEM) da Secrets Manager
- * (segreti "apicCert"/"apicKey", configurabili via env) e costruisce un https.Agent
+ * (segreti "sm-np-bsn0027990-<env>-apic-cert"/"-apic-key", configurabili via env) e costruisce un https.Agent
  * da usare per l'autenticazione mTLS verso il servizio AgendaSOA-Naga.
  *
  * La promise dell'agent è cache-ata in-process (warm start): sulle invocazioni "warm"

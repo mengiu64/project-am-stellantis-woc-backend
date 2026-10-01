@@ -13,11 +13,13 @@ jobcard/
 ├── httpClient.js      # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js     # Autenticazione PingFederate → Bearer token
 ├── jobCardService.js  # getJobCardList / getJobCardDetails / saveJobCard
+├── JobcardSyncActivityRepository.js # UPSERT woc.jobcard_sync_activity (saveJobcard)
+├── db.js              # Pool pg Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── index.js           # Entry point CLI
 └── package.json
 ```
 
-> **Nessuna dipendenza npm** — usa esclusivamente moduli built-in di Node.js (`https`, `url`).
+> Dipendenze npm: SDK AWS (DynamoDB/Secrets Manager) e `pg` (solo per `saveJobcard`).
 
 ---
 
@@ -118,9 +120,21 @@ node index.js saveJobcard ./payload.json
 | `Authorization` | `Bearer <token>` |
 
 > **Nota**: `saveJobcard` (POST `/jobCard`) è la stessa azione esposta anche dalla
-> lambda `djc` (stesso client PingFederate/DGT). **API Gateway instrada le
-> richieste POST verso la lambda `djc`**; questa azione resta disponibile qui per
-> chiamata diretta/CLI e per coerenza tra le due lambda.
+> lambda `djc` (stesso client PingFederate/DGT). **API Gateway instrada la POST
+> `/api/repairorder/saveJobcard` (`/api/repairorder/{proxy+}`) verso questa
+> lambda (`jobcard`)**; la versione di `djc` resta per invocazione diretta/CLI.
+
+**Tracciamento su DB (`woc.jobcard_sync_activity`)**: prima dell'invio a DGT
+(e prima del recupero del token) il payload sanitizzato viene salvato con un
+UPSERT su `jobcardid` = `roInfo.jobCardSrpId` (fallback `dmsRepairOrderId`, poi
+`jobCardLegacyId`): al primo inserimento `creationdate` = `now()`, ai successivi
+viene aggiornato solo `payload`; `ack`/`techreason`/`businessreason`/`lastupdate`
+sono popolati in un secondo momento. Bloccante: id mancante → `400`, errore DB →
+`502`, e il payload non viene inviato a DGT. Da CLI il salvataggio avviene dopo la
+sync NAGA (che può valorizzare `appointments[].appointmentInternalId`), così la
+tabella contiene il payload effettivamente inviato. Stessa implementazione di
+`djc` (v. [`djc/README.md`](../djc/README.md)); DDL in
+`sql/create_table_jobcard_sync_activity.sql`.
 
 **Payload e obbligatorietà**: il payload (`roInfo` obbligatorio, più le sezioni
 opzionali `customerInfo[]`, `vehicleInfo`, `jobs[]`, ecc.) segue le stesse
@@ -211,6 +225,10 @@ JOBCARD_PING_CLIENT_ID=your_ping_client_id_here
 JOBCARD_PING_CLIENT_SECRET=your_ping_client_secret_here
 DGT_CLIENT_ID=your_dgt_client_id_here
 DGT_CLIENT_SECRET=your_dgt_client_secret_here
+# woc.jobcard_sync_activity (solo saveJobcard)
+JOBCARD_DB_HOST=your_rds_proxy_endpoint_here
+JOBCARD_DB_USER=wiadvisor_app
+JOBCARD_DB_PASSWORD=your_db_password_here
 ```
 
 `config.js` carica automaticamente il file `.env` se presente, senza dipendenze npm.
@@ -225,6 +243,9 @@ Configura le variabili d'ambiente direttamente sull'ambiente di esecuzione (es. 
 | `JOBCARD_PING_CLIENT_SECRET` | Client Secret PingFederate (dedicato jobcard) |
 | `DGT_CLIENT_ID` | Client ID Stellantis DGT API |
 | `DGT_CLIENT_SECRET` | Client Secret Stellantis DGT API |
+| `JOBCARD_DB_HOST` | Endpoint RDS Proxy Aurora "wiadvisor" (`woc.jobcard_sync_activity`, solo `saveJobcard`) |
+| `JOBCARD_DB_SECRET_ID` | Secret Aurora `wiadvisor_app` (default `sm-np-bsn0027990-dev-aurora-app`); in locale in alternativa `JOBCARD_DB_USER`/`JOBCARD_DB_PASSWORD` |
+| `JOBCARD_DB_PORT` / `JOBCARD_DB_NAME` / `JOBCARD_DB_SSL` | Opzionali (default dal secret / `5432` / `wiadvisor`; `JOBCARD_DB_SSL=false` solo per Postgres locale senza TLS) |
 
 ---
 
