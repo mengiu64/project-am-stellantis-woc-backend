@@ -36,6 +36,8 @@ function makeManagerInstance(overrides = {}) {
     deletePackage: jest.fn(),
     setPackageVisible: jest.fn(),
     getPackageList: jest.fn(),
+    clonePk: jest.fn(),
+    cloneVeicInspection: jest.fn(),
     insertAudit: jest.fn(),
     searchAudit: jest.fn(),
     getAnagSection: jest.fn(),
@@ -341,6 +343,52 @@ describe('hqManager/index.js', () => {
       expect(instance.getPackageList).toHaveBeenCalledWith('1000', undefined);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
+    });
+
+    it('dispatches clonePk (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        clonePk: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({ action: 'clonePk', body: { marketTarget: '2000', marketOrig: '1000' } });
+
+      expect(instance.clonePk).toHaveBeenCalledWith('2000', '1000');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, marketTarget: '2000', marketOrig: '1000' });
+    });
+
+    it('dispatches cloneVeicInspection (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        cloneVeicInspection: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({
+        action: 'cloneVeicInspection',
+        body: { marketTarget: '3136', marketOrig: '1000', type: 'damagearea' },
+      });
+
+      expect(instance.cloneVeicInspection).toHaveBeenCalledWith('3136', '1000', 'damagearea');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        success: true, marketTarget: '3136', marketOrig: '1000', type: 'damagearea',
+      });
+    });
+
+    it('dispatches cloneVeicInspection via an API Gateway-style event (query string)', async () => {
+      const instance = makeManagerInstance({
+        cloneVeicInspection: jest.fn().mockResolvedValue(undefined),
+      });
+
+      const res = await handler({
+        rawPath: '/api/hq/cloneVeicInspection',
+        queryStringParameters: { marketTarget: '3136', marketOrig: '1000', type: 'damagearea' },
+      });
+
+      expect(instance.cloneVeicInspection).toHaveBeenCalledWith('3136', '1000', 'damagearea');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        success: true, marketTarget: '3136', marketOrig: '1000', type: 'damagearea',
+      });
     });
 
     it('dispatches insertAudit (direct invocation payload), resolving the username from the session server-side and ignoring any client-supplied username', async () => {

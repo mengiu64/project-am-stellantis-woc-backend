@@ -54,6 +54,14 @@
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
  *     la configurazione "a livello mercato"), incluso il flag "visible" di
  *     dominio/pacchetto (domVisible/pkVisible).
+ *   - clonePk(marketTarget, marketOrig): clona, per il mercato marketOrig,
+ *     tutta la gerarchia hq_pk_oic/hq_pk_domain/hq_pk_packages nel nuovo
+ *     mercato marketTarget (v. dbManager/HqRepository.clonePk).
+ *   - cloneVeicInspection(marketTarget, marketOrig, type): cancella
+ *     logicamente le voci di controllo veicolo gia' presenti in
+ *     marketTarget per il "type" indicato e clona quelle di marketOrig
+ *     (anche se marketOrig e' assente, cioe' le righe comuni senza mercato)
+ *     nel mercato marketTarget (v. dbManager/HqRepository.cloneVeicInspection).
  *   - insertAudit(section, market, actiontype, descr): inserisce una riga
  *     di log nell'audit HQ (woc.hq_audit), con username risolto da
  *     HqManager.js::resolveUsername (firstname+lastname della sessione
@@ -109,6 +117,8 @@ const VALID_ACTIONS = [
   'deletePackage',
   'setPackageVisible',
   'getPackageList',
+  'clonePk',
+  'cloneVeicInspection',
   'insertAudit',
   'searchAudit',
   'getAnagSection',
@@ -162,6 +172,7 @@ exports.handler = async (event = {}) => {
   const {
     codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
     iddomain, timeop, pricewithvat, idpackage, section, actiontype, datefrom, dateto, username,
+    marketTarget, marketOrig,
   } = body;
   const manager = new HqManager();
 
@@ -255,6 +266,16 @@ exports.handler = async (event = {}) => {
     if (action === 'getPackageList') {
       const packages = await manager.getPackageList(market, oic);
       return response(200, { success: true, market, oic: oic ?? null, packages });
+    }
+
+    if (action === 'clonePk') {
+      await manager.clonePk(marketTarget, marketOrig);
+      return response(200, { success: true, marketTarget, marketOrig });
+    }
+
+    if (action === 'cloneVeicInspection') {
+      await manager.cloneVeicInspection(marketTarget, marketOrig, type);
+      return response(200, { success: true, marketTarget, marketOrig, type });
     }
 
     if (action === 'insertAudit') {
