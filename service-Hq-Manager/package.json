@@ -1,0 +1,42 @@
+{
+  "name": "service-hq-manager",
+  "version": "1.0.0",
+  "description": "Lambda service-Hq-Manager — API REST CRUD su woc.customer_options e woc.hq_settings_email (Aurora PostgreSQL via RDS Proxy)",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.800.0",
+    "@aws-sdk/client-ssm": "^3.800.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "index.js",
+      "validation.js",
+      "repository.js",
+      "shared/**/*.js"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
+  }
+}
