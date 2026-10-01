@@ -1718,6 +1718,57 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-synch-status"
       RetentionInDays: 30
 
+  # ── service-Hq-Manager (Aurora via RDS Proxy) ─────────────────────────────
+  #
+  # API REST CRUD su woc.customer_options e woc.hq_settings_email (WOC-201).
+  # Stessa architettura e stessi permessi (policy inline gestite da SAM) di
+  # IsStellantisBrandFunction: VPC access, X-Ray, ssm:GetParameter sui due
+  # parametri DB, secretsmanager:GetSecretValue, kms:Decrypt.
+  ServiceHqManagerFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ServiceHqManagerFunctionLogGroup
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-service-hq-manager"
+      CodeUri: service-Hq-Manager/
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub
+                  - "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/DB_SECRET_ARN", !Sub "/app/np-BSN0027990-${Environment}/DB_SECRET_ARN"]
+                - !Sub
+                  - "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/RDS_PROXY_ENDPOINT", !Sub "/app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT"]
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: "*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+      Environment:
+        Variables:
+          DB_SECRET_ARN_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/DB_SECRET_ARN
+            - !Sub /app/np-BSN0027990-${Environment}/DB_SECRET_ARN
+          RDS_PROXY_ENDPOINT_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/RDS_PROXY_ENDPOINT
+            - !Sub /app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT
+
+  ServiceHqManagerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      # Nome letterale per rompere la dipendenza LogGroup->Lambda
+      LogGroupName: !Sub "/aws/lambda/lmb-np-bsn0027990-${Environment}-service-hq-manager"
+      RetentionInDays: 30
+
 # ── Outputs ───────────────────────────────────────────────────────────────────
 
 Outputs:
@@ -1761,3 +1812,5 @@ Outputs:
     Value: !GetAtt IsStellantisBrandFunction.Arn
   SynchStatusFunctionArn:
     Value: !GetAtt SynchStatusFunction.Arn
+  ServiceHqManagerFunctionArn:
+    Value: !GetAtt ServiceHqManagerFunction.Arn
