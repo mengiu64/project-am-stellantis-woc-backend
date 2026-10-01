@@ -301,6 +301,68 @@ async function insertVehicleInspection(pool, market, type, descr, username, codm
 }
 
 /**
+ * Clona, per il tipo indicato (type), le righe di woc.hq_vehicle_inspection
+ * dal mercato marketOrig (eventualmente null/vuoto, cioe' le righe comuni
+ * senza mercato) al mercato marketTarget:
+ *  1) cancella logicamente (deleted = 1) le righe gia' presenti in
+ *     marketTarget per quel type;
+ *  2) clona (INSERT) tutte le righe di marketOrig per quel type (descr,
+ *     visible, deleted cosi' come sono in origine) con market = marketTarget.
+ * L'intera operazione viene eseguita in un'unica transazione (BEGIN/COMMIT
+ * su una connessione dedicata, ROLLBACK in caso di errore).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} marketTarget
+ * @param {string|null} [marketOrig] - se assente/vuoto, clona le righe comuni
+ *                                     senza mercato (market IS NULL OR market = '')
+ * @param {string} type
+ * @returns {Promise<void>}
+ */
+async function cloneVeicInspection(pool, marketTarget, marketOrig, type) {
+  if (!marketTarget) throw new Error('"marketTarget" is required');
+  if (!type) throw new Error('"type" is required');
+
+  const hasMarketOrig = marketOrig !== undefined && marketOrig !== null && marketOrig !== '';
+  const origCondition = hasMarketOrig ? 'market = $2' : "(market IS NULL OR market = '')";
+  const origParams = hasMarketOrig ? [type, marketOrig] : [type];
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `UPDATE woc.hq_vehicle_inspection
+          SET deleted = 1
+        WHERE market = $1
+          AND type = $2`,
+      [marketTarget, type],
+    );
+
+    const { rows: sourceRows } = await client.query(
+      `SELECT descr, visible, deleted
+         FROM woc.hq_vehicle_inspection
+        WHERE type = $1
+          AND ${origCondition}`,
+      origParams,
+    );
+    for (const { descr, visible, deleted } of sourceRows) {
+      await client.query(
+        `INSERT INTO woc.hq_vehicle_inspection (market, type, descr, visible, deleted)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [marketTarget, type, descr, visible, deleted],
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * @param {import('pg').Pool} pool
  * @param {{ market: string, oic: string }[]} pairs - coppie (market, oic) da verificare
  * @returns {Promise<Set<string>>} set di chiavi "market|oic" esplicitamente
@@ -920,6 +982,7 @@ module.exports = {
   setVehicleInspectionVisible,
   deletetVehicleInspection,
   insertVehicleInspection,
+  cloneVeicInspection,
   getDisabledOics,
   getEnableSignatureByOics,
   getAddressByOics,

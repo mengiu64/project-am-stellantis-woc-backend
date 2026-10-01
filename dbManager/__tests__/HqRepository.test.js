@@ -16,6 +16,7 @@ const {
   setVehicleInspectionVisible,
   deletetVehicleInspection,
   insertVehicleInspection,
+  cloneVeicInspection,
   getDisabledOics,
   getEnableSignatureByOics,
   getAddressByOics,
@@ -330,6 +331,110 @@ describe('HqRepository', () => {
         expect.stringContaining('INSERT INTO woc.hq_audit'),
         ['jdoe', 'EXTERIOR', '1000', 'insert', 'EXTERIOR Controllo carrozzeria visible: 1'],
       );
+    });
+  });
+
+  describe('cloneVeicInspection', () => {
+    function makeClientPool(queryImpl) {
+      const client = { query: jest.fn(queryImpl), release: jest.fn() };
+      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      return { pool, client };
+    }
+
+    it('throws when marketTarget is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(cloneVeicInspection(pool, undefined, '1000', 'EXTERIOR'))
+        .rejects.toThrow('"marketTarget" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('throws when type is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(cloneVeicInspection(pool, '2000', '1000', undefined))
+        .rejects.toThrow('"type" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('soft-deletes marketTarget rows and clones marketOrig rows for the given type in a single transaction', async () => {
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT') return {};
+        if (sql.includes('SELECT descr, visible, deleted')) {
+          return {
+            rows: [
+              { descr: 'Controllo carrozzeria', visible: 1, deleted: 0 },
+              { descr: 'Controllo pneumatici', visible: 0, deleted: 1 },
+            ],
+          };
+        }
+        return { rows: [] };
+      });
+
+      await cloneVeicInspection(pool, '2000', '1000', 'EXTERIOR');
+
+      expect(pool.connect).toHaveBeenCalledTimes(1);
+      expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE woc.hq_vehicle_inspection'),
+        ['2000', 'EXTERIOR'],
+      );
+      const [updateSql] = client.query.mock.calls[1];
+      expect(updateSql).toEqual(expect.stringContaining('SET deleted = 1'));
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT descr, visible, deleted'),
+        ['EXTERIOR', '1000'],
+      );
+      const [selectSql] = client.query.mock.calls[2];
+      expect(selectSql).toEqual(expect.stringContaining('market = $2'));
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_vehicle_inspection (market, type, descr, visible, deleted)'),
+        ['2000', 'EXTERIOR', 'Controllo carrozzeria', 1, 0],
+      );
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_vehicle_inspection (market, type, descr, visible, deleted)'),
+        ['2000', 'EXTERIOR', 'Controllo pneumatici', 0, 1],
+      );
+
+      expect(client.query).toHaveBeenLastCalledWith('COMMIT');
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('clones rows with marketOrig null/undefined (market IS NULL OR market = \'\')', async () => {
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT') return {};
+        if (sql.includes('SELECT descr, visible, deleted')) {
+          return { rows: [{ descr: 'Controllo comune', visible: 1, deleted: 0 }] };
+        }
+        return { rows: [] };
+      });
+
+      await cloneVeicInspection(pool, '2000', undefined, 'EXTERIOR');
+
+      const [selectSql, selectParams] = client.query.mock.calls[2];
+      expect(selectSql).toEqual(expect.stringContaining("(market IS NULL OR market = '')"));
+      expect(selectParams).toEqual(['EXTERIOR']);
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_vehicle_inspection (market, type, descr, visible, deleted)'),
+        ['2000', 'EXTERIOR', 'Controllo comune', 1, 0],
+      );
+    });
+
+    it('rolls back and releases the client when a query fails', async () => {
+      const error = new Error('boom');
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
+        if (sql.includes('UPDATE woc.hq_vehicle_inspection')) throw error;
+        return { rows: [] };
+      });
+
+      await expect(cloneVeicInspection(pool, '2000', '1000', 'EXTERIOR')).rejects.toThrow('boom');
+
+      expect(client.query).toHaveBeenCalledWith('BEGIN');
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalledTimes(1);
     });
   });
 
