@@ -701,7 +701,7 @@ describe('HqRepository', () => {
   });
 
   describe('getPackageList', () => {
-    it('1) market = null, oic = null: queries hq_pk_market with market IS NULL and no oic join', async () => {
+    it('1) market = null, oic = null: queries hq_pk_domain with market IS NULL and no hq_pk_market/hq_pk_oic join', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
       await getPackageList(pool, undefined, undefined);
@@ -709,11 +709,13 @@ describe('HqRepository', () => {
       expect(pool.query).toHaveBeenCalledTimes(1);
       const [sql, params] = pool.query.mock.calls[0];
       expect(params).toEqual([]);
-      expect(sql).toEqual(expect.stringContaining('SELECT mk.market, NULL::varchar AS oic'));
-      expect(sql).toEqual(expect.stringContaining('WHERE mk.market IS NULL'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain'));
+      expect(sql).toEqual(expect.stringContaining('SELECT dom.market, NULL::varchar AS oic'));
+      expect(sql).toEqual(expect.stringContaining('FROM woc.hq_pk_domain dom'));
+      expect(sql).toEqual(expect.stringContaining('WHERE dom.market IS NULL'));
+      expect(sql).toEqual(expect.stringContaining('AND dom.oic IS NULL AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain'));
       expect(sql).not.toEqual(expect.stringContaining('hq_pk_oic'));
+      expect(sql).not.toEqual(expect.stringContaining('hq_pk_market'));
       expect(sql).not.toEqual(expect.stringContaining('::text'));
     });
 
@@ -726,7 +728,7 @@ describe('HqRepository', () => {
       expect(params).toEqual([]);
     });
 
-    it('2) market = null, oic != null: joins hq_pk_oic with market IS NULL and filters dom/pk on oic = $1', async () => {
+    it('2) market = null, oic != null: queries hq_pk_oic with market IS NULL and filters dom/pk on oic = $1', async () => {
       const pool = makePool(async () => ({
         rows: [
           {
@@ -763,10 +765,14 @@ describe('HqRepository', () => {
       expect(pool.query).toHaveBeenCalledTimes(1);
       const [sql, params] = pool.query.mock.calls[0];
       expect(params).toEqual(['00006821']);
-      expect(sql).toEqual(expect.stringContaining('JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $1 AND oi.deleted = 0'));
-      expect(sql).toEqual(expect.stringContaining('WHERE mk.market IS NULL'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain'));
+      expect(sql).toEqual(expect.stringContaining('SELECT dom.market, oi.oic'));
+      expect(sql).toEqual(expect.stringContaining('FROM woc.hq_pk_oic oi'));
+      expect(sql).toEqual(expect.stringContaining('WHERE oi.market IS NULL'));
+      expect(sql).toEqual(expect.stringContaining('AND oi.oic = $1'));
+      expect(sql).toEqual(expect.stringContaining('AND oi.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain'));
+      expect(sql).not.toEqual(expect.stringContaining('hq_pk_market'));
     });
 
     it('3) market != null, oic != null: joins hq_pk_oic on (market, oic) and filters dom/pk on oic = $2', async () => {

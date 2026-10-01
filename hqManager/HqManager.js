@@ -450,6 +450,23 @@ class HqManager {
   }
 
   /**
+   * Clona, per il mercato indicato (marketOrig), tutte le righe di
+   * woc.hq_pk_oic/hq_pk_domain/hq_pk_packages in un nuovo mercato
+   * (marketTarget). Vedi dbManager/HqRepository.clonePk per i dettagli.
+   *
+   * @param {string} marketTarget
+   * @param {string} marketOrig
+   * @returns {Promise<void>}
+   */
+  async clonePk(marketTarget, marketOrig) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const { clonePk } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    await clonePk(pool, marketTarget, marketOrig);
+  }
+
+  /**
    * Registra una riga di audit (woc.hq_audit) generica, usata dall'azione
    * "insertAudit" dell'API. Lo username registrato NON e' quello passato
    * dal chiamante (v. index.js, che non lo estrae piu' dal body): e'

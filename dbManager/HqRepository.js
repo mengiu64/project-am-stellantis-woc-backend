@@ -641,11 +641,13 @@ async function setPackageVisible(pool, idpackage, value) {
  * delle 4 query viene eseguita (nessuna piu' costruita dinamicamente con
  * OR/cast ::text in WHERE):
  *  1) market non valorizzato, oic non valorizzato: righe "globali" (non
- *     legate a nessun mercato ne' a nessun OIC), dom.oic IS NULL / pk.oic
- *     IS NULL;
- *  2) market non valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
- *     cancellato (deleted = 0) con market IS NULL per l'oic indicato,
- *     restituisce SOLO i domini/pacchetti legati a quell'oic;
+ *     legate a nessun mercato ne' a nessun OIC); query diretta su
+ *     woc.hq_pk_domain (dom.market IS NULL AND dom.oic IS NULL), senza
+ *     passare per hq_pk_market;
+ *  2) market non valorizzato, oic valorizzato: query diretta su
+ *     woc.hq_pk_oic (oi.market IS NULL AND oi.oic = oic AND oi.deleted = 0),
+ *     senza passare per hq_pk_market, restituisce SOLO i domini/pacchetti
+ *     legati a quell'oic;
  *  3) market valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
  *     cancellato (deleted = 0) per (market, oic), restituisce SOLO i
  *     domini/pacchetti legati a quello specifico oic;
@@ -682,22 +684,21 @@ async function getPackageList(pool, market, oic) {
 
   if (!hasMarket && !hasOic) {
     // 1) market = null, oic = null: configurazione globale (nessun mercato, nessun OIC).
-    sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
-             FROM woc.hq_pk_market mk
-               FROM woc.hq_pk_market mk
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL and dom.oic IS NULL AND dom.deleted = 0
+    sql = `SELECT dom.market, NULL::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_domain dom  
              LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
-           WHERE mk.market IS NULL`;
+           WHERE dom.market IS NULL
+                 AND dom.oic IS NULL AND dom.deleted = 0`;
     params = [];
   } else if (!hasMarket && hasOic) {
     // 2) market = null, oic != null: OIC non legato a nessun mercato.
-    sql = `SELECT mk.market, oi.oic, ${selectColumns}
-             FROM woc.hq_pk_market mk
-             JOIN woc.hq_pk_oic oi ON dom.market IS NULL AND oi.deleted = 0
+    sql = `SELECT dom.market, oi.oic, ${selectColumns}
+             FROM woc.hq_pk_oic oi 
              LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
-           WHERE mk.market IS NULL
-             AND oi.oic = $1 `;
+           WHERE oi.market IS NULL
+             AND oi.oic = $1 
+             AND oi.deleted = 0`;
     params = [oic];
   } else if (hasMarket && hasOic) {
     // 3) market != null, oic != null: OIC legato ad uno specifico mercato.
@@ -705,7 +706,7 @@ async function getPackageList(pool, market, oic) {
              FROM woc.hq_pk_market mk
              JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
              LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
+             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
            WHERE mk.market = $1`;
     params = [market, oic];
   } else {
