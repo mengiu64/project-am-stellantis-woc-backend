@@ -14,8 +14,9 @@ il payload alla Push API SRP tramite `POST /jobCard`, usando **lo stesso client
 PingFederate/DGT della lambda `jobcard`** (`config.js`/`authService.js`/`httpClient.js`,
 copie sincronizzate con quelle di `jobcard`, che usa le stesse per le `GET
 /jobCardList` e `/jobCardDetails`). `saveJobcard` è replicata identica anche in
-`jobcard` (stesso `jobCardService.js::saveJobCard`), ma **API Gateway instrada le
-richieste POST verso la lambda `djc`**, non verso `jobcard`.
+`jobcard` (stesso `jobCardService.js::saveJobCard`). **Nota**: API Gateway
+instrada la POST `/api/repairorder/saveJobcard` (`/api/repairorder/{proxy+}`)
+verso la lambda **`jobcard`**, non verso `djc`.
 
 ## Struttura
 
@@ -24,6 +25,8 @@ djc/
 ├── index.js             ← CLI entry-point + Lambda handler (dispatcher per metodo)
 ├── DjcManager.js         ← classe orchestratore (payload json_orig/json_mod)
 ├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
+├── JobcardSyncActivityRepository.js ← UPSERT woc.jobcard_sync_activity (saveJobcard)
+├── db.js                 ← Pool pg verso Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
 ├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
 ├── dynamoCache.js        ← cache condivisa su DynamoDB (TmpCacheTable), sostituisce /tmp
@@ -34,7 +37,9 @@ djc/
 │   ├── jobCardService.test.js
 │   ├── authService.test.js
 │   ├── httpClient.test.js
-│   └── dynamoCache.test.js
+│   ├── dynamoCache.test.js
+│   ├── db.test.js
+│   └── JobcardSyncActivityRepository.test.js
 ├── package.json
 ├── .env.example           ← template variabili d'ambiente
 └── .env                    ← configurazione locale (non committare)
@@ -281,7 +286,8 @@ metodi `Save*`) da `<payloadJsonFile>` e lo invia con `POST /jobCard` usando lo
 stesso client PingFederate/DGT di `jobcard`. Richiede le variabili d'ambiente
 `JOBCARD_PING_CLIENT_ID`, `JOBCARD_PING_CLIENT_SECRET`, `DGT_CLIENT_ID`,
 `DGT_CLIENT_SECRET` (vedi `.env.example`); a differenza degli altri metodi, non
-richiede `--jobCardId`.
+richiede `--jobCardId`. Prima dell'invio registra il payload in
+`woc.jobcard_sync_activity` (v. sotto), quindi richiede anche `DJC_DB_*`.
 
 ```bash
 node index.js saveJobcard ./payload.json
@@ -322,9 +328,33 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
 ```
 
 `body` è inviato tal quale come payload della `POST /jobCard` (oppure, se presente,
-`body.payload`). **API Gateway instrada le richieste POST verso la lambda `djc`**
-per questa azione; la lambda `jobcard` espone la stessa azione (`jobCardService.js::
-saveJobCard`) per chiamata diretta/CLI, ma non è il target dell'integrazione POST.
+`body.payload`). La lambda `jobcard` espone la stessa azione (`jobCardService.js::
+saveJobCard`) ed è quella effettivamente integrata da API Gateway per la POST
+`/api/repairorder/saveJobcard`; questa versione resta per invocazione diretta/CLI.
+Entrambe registrano il payload in `woc.jobcard_sync_activity` (v. sotto).
+
+#### Tracciamento su DB: `woc.jobcard_sync_activity`
+
+Ad ogni `saveJobcard`, **prima** dell'invio a DGT, il payload (già ripulito
+dagli arricchimenti di sola UI, cioè esattamente quello inviato — v.
+`jobCardService.js::sanitizeJobCardPayload`) viene salvato con un UPSERT su
+`jobcardid` nella tabella `woc.jobcard_sync_activity` (DDL in
+`sql/create_table_jobcard_sync_activity.sql`, v. `JobcardSyncActivityRepository.js`):
+
+| Colonna | Valorizzazione |
+|---|---|
+| `jobcardid` (PK) | `roInfo.jobCardSrpId`, fallback `roInfo.dmsRepairOrderId`, poi `roInfo.jobCardLegacyId` |
+| `creationdate` | `now()` al primo inserimento; non modificata dagli UPSERT successivi |
+| `payload` (JSONB) | payload inviato a DGT; sovrascritto ad ogni `saveJobcard` |
+| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento |
+
+Il salvataggio è **bloccante**: se nessuno dei tre id è presente la lambda
+risponde `400` (`roInfo.jobCardSrpId/dmsRepairOrderId/jobCardLegacyId is required`),
+se il DB non è raggiungibile risponde `502`; in entrambi i casi il payload **non**
+viene inviato a DGT. Connessione: Aurora "wiadvisor" via RDS Proxy, utente
+`wiadvisor_app` dal secret Secrets Manager (layer Parameters and Secrets
+Extension), variabili `DJC_DB_HOST`/`DJC_DB_PORT`/`DJC_DB_NAME`/`DJC_DB_SECRET_ID`
+(in locale anche `DJC_DB_USER`/`DJC_DB_PASSWORD`/`DJC_DB_SSL`, v. `.env.example`).
 
 #### Payload: struttura e regole di obbligatorietà
 

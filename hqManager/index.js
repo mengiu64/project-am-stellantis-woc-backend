@@ -60,8 +60,8 @@
  *     dell'utente autenticato, event.requestContext.authorizer.sub — MAI
  *     un valore fornito nel body, salvo invocazione diretta/CLI senza
  *     requestContext.authorizer).
- *   - searchAudit(market, section, datefrom, dateto, actiontype): elenco
- *     righe di audit filtrate (tutti i filtri sono opzionali).
+ *   - searchAudit(market, section, datefrom, dateto, actiontype, username):
+ *     elenco righe di audit filtrate (tutti i filtri sono opzionali).
  *   - getAnagSection(): elenco delle sezioni HQ (config/hq_sections.json su
  *     S3, TranslationsBucket).
  *   - getAnagAllocation(): elenco dei tipi di azione di audit
@@ -161,7 +161,7 @@ exports.handler = async (event = {}) => {
 
   const {
     codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
-    iddomain, timeop, pricewithvat, idpackage, section, actiontype, datefrom, dateto,
+    iddomain, timeop, pricewithvat, idpackage, section, actiontype, datefrom, dateto, username,
   } = body;
   const manager = new HqManager();
 
@@ -265,8 +265,10 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'searchAudit') {
-      const audits = await manager.searchAudit(market, section, datefrom, dateto, actiontype);
-      return response(200, { success: true, market, section, datefrom, dateto, actiontype, audits });
+      const audits = await manager.searchAudit(market, section, datefrom, dateto, actiontype, username);
+      return response(200, {
+        success: true, market, section, datefrom, dateto, actiontype, username, audits,
+      });
     }
 
     if (action === 'getAnagSection') {

@@ -4,11 +4,11 @@ const http = require('http');
 const https = require('https');
 
 // Segreti Secrets Manager (client certificate/key mTLS) — GLI STESSI usati da myPeople
-// (vedi myPeople/certService.js): di default "apicCert"/"apicKey", configurabili via env
+// (vedi myPeople/certService.js): di default "sm-np-bsn0027990-dev-apic-cert"/"sm-np-bsn0027990-dev-apic-key" (in Lambda per ambiente via env), configurabili via env
 // solo per compatibilità/override (in template.yaml puntano allo stesso parametro
 // MyPeopleCertSecretId/MyPeopleKeySecretId, quindi allo stesso segreto fisico).
-const CERT_SECRET_ID = process.env.DOCSOA_CERT_SECRET_ID || 'apicCert';
-const KEY_SECRET_ID = process.env.DOCSOA_KEY_SECRET_ID || 'apicKey';
+const CERT_SECRET_ID = process.env.DOCSOA_CERT_SECRET_ID || 'sm-np-bsn0027990-dev-apic-cert';
+const KEY_SECRET_ID = process.env.DOCSOA_KEY_SECRET_ID || 'sm-np-bsn0027990-dev-apic-key';
 const EXTENSION_PORT = Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773;
 
 // Cache in-process del https.Agent (sopravvive tra invocazioni "warm" della stessa
@@ -20,7 +20,7 @@ let cachedAgentPromise = null;
  * Lambda Extension (layer), che espone una cache locale su http://localhost:<port>.
  * https://docs.aws.amazon.com/secretsmanager/latest/userguide/retrieving-secrets_lambda.html
  *
- * @param {string} secretId - nome/ARN del segreto (es. "apicCert")
+ * @param {string} secretId - nome/ARN del segreto (es. "sm-np-bsn0027990-dev-apic-cert")
  * @returns {Promise<string>} il valore SecretString del segreto
  */
 function fetchSecret(secretId) {
@@ -77,7 +77,7 @@ function extractPem(value) {
 
 /**
  * Scarica il certificato client (.cer/.pem) e la chiave privata (.key/.pem) da
- * Secrets Manager (segreti "apicCert"/"apicKey", configurabili via env, gli STESSI
+ * Secrets Manager (segreti "sm-np-bsn0027990-dev-apic-cert"/"sm-np-bsn0027990-dev-apic-key", configurabili via env, gli STESSI
  * usati da myPeople) e costruisce un https.Agent da usare per l'autenticazione mTLS
  * verso il gateway DocSOA (api-cert-preprod.groupe-psa.com/api/cert-aai).
  *

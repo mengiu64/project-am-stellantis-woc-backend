@@ -19,7 +19,8 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1083.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
-    "@aws-sdk/lib-dynamodb": "^3.1083.0"
+    "@aws-sdk/lib-dynamodb": "^3.1083.0",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
@@ -34,7 +35,9 @@
       "authService.js",
       "httpClient.js",
       "jobCardService.js",
-      "dynamoCache.js"
+      "dynamoCache.js",
+      "db.js",
+      "JobcardSyncActivityRepository.js"
     ],
     "coverageReporters": [
       "html",

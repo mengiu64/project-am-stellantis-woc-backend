@@ -13,9 +13,11 @@ const {
 } = require('../index');
 
 const { getPool } = require('../shared/dbClient');
+const { syncJobcardActivity } = require('../jobcardSyncActivity');
 
 // Mock modules
 jest.mock('../shared/dbClient');
+jest.mock('../jobcardSyncActivity', () => ({ syncJobcardActivity: jest.fn() }));
 jest.mock('../logger', () => {
   return class MockLogger {
     getTraceId() { return 'trace-12345'; }
@@ -36,6 +38,7 @@ describe('synch-status Lambda - 4 Event Types', () => {
       query: jest.fn()
     };
     getPool.mockResolvedValue(mockPool);
+    syncJobcardActivity.mockResolvedValue({ techReasonUpdated: true, businessReason: 'SYNCED', businessReasonUpdated: true });
   });
 
   // ─────────────────────────────────────────────────────────────────────
@@ -264,6 +267,11 @@ describe('synch-status Lambda - 4 Event Types', () => {
       expect(body.message).toBe('Event successfully received');
       expect(body.success).toBe(true);
       expect(body.response).toBeUndefined();
+      expect(syncJobcardActivity).toHaveBeenCalledWith(expect.objectContaining({
+        pool: mockPool,
+        jobCardId: 'JCID-42',
+        djcSyncStatus: 'SUCCESS_WITHOUT_UPDATE'
+      }));
     });
 
     it('DEVE registrare evento DMS_PUSH_SUCCESS_WITH_UPDATE e ritornare 200', async () => {
@@ -485,6 +493,25 @@ describe('synch-status Lambda - 4 Event Types', () => {
       const body = JSON.parse(response.body);
       expect(body.success).toBe(true);
       expect(body.message).toBe('Event successfully received');
+      // jobcard_sync_activity viene aggiornata anche se comunication_asyncro_djc non ha il record
+      expect(syncJobcardActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it('NON DEVE aggiornare jobcard_sync_activity se la query su comunication_asyncro_djc fallisce', async () => {
+      mockPool.query.mockRejectedValueOnce(new Error('statement timeout'));
+
+      const event = {
+        body: JSON.stringify({
+          eventType: 'DMS_PUSH_FAILURE',
+          jobCardSrpId: 'JCID-42',
+          timestamp: '2026-04-24T10:30:00Z',
+        })
+      };
+
+      const response = await handler(event, {});
+
+      expect(response.statusCode).toBe(504);
+      expect(syncJobcardActivity).not.toHaveBeenCalled();
     });
   });
 
