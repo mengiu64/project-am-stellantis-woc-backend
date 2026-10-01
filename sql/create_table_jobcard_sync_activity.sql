@@ -14,7 +14,9 @@
 --   - UPDATE (jobcardid già presente): solo payload (creationdate e gli altri
 --     campi restano invariati)
 -- ack/techreason/businessreason/lastupdate NON sono valorizzati da djc: vengono
--- popolati in un secondo momento (esito asincrono della sincronizzazione).
+-- popolati in un secondo momento da synch-status (esito asincrono della
+-- sincronizzazione): ack = OK/KO, techreason = djc_sync_status,
+-- businessreason = dmsSynchroStatus da jobCardDetails.
 -- ============================================================================
 
 BEGIN;
@@ -40,7 +42,7 @@ COMMENT ON TABLE  woc.jobcard_sync_activity                IS 'Payload saveJobca
 COMMENT ON COLUMN woc.jobcard_sync_activity.jobcardid      IS 'PK: id jobcard dal payload (roInfo.jobCardSrpId, fallback dmsRepairOrderId, poi jobCardLegacyId)';
 COMMENT ON COLUMN woc.jobcard_sync_activity.creationdate   IS 'Data del primo saveJobcard per la jobcard (non aggiornata sugli UPSERT successivi)';
 COMMENT ON COLUMN woc.jobcard_sync_activity.payload        IS 'Ultimo payload inviato a DGT (POST /jobCard)';
-COMMENT ON COLUMN woc.jobcard_sync_activity.ack            IS 'Esito (ack) della sincronizzazione — popolato in un secondo momento';
+COMMENT ON COLUMN woc.jobcard_sync_activity.ack            IS 'Esito (ack) della sincronizzazione: OK (DMS_PUSH_SUCCESS_*) / KO (DMS_PUSH_REFUSAL, DMS_PUSH_FAILURE) — popolato da synch-status';
 COMMENT ON COLUMN woc.jobcard_sync_activity.techreason     IS 'Motivazione tecnica dell''esito — popolata in un secondo momento';
 COMMENT ON COLUMN woc.jobcard_sync_activity.businessreason IS 'Motivazione di business dell''esito — popolata in un secondo momento';
 COMMENT ON COLUMN woc.jobcard_sync_activity.lastupdate     IS 'Data ultimo aggiornamento dell''esito — popolata in un secondo momento';

@@ -6,7 +6,9 @@
  *
  * Il record (jobcardid, creationdate, payload) è creato dalle lambda
  * jobcard/djc ad ogni saveJobcard; qui, alla ricezione dell'evento DJC:
- *   1) techreason     = djc_sync_status (mappato da eventType), lastupdate = now()
+ *   1) techreason     = djc_sync_status (mappato da eventType),
+ *      ack            = OK (DMS_PUSH_SUCCESS_WITHOUT_UPDATE / DMS_PUSH_SUCCESS_WITH_UPDATE)
+ *                       o KO (DMS_PUSH_REFUSAL / DMS_PUSH_FAILURE), lastupdate = now()
  *   2) businessreason = roInfo.dmsSynchroStatus restituito da jobCardDetails
  *                       (jobcard/jobCardService.js, imbarcato in-process via
  *                       Makefile), lastupdate = now()
@@ -17,9 +19,16 @@
 
 const path = require('path');
 
+const EVENT_TYPE_TO_ACK = Object.freeze({
+  DMS_PUSH_SUCCESS_WITHOUT_UPDATE: 'OK',
+  DMS_PUSH_SUCCESS_WITH_UPDATE: 'OK',
+  DMS_PUSH_REFUSAL: 'KO',
+  DMS_PUSH_FAILURE: 'KO',
+});
+
 const UPDATE_TECHREASON_SQL = `
   UPDATE woc.jobcard_sync_activity
-  SET techreason = $2, lastupdate = now()
+  SET techreason = $2, ack = $3, lastupdate = now()
   WHERE jobcardid = $1
   RETURNING jobcardid`;
 
@@ -53,27 +62,28 @@ async function fetchDmsSynchroStatus(jobCardId, deps = loadJobcardServices()) {
 }
 
 /**
- * Aggiorna techreason e poi businessreason di woc.jobcard_sync_activity per la
+ * Aggiorna techreason/ack e poi businessreason di woc.jobcard_sync_activity per la
  * jobcard indicata. Non solleva mai eccezioni.
  * @param {object} params
  * @param {import('pg').Pool} params.pool
  * @param {string} params.jobCardId
  * @param {string} params.djcSyncStatus
+ * @param {string} params.eventType - evento DJC, determina ack (OK/KO)
  * @param {object} params.logger
  * @param {object} [params.deps] - servizi jobcard, iniettabili nei test
  * @returns {Promise<{techReasonUpdated: boolean, businessReason: (string|null), businessReasonUpdated: boolean}>}
  */
-async function syncJobcardActivity({ pool, jobCardId, djcSyncStatus, logger, deps }) {
-  const outcome = { techReasonUpdated: false, businessReason: null, businessReasonUpdated: false };
+async function syncJobcardActivity({ pool, jobCardId, djcSyncStatus, eventType, logger, deps }) {
+  const outcome = { techReasonUpdated: false, ack: EVENT_TYPE_TO_ACK[eventType] ?? null, businessReason: null, businessReasonUpdated: false };
 
   try {
-    const tech = await pool.query(UPDATE_TECHREASON_SQL, [jobCardId, djcSyncStatus]);
+    const tech = await pool.query(UPDATE_TECHREASON_SQL, [jobCardId, djcSyncStatus, outcome.ack]);
     if (!tech.rows || tech.rows.length === 0) {
-      logger.warn('⚠️  jobcard_sync_activity: record non trovato, techreason/businessreason non aggiornati', { jobCardId });
+      logger.warn('⚠️  jobcard_sync_activity: record non trovato, techreason/ack/businessreason non aggiornati', { jobCardId });
       return outcome;
     }
     outcome.techReasonUpdated = true;
-    logger.info('✅ jobcard_sync_activity: techreason aggiornato', { jobCardId, techreason: djcSyncStatus });
+    logger.info('✅ jobcard_sync_activity: techreason/ack aggiornati', { jobCardId, techreason: djcSyncStatus, ack: outcome.ack });
   } catch (err) {
     logger.error('❌ jobcard_sync_activity: errore aggiornamento techreason', { jobCardId, errorMessage: err.message });
     return outcome;
@@ -101,6 +111,7 @@ module.exports = {
   syncJobcardActivity,
   fetchDmsSynchroStatus,
   loadJobcardServices,
+  EVENT_TYPE_TO_ACK,
   UPDATE_TECHREASON_SQL,
   UPDATE_BUSINESSREASON_SQL,
 };
