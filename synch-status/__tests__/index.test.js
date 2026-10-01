@@ -270,7 +270,8 @@ describe('synch-status Lambda - 4 Event Types', () => {
       expect(syncJobcardActivity).toHaveBeenCalledWith(expect.objectContaining({
         pool: mockPool,
         jobCardId: 'JCID-42',
-        djcSyncStatus: 'SUCCESS_WITHOUT_UPDATE'
+        djcSyncStatus: 'SUCCESS_WITHOUT_UPDATE',
+        eventType: 'DMS_PUSH_SUCCESS_WITHOUT_UPDATE'
       }));
     });
 
