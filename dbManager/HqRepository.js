@@ -636,24 +636,31 @@ async function setPackageVisible(pool, idpackage, value) {
  * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
  * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
  *
- * "market" e' obbligatorio, "oic" e' facoltativo:
- *  - se oic e' valorizzato, richiede che esista un woc.hq_pk_oic non
- *    cancellato (deleted = 0) per (market, oic) e restituisce SOLO i domini/
- *    pacchetti legati a quello specifico oic (dom.oic = oic, pk.oic = oic);
- *  - se oic e' null/undefined, restituisce SOLO la configurazione "a livello
- *    mercato" (non legata a nessun OIC), cioe' le righe con dom.oic IS NULL /
- *    pk.oic IS NULL.
- * Le due varianti NON passano piu' per un JOIN su woc.hq_pk_oic condiviso: in
- * precedenza dom/pk venivano agganciati tramite "IS NOT DISTINCT FROM oi.oic"
- * ancorato all'unico oi.oic risolto dalla LEFT JOIN su hq_pk_oic, quindi per
- * un mercato con almeno un OIC configurato i domini "a livello mercato"
- * (oic IS NULL) non venivano MAI raggiunti dal join, a prescindere dal filtro
- * WHERE (bug: con oic omesso, la risposta conteneva comunque i domini
- * dell'OIC anziche' quelli a livello mercato). I domini cancellati
- * logicamente (dom.deleted = 1) sono sempre esclusi (dom.deleted = 0).
+ * "market" e "oic" sono entrambi facoltativi (null/undefined/stringa vuota
+ * equivalgono a "non valorizzato") e la combinazione dei due determina QUALE
+ * delle 4 query viene eseguita (nessuna piu' costruita dinamicamente con
+ * OR/cast ::text in WHERE):
+ *  1) market non valorizzato, oic non valorizzato: righe "globali" (non
+ *     legate a nessun mercato ne' a nessun OIC), dom.oic IS NULL / pk.oic
+ *     IS NULL;
+ *  2) market non valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
+ *     cancellato (deleted = 0) con market IS NULL per l'oic indicato,
+ *     restituisce SOLO i domini/pacchetti legati a quell'oic;
+ *  3) market valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
+ *     cancellato (deleted = 0) per (market, oic), restituisce SOLO i
+ *     domini/pacchetti legati a quello specifico oic;
+ *  4) market valorizzato, oic non valorizzato: restituisce SOLO la
+ *     configurazione "a livello mercato" (non legata a nessun OIC), cioe' le
+ *     righe con dom.oic IS NULL / pk.oic IS NULL per quel mercato.
+ * In tutti i casi dom/pk vengono agganciati per oic esplicito (oic = $n o
+ * IS NULL), mai tramite un oi.oic unico risolto da una LEFT JOIN condivisa:
+ * questo evita che, con oic omesso, i domini "a livello mercato" (oic IS
+ * NULL) restino irraggiungibili quando il mercato ha gia' almeno un OIC
+ * configurato. I domini cancellati logicamente (dom.deleted = 1) sono sempre
+ * esclusi (dom.deleted = 0).
  *
  * @param {import('pg').Pool} pool
- * @param {string} market
+ * @param {string|null} [market]
  * @param {string|null} [oic]
  * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
@@ -667,32 +674,49 @@ async function getPackageList(pool, market, oic) {
                           , pk.pricewithvat
                           , pk.visible AS pkvisible`;
 
-  const { rows } = oic
-    ? await pool.query(
-      `SELECT mk.market, oi.oic, ${selectColumns}
-         FROM woc.hq_pk_market mk
-         JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
-         LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-         LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
-       WHERE (
-               (($1::text IS NULL OR $1::text = '') AND mk.market IS NULL)
-                 OR
-               ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
-               )`,
-      [market, oic],
-    )
-    : await pool.query(
-      `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
-         FROM woc.hq_pk_market mk
-         LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
-         LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
-       WHERE (
-               (($1::text IS NULL OR $1::text = '') AND dom.market IS NULL)
-                 OR
-               ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
-               )`,
-      [market],
-    );
+  const hasMarket = market !== null && market !== undefined && market !== '';
+  const hasOic = oic !== null && oic !== undefined && oic !== '';
+
+  let sql;
+  let params;
+
+  if (!hasMarket && !hasOic) {
+    // 1) market = null, oic = null: configurazione globale (nessun mercato, nessun OIC).
+    sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_market mk
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
+           WHERE mk.market IS NULL`;
+    params = [];
+  } else if (!hasMarket && hasOic) {
+    // 2) market = null, oic != null: OIC non legato a nessun mercato.
+    sql = `SELECT mk.market, oi.oic, ${selectColumns}
+             FROM woc.hq_pk_market mk
+             JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $1 AND oi.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
+           WHERE mk.market IS NULL`;
+    params = [oic];
+  } else if (hasMarket && hasOic) {
+    // 3) market != null, oic != null: OIC legato ad uno specifico mercato.
+    sql = `SELECT mk.market, oi.oic, ${selectColumns}
+             FROM woc.hq_pk_market mk
+             JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
+           WHERE mk.market = $1`;
+    params = [market, oic];
+  } else {
+    // 4) market != null, oic = null: configurazione "a livello mercato" (nessun OIC).
+    sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_market mk
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
+           WHERE mk.market = $1`;
+    params = [market];
+  }
+
+  const { rows } = await pool.query(sql, params);
 
   return rows.map((row) => ({
     market: row.market,
