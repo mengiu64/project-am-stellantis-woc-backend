@@ -447,7 +447,7 @@ async function setOicEnable(pool, market, oic) {
 
   await pool.query(
     `INSERT INTO woc.hq_pk_oic (market, oic, deleted)
-     VALUES ($1, $2, 0)
+     VALUES (NULLIF($1, ''), $2, 0)
      ON CONFLICT (market, oic) DO UPDATE SET deleted = 0`,
     [market, oic],
   );
@@ -466,7 +466,7 @@ async function setOicEnable(pool, market, oic) {
 async function insertDomain(pool, market, oic, descr) {
   const { rows } = await pool.query(
     `INSERT INTO woc.hq_pk_domain (market, oic, descr)
-     VALUES ($1, $2, $3)
+     VALUES (NULLIF($1, ''), $2, $3)
      RETURNING iddomain`,
     [market, oic, descr],
   );
@@ -555,7 +555,7 @@ async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewi
 
   const { rows } = await pool.query(
     `INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)
-     VALUES ($1, $2, $3, $4, $5, $6)
+     VALUES (NULLIF($1, ''), $2, $3, $4, $5, $6)
      RETURNING idpackage`,
     [market, oic, iddomain, descr, timeop, pricewithvat],
   );
@@ -687,7 +687,7 @@ async function getPackageList(pool, market, oic) {
          LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
          LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
        WHERE (
-               (($1::text IS NULL OR $1::text = '') AND mk.market IS NULL)
+               (($1::text IS NULL OR $1::text = '') AND dom.market IS NULL)
                  OR
                ($1::text IS NOT NULL AND $1::text <> '' AND mk.market = $1::text)
                )`,
