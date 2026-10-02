@@ -1082,11 +1082,11 @@ DMLCONFIGSYNC_DB_SSL=true                     # (optional) default true
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
 AWS_REGION=eu-west-1                                                  # (optional in Lambda: already set automatically by AWS)
 ```
 
-> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is automatically set by `template.yaml` (`!Sub "rds-np-bsn0027990-${Environment}-aurora"`), no DB secret/credential required (uses only the RDS management API via IAM, no database connection).
+> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is set by the `AuroraAutoStartClusterIdentifier` template parameter (by default the migrated stage cluster; when empty it falls back to the historical name). The IAM policy targets the same cluster. No DB secret/credential is required (only the RDS management API is used).
 
 ---
 
