@@ -367,6 +367,8 @@ Before being returned, the response is enriched by `sanitizeJobCardDetails` with
 
 Additionally, before being persisted to cache (`saveJobCardDetailsToTmp`), the response is also enriched with data from the DML gateway (`getDataFromDML`/`getCartPriceAndAvailability`, see below): `jobs[].partInfo[]`/`jobs[].laborInfo[]` already receive updated price/availability/discount, using the same (optional) `sessionContext` passed to `getJobCardDetails` — best-effort, does not block the response if `dms` is unreachable.
 
+Recalculated monetary amounts are rounded to two decimal places. If `dmsDiscountPercentage` already matches the DML value, the discount is not recalculated: when the price is unchanged, `jobs[].dmsOverride` remains `false`; a changed DML price is still updated using the existing discount.
+
 See `jobcard/README.md` for the full rule table.
 
 #### `getCartPriceAndAvailability` (`dml` action) — dynamic Sender

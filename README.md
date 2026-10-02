@@ -375,6 +375,8 @@ Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDeta
 
 Inoltre, prima di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene arricchita anche con i dati del gateway DML (`getDataFromDML`/`getCartPriceAndAvailability`, v. sotto): `jobs[].partInfo[]`/`jobs[].laborInfo[]` ricevono così già prezzo/disponibilità/sconto aggiornati, con lo stesso `sessionContext` (opzionale) passato a `getJobCardDetails` — best-effort, non blocca la risposta in caso di problemi verso `dms`.
 
+Gli importi monetari ricalcolati sono arrotondati a due decimali. Se `dmsDiscountPercentage` coincide già con il valore DML, lo sconto non viene ricalcolato: con prezzo invariato `jobs[].dmsOverride` resta `false`; un prezzo DML diverso viene invece aggiornato usando lo sconto già presente.
+
 Vedi `jobcard/README.md` per la tabella completa delle regole.
 
 #### `saveJobcard` (POST `/jobCard`)
@@ -1742,4 +1744,3 @@ Il comando genera nella cartella `coverage/`:
 - `lcov-report/index.html` — report HTML navigabile per file e riga
 - `cobertura-coverage.xml` — formato XML per integrazione CI
 - `coverage-summary.json` — riepilogo JSON con le percentuali per modulo
-
