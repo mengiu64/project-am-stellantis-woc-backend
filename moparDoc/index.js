@@ -128,6 +128,28 @@ const ACTIONS = {
   createJobCardAndUploadDocument, // NUOVO: orchestra createJobCard + getUploadDocURL + PUT su S3 + uploadedDoc in un'unica chiamata
 };
 
+// Azioni che ricevono, oltre al body, opzioni interne non sovrascrivibili dal chiamante
+const ACTIONS_WITH_IDENTITY = ['createJobCardAndUploadDocument'];
+
+/**
+ * Risolve l'utente autenticato (created_by dei metadati di ispezione).
+ * Se l'evento ha un requestContext.authorizer, SOLO authorizer.sub è
+ * attendibile (null se assente): stessa regola di session/src/index.js e
+ * pkFavorite/index.js, un client non deve poter impersonare un altro utente.
+ * Il fallback su body.UserName è ammesso SOLO quando l'evento non ha alcun
+ * requestContext.authorizer (invocazione diretta Lambda / CLI di test).
+ * @param {object} event
+ * @param {object} body
+ * @returns {string|null}
+ */
+function resolveCreatedBy(event, body) {
+  const authorizer = event && event.requestContext && event.requestContext.authorizer;
+  if (authorizer) {
+    return authorizer.sub || null;
+  }
+  return (body && body.UserName) || null;
+}
+
 exports.handler = async (event) => {
   // Log: Riceve l'evento API Gateway e inizia a elaborare la richiesta
   console.log('[handler] Richiesta ricevuta. Event:', JSON.stringify(event, null, 2));
@@ -157,7 +179,11 @@ exports.handler = async (event) => {
     console.log(`[handler] Esecuzione azione: ${action} con payload:`, JSON.stringify(body.payload ?? body, null, 2));
     
     // Esegue il metodo corrispondente dall'oggetto ACTIONS
-    const result = await ACTIONS[action](body.payload ?? body);
+    // (per le azioni con identita', l'utente autenticato e' passato come opzione interna separata dal body)
+    const payload = body.payload ?? body;
+    const result = ACTIONS_WITH_IDENTITY.includes(action)
+      ? await ACTIONS[action](payload, { createdBy: resolveCreatedBy(event, payload) })
+      : await ACTIONS[action](payload);
     
     // Log di successo: informa che l'azione è stata completata con successo
     console.log(`[handler] Azione "${action}" completata con successo. Risultato:`, JSON.stringify(result, null, 2));
@@ -201,7 +227,10 @@ async function runAction(action, payloadJsonFile) {
   
   // Esegue l'azione recuperandola dal dispatcher ACTIONS
   console.log(`[CLI] Esecuzione azione: ${action}...`);
-  const result = await ACTIONS[action](payload);
+  // Da CLI non c'e' authorizer: per le azioni con identita' si usa il fallback su UserName
+  const result = ACTIONS_WITH_IDENTITY.includes(action)
+    ? await ACTIONS[action](payload, { createdBy: resolveCreatedBy({}, payload) })
+    : await ACTIONS[action](payload);
   
   // Log: stampa il risultato
   console.log(`[CLI] Risultato:`, JSON.stringify(result, null, 2));
@@ -253,3 +282,5 @@ async function main() {
 if (require.main === module) {
   main();
 }
+
+exports.resolveCreatedBy = resolveCreatedBy;

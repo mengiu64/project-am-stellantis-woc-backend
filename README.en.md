@@ -16,6 +16,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [agendaSoaNaga](#agendasoanaga)
    - [dms](#dms)
    - [jobcard](#jobcard)
+   - [moparDoc](#mopardoc)
    - [v360](#v360)
    - [pkEper](#pkeper)
    - [pkDocsoa](#pkdocsoa)
@@ -426,6 +427,60 @@ node index.js details <jobCardId>
 # e.g.: node index.js list 0062219 vin=VIN123 page=2
 # e.g.: node index.js details 79
 ```
+
+---
+
+### moparDoc
+
+Lambda for the MoparDoc/job-docs gateways (documents attached to job cards):
+`createJobCard`, `createAccessToken`, `getUploadDocURL`, `uploadedDoc`,
+`getDocuments`, `getJobCardAndDocumentList`, `deleteDocumentsByVin`,
+`createJobCardAndUploadDocument` and the other actions listed in `moparDoc/index.js`.
+See the Italian `README.md` and `moparDoc/README.md` for the full details.
+
+#### Inspection photo metadata (`woc.mopardoc_inspection_media`)
+
+`createJobCardAndUploadDocument` accepts optional, nullable inspection metadata
+that is **not** forwarded to Mopar but stored on Aurora
+(`moparDoc/InspectionMetadataRepository.js` + `moparDoc/db.js`):
+
+| Field | Type | Allowed values |
+|---|---|---|
+| `Kind` | string | `pin` \| `general` |
+| `TabId` | string | `vehicle` \| `tyres` \| `dashboard` |
+| `DamageArea` | string | `front` \| `left` \| `right` \| `top` \| `rear` \| `generic` |
+| `Description` | string | max 1000 chars (longer values are truncated) |
+| `PosX`, `PosY` | number (or numeric string) | 0..100 (percentage on the diagram) |
+| `CapturedAt` | string | ISO 8601 date-time |
+
+- **Normalization (never a 400 because of metadata):** strings are trimmed;
+  empty/whitespace/missing → `null`; values outside the enum whitelists,
+  non-finite or out-of-range numbers, unparsable dates and wrong types → `null`
+  + `console.warn`. When **all** metadata are `null` no row is written.
+- **Write:** after the successful Mopar upload (non-blocking STEP 5) UPSERT on
+  `document_id` (= Mopar `DocumentId`) with `jobcard_id`, `vin` and
+  `created_by` = `requestContext.authorizer.sub` (internal option set by
+  `index.js`, cannot be overridden by the body; falls back to `body.UserName`
+  only when the event has no `requestContext.authorizer` at all, e.g. direct
+  invocation/CLI). The response keeps all existing fields and adds
+  `metadataSaved` (boolean) and `steps.saveInspectionMetadata`
+  (`{ saved, reason }`, reason = `saved` | `no-metadata` | `db-not-configured` |
+  `missing-keys` | `db-error`). DB failure or missing configuration still
+  returns `200` with `metadataSaved: false`.
+- **Read:** `getDocuments` and `getJobCardAndDocumentList` add
+  `InspectionMetadata` to every document of `jobCardList[].DocumentList[]` (and
+  of a top-level `DocumentList[]` if present), matched by `ID`:
+  `{ Kind, TabId, DamageArea, Description, PosX, PosY, CapturedAt }` (`PosX`/`PosY`
+  numbers, `CapturedAt` ISO string) or `null` (no row / DB unavailable; on DB
+  errors the upstream response is otherwise unchanged).
+- **Delete:** `deleteDocumentsByVin`, after a successful `DeleteDocuments`,
+  physically deletes the rows of the deleted documents (excluding those in
+  `ErrorDocumentID`); DB errors are only logged.
+
+> **Table must be created manually:** `sql/create_table_mopardoc_inspection_media.sql`
+> is **not** run by the pipeline; apply it on Aurora (DEV/stage/prod) before
+> deploying. Without the table (or without `MOPARDOC_DB_HOST`) uploads still
+> work, with `metadataSaved: false` and `InspectionMetadata: null`.
 
 ---
 
@@ -954,6 +1009,20 @@ DBMANAGER_DB_HOST=...
 DBMANAGER_DB_PORT=5432
 DBMANAGER_DB_NAME=...
 DBMANAGER_DB_SECRET_ID=...
+```
+
+### moparDoc
+
+```env
+MOPARDOC_PING_CLIENT_ID=...         # PingFederate Client ID (moparDoc-dedicated)
+MOPARDOC_PING_CLIENT_SECRET=...     # PingFederate Client Secret (moparDoc-dedicated)
+MOPARDOC_IBM_CLIENT_ID=...          # X-IBM-Client-Id (job-docs connector + MoparDocs Browser API)
+MOPARDOC_IBM_CLIENT_SECRET=...      # X-IBM-Client-Secret (job-docs connector + MoparDocs Browser API)
+MOPARDOC_DB_HOST=...                # RDS Proxy endpoint, Aurora "wiadvisor" (woc.mopardoc_inspection_media); optional: if empty inspection metadata is ignored
+MOPARDOC_DB_SECRET_ID=...           # wiadvisor_app Aurora secret (default sm-np-bsn0027990-dev-aurora-app); locally MOPARDOC_DB_USER/MOPARDOC_DB_PASSWORD can be used instead
+MOPARDOC_DB_PORT=5432               # optional (default from secret / 5432)
+MOPARDOC_DB_NAME=wiadvisor          # optional (default from secret / wiadvisor)
+MOPARDOC_DB_SSL=true                # false only for local Postgres without TLS
 ```
 
 ### v360
