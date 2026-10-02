@@ -751,9 +751,8 @@ function resolveDmlPartSource(partsItem) {
  * uno dei suoi partInfo[]/laborInfo[] ha subito un vero e proprio override
  * da parte del DMS, cioe' se il prezzo (originalPriceExclVat) ricalcolato
  * con i dati DML risulta effettivamente diverso da quello precedente (v.
- * isPriceChanged) e/o se e' stato applicato uno sconto DMS
- * (dmsDiscountPercentage!=0, v. reconcileDiscountPercentages) — l'override
- * puo' quindi avvenire anche solo per il prezzo, senza alcuno sconto.
+ * isPriceChanged) e/o se lo sconto DMS e' cambiato rispetto al dettaglio.
+ * Uno sconto DMS gia' uguale non viene applicato una seconda volta.
  * Un semplice match PartNumber/LaborOperationID nella risposta DML che non
  * porta ne' un prezzo diverso ne' uno sconto (es. solo dati di
  * disponibilita/BinLocation, come nel caso di ricambi "in stock" senza
@@ -770,9 +769,11 @@ function resolveDmlPartSource(partsItem) {
  * job.discountInAmountOnPriceWithVat/job.discountInPercentage; questo flag
  * guida la riconciliazione tra sconto applicativo (appDiscountPercentage) e
  * sconto DMS (dmsDiscountPercentage) di ogni part/labor (v.
- * reconcileDiscountPercentages). I prezzi di ciascun part/labor vengono poi
- * ricalcolati (v. computePartPriceFields/computeLaborPriceFields) usando la
- * somma dei due sconti — ma solo se itemQuantity/unitaryPriceExclVat (part) o
+ * reconcileDiscountPercentages), solo quando lo sconto restituito e' diverso
+ * da quello gia' presente. I prezzi vengono ricalcolati solo quando cambia
+ * prezzo o sconto, usando la somma dei due sconti, e arrotondati a due
+ * decimali (v. computePartPriceFields/computeLaborPriceFields) — ma solo se
+ * itemQuantity/unitaryPriceExclVat (part) o
  * laborDuration/UnitaryTimeAmount (labor) sono entrambi definiti e diversi da
  * zero, per evitare di sovrascrivere i campi prezzo con zeri quando manca
  * quantita' o prezzo/tariffa unitaria (v. computePartPriceFields).
@@ -892,11 +893,11 @@ function computePartPriceFields(itemQuantity, unitaryPriceExclVat, appDiscountPe
   const vat = vatPercentage ?? 0;
   const discount = (appDiscountPercentage ?? 0) + (dmsDiscountPercentage ?? 0);
 
-  const originalPriceExclVat = quantity * unitPrice;
-  const originalPriceWithVat = originalPriceExclVat * (1 + vat / 100);
-  const priceExclVatAfterDiscount = originalPriceExclVat * (1 - discount / 100);
-  const priceWithVatAfterDiscount = priceExclVatAfterDiscount * (1 + vat / 100);
-  const discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+  const originalPriceExclVat = roundMoney(quantity * unitPrice);
+  const originalPriceWithVat = roundMoney(originalPriceExclVat * (1 + vat / 100));
+  const priceExclVatAfterDiscount = roundMoney(originalPriceExclVat * (1 - discount / 100));
+  const priceWithVatAfterDiscount = roundMoney(priceExclVatAfterDiscount * (1 + vat / 100));
+  const discountInAmountOnPriceWithVat = roundMoney(originalPriceWithVat - priceWithVatAfterDiscount);
 
   return {
     originalPriceExclVat,
@@ -926,12 +927,12 @@ function computeLaborPriceFields(laborDuration, laborRate, appDiscountPercentage
   const vat = vatPercentage ?? 0;
   const discount = (appDiscountPercentage ?? 0) + (dmsDiscountPercentage ?? 0);
 
-  const laborRateAmount = rate;
-  const originalPriceExclVat = duration * rate;
-  const originalPriceWithVat = originalPriceExclVat * (1 + vat / 100);
-  const priceExclVatAfterDiscount = originalPriceExclVat * (1 - discount / 100);
-  const priceWithVatAfterDiscount = priceExclVatAfterDiscount * (1 + vat / 100);
-  const discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+  const laborRateAmount = roundMoney(rate);
+  const originalPriceExclVat = roundMoney(duration * laborRateAmount);
+  const originalPriceWithVat = roundMoney(originalPriceExclVat * (1 + vat / 100));
+  const priceExclVatAfterDiscount = roundMoney(originalPriceExclVat * (1 - discount / 100));
+  const priceWithVatAfterDiscount = roundMoney(priceExclVatAfterDiscount * (1 + vat / 100));
+  const discountInAmountOnPriceWithVat = roundMoney(originalPriceWithVat - priceWithVatAfterDiscount);
 
   return {
     laborRateAmount,
@@ -941,6 +942,42 @@ function computeLaborPriceFields(laborDuration, laborRate, appDiscountPercentage
     priceWithVatAfterDiscount,
     discountInAmountOnPriceWithVat,
   };
+}
+
+/**
+ * Arrotonda un importo monetario a due decimali, evitando artefatti binari
+ * come 110.91752000000001 nei risultati JSON.
+ * @param {number} value - importo da arrotondare
+ * @returns {number}
+ */
+function roundMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return amount;
+  return Math.sign(amount) * Math.round((Math.abs(amount) + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Arrotonda i campi monetari già presenti su un part o una manodopera.
+ * @param {object} item - elemento partInfo[] o laborInfo[]
+ */
+function roundItemPriceFields(item) {
+  for (const field of [
+    'unitaryPriceExclVat',
+    'laborRateAmount',
+    'originalPriceExclVat',
+    'originalPriceWithVat',
+    'priceExclVatAfterDiscount',
+    'priceWithVatAfterDiscount',
+    'discountInAmountOnPriceWithVat',
+  ]) {
+    if (item[field] !== undefined && item[field] !== null) {
+      item[field] = roundMoney(item[field]);
+    }
+  }
+}
+
+function samePercentage(left, right) {
+  return Number(left ?? 0) === Number(right ?? 0);
 }
 
 /**
@@ -1005,14 +1042,14 @@ function recalculateJobTotals(job) {
   const priceExclVatAfterDiscount = sumField(parts, 'priceExclVatAfterDiscount') + sumField(labors, 'priceExclVatAfterDiscount');
   const priceWithVatAfterDiscount = sumField(parts, 'priceWithVatAfterDiscount') + sumField(labors, 'priceWithVatAfterDiscount');
 
-  job.originalPriceExclVat = originalPriceExclVat;
-  job.originalPriceWithVat = originalPriceWithVat;
-  job.priceExclVatAfterDiscount = priceExclVatAfterDiscount;
-  job.priceWithVatAfterDiscount = priceWithVatAfterDiscount;
-  job.discountInAmountOnPriceWithVat = originalPriceWithVat - priceWithVatAfterDiscount;
+  job.originalPriceExclVat = roundMoney(originalPriceExclVat);
+  job.originalPriceWithVat = roundMoney(originalPriceWithVat);
+  job.priceExclVatAfterDiscount = roundMoney(priceExclVatAfterDiscount);
+  job.priceWithVatAfterDiscount = roundMoney(priceWithVatAfterDiscount);
+  job.discountInAmountOnPriceWithVat = roundMoney(originalPriceWithVat - priceWithVatAfterDiscount);
 
-  job.totalPartsAmountRequested = sumField(parts, 'originalPriceExclVat');
-  job.totalLaborAmountRequested = sumField(labors, 'originalPriceExclVat');
+  job.totalPartsAmountRequested = roundMoney(sumField(parts, 'originalPriceExclVat'));
+  job.totalLaborAmountRequested = roundMoney(sumField(labors, 'originalPriceExclVat'));
   job.totalLaborDurationRequested = sumField(labors, 'laborDuration');
 }
 
@@ -1051,14 +1088,14 @@ function recalculateRoInfoTotals(jobCardDetail) {
 
   roInfo.totalPrice = {
     ...roInfo.totalPrice,
-    originalPriceExclVat: sumField(jobs, 'originalPriceExclVat'),
-    originalPriceWithVat: sumField(jobs, 'originalPriceWithVat'),
-    priceExclVatAfterDiscount: sumField(jobs, 'priceExclVatAfterDiscount'),
-    priceWithVatAfterDiscount: sumField(jobs, 'priceWithVatAfterDiscount'),
-    totalCustomerWithVat: sumPriceWithVatByPaymentType(jobs, 'CUSTOMER'),
-    totalInsuranceWithVat: sumPriceWithVatByPaymentType(jobs, 'INSURANCE'),
-    totalManufacturerWithVat: sumPriceWithVatByPaymentType(jobs, 'MANUFACTURER'),
-    totalInternalWithVat: sumPriceWithVatByPaymentType(jobs, 'INTERNAL'),
+    originalPriceExclVat: roundMoney(sumField(jobs, 'originalPriceExclVat')),
+    originalPriceWithVat: roundMoney(sumField(jobs, 'originalPriceWithVat')),
+    priceExclVatAfterDiscount: roundMoney(sumField(jobs, 'priceExclVatAfterDiscount')),
+    priceWithVatAfterDiscount: roundMoney(sumField(jobs, 'priceWithVatAfterDiscount')),
+    totalCustomerWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'CUSTOMER')),
+    totalInsuranceWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'INSURANCE')),
+    totalManufacturerWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'MANUFACTURER')),
+    totalInternalWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'INTERNAL')),
   };
 }
 
@@ -1109,10 +1146,19 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       part.availability = computeAvailability(part.itemQuantity, part.QuantityAvailable);
 
       const previousOriginalPriceExclVat = part.originalPriceExclVat;
-      part.unitaryPriceExclVat = source.OriginalPriceExclVAT;
+      const previousDmsDiscount = part.dmsDiscountPercentage ?? 0;
+      const dmsDiscountChanged = !samePercentage(previousDmsDiscount, source.DiscountPercentage);
+      if (source.OriginalPriceExclVAT !== undefined && source.OriginalPriceExclVAT !== null) {
+        part.unitaryPriceExclVat = roundMoney(source.OriginalPriceExclVAT);
+      }
 
-      reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
+      if (dmsDiscountChanged) {
+        reconcileDiscountPercentages(part, wlDiscount, source.DiscountPercentage);
+      } else if (part.dmsDiscountPercentage === undefined || part.dmsDiscountPercentage === null) {
+        part.dmsDiscountPercentage = Number(source.DiscountPercentage ?? 0);
+      }
 
+      let priceChanged = false;
       if (part.itemQuantity && part.unitaryPriceExclVat) {
         const computedFields = computePartPriceFields(
           part.itemQuantity,
@@ -1121,15 +1167,14 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
           part.dmsDiscountPercentage,
           part.vatPercentage,
         );
-        Object.assign(part, computedFields);
-        if (isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat)) {
-          jobHasDmsOverride = true;
+        priceChanged = isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat);
+        if (dmsDiscountChanged || priceChanged) {
+          Object.assign(part, computedFields);
         }
       }
+      roundItemPriceFields(part);
 
-      if (part.dmsDiscountPercentage) {
-        jobHasDmsOverride = true;
-      }
+      if (priceChanged || dmsDiscountChanged) jobHasDmsOverride = true;
     }
 
     for (const labor of job?.laborInfo ?? []) {
@@ -1137,10 +1182,18 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
       if (!laborItem) continue;
 
       const previousOriginalPriceExclVat = labor.originalPriceExclVat;
-      labor.laborDuration = laborItem.TimeUnit;
+      const previousDmsDiscount = labor.dmsDiscountPercentage ?? 0;
+      const dmsDiscountChanged = !samePercentage(previousDmsDiscount, laborItem.DiscountPercentage);
+      const previousLaborDuration = labor.laborDuration;
+      labor.laborDuration = laborItem.TimeUnit ?? previousLaborDuration;
 
-      reconcileDiscountPercentages(labor, wlDiscount, laborItem.DiscountPercentage);
+      if (dmsDiscountChanged) {
+        reconcileDiscountPercentages(labor, wlDiscount, laborItem.DiscountPercentage);
+      } else if (labor.dmsDiscountPercentage === undefined || labor.dmsDiscountPercentage === null) {
+        labor.dmsDiscountPercentage = Number(laborItem.DiscountPercentage ?? 0);
+      }
 
+      let priceChanged = false;
       if (labor.laborDuration && laborItem.UnitaryTimeAmount) {
         const computedFields = computeLaborPriceFields(
           labor.laborDuration,
@@ -1149,15 +1202,14 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
           labor.dmsDiscountPercentage,
           labor.vatPercentage,
         );
-        Object.assign(labor, computedFields);
-        if (isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat)) {
-          jobHasDmsOverride = true;
+        priceChanged = isPriceChanged(computedFields.originalPriceExclVat, previousOriginalPriceExclVat);
+        if (dmsDiscountChanged || priceChanged) {
+          Object.assign(labor, computedFields);
         }
       }
+      roundItemPriceFields(labor);
 
-      if (labor.dmsDiscountPercentage) {
-        jobHasDmsOverride = true;
-      }
+      if (priceChanged || dmsDiscountChanged) jobHasDmsOverride = true;
     }
 
     job.dmsOverride = jobHasDmsOverride;

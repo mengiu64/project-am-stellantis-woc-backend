@@ -35,6 +35,11 @@ describe('dynamoCache', () => {
     it('returns null when no item is found', async () => {
       mockSend.mockResolvedValue({});
       expect(await getCacheItem('some-key')).toBeNull();
+      const { DynamoDBDocumentClient } = require('@aws-sdk/lib-dynamodb');
+      expect(DynamoDBDocumentClient.from).toHaveBeenCalledWith(
+        expect.anything(),
+        { marshallOptions: { removeUndefinedValues: true } },
+      );
     });
 
     it('returns the cached value when the item is present and not expired', async () => {

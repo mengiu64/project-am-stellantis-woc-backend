@@ -375,6 +375,8 @@ Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDeta
 
 Inoltre, prima di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene arricchita anche con i dati del gateway DML (`getDataFromDML`/`getCartPriceAndAvailability`, v. sotto): `jobs[].partInfo[]`/`jobs[].laborInfo[]` ricevono così già prezzo/disponibilità/sconto aggiornati, con lo stesso `sessionContext` (opzionale) passato a `getJobCardDetails` — best-effort, non blocca la risposta in caso di problemi verso `dms`.
 
+Gli importi monetari ricalcolati sono arrotondati a due decimali. Se `dmsDiscountPercentage` coincide già con il valore DML, lo sconto non viene ricalcolato: con prezzo invariato `jobs[].dmsOverride` resta `false`; un prezzo DML diverso viene invece aggiornato usando lo sconto già presente.
+
 Vedi `jobcard/README.md` per la tabella completa delle regole.
 
 #### `saveJobcard` (POST `/jobCard`)
@@ -1595,11 +1597,11 @@ DMLCONFIGSYNC_DB_SSL=true                     # (opzionale) default true
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
 AWS_REGION=eu-west-1                                                  # (opzionale in Lambda: già impostata automaticamente da AWS)
 ```
 
-> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata automaticamente da `template.yaml` (`!Sub "rds-np-bsn0027990-${Environment}-aurora"`), nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
+> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (di default il cluster migrato di stage; se vuoto usa il nome storico). La policy IAM usa lo stesso identificativo. Nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
 
 ---
 
@@ -1807,4 +1809,3 @@ Il comando genera nella cartella `coverage/`:
 - `lcov-report/index.html` — report HTML navigabile per file e riga
 - `cobertura-coverage.xml` — formato XML per integrazione CI
 - `coverage-summary.json` — riepilogo JSON con le percentuali per modulo
-
