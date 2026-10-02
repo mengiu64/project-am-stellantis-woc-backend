@@ -1088,3 +1088,223 @@ describe('createJobCardAndUploadDocument', () => {
     expect(httpsMock.request).not.toHaveBeenCalled();
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Metadati di ispezione (woc.mopardoc_inspection_media) — Option A.
+// Il modulo ../db e' mockato: nessuna connessione reale ad Aurora. Di default il DB
+// risulta NON configurato (isDbConfigured=false), cosi' i test esistenti restano invariati.
+// ────────────────────────────────────────────────────────────────────────────
+jest.mock('../db', () => ({
+  getPool: jest.fn(),
+  isDbConfigured: jest.fn(() => false),
+}));
+
+const dbMock = require('../db');
+const { UPSERT_SQL, SELECT_BY_IDS_SQL, DELETE_BY_IDS_SQL } = require('../InspectionMetadataRepository');
+
+// Pool finto: query pilotabile per test
+function useDbPool(queryImpl) {
+  const pool = { query: jest.fn(queryImpl || (() => Promise.resolve({ rows: [], rowCount: 0 }))) };
+  dbMock.isDbConfigured.mockImplementation(() => true);
+  dbMock.getPool.mockResolvedValue(pool);
+  return pool;
+}
+
+const INSPECTION_FIELDS = {
+  Kind: 'pin',
+  TabId: 'vehicle',
+  DamageArea: 'front',
+  Description: 'Graffio paraurti',
+  PosX: 12.5,
+  PosY: '40',
+  CapturedAt: '2026-10-01T08:00:00Z',
+};
+
+describe('Metadati di ispezione — createJobCardAndUploadDocument', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    httpsMock.__resetHttpsBehavior();
+    dbMock.isDbConfigured.mockImplementation(() => false);
+    routeCjcHttps();
+  });
+
+  test('salva i metadati (UPSERT) con createdBy dalle opzioni interne -> metadataSaved true', async () => {
+    const pool = useDbPool();
+    const result = await cjcud(validParams(INSPECTION_FIELDS), { createdBy: 'auth.sub' });
+
+    expect(result.success).toBe(true);
+    expect(result.metadataSaved).toBe(true);
+    expect(result.steps.saveInspectionMetadata).toEqual({ saved: true, reason: 'saved' });
+    expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, [
+      '47645', '78660', 'VIN123', 'pin', 'vehicle', 'front', 'Graffio paraurti', 12.5, 40, '2026-10-01T08:00:00.000Z', 'auth.sub',
+    ]);
+  });
+
+  test('i metadati NON sono inoltrati a Mopar', async () => {
+    useDbPool();
+    await cjcud(validParams(INSPECTION_FIELDS), { createdBy: 'auth.sub' });
+
+    for (const [, body] of httpsRequestCJC.mock.calls) {
+      const sent = body ? JSON.parse(body) : {};
+      Object.keys(INSPECTION_FIELDS).forEach((k) => expect(sent).not.toHaveProperty(k));
+    }
+  });
+
+  test('senza opzioni: createdBy null (mai dal body)', async () => {
+    const pool = useDbPool();
+    await cjcud(validParams({ ...INSPECTION_FIELDS, createdBy: 'evil' }));
+    expect(pool.query.mock.calls[0][1][10]).toBeNull();
+  });
+
+  test('opzioni null: createdBy null', async () => {
+    const pool = useDbPool();
+    await cjcud(validParams(INSPECTION_FIELDS), null);
+    expect(pool.query.mock.calls[0][1][10]).toBeNull();
+  });
+
+  test('errore DB -> risposta comunque di successo con metadataSaved false', async () => {
+    useDbPool(() => Promise.reject(new Error('db down')));
+    const result = await cjcud(validParams(INSPECTION_FIELDS), { createdBy: 'auth.sub' });
+
+    expect(result.success).toBe(true);
+    expect(result.DocumentId).toBe(47645);
+    expect(result.metadataSaved).toBe(false);
+    expect(result.steps.saveInspectionMetadata).toEqual({ saved: false, reason: 'db-error' });
+  });
+
+  test('errore DB senza message gestito', async () => {
+    dbMock.isDbConfigured.mockImplementation(() => true);
+    dbMock.getPool.mockRejectedValue(null);
+    const result = await cjcud(validParams(INSPECTION_FIELDS));
+    expect(result.metadataSaved).toBe(false);
+  });
+
+  test('tutti i metadati null/invalidi -> nessuna riga, metadataSaved false', async () => {
+    const pool = useDbPool();
+    const result = await cjcud(validParams({ Kind: 'xxx', PosX: 500, Description: '   ' }), { createdBy: 'auth.sub' });
+
+    expect(result.metadataSaved).toBe(false);
+    expect(result.steps.saveInspectionMetadata).toEqual({ saved: false, reason: 'no-metadata' });
+    expect(pool.query).not.toHaveBeenCalled();
+  });
+
+  test('DB non configurato -> metadataSaved false', async () => {
+    const result = await cjcud(validParams(INSPECTION_FIELDS), { createdBy: 'auth.sub' });
+    expect(result.metadataSaved).toBe(false);
+    expect(result.steps.saveInspectionMetadata.reason).toBe('db-not-configured');
+    expect(dbMock.getPool).not.toHaveBeenCalled();
+  });
+});
+
+describe('Metadati di ispezione — arricchimento letture', () => {
+  const upstreamBody = {
+    errorCode: 0,
+    jobCardList: [{ JobCardId: 78660, DocumentList: [{ ID: 47645, Name: 'a.jpg' }, { ID: 47646 }] }],
+  };
+  const row = {
+    document_id: '47645', kind: 'pin', tab_id: 'vehicle', damage_area: 'front', description: 'd',
+    pos_x: '12.500', pos_y: '40.000', captured_at: new Date('2026-10-01T08:00:00Z'),
+  };
+  const expectedMetadata = {
+    Kind: 'pin', TabId: 'vehicle', DamageArea: 'front', Description: 'd', PosX: 12.5, PosY: 40, CapturedAt: '2026-10-01T08:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    dbMock.isDbConfigured.mockImplementation(() => false);
+    httpsRequest.mockImplementation(() => Promise.resolve({ statusCode: 200, body: upstreamBody }));
+  });
+
+  afterAll(() => {
+    httpsRequest.mockImplementation(() => Promise.resolve({ statusCode: 200, body: { success: true } }));
+  });
+
+  test('getDocuments: InspectionMetadata per documento (null se assente)', async () => {
+    const pool = useDbPool(() => Promise.resolve({ rows: [row] }));
+    const result = await getDocuments({ vin: 'VIN123' });
+
+    expect(pool.query).toHaveBeenCalledWith(SELECT_BY_IDS_SQL, [['47645', '47646']]);
+    expect(result.jobCardList[0].DocumentList).toEqual([
+      { ID: 47645, Name: 'a.jpg', InspectionMetadata: expectedMetadata },
+      { ID: 47646, InspectionMetadata: null },
+    ]);
+    expect(result.errorCode).toBe(0);
+  });
+
+  test('getJobCardAndDocumentList: InspectionMetadata per documento', async () => {
+    useDbPool(() => Promise.resolve({ rows: [row] }));
+    const result = await getJobCardAndDocumentList({
+      source: 'WOC', vin: 'VIN123', dealerCode: '0062230', market: 'IT', Language: 'en', StartDate: '2022-10-31',
+    });
+    expect(result.jobCardList[0].DocumentList[0].InspectionMetadata).toEqual(expectedMetadata);
+    expect(result.jobCardList[0].DocumentList[1].InspectionMetadata).toBeNull();
+  });
+
+  test('errore DB in lettura -> risposta upstream invariata con InspectionMetadata null', async () => {
+    useDbPool(() => Promise.reject(new Error('db down')));
+    const result = await getDocuments({ vin: 'VIN123' });
+    expect(result).toEqual({
+      errorCode: 0,
+      jobCardList: [{
+        JobCardId: 78660,
+        DocumentList: [{ ID: 47645, Name: 'a.jpg', InspectionMetadata: null }, { ID: 47646, InspectionMetadata: null }],
+      }],
+    });
+  });
+});
+
+describe('Metadati di ispezione — deleteDocumentsByVin', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    dbMock.isDbConfigured.mockImplementation(() => false);
+  });
+
+  test('cancella i metadati dei documenti eliminati (esclusi quelli in ErrorDocumentID)', async () => {
+    const pool = useDbPool(() => Promise.resolve({ rowCount: 1 }));
+    routeHttps({
+      getDocumentsBody: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }, { ID: 47559 }] }] },
+      deleteHandler: () => ({ statusCode: 200, body: { errorCode: 0, errorMessage: '', ErrorDocumentID: [47559] } }),
+    });
+
+    const result = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 47559] });
+
+    expect(result.success).toBe(true);
+    // la risoluzione JobCardId usa getDocuments upstream senza arricchimento: solo la DELETE tocca il DB
+    expect(pool.query).toHaveBeenCalledTimes(1);
+    expect(pool.query).toHaveBeenCalledWith(DELETE_BY_IDS_SQL, [['47558']]);
+  });
+
+  test('ErrorDocumentID assente: cancella tutti i documenti richiesti', async () => {
+    const pool = useDbPool(() => Promise.resolve({ rowCount: 2 }));
+    routeHttps({
+      getDocumentsBody: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }, { ID: 47559 }] }] },
+      deleteHandler: () => ({ statusCode: 200, body: { errorCode: 0 } }),
+    });
+    await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558, 47559] });
+    expect(pool.query).toHaveBeenCalledWith(DELETE_BY_IDS_SQL, [['47558', '47559']]);
+  });
+
+  test('errore DB in cancellazione -> esito invariato', async () => {
+    useDbPool(() => Promise.reject(new Error('db down')));
+    routeHttps({
+      getDocumentsBody: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }] }] },
+    });
+    const result = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] });
+    expect(result).toEqual({
+      success: true,
+      JobCardId: 78380,
+      deleted: [47558],
+      result: { errorCode: 0, errorMessage: '', ErrorDocumentID: [] },
+    });
+  });
+
+  test('errore DB senza message -> esito invariato', async () => {
+    dbMock.isDbConfigured.mockImplementation(() => true);
+    dbMock.getPool.mockRejectedValue(null);
+    routeHttps({
+      getDocumentsBody: { errorCode: 0, jobCardList: [{ JobCardId: 78380, DocumentList: [{ ID: 47558 }] }] },
+    });
+    const result = await deleteDocumentsByVin({ source: 'WOC', vin: 'VIN123', Documents: [47558] });
+    expect(result.success).toBe(true);
+  });
+});

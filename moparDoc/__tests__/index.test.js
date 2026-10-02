@@ -12,6 +12,8 @@ jest.mock('../moparDocService', () => ({
   DeleteDocuments: jest.fn(),
   DeleteJobcard: jest.fn(),
   getDocumentsDownloadUrl: jest.fn(),
+  deleteDocumentsByVin: jest.fn(),
+  createJobCardAndUploadDocument: jest.fn(),
 }));
 
 const {
@@ -26,8 +28,9 @@ const {
   DeleteDocuments,
   DeleteJobcard,
   getDocumentsDownloadUrl,
+  createJobCardAndUploadDocument,
 } = require('../moparDocService');
-const { handler } = require('../index');
+const { handler, resolveCreatedBy } = require('../index');
 
 describe('moparDoc index.handler', () => {
   beforeEach(() => {
@@ -148,5 +151,62 @@ describe('moparDoc index.handler', () => {
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     const parsed = JSON.parse(res.body);
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('moparDoc index — identita\' (created_by) per createJobCardAndUploadDocument', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    createJobCardAndUploadDocument.mockResolvedValue({ success: true, metadataSaved: true });
+  });
+
+  test('usa requestContext.authorizer.sub come createdBy (opzione interna, separata dal body)', async () => {
+    const res = await handler({
+      rawPath: '/api/repairorder/mopardoc/createJobCardAndUploadDocument',
+      requestContext: { authorizer: { sub: 'auth.user' } },
+      body: JSON.stringify({ vin: 'VIN1', UserName: 'body.user', Kind: 'pin' }),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(createJobCardAndUploadDocument).toHaveBeenCalledWith(
+      { vin: 'VIN1', UserName: 'body.user', Kind: 'pin' },
+      { createdBy: 'auth.user' },
+    );
+  });
+
+  test('il body non puo\' sovrascrivere createdBy (createdBy/created_by/options nel body ignorati)', async () => {
+    await handler({
+      action: 'createJobCardAndUploadDocument',
+      requestContext: { authorizer: { sub: 'auth.user' } },
+      body: { vin: 'VIN1', createdBy: 'evil', created_by: 'evil', options: { createdBy: 'evil' } },
+    });
+    const [, options] = createJobCardAndUploadDocument.mock.calls[0];
+    expect(options).toEqual({ createdBy: 'auth.user' });
+  });
+
+  test('authorizer presente ma senza sub -> createdBy null (nessun fallback sul body)', async () => {
+    await handler({
+      action: 'createJobCardAndUploadDocument',
+      requestContext: { authorizer: {} },
+      body: { vin: 'VIN1', UserName: 'body.user' },
+    });
+    expect(createJobCardAndUploadDocument.mock.calls[0][1]).toEqual({ createdBy: null });
+  });
+
+  test('authorizer del tutto assente (invocazione diretta) -> fallback su body.UserName', async () => {
+    await handler({ action: 'createJobCardAndUploadDocument', body: { vin: 'VIN1', UserName: 'body.user' } });
+    expect(createJobCardAndUploadDocument.mock.calls[0][1]).toEqual({ createdBy: 'body.user' });
+  });
+
+  test('le altre azioni non ricevono opzioni interne', async () => {
+    getDocuments.mockResolvedValue({});
+    await handler({ action: 'getDocuments', requestContext: { authorizer: { sub: 'auth.user' } }, body: { vin: 'VIN1' } });
+    expect(getDocuments.mock.calls[0]).toEqual([{ vin: 'VIN1' }]);
+  });
+
+  test('resolveCreatedBy: casi limite', () => {
+    expect(resolveCreatedBy(undefined, undefined)).toBeNull();
+    expect(resolveCreatedBy({}, {})).toBeNull();
+    expect(resolveCreatedBy({ requestContext: {} }, { UserName: 'u' })).toBe('u');
+    expect(resolveCreatedBy({ requestContext: { authorizer: { sub: 's' } } }, { UserName: 'u' })).toBe('s');
   });
 });

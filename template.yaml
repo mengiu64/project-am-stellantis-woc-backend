@@ -710,6 +710,10 @@ Resources:
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-mopardoc"
       CodeUri: moparDoc/
+      # Layer AWS Parameters and Secrets Lambda Extension: recupero delle
+      # credenziali Aurora "wiadvisor_app" in moparDoc/db.js (stesso layer di DjcFunction).
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
@@ -739,6 +743,14 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
               Resource: !GetAtt TmpCacheTable.Arn
+        # moparDoc/db.js — utente applicativo Aurora "wiadvisor_app" (tabella
+        # woc.mopardoc_inspection_media, metadati di ispezione delle foto),
+        # stesso secret di DjcFunction/PkFavoriteFunction (kms:Decrypt già
+        # concesso dallo statement precedente).
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
       Environment:
         Variables:
           MOPARDOC_PARAM_NAME: !If
@@ -746,6 +758,13 @@ Resources:
             - /app/BSN0027990/mopardoc_ibm
             - !Sub /app/np-BSN0027990-${Environment}/mopardoc_ibm
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
+          # moparDoc/db.js — Aurora "wiadvisor" via RDS Proxy (woc.mopardoc_inspection_media),
+          # stesso Aurora/secret di DJC_DB_* (nessun nuovo parametro CFN).
+          MOPARDOC_DB_HOST:      !Ref DocsoaDbHost
+          MOPARDOC_DB_PORT:      !Ref DocsoaDbPort
+          MOPARDOC_DB_NAME:      !Ref DocsoaDbName
+          MOPARDOC_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
   MoparDocFunctionLogGroup:
     Type: AWS::Logs::LogGroup
