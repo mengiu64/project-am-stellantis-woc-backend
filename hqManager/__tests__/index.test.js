@@ -36,6 +36,7 @@ function makeManagerInstance(overrides = {}) {
     deletePackage: jest.fn(),
     setPackageVisible: jest.fn(),
     getPackageList: jest.fn(),
+    initializeOicPkList: jest.fn(),
     clonePk: jest.fn(),
     cloneVeicInspection: jest.fn(),
     insertAudit: jest.fn(),
@@ -341,6 +342,33 @@ describe('hqManager/index.js', () => {
       const res = await handler({ action: 'getPackageList', body: { market: '1000' } });
 
       expect(instance.getPackageList).toHaveBeenCalledWith('1000', undefined);
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
+    });
+
+    it('dispatches initializeOicPkList with a specific oic (direct invocation payload)', async () => {
+      const packages = [{
+        market: '1000', oic: '00006821', domainDescr: 'Meccanica', idpackage: 7, packageDescr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
+      }];
+      const instance = makeManagerInstance({
+        initializeOicPkList: jest.fn().mockResolvedValue(packages),
+      });
+
+      const res = await handler({ action: 'initializeOicPkList', body: { market: '1000', oic: '00006821' } });
+
+      expect(instance.initializeOicPkList).toHaveBeenCalledWith('1000', '00006821');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: '00006821', packages });
+    });
+
+    it('dispatches initializeOicPkList without oic', async () => {
+      const instance = makeManagerInstance({
+        initializeOicPkList: jest.fn().mockResolvedValue([]),
+      });
+
+      const res = await handler({ action: 'initializeOicPkList', body: { market: '1000' } });
+
+      expect(instance.initializeOicPkList).toHaveBeenCalledWith('1000', undefined);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
     });

@@ -119,6 +119,12 @@ async function resolveCodmarket(event = {}, body = {}) {
  * (i domini cancellati logicamente sono esclusi, include anche
  * domVisible/pkVisible).
  *
+ * initializeOicPkList(market, oic) inizializza, se necessario, la
+ * configurazione PK dell'oic (copiandone i domini dal mercato/comuni via
+ * copyDomainFromMarket quando l'oic non e' ancora configurato, v.
+ * checkIsPkMarketEnabled/checkIsPkOicConfigured in HqRepository.js) e ne
+ * ritorna la lista pacchetti (getPackageList).
+ *
  * insertAudit(event, section, market, actiontype, descr) e
  * searchAudit(market, section, datefrom, dateto, actiontype, username)
  * (filtri tutti opzionali; se nessuno e' valorizzato, il risultato e'
@@ -267,10 +273,10 @@ class HqManager {
    */
   async setMarketEnable(market) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setMarketEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    const { setPkMarketEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return setMarketEnable(pool, market);
+    return setPkMarketEnable(pool, market);
   }
 
   /**
@@ -279,10 +285,10 @@ class HqManager {
    */
   async setMarketDisable(market) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    const { setPkMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
-    return setMarketDisable(pool, market);
+    return setPkMarketDisable(pool, market);
   }
 
   /**
@@ -297,11 +303,11 @@ class HqManager {
    */
   async setOicEnable(market, oic) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setOicEnable, setMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    const { setOicEnable, setPkMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
     await setOicEnable(pool, market, oic);
-    return setMarketDisable(pool, market);
+    return setPkMarketDisable(pool, market);
   }
 
   /**
@@ -446,6 +452,47 @@ class HqManager {
     const { getPackageList } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
+    return getPackageList(pool, market, oic);
+  }
+
+  /**
+   * Inizializza, se necessario, la configurazione PK dell'oic indicato e ne
+   * ritorna la lista pacchetti:
+   * - se il mercato e' abilitato a livello market (checkIsPkMarketEnabled
+   *   ritorna 1, cascata di setMarketEnable: tutti gli oic sono deleted =
+   *   1), la configurazione e' gia' condivisa a livello mercato e si
+   *   ritorna direttamente getPackageList(market, oic);
+   * - altrimenti (mercato gestito a livello di singolo oic) si verifica se
+   *   l'oic e' gia' configurato (checkIsPkOicConfigured); se non lo e'
+   *   (ritorna 1, nessuna riga trovata) si copiano in hq_pk_domain i domini
+   *   del mercato (o quelli comuni, v. copyDomainFromMarket) prima di
+   *   ritornare getPackageList(market, oic).
+   *
+   * @param {string} market
+   * @param {string} oic
+   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+   */
+  async initializeOicPkList(market, oic) {
+    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
+    const {
+      checkIsPkMarketEnabled,
+      checkIsPkOicConfigured,
+      copyDomainFromMarket,
+      getPackageList,
+    } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+
+    const pool = await getPool();
+    const isPkMarketEnabled = await checkIsPkMarketEnabled(pool, market);
+
+    if (isPkMarketEnabled === 1) {
+      return getPackageList(pool, market, oic);
+    }
+
+    const isPkOicConfigured = await checkIsPkOicConfigured(pool, market, oic);
+    if (isPkOicConfigured === 1) {
+      await copyDomainFromMarket(pool, market, oic);
+    }
+
     return getPackageList(pool, market, oic);
   }
 

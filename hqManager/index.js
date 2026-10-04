@@ -54,6 +54,11 @@
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
  *     la configurazione "a livello mercato"), incluso il flag "visible" di
  *     dominio/pacchetto (domVisible/pkVisible).
+ *   - initializeOicPkList(market, oic): inizializza, se necessario, la
+ *     configurazione PK dell'oic (copiandone i domini dal mercato/comuni se
+ *     l'oic non e' ancora configurato e il mercato non e' gestito a livello
+ *     market, v. HqManager.js::initializeOicPkList) e ne ritorna la lista
+ *     pacchetti (stesso formato di getPackageList).
  *   - clonePk(marketTarget, marketOrig): clona, per il mercato marketOrig,
  *     tutta la gerarchia hq_pk_oic/hq_pk_domain/hq_pk_packages nel nuovo
  *     mercato marketTarget (v. dbManager/HqRepository.clonePk).
@@ -117,6 +122,7 @@ const VALID_ACTIONS = [
   'deletePackage',
   'setPackageVisible',
   'getPackageList',
+  'initializeOicPkList',
   'clonePk',
   'cloneVeicInspection',
   'insertAudit',
@@ -265,6 +271,11 @@ exports.handler = async (event = {}) => {
 
     if (action === 'getPackageList') {
       const packages = await manager.getPackageList(market, oic);
+      return response(200, { success: true, market, oic: oic ?? null, packages });
+    }
+
+    if (action === 'initializeOicPkList') {
+      const packages = await manager.initializeOicPkList(market, oic);
       return response(200, { success: true, market, oic: oic ?? null, packages });
     }
 

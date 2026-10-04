@@ -20,10 +20,13 @@ const {
   getDisabledOics,
   getEnableSignatureByOics,
   getAddressByOics,
-  setMarketEnable,
-  setMarketDisable,
+  setPkMarketEnable,
+  setPkMarketDisable,
   setOicEnable,
+  checkIsPkMarketEnabled,
+  checkIsPkOicConfigured,
   insertDomain,
+  copyDomainFromMarket,
   setDomain,
   deleteDomain,
   setDomainVisible,
@@ -566,11 +569,11 @@ describe('HqRepository', () => {
     });
   });
 
-  describe('setMarketEnable', () => {
+  describe('setPkMarketEnable', () => {
     it('upserts hq_pk_market (deleted = 0) and cascades deleted = 1 on hq_pk_oic', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setMarketEnable(pool, '1000');
+      await setPkMarketEnable(pool, '1000');
 
       expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenNthCalledWith(
@@ -587,11 +590,11 @@ describe('HqRepository', () => {
     });
   });
 
-  describe('setMarketDisable', () => {
+  describe('setPkMarketDisable', () => {
     it('upserts hq_pk_market (deleted = 1) and re-enables (deleted = 0) on hq_pk_oic', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setMarketDisable(pool, '1000');
+      await setPkMarketDisable(pool, '1000');
 
       expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenNthCalledWith(
@@ -630,6 +633,48 @@ describe('HqRepository', () => {
     });
   });
 
+  describe('checkIsPkMarketEnabled', () => {
+    it('returns the "deleted" flag of the first row found for the market', async () => {
+      const pool = makePool(async () => ({ rows: [{ deleted: 0 }] }));
+
+      const result = await checkIsPkMarketEnabled(pool, '1000');
+
+      expect(result).toBe(0);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('select deleted from woc.hq_pk_oic'),
+        ['1000'],
+      );
+    });
+
+    it('returns undefined when no row is found', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      expect(await checkIsPkMarketEnabled(pool, '9999')).toBeUndefined();
+    });
+  });
+
+  describe('checkIsPkOicConfigured', () => {
+    it('returns the "deleted" flag of the oic row for the given market', async () => {
+      const pool = makePool(async () => ({ rows: [{ deleted: 0 }] }));
+
+      const result = await checkIsPkOicConfigured(pool, '1000', '00006821');
+
+      expect(result).toBe(0);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM woc.hq_pk_market mk'),
+        ['1000', '00006821'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE mk.market = $1'));
+    });
+
+    it('returns 1 when no row is found (oic not configured for the market)', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      expect(await checkIsPkOicConfigured(pool, '1000', '09999999')).toBe(1);
+    });
+  });
+
   describe('insertDomain', () => {
     it('inserts the domain and returns the generated iddomain', async () => {
       const pool = makePool(async () => ({ rows: [{ iddomain: 42 }] }));
@@ -643,6 +688,24 @@ describe('HqRepository', () => {
         ['1000', '00006821', 'Meccanica'],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING iddomain'));
+    });
+  });
+
+  describe('copyDomainFromMarket', () => {
+    it('runs the INSERT ... SELECT with market/oic copying domains from the market (or common ones as fallback)', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await copyDomainFromMarket(pool, '1000', '00006821');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO woc.hq_pk_domain'),
+        ['1000', '00006821'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE market = $1'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('UNION ALL'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE market IS NULL'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('NOT EXISTS'));
     });
   });
 

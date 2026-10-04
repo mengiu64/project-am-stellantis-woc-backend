@@ -12,8 +12,8 @@ jest.mock('../../dbManager/HqRepository', () => ({
   setVehicleInspectionVisible: jest.fn(),
   deletetVehicleInspection: jest.fn(),
   insertVehicleInspection: jest.fn(),
-  setMarketEnable: jest.fn(),
-  setMarketDisable: jest.fn(),
+  setPkMarketEnable: jest.fn(),
+  setPkMarketDisable: jest.fn(),
   setOicEnable: jest.fn(),
   insertDomain: jest.fn(),
   setDomain: jest.fn(),
@@ -26,6 +26,9 @@ jest.mock('../../dbManager/HqRepository', () => ({
   clonePk: jest.fn(),
   cloneVeicInspection: jest.fn(),
   getPackageList: jest.fn(),
+  checkIsPkMarketEnabled: jest.fn(),
+  checkIsPkOicConfigured: jest.fn(),
+  copyDomainFromMarket: jest.fn(),
   insertAudit: jest.fn(),
   searchAudit: jest.fn(),
   getAnagSection: jest.fn(),
@@ -47,8 +50,8 @@ const {
   setVehicleInspectionVisible,
   deletetVehicleInspection,
   insertVehicleInspection,
-  setMarketEnable,
-  setMarketDisable,
+  setPkMarketEnable,
+  setPkMarketDisable,
   setOicEnable,
   insertDomain,
   setDomain,
@@ -59,6 +62,9 @@ const {
   deletePackage,
   setPackageVisible,
   getPackageList,
+  checkIsPkMarketEnabled,
+  checkIsPkOicConfigured,
+  copyDomainFromMarket,
   clonePk,
   cloneVeicInspection,
   insertAudit,
@@ -262,37 +268,37 @@ describe('HqManager', () => {
   });
 
   describe('setMarketEnable', () => {
-    it('resolves the pool and delegates to HqRepository.setMarketEnable', async () => {
-      setMarketEnable.mockResolvedValue(undefined);
+    it('resolves the pool and delegates to HqRepository.setPkMarketEnable', async () => {
+      setPkMarketEnable.mockResolvedValue(undefined);
 
       await manager.setMarketEnable('1000');
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setMarketEnable).toHaveBeenCalledWith(fakePool, '1000');
+      expect(setPkMarketEnable).toHaveBeenCalledWith(fakePool, '1000');
     });
   });
 
   describe('setMarketDisable', () => {
-    it('resolves the pool and delegates to HqRepository.setMarketDisable', async () => {
-      setMarketDisable.mockResolvedValue(undefined);
+    it('resolves the pool and delegates to HqRepository.setPkMarketDisable', async () => {
+      setPkMarketDisable.mockResolvedValue(undefined);
 
       await manager.setMarketDisable('1000');
 
       expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
+      expect(setPkMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
     });
   });
 
   describe('setOicEnable', () => {
     it('resolves the pool, delegates to HqRepository.setOicEnable and cascades a setMarketDisable', async () => {
       setOicEnable.mockResolvedValue(undefined);
-      setMarketDisable.mockResolvedValue(undefined);
+      setPkMarketDisable.mockResolvedValue(undefined);
 
       await manager.setOicEnable('1000', '00006821');
 
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(setOicEnable).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(setMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
+      expect(setPkMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
     });
   });
 
@@ -416,6 +422,53 @@ describe('HqManager', () => {
       const result = await manager.getPackageList('1000', '00006821');
 
       expect(getPool).toHaveBeenCalledTimes(1);
+      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(result).toBe(packages);
+    });
+  });
+
+  describe('initializeOicPkList', () => {
+    it('when the market is enabled (checkIsPkMarketEnabled = 1), returns getPackageList without copying domains', async () => {
+      checkIsPkMarketEnabled.mockResolvedValue(1);
+      const packages = [{ market: '1000', oic: '00006821' }];
+      getPackageList.mockResolvedValue(packages);
+
+      const result = await manager.initializeOicPkList('1000', '00006821');
+
+      expect(getPool).toHaveBeenCalledTimes(1);
+      expect(checkIsPkMarketEnabled).toHaveBeenCalledWith(fakePool, '1000');
+      expect(checkIsPkOicConfigured).not.toHaveBeenCalled();
+      expect(copyDomainFromMarket).not.toHaveBeenCalled();
+      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(result).toBe(packages);
+    });
+
+    it('when the market is not enabled and the oic is not configured (checkIsPkOicConfigured = 1), copies domains before returning getPackageList', async () => {
+      checkIsPkMarketEnabled.mockResolvedValue(0);
+      checkIsPkOicConfigured.mockResolvedValue(1);
+      copyDomainFromMarket.mockResolvedValue(undefined);
+      const packages = [{ market: '1000', oic: '00006821' }];
+      getPackageList.mockResolvedValue(packages);
+
+      const result = await manager.initializeOicPkList('1000', '00006821');
+
+      expect(checkIsPkMarketEnabled).toHaveBeenCalledWith(fakePool, '1000');
+      expect(checkIsPkOicConfigured).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(copyDomainFromMarket).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(result).toBe(packages);
+    });
+
+    it('when the market is not enabled but the oic is already configured (checkIsPkOicConfigured = 0), does not copy domains', async () => {
+      checkIsPkMarketEnabled.mockResolvedValue(0);
+      checkIsPkOicConfigured.mockResolvedValue(0);
+      const packages = [{ market: '1000', oic: '00006821' }];
+      getPackageList.mockResolvedValue(packages);
+
+      const result = await manager.initializeOicPkList('1000', '00006821');
+
+      expect(checkIsPkOicConfigured).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(copyDomainFromMarket).not.toHaveBeenCalled();
       expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
       expect(result).toBe(packages);
     });

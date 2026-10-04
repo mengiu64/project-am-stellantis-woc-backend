@@ -55,7 +55,7 @@
  * escludendo le righe cancellate logicamente dalla sorgente Snowflake
  * (fl_is_deleted_flag = 1).
  *
- * setMarketEnable/setMarketDisable/setOicEnable/insertDomain/setDomain/
+ * setPkMarketEnable/setPkMarketDisable/setOicEnable/insertDomain/setDomain/
  * deleteDomain/insertPackage/setPackage/deletePackage operano sulle tabelle
  * woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages
  * (sql/create_table_hq_packages.sql): gerarchia di configurazione mercato ->
@@ -458,7 +458,7 @@ async function getAddressByOics(pool, { oics } = {}) {
  * @param {string} market
  * @returns {Promise<void>}
  */
-async function setMarketEnable(pool, market) {
+async function setPkMarketEnable(pool, market) {
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 0)
@@ -481,7 +481,7 @@ async function setMarketEnable(pool, market) {
  * @param {string} market
  * @returns {Promise<void>}
  */
-async function setMarketDisable(pool, market) {
+async function setPkMarketDisable(pool, market) {
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 1)
@@ -516,6 +516,46 @@ async function setOicEnable(pool, market, oic) {
 }
 
 /**
+ * Verifica se il mercato indicato e' abilitato, leggendo il flag "deleted"
+ * di woc.hq_pk_oic per il mercato (0 = abilitato, 1 = disabilitato).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @returns {Promise<number|undefined>} il valore di "deleted" della riga trovata
+ */
+async function checkIsPkMarketEnabled(pool, market) {
+  const { rows } = await pool.query(
+    `select deleted from woc.hq_pk_oic WHERE market = $1`,
+    [market],
+  );
+
+  return rows[0]?.deleted;
+}
+
+/**
+ * Verifica se l'OIC indicato e' configurato (presente in woc.hq_pk_oic) per
+ * il mercato indicato, leggendo il flag "deleted" tramite JOIN con
+ * woc.hq_pk_market. Se non viene trovato nessun record (OIC non configurato
+ * per quel mercato) viene ritornato 1 (= disabilitato/non configurato).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<number>} il valore di "deleted" della riga trovata, 1 se non trovata
+ */
+async function checkIsPkOicConfigured(pool, market, oic) {
+  const { rows } = await pool.query(
+    `SELECT oi.deleted
+       FROM woc.hq_pk_market mk
+       JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2
+      WHERE mk.market = $1`,
+    [market, oic],
+  );
+
+  return rows[0]?.deleted ?? 1;
+}
+
+/**
  * Inserisce un nuovo dominio (woc.hq_pk_domain.iddomain generato dalla
  * sequence woc.hq_pk_domain_iddomain_seq).
  *
@@ -534,6 +574,40 @@ async function insertDomain(pool, market, oic, descr) {
   );
 
   return rows[0].iddomain;
+}
+
+/**
+ * Copia in woc.hq_pk_domain, per il nuovo (market, oic), i domini gia'
+ * esistenti del mercato (descr): se il mercato non ha ancora domini propri
+ * (WHERE market = $1), copia invece i domini comuni (market IS NULL),
+ * ma solo se per quel mercato non esiste gia' nessun dominio (NOT EXISTS).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<void>}
+ */
+async function copyDomainFromMarket(pool, market, oic) {
+  await pool.query(
+    `
+    INSERT INTO woc.hq_pk_domain (market, oic, descr)
+    SELECT $1, $2, descr
+    FROM woc.hq_pk_domain
+    WHERE market = $1
+
+    UNION ALL
+
+    SELECT $1, $2, descr
+    FROM woc.hq_pk_domain
+    WHERE market IS NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM woc.hq_pk_domain
+        WHERE market = $1
+      )
+    `,
+    [market, oic],
+  );
 }
 
 /**
@@ -986,10 +1060,13 @@ module.exports = {
   getDisabledOics,
   getEnableSignatureByOics,
   getAddressByOics,
-  setMarketEnable,
-  setMarketDisable,
+  setPkMarketEnable,
+  setPkMarketDisable,
   setOicEnable,
+  checkIsPkMarketEnabled,
+  checkIsPkOicConfigured,
   insertDomain,
+  copyDomainFromMarket,
   setDomain,
   deleteDomain,
   setDomainVisible,
