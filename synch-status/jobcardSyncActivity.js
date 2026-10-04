@@ -9,7 +9,8 @@
  *   1) techreason     = djc_sync_status (mappato da eventType),
  *      ack            = OK (DMS_PUSH_SUCCESS_WITHOUT_UPDATE / DMS_PUSH_SUCCESS_WITH_UPDATE)
  *                       o KO (DMS_PUSH_REFUSAL / DMS_PUSH_FAILURE), lastupdate = now()
- *   2) businessreason = roInfo.dmsSynchroStatus restituito da jobCardDetails
+ *   2) businessreason = roInfo.dmsSynchroStatus + dmsReturnMessage restituiti
+ *                       da jobCardDetails
  *                       (jobcard/jobCardService.js, imbarcato in-process via
  *                       Makefile), lastupdate = now()
  *
@@ -49,16 +50,19 @@ function loadJobcardServices() {
 }
 
 /**
- * Richiama jobCardDetails (lambda jobcard) e ne estrae roInfo.dmsSynchroStatus.
+ * Richiama jobCardDetails (lambda jobcard) e compone il businessreason da
+ * roInfo.dmsSynchroStatus e roInfo.dmsReturnMessage.
  * @param {string} jobCardId
  * @param {object} [deps] - iniettabile nei test
  * @returns {Promise<string|null>}
  */
-async function fetchDmsSynchroStatus(jobCardId, deps = loadJobcardServices()) {
+async function fetchBusinessReason(jobCardId, deps = loadJobcardServices()) {
   const token = await deps.getBearerToken();
   const body = await deps.getJobCardDetails(token, jobCardId);
   const roInfo = body?.jobCardDetail?.roInfo ?? body?.roInfo;
-  return roInfo?.dmsSynchroStatus ?? null;
+  const reasonParts = [roInfo?.dmsSynchroStatus, roInfo?.dmsReturnMessage]
+    .filter((value) => typeof value === 'string' && value.trim() !== '');
+  return reasonParts.length > 0 ? reasonParts.join(' - ') : null;
 }
 
 /**
@@ -90,7 +94,7 @@ async function syncJobcardActivity({ pool, jobCardId, djcSyncStatus, eventType, 
   }
 
   try {
-    outcome.businessReason = await fetchDmsSynchroStatus(jobCardId, deps);
+    outcome.businessReason = await fetchBusinessReason(jobCardId, deps);
   } catch (err) {
     logger.error('❌ jobcard_sync_activity: errore jobCardDetails, businessreason non aggiornato', { jobCardId, errorMessage: err.message });
     return outcome;
@@ -109,7 +113,7 @@ async function syncJobcardActivity({ pool, jobCardId, djcSyncStatus, eventType, 
 
 module.exports = {
   syncJobcardActivity,
-  fetchDmsSynchroStatus,
+  fetchBusinessReason,
   loadJobcardServices,
   EVENT_TYPE_TO_ACK,
   UPDATE_TECHREASON_SQL,

@@ -26,7 +26,9 @@ const { DynamoDBDocumentClient, GetCommand, PutCommand } = require('@aws-sdk/lib
 let docClient;
 function getDocClient() {
   if (!docClient) {
-    docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+    docClient = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+      marshallOptions: { removeUndefinedValues: true },
+    });
   }
   return docClient;
 }

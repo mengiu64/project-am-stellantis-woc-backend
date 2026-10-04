@@ -28,6 +28,8 @@ moparDoc/
 ├── authService.js        ← autenticazione PingFederate → token (client dedicato MoparDoc)
 ├── httpClient.js         ← wrapper HTTPS generico (redazione dati sensibili nei log)
 ├── config.js              ← credenziali/URL (PingFederate + job-docs + MoparDocs Browser API)
+├── db.js                  ← pool Aurora "wiadvisor" (MOPARDOC_DB_*), opzionale
+├── InspectionMetadataRepository.js ← metadati di ispezione foto (woc.mopardoc_inspection_media)
 ├── __tests__/
 │   ├── moparDocService.test.js
 │   ├── authService.test.js
@@ -54,6 +56,26 @@ cp .env.example .env   # valorizzare con le credenziali reali
 | `MOPARDOC_PING_CLIENT_SECRET`   | Client secret PingFederate dedicato a moparDoc                       |
 | `MOPARDOC_IBM_CLIENT_ID`        | `X-IBM-Client-Id` (job-docs connector + MoparDocs Browser API)       |
 | `MOPARDOC_IBM_CLIENT_SECRET`    | `X-IBM-Client-Secret` (job-docs connector + MoparDocs Browser API)   |
+| `MOPARDOC_DB_HOST`              | Endpoint RDS Proxy Aurora `wiadvisor` (tabella `woc.mopardoc_inspection_media`). Opzionale: se vuota i metadati di ispezione sono ignorati |
+| `MOPARDOC_DB_SECRET_ID`         | Secret Aurora `wiadvisor_app` (default `sm-np-bsn0027990-dev-aurora-app`) |
+| `MOPARDOC_DB_USER` / `MOPARDOC_DB_PASSWORD` | Solo in locale: credenziali dirette (altrimenti dal secret) |
+| `MOPARDOC_DB_PORT` / `MOPARDOC_DB_NAME` | Opzionali (default dal secret / `5432` / `wiadvisor`) |
+| `MOPARDOC_DB_SSL`               | `false` solo per Postgres locale senza TLS (default TLS attivo)      |
+
+## Metadati di ispezione (`createJobCardAndUploadDocument`)
+
+Campi opzionali e nullable del body, **non** inoltrati a Mopar e salvati su
+Aurora in `woc.mopardoc_inspection_media` (UPSERT su `document_id`) dopo l'upload
+riuscito: `Kind` (`pin`|`general`), `TabId` (`vehicle`|`tyres`|`dashboard`),
+`DamageArea` (`front`|`left`|`right`|`top`|`rear`|`generic`), `Description`
+(max 1000), `PosX`/`PosY` (0..100), `CapturedAt` (ISO 8601). Valori non validi →
+`null` + warn (mai 400). La risposta aggiunge `metadataSaved` (boolean).
+`getDocuments`/`getJobCardAndDocumentList` aggiungono a ogni documento
+`InspectionMetadata` (`{ Kind, TabId, DamageArea, Description, PosX, PosY, CapturedAt }`
+o `null`); `deleteDocumentsByVin` cancella le righe dei documenti eliminati.
+`created_by` = `requestContext.authorizer.sub`. Lo script
+`../sql/create_table_mopardoc_inspection_media.sql` va applicato **manualmente**
+su Aurora. Dettagli nel `README.md` di root, sezione moparDoc.
 
 URL/basePath di PingFederate, job-docs e MoparDocs Browser API sono **hardcoded** in
 `config.js` (stessa convenzione di `jobcard`/`djc`/`v360`) e non richiedono configurazione.

@@ -18,7 +18,8 @@
     "@aws-sdk/client-dynamodb": "^3.1083.0",
     "@aws-sdk/client-secrets-manager": "^3.800.0",
     "@aws-sdk/client-ssm": "^3.800.0",
-    "@aws-sdk/lib-dynamodb": "^3.1083.0"
+    "@aws-sdk/lib-dynamodb": "^3.1083.0",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "jest": "^29.7.0",
@@ -35,7 +36,9 @@
       "moparDocService.js",
       "config.js",
       "secretsLoader.js",
-      "dynamoCache.js"
+      "dynamoCache.js",
+      "db.js",
+      "InspectionMetadataRepository.js"
     ],
     "coverageReporters": [
       "html",

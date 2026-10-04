@@ -375,6 +375,8 @@ Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDeta
 
 Inoltre, prima di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene arricchita anche con i dati del gateway DML (`getDataFromDML`/`getCartPriceAndAvailability`, v. sotto): `jobs[].partInfo[]`/`jobs[].laborInfo[]` ricevono così già prezzo/disponibilità/sconto aggiornati, con lo stesso `sessionContext` (opzionale) passato a `getJobCardDetails` — best-effort, non blocca la risposta in caso di problemi verso `dms`.
 
+Gli importi monetari ricalcolati sono arrotondati a due decimali. Se `dmsDiscountPercentage` coincide già con il valore DML, lo sconto non viene ricalcolato: con prezzo invariato `jobs[].dmsOverride` resta `false`; un prezzo DML diverso viene invece aggiornato usando lo sconto già presente.
+
 Vedi `jobcard/README.md` per la tabella completa delle regole.
 
 #### `saveJobcard` (POST `/jobCard`)
@@ -563,6 +565,8 @@ condivisi) e le stesse credenziali **IBM API Connect** (`X-IBM-Client-Id`/
 | `moparDocService` | `createJobCard(payload)` | POST `/CreateJobCard` sul connector job-docs |
 | `moparDocService` | `getUploadDocURL(payload)` | POST `/getUploadDocURL` sul MoparDocs Browser API |
 | `moparDocService` | `uploadedDoc(payload)` | POST `/UploadedDoc` sul MoparDocs Browser API |
+| `InspectionMetadataRepository` | `saveInspectionMetadata` / `findByDocumentIds` / `deleteByDocumentIds` / `enrichDocumentLists` | Metadati di ispezione delle foto su `woc.mopardoc_inspection_media` (v. sotto), tolleranti agli errori DB |
+| `db` | `getPool()` / `isDbConfigured()` | Pool Aurora `wiadvisor` (env `MOPARDOC_DB_*`, credenziali dal secret via Parameters and Secrets Extension) |
 | `authService` | `getBearerToken()` | Ottiene/rinnova il token PingFederate (cache su file, client dedicato MoparDoc) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js (redazione dati sensibili nei log) |
 
@@ -600,6 +604,64 @@ segmento del path (integrazione API Gateway, es. `.../moparDoc/createJobCard`).
 
 Risposta: `200` con il body upstream in caso di successo; `400` se manca un
 campo obbligatorio; `502` per errori upstream/di rete.
+
+#### Metadati di ispezione delle foto (`woc.mopardoc_inspection_media`)
+
+`createJobCardAndUploadDocument` accetta, oltre ai campi esistenti, alcuni
+metadati **opzionali e nullable** della foto di ispezione, che **non** vengono
+inoltrati a Mopar ma salvati su Aurora (tabella `woc.mopardoc_inspection_media`,
+`moparDoc/InspectionMetadataRepository.js` + `moparDoc/db.js`):
+
+| Campo | Tipo | Valori ammessi |
+|---|---|---|
+| `Kind` | string | `pin` \| `general` |
+| `TabId` | string | `vehicle` \| `tyres` \| `dashboard` |
+| `DamageArea` | string | `front` \| `left` \| `right` \| `top` \| `rear` \| `generic` |
+| `Description` | string | max 1000 caratteri (oltre: troncata) |
+| `PosX`, `PosY` | number (o stringa numerica) | 0..100 (percentuale sul diagramma) |
+| `CapturedAt` | string | data/ora ISO 8601 |
+
+- **Normalizzazione (mai 400 per colpa dei metadati):** trim delle stringhe;
+  vuoto/solo spazi/assente → `null`; enum fuori whitelist, numeri non finiti o
+  fuori 0..100, date non parsabili, tipi errati (oggetti, array…) → `null` +
+  `console.warn`. Se **tutti** i metadati sono `null` non viene scritta alcuna riga.
+- **Scrittura:** dopo l'upload Mopar riuscito (STEP 5, non bloccante) UPSERT su
+  `document_id` (= `DocumentId` Mopar) con `jobcard_id`, `vin` e `created_by` =
+  `requestContext.authorizer.sub` (opzione interna passata da `index.js`, **non**
+  sovrascrivibile dal body; fallback su `body.UserName` solo se l'evento non ha
+  alcun `requestContext.authorizer`, es. invocazione diretta/CLI). La risposta
+  mantiene tutti i campi esistenti e aggiunge `metadataSaved` (boolean) e
+  `steps.saveInspectionMetadata` (`{ saved, reason }`, reason = `saved` |
+  `no-metadata` | `db-not-configured` | `missing-keys` | `db-error`). Se il DB
+  fallisce o non è configurato la risposta resta `200` con `metadataSaved: false`.
+
+  ```json
+  { "success": true, "JobCardId": 78660, "DocumentId": 47645, "uploadHttpStatus": 200,
+    "metadataSaved": true,
+    "steps": { "createJobCard": {}, "createAccessToken": null, "getUploadDocURL": {}, "uploadedDoc": {},
+               "saveInspectionMetadata": { "saved": true, "reason": "saved" } } }
+  ```
+- **Lettura:** `getDocuments` e `getJobCardAndDocumentList` arricchiscono ogni
+  documento di `jobCardList[].DocumentList[]` (e dell'eventuale `DocumentList[]`
+  top-level), abbinato per `ID`, con `InspectionMetadata` (`null` se non esiste
+  una riga o se il DB non è disponibile; in caso di errore DB la risposta upstream
+  resta per il resto invariata):
+
+  ```json
+  { "ID": 47645, "...": "campi upstream invariati",
+    "InspectionMetadata": { "Kind": "pin", "TabId": "vehicle", "DamageArea": "front",
+      "Description": "Graffio paraurti", "PosX": 12.5, "PosY": 40,
+      "CapturedAt": "2026-10-01T08:00:00.000Z" } }
+  ```
+- **Cancellazione:** `deleteDocumentsByVin`, dopo `DeleteDocuments` riuscito,
+  cancella fisicamente le righe dei documenti eliminati (esclusi quelli in
+  `ErrorDocumentID`); eventuali errori DB sono solo loggati.
+
+> **Tabella da creare manualmente:** lo script
+> `sql/create_table_mopardoc_inspection_media.sql` **non** è eseguito dalla
+> pipeline: va applicato a mano su Aurora (DEV/stage/prod) prima del deploy.
+> Senza tabella (o senza `MOPARDOC_DB_HOST`) l'upload funziona comunque, con
+> `metadataSaved: false` e `InspectionMetadata: null`.
 
 #### Utilizzo CLI
 
@@ -1363,6 +1425,11 @@ MOPARDOC_PING_CLIENT_ID=...         # Client ID PingFederate dedicato a moparDoc
 MOPARDOC_PING_CLIENT_SECRET=...     # Client Secret PingFederate dedicato a moparDoc
 MOPARDOC_IBM_CLIENT_ID=...          # X-IBM-Client-Id (job-docs connector + MoparDocs Browser API)
 MOPARDOC_IBM_CLIENT_SECRET=...      # X-IBM-Client-Secret (job-docs connector + MoparDocs Browser API)
+MOPARDOC_DB_HOST=...                # Endpoint RDS Proxy Aurora "wiadvisor" (woc.mopardoc_inspection_media); opzionale: se vuota i metadati di ispezione sono ignorati
+MOPARDOC_DB_SECRET_ID=...           # Secret Aurora wiadvisor_app (default sm-np-bsn0027990-dev-aurora-app); in locale in alternativa MOPARDOC_DB_USER/MOPARDOC_DB_PASSWORD
+MOPARDOC_DB_PORT=5432               # opzionale (default dal secret / 5432)
+MOPARDOC_DB_NAME=wiadvisor          # opzionale (default dal secret / wiadvisor)
+MOPARDOC_DB_SSL=true                # false solo per Postgres locale senza TLS
 ```
 
 ### v360
@@ -1530,11 +1597,11 @@ DMLCONFIGSYNC_DB_SSL=true                     # (opzionale) default true
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
 AWS_REGION=eu-west-1                                                  # (opzionale in Lambda: già impostata automaticamente da AWS)
 ```
 
-> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata automaticamente da `template.yaml` (`!Sub "rds-np-bsn0027990-${Environment}-aurora"`), nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
+> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (di default il cluster migrato di stage; se vuoto usa il nome storico). La policy IAM usa lo stesso identificativo. Nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
 
 ---
 
@@ -1566,7 +1633,7 @@ cd agendaSoa && npm run test:coverage
 | **dms** | 3 | 40 | `httpClient`, `authService`, `dmsService` |
 | **jobcard** | 3 | 67 | `httpClient`, `authService`, `jobCardService` |
 | **djc** | 4 | 61 | `httpClient`, `authService`, `jobCardService`, `DjcManager` |
-| **moparDoc** | 4 | 37 | `httpClient`, `authService`, `moparDocService`, `index` |
+| **moparDoc** | 9 | 191 | `httpClient`, `authService`, `moparDocService`, `index`, `config`, `secretsLoader`, `dynamoCache`, `db`, `InspectionMetadataRepository` |
 | **v360** | 3 | 29 | `httpClient`, `authService`, `v360Service` |
 | **pkEper** | 1 | 19 | `WsIQPckEper` |
 | **pkDocsoa** | 2 | 40 | `DocSOARestClient`, `certService` |
@@ -1590,7 +1657,7 @@ cd agendaSoa && npm run test:coverage
 | **dms** | 100% ✅ | 96.55% ✅ | 100% ✅ | 100% ✅ |
 | **jobcard** | 99.06% ✅ | 93.89% ✅ | 100% ✅ | 100% ✅ |
 | **djc** | 99.45% ✅ | 97.05% ✅ | 100% ✅ | 100% ✅ |
-| **moparDoc** | 99.17% ✅ | 96.36% ✅ | 100% ✅ | 100% ✅ |
+| **moparDoc** | 97.35% ✅ | 94.77% ✅ | 99% ✅ | 97.58% ✅ |
 | **v360** | 100% ✅ | 93.18% ✅ | 100% ✅ | 100% ✅ |
 | **pkEper** | 98.66% ✅ | 91.11% ✅ | 100% ✅ | 98.64% ✅ |
 | **pkDocsoa** | 97.61% ✅ | 93.70% ✅ | 100% ✅ | 98.97% ✅ |
@@ -1742,4 +1809,3 @@ Il comando genera nella cartella `coverage/`:
 - `lcov-report/index.html` — report HTML navigabile per file e riga
 - `cobertura-coverage.xml` — formato XML per integrazione CI
 - `coverage-summary.json` — riepilogo JSON con le percentuali per modulo
-

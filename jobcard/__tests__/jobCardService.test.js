@@ -1589,6 +1589,86 @@ describe('jobCardService', () => {
       expect(labor.discountInAmountOnPriceWithVat).toBeCloseTo(12.2, 5); // 122 - 109.8
     });
 
+    test('arrotonda a due decimali gli importi monetari di partInfo', () => {
+      const jobCardDetail = {
+        jobs: [{
+          partInfo: [{
+            partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 116.51,
+            appDiscountPercentage: 0, dmsDiscountPercentage: 0, vatPercentage: 19,
+          }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 116.51, DiscountPercentage: 20 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        unitaryPriceExclVat: 116.51,
+        originalPriceExclVat: 116.51,
+        originalPriceWithVat: 138.65,
+        priceExclVatAfterDiscount: 93.21,
+        priceWithVatAfterDiscount: 110.92,
+        discountInAmountOnPriceWithVat: 27.73,
+      }));
+    });
+
+    test('non ricalcola uno sconto DMS gia presente e lascia dmsOverride=false quando il prezzo non cambia', () => {
+      const jobCardDetail = {
+        jobs: [{
+          partInfo: [{
+            partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 116.51,
+            originalPriceExclVat: 116.51, originalPriceWithVat: 138.6469,
+            priceExclVatAfterDiscount: 93.20800000000001,
+            priceWithVatAfterDiscount: 110.91752000000001,
+            discountInAmountOnPriceWithVat: 27.729379999999978,
+            appDiscountPercentage: 0, dmsDiscountPercentage: 20, vatPercentage: 19,
+          }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 116.51, DiscountPercentage: 20 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        dmsDiscountPercentage: 20,
+        originalPriceExclVat: 116.51,
+        originalPriceWithVat: 138.65,
+        priceExclVatAfterDiscount: 93.21,
+        priceWithVatAfterDiscount: 110.92,
+        discountInAmountOnPriceWithVat: 27.73,
+      }));
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
+    });
+
+    test('aggiorna il prezzo con lo sconto DMS gia presente senza riconciliare due volte lo stesso sconto', () => {
+      const jobCardDetail = {
+        jobs: [{
+          partInfo: [{
+            partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 116.51,
+            originalPriceExclVat: 116.51, appDiscountPercentage: 0,
+            dmsDiscountPercentage: 20, vatPercentage: 19,
+          }],
+          laborInfo: [],
+        }],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 120, DiscountPercentage: 20 }], LaborItems: [] }],
+      });
+
+      expect(jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
+        unitaryPriceExclVat: 120,
+        originalPriceExclVat: 120,
+        priceExclVatAfterDiscount: 96,
+        dmsDiscountPercentage: 20,
+      }));
+      expect(jobCardDetail.jobs[0].dmsOverride).toBe(true);
+    });
+
     test('sets part.dmsunknown=1 and job.dmsOverride=false when no matching PartNumber/LaborOperationID is found for any part/labor of the job', () => {
       const jobCardDetail = {
         jobs: [
@@ -1645,7 +1725,7 @@ describe('jobCardService', () => {
       const jobCardDetail = {
         jobs: [
           {
-            partInfo: [{ partNumber: 'P1', itemQuantity: 1, originalPriceExclVat: 10 }],
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 10, originalPriceExclVat: 10 }],
             laborInfo: [{ laborOperationCode: 'OP1', originalPriceExclVat: 20 }],
           },
         ],
@@ -1662,6 +1742,7 @@ describe('jobCardService', () => {
       // disponibilita', ma senza prezzo/sconto dal DMS non c'e' un vero override.
       expect(jobCardDetail.jobs[0].partInfo[0].dmsunknown).toBe(0);
       expect(jobCardDetail.jobs[0].partInfo[0].QuantityAvailable).toBe(5);
+      expect(jobCardDetail.jobs[0].partInfo[0].unitaryPriceExclVat).toBe(10);
       expect(jobCardDetail.jobs[0].dmsOverride).toBe(false);
     });
 
