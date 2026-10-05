@@ -112,12 +112,24 @@ Lo username inoltrato dai consumer deriva dall'authorizer della richiesta
 originale, non da un parametro frontend; i receiver interni accettano solo
 richieste autenticate IAM da API Gateway.
 
-**Infrastruttura (senza deploy automatico):** `infrastructure/internal-api.yaml`
+**Infrastruttura:** `infrastructure/internal-api.yaml`
 aggiunge rotte `AWS_IAM`, permessi API Gateway→Lambda e policy
 `execute-api:Invoke` limitate alle operazioni di ciascun ruolo. Si applica al
 REST API privato esistente: non crea/modifica API, endpoint VPC, resource policy
 o stage. Passare `RestApiId`, `RootResourceId`, `Environment`, `StageName` e i
 nomi dei ruoli execution (output `Internal*RoleName` del template SAM).
+Nei deploy CI di dev/stage/prod, dopo SAM, `infrastructure/deploy-internal-api.js`
+aggiorna lo stack esistente `stla-woc-internal-api-<env>` con il template corrente,
+conservando i parametri API e risolvendo i ruoli dagli output del backend.
+Errori di allineamento bloccano il job; API/stage diversi da quelli configurati
+sono rifiutati. Il primo provisioning resta a cura del team infrastruttura.
+Per aggiungere/rinominare un'operazione inter-Lambda, aggiornare receiver, consumer
+e la policy del chiamante in questo template nello stesso commit: i test
+architetturali di `serviceClient` verificano che ogni chiamata abbia un permesso.
+Il normale deploy applica anche le policy, senza interventi manuali sui ruoli.
+Le nuove operazioni sulle rotte `{operation}` non richiedono una pubblicazione
+API; nuove rotte/receiver richiedono invece il deployment dello stage dal team
+infrastruttura. La pipeline non ripubblica il gateway condiviso.
 Il team infrastruttura deve verificare che permission boundary/SCP consentano
 `execute-api:Invoke`, che DNS privato e SG consentano HTTPS verso il VPC endpoint,
 e pubblicare un nuovo deployment dello stage dopo la creazione delle rotte.

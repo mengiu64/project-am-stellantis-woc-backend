@@ -59,3 +59,61 @@ test('internal gateway authorizes IAM POSTs without managing the existing stage'
   expect(template).toContain('execute-api:Invoke');
   expect(template).not.toMatch(/POST\/internal\/\*/);
 });
+
+const consumerPolicies = {
+  pkManager: 'PkManager', pkFavorite: 'PkFavorite', dms: 'Dms', jobcard: 'JobCard',
+  djc: 'Djc', session: 'Session', hqManager: 'HqManager',
+  dmlConfigSync: 'DmlConfigSync', 'synch-status': 'SynchStatus',
+};
+
+function checkRestPermissions(module, policy, template) {
+  const block = template.match(new RegExp(`^  ${policy}RestPolicy:[\\s\\S]*?(?=^  \\w+:|(?![\\s\\S]))`, 'm'));
+  expect(block).not.toBeNull();
+  const allowed = new Set([...block[0].matchAll(/POST\/internal\/([\w-]+)\/([\w-]+)/g)]
+    .map((match) => `${match[1]}/${match[2]}`));
+  const operations = [];
+  for (const file of sourceFiles(path.join(root, module))) {
+    const relative = path.relative(root, file).split(path.sep).join('/');
+    const source = fs.readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/function remoteOperation\(service, operation\)/g, '');
+    for (const match of source.matchAll(/\b(?:callService|remoteOperation)\s*\(\s*([^)]*)/g)) {
+      const literal = match[1].match(/^['"]([\w-]+)['"]\s*,\s*['"]([\w-]+)['"]\s*(?:,|$)/);
+      if (literal) {
+        operations.push(`${literal[1]}/${literal[2]}`);
+      } else if (relative === 'hqManager/repository.js' && /^'dbmanager', operation,/.test(match[1])) {
+        operations.push(...Object.keys(require('../../hqManager/repository')).map((name) => `dbmanager/${name}`));
+      } else if (relative === 'session/src/repositories/myPeopleDmsSessionRepository.js'
+        && /^service, operation,/.test(match[1])) {
+        // I nomi vengono verificati sulle chiamate remoteOperation dello stesso file.
+      } else {
+        throw new Error(`${relative}: chiamata REST dinamica non verificabile; aggiungere un controllo esplicito`);
+      }
+    }
+  }
+  expect(operations.length).toBeGreaterThan(0);
+  for (const operation of operations) {
+    if (!allowed.has(operation)) throw new Error(`${module}: manca il permesso IAM per ${operation}`);
+  }
+}
+
+test.each(Object.entries(consumerPolicies))('%s REST operations have explicit caller IAM permissions', (module, policy) => {
+  checkRestPermissions(module, policy, fs.readFileSync(path.join(root, 'infrastructure/internal-api.yaml'), 'utf8'));
+});
+
+test('adding a new REST caller requires an architecture policy check', () => {
+  for (const module of modules) {
+    const hasCalls = sourceFiles(path.join(root, module)).some((file) =>
+      /\bcallService\s*\(/.test(fs.readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')));
+    if (hasCalls) expect(consumerPolicies).toHaveProperty(module);
+  }
+});
+
+test('missing HQ operation permissions fail before deployment', () => {
+  const template = fs.readFileSync(path.join(root, 'infrastructure/internal-api.yaml'), 'utf8')
+    .replace(/^.*POST\/internal\/dbmanager\/getPackageListHQ\r?\n/gm, '');
+  expect(() => checkRestPermissions('hqManager', 'HqManager', template))
+    .toThrow('hqManager: manca il permesso IAM per dbmanager/getPackageListHQ');
+});

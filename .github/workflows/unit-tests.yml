@@ -4867,6 +4867,12 @@ jobs:
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
               DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}"
 
+      - name: Align internal REST routes and IAM policies
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
+        run: node infrastructure/deploy-internal-api.js dev
+
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
     environment: stage
@@ -4971,6 +4977,12 @@ jobs:
               DocsoaDbSecretId="${{ vars.STAGE_DOCSOA_DB_SECRET_ID }}" \
               TranslationsBucketNameOverride='""'
 
+      - name: Align internal REST routes and IAM policies
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
+        run: node infrastructure/deploy-internal-api.js stage
+
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
     concurrency:
@@ -5073,3 +5085,9 @@ jobs:
               ServiceUrlsSecretId="sm-np-bsn0027990-prod-service-urls" \
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
               DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}"
+
+      - name: Align internal REST routes and IAM policies
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
+        run: node infrastructure/deploy-internal-api.js prod

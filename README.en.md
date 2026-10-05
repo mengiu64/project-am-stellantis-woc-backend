@@ -104,12 +104,24 @@ remain in their owning services. Forwarded usernames come from the original
 request authorizer, not frontend parameters; internal receivers require
 API Gateway IAM authentication.
 
-**Infrastructure (no automatic deployment):** `infrastructure/internal-api.yaml`
+**Infrastructure:** `infrastructure/internal-api.yaml`
 adds `AWS_IAM` routes, API Gateway→Lambda permissions and per-role, per-operation
 `execute-api:Invoke` policies to the existing private REST API. It does not
 create/modify the API, VPC endpoint, resource policy or stage. Supply `RestApiId`,
 `RootResourceId`, `Environment`, `StageName` and execution-role names (SAM
-`Internal*RoleName` outputs). The infrastructure team must verify permission
+`Internal*RoleName` outputs).
+After SAM deployment, CI for dev/stage/prod runs `infrastructure/deploy-internal-api.js`
+to update the existing `stla-woc-internal-api-<env>` stack using the current template,
+preserving API parameters and resolving execution roles from backend outputs.
+Alignment errors fail the job; mismatched API/stage settings are rejected.
+Initial provisioning remains the infrastructure team's responsibility.
+When adding/renaming an inter-Lambda operation, update the receiver, consumer and
+caller policy in this template in the same commit: `serviceClient` architecture
+tests verify that every call has an explicit permission. Normal deployment also
+applies the policies, without manual role edits. New operations on `{operation}`
+routes do not require API publication; new routes/receivers still require a stage
+deployment by the infrastructure team. CI does not republish the shared gateway.
+The infrastructure team must verify permission
 boundary/SCP support for `execute-api:Invoke`, private DNS and security-group
 HTTPS access to the VPC endpoint, then publish a new stage deployment after
 creating the routes. Configure backend `InternalApiId`/`InternalApiStage` before
