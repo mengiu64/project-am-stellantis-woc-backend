@@ -522,10 +522,15 @@ Before being returned, the response is enriched by `sanitizeJobCardDetails` with
 
 - **`jobs[].packageType` / `jobs[].packageCharge`** — added to each job (placed before `partInfo`/`laborInfo` when present), derived from `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` with `packageCode` set → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` without `packageCode` (or missing/empty/`null` `jobType`) → `GC`/`CUSTOMER`; any other non-empty `jobType` → `GC`/`INTERNAL`. If the job has `paymentType` set, it always overrides `packageCharge` (`packageType` stays unchanged).
 - **`roInfo.roSource`** — added right after `roInfo.sourceApplication`, with the same value.
+- **`jobs[].partInfo[]`/`laborInfo[]` `appDiscountPercentage`/`dmsDiscountPercentage`** (`checkDiscount`) — missing fields are added with value `0`. `dmsDiscountPercentage` (DMS discount) is **never** modified: when the job has a workline discount (`discountInPercentage` set), children are brought to full price by setting `appDiscountPercentage = -dmsDiscountPercentage` (effective child discount = `dms + app` = 0).
 
 Additionally, before being persisted to cache (`saveJobCardDetailsToTmp`), the response is also enriched with data from the DML gateway (`getDataFromDML`/`getCartPriceAndAvailability`, see below): `jobs[].partInfo[]`/`jobs[].laborInfo[]` already receive updated price/availability/discount, using the same (optional) `sessionContext` passed to `getJobCardDetails` — best-effort, does not block the response if `dms` is unreachable.
 
 Recalculated monetary amounts are rounded to two decimal places. If `dmsDiscountPercentage` already matches the DML value, the discount is not recalculated: when the price is unchanged, `jobs[].dmsOverride` remains `false`; a changed DML price is still updated using the existing discount.
+
+QE/GC jobs with `dmsOverride === true` are recalculated as the sum of their children; with a workline discount the net price is the children's original total × (1 − workline discount). Fixed-price FP/LFP jobs keep the job price (never recalculated from the children).
+
+When at least one job has `dmsOverride === true`, `roInfo.totalPrice` is recalculated summing **only CUSTOMER jobs** (`paymentType`, or `packageCharge` when missing) and applying the cart-wide discount `roInfo.discounts.discountInPercentage` **only at the end** (never inside single jobs): `priceWithVatAfterDiscount = totalCustomerWithVat = CUSTOMER net × (1 − global discount)`. `totalManufacturerWithVat`/`totalInternalWithVat`/`totalInsuranceWithVat` stay the sum of their own jobs, without the global discount. When `roInfo.discounts` is present, `discountInAmountOnPriceWithVat` = (CUSTOMER original − CUSTOMER net) + CUSTOMER net × global discount.
 
 See `jobcard/README.md` for the full rule table.
 

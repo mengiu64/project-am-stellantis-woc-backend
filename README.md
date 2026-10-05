@@ -540,10 +540,15 @@ Prima di essere restituita, la risposta viene arricchita da `sanitizeJobCardDeta
 
 - **`jobs[].packageType` / `jobs[].packageCharge`** — aggiunti a ciascun job (posizionati prima di `partInfo`/`laborInfo` quando presenti), derivati da `jobType`/`packageCode`: `jobType="MFP"` → `FP`/`CUSTOMER`; `jobType="STD"` con `packageCode` valorizzato → `QE`/`CUSTOMER`; `jobType="LFP"` → `LFP`/`CUSTOMER`; `jobType="STD"` senza `packageCode` (o assente/vuoto/`null` di `jobType`) → `GC`/`CUSTOMER`; qualsiasi altro `jobType` non vuoto → `GC`/`INTERNAL`. Se il job ha `paymentType` valorizzato, questo sovrascrive sempre `packageCharge` (il `packageType` resta invariato).
 - **`roInfo.roSource`** — aggiunto subito dopo `roInfo.sourceApplication`, con lo stesso valore.
+- **`jobs[].partInfo[]`/`laborInfo[]` `appDiscountPercentage`/`dmsDiscountPercentage`** (`checkDiscount`) — i campi mancanti vengono aggiunti con valore `0`. `dmsDiscountPercentage` (sconto DMS) non viene **mai** modificato: se il job ha uno sconto di workline (`discountInPercentage` valorizzato), i figli vanno a prezzo pieno impostando `appDiscountPercentage = -dmsDiscountPercentage` (sconto effettivo del figlio = `dms + app` = 0).
 
 Inoltre, prima di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene arricchita anche con i dati del gateway DML (`getDataFromDML`/`getCartPriceAndAvailability`, v. sotto): `jobs[].partInfo[]`/`jobs[].laborInfo[]` ricevono così già prezzo/disponibilità/sconto aggiornati, con lo stesso `sessionContext` (opzionale) passato a `getJobCardDetails` — best-effort, non blocca la risposta in caso di problemi verso `dms`.
 
 Gli importi monetari ricalcolati sono arrotondati a due decimali. Se `dmsDiscountPercentage` coincide già con il valore DML, lo sconto non viene ricalcolato: con prezzo invariato `jobs[].dmsOverride` resta `false`; un prezzo DML diverso viene invece aggiornato usando lo sconto già presente.
+
+Il prezzo dei job QE/GC con `dmsOverride === true` viene ricalcolato come somma dei figli; con sconto di workline è la somma degli originali dei figli × (1 − sconto workline). I job a prezzo fisso FP/LFP mantengono il prezzo del job (non viene ricalcolato dai figli).
+
+Quando almeno un job ha `dmsOverride === true`, `roInfo.totalPrice` viene ricalcolato sommando **solo i job CUSTOMER** (`paymentType`, o `packageCharge` se assente) e applicando **alla fine** lo sconto generale `roInfo.discounts.discountInPercentage` (mai dentro i singoli job): `priceWithVatAfterDiscount = totalCustomerWithVat = netto CUSTOMER × (1 − sconto generale)`. `totalManufacturerWithVat`/`totalInternalWithVat`/`totalInsuranceWithVat` restano la somma dei rispettivi job, senza sconto generale. Se `roInfo.discounts` è presente, `discountInAmountOnPriceWithVat` = (originale CUSTOMER − netto CUSTOMER) + netto CUSTOMER × sconto generale.
 
 Vedi `jobcard/README.md` per la tabella completa delle regole.
 
