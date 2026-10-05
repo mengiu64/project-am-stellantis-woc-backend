@@ -53,6 +53,22 @@ describe('WsIQPckEper', () => {
     expect(client.codmarket).toBe('IT');
   });
 
+  test('uses the secret host without an environment fallback', async () => {
+    process.env.WOC_CONFIG_SECRET_ID = 'test-config';
+    const spy = jest.spyOn(require('../../runtimeConfig'), 'loadSettings');
+    try {
+      spy.mockResolvedValue({ EPER_HOST: 'secret.test' });
+      axios.post.mockResolvedValue({ data: emptySoapEnvelope() });
+      await client.getGroupsPRRequest({ ticket: 'TK', lingua: 'it', VIN: 'VIN123' });
+      expect(axios.post.mock.calls[0][0]).toBe('https://secret.test/DMSConnectorService');
+      spy.mockResolvedValue({});
+      await expect(client.getGroupsPRRequest({ VIN: 'VIN123' })).rejects.toThrow('EPER_HOST');
+    } finally {
+      delete process.env.WOC_CONFIG_SECRET_ID;
+      spy.mockRestore();
+    }
+  });
+
   test('getGroupsPRRequest uses VIN path and returns single gruppo', async () => {
     process.env.DEBUG_SOAP = '1';
     const innerXml = messageWith(

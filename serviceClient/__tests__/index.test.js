@@ -23,6 +23,28 @@ afterEach(() => {
   process.env = { ...originalEnv };
   global.fetch = originalFetch;
   jest.useRealTimers();
+  jest.restoreAllMocks();
+});
+
+test('reads REST URL and timeout from the shared secret rather than environment values', async () => {
+  process.env.WOC_INTERNAL_CONFIG_SECRET_ID = 'shared-config';
+  const spy = jest.spyOn(require('../../runtimeConfig'), 'loadSettings').mockResolvedValue({
+    WOC_INTERNAL_API_URL: 'https://secret-gateway/wia', WOC_INTERNAL_TIMEOUT_MS: 15000,
+  });
+  await callService('dms', 'inquiry');
+  expect(spy).toHaveBeenCalledWith('WOC_INTERNAL_CONFIG_SECRET_ID');
+  expect(mockSign).toHaveBeenCalledWith(expect.objectContaining({ hostname: 'secret-gateway' }));
+  spy.mockResolvedValue({});
+  await expect(callService('dms', 'inquiry')).rejects.toThrow('Missing configuration keys');
+  spy.mockResolvedValue({ WOC_INTERNAL_API_URL: 'https://secret-gateway/wia', WOC_INTERNAL_TIMEOUT_MS: 0 });
+  await expect(callService('dms', 'inquiry')).rejects.toThrow('positivo');
+});
+
+test('requires the shared secret reference when running in Lambda', async () => {
+  process.env.AWS_LAMBDA_FUNCTION_NAME = 'test-consumer';
+  delete process.env.WOC_INTERNAL_CONFIG_SECRET_ID;
+  await expect(callService('dms', 'inquiry')).rejects.toThrow('WOC_INTERNAL_CONFIG_SECRET_ID is required');
+  expect(global.fetch).not.toHaveBeenCalled();
 });
 
 test('signs a POST with role credentials, exact payload and private API path', async () => {

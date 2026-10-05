@@ -17,6 +17,11 @@ const { getHttpsAgent } = require('./certService');
  * @returns {Promise<AgendaNagaClient>} il client configurato.
  */
 async function buildClient(overrides = {}) {
+  const { loadSettings, requireSettings } = require('../../runtimeConfig');
+  const settings = await loadSettings();
+  if (process.env.WOC_CONFIG_SECRET_ID) {
+    requireSettings(settings, ['AGENDA_SOA_HOST', 'AGENDA_SOA_USERNAME', 'AGENDA_SOA_PASSWORD', 'AGENDA_SOA_API_KEY']);
+  }
   // Separa l'eventuale override di httpsAgent dagli altri override di configurazione.
   const { httpsAgent: httpsAgentOverride, ...restOverrides } = overrides;
   // Usa l'httpsAgent fornito (test) se presente, altrimenti lo carica da Secrets Manager.
@@ -26,11 +31,11 @@ async function buildClient(overrides = {}) {
 
   // Istanzia il client con la configurazione da env, l'agent mTLS e gli override rimanenti.
   return new AgendaNagaClient({
-    host:     process.env.AGENDA_SOA_HOST,
-    username: process.env.AGENDA_SOA_USERNAME,
-    password: process.env.AGENDA_SOA_PASSWORD,
-    apiKey:   process.env.AGENDA_SOA_API_KEY,
-    proxy:    process.env.AGENDA_SOA_PROXY,
+    host:     settings.AGENDA_SOA_HOST,
+    username: settings.AGENDA_SOA_USERNAME,
+    password: settings.AGENDA_SOA_PASSWORD,
+    apiKey:   settings.AGENDA_SOA_API_KEY,
+    proxy:    settings.AGENDA_SOA_PROXY,
     httpsAgent,
     ...restOverrides,
   });

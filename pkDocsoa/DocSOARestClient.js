@@ -8,13 +8,13 @@ const { getHttpsAgent } = require('./certService');
 // ─── Configurazione (da .env) ──────────────────────────────────────────────────
 // HOST: gateway IBM API Connect "cert-aai" (autenticazione mTLS), es:
 // https://api-cert-preprod.groupe-psa.com/api/cert-aai
-const HOST      = (process.env.DOCSOA_HOST ?? '').replace(/\/$/, '');
-const USERNAME  = process.env.DOCSOA_USERNAME;
-const PASSWORD  = process.env.DOCSOA_PASSWORD;
-// Credenziali applicative del gateway IBM API Connect (stesso pattern di dms/dmsService
-// per il gateway DML): richieste come header su OGNI chiamata, non più come query string.
-const IBM_CLIENT_ID     = process.env.DOCSOA_IBM_CLIENT_ID;
-const IBM_CLIENT_SECRET = process.env.DOCSOA_IBM_CLIENT_SECRET;
+async function getSettings() {
+  const { loadSettings, requireSettings } = require('../runtimeConfig');
+  return requireSettings(await loadSettings(), [
+    'DOCSOA_HOST', 'DOCSOA_USERNAME', 'DOCSOA_PASSWORD',
+    'DOCSOA_IBM_CLIENT_ID', 'DOCSOA_IBM_CLIENT_SECRET',
+  ]);
+}
 
 // Proxy opzionale (richiesto sulla rete corporativa Stellantis/PSA)
 const PROXY_HOST = process.env.PROXY_HOST;
@@ -50,26 +50,26 @@ function redactXml(xml) {
 // l'identificazione applicativa avviene via header X-IBM-Client-Id/X-IBM-Client-Secret,
 // vedi doPost)
 const URLS = {
-  functionsService:         () => `${HOST}/applications/newapvprdocre/ws/functionsService/v1/getFunctions`,
-  forfaitService:           () => `${HOST}/applications/newapvprdocre/ws/ForfaitService/v1/getForfait`,
-  ibxDetailForfaitService:  () => `${HOST}/applications/newapvprdocre/ws/ibxdetailforfaitservice/v1/getIbxDetailForfait`,
-  ibxParametrageService:    () => `${HOST}/applications/newapvprdocre/ws/ibxparametrageservice/v1/getIbxParametrage`,
-  ibxDetailtpService:       () => `${HOST}/applications/newapvprdocre/ibxdetailtpservice/v1/getIbxDetailTp`,
+  functionsService:         (host) => `${host}/applications/newapvprdocre/ws/functionsService/v1/getFunctions`,
+  forfaitService:           (host) => `${host}/applications/newapvprdocre/ws/ForfaitService/v1/getForfait`,
+  ibxDetailForfaitService:  (host) => `${host}/applications/newapvprdocre/ws/ibxdetailforfaitservice/v1/getIbxDetailForfait`,
+  ibxParametrageService:    (host) => `${host}/applications/newapvprdocre/ws/ibxparametrageservice/v1/getIbxParametrage`,
+  ibxDetailtpService:       (host) => `${host}/applications/newapvprdocre/ibxdetailtpservice/v1/getIbxDetailTp`,
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Helper: costruisce le sezioni riutilizzabili del payload
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function wsSecurityHeader() {
+function wsSecurityHeader(settings) {
   return `
   <soapenv:Header>
     <wsse:Security soapenv:mustUnderstand="1"
       xmlns:wsse="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
       xmlns:wsu="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd">
       <wsse:UsernameToken>
-        <wsse:Username>${USERNAME}</wsse:Username>
-        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">${PASSWORD}</wsse:Password>
+        <wsse:Username>${settings.DOCSOA_USERNAME}</wsse:Username>
+        <wsse:Password Type="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText">${settings.DOCSOA_PASSWORD}</wsse:Password>
         <wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">ZlnzJSe0ABUVnzSW8mmZ1A==</wsse:Nonce>
         <wsu:Created>2024-01-01T00:00:00.000Z</wsu:Created>
       </wsse:UsernameToken>
@@ -99,7 +99,7 @@ function ioBlock(params) {
 // Payload builders (uno per metodo)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function buildPayload_functionsService(params) {
+function buildPayload_functionsService(params, settings) {
   let typedocXml = '';
   if (params.typedoc) {
     const list = Array.isArray(params.typedoc) ? params.typedoc : [params.typedoc];
@@ -112,7 +112,7 @@ function buildPayload_functionsService(params) {
     xmlns:spec="http://xml.inetpsa.com/fdzsoa/functions/Commerce/APVTechnique/Reseau/Specific"
     xmlns:io="http://xml.inetpsa.com/fdzsoa/Commerce/APVTechnique/Reseau/Specific/IO"
     xmlns:iden="http://xml.inetpsa.com/fdzsoa/ProduitProcess/Vehicule/Identification">
-  ${wsSecurityHeader()}
+  ${wsSecurityHeader(settings)}
   <soapenv:Body>
     <fun:getFunctions>
       <spec:functionsRequest>
@@ -125,7 +125,7 @@ function buildPayload_functionsService(params) {
 </soapenv:Envelope>`;
 }
 
-function buildPayload_forfaitService(params) {
+function buildPayload_forfaitService(params, settings) {
   const fonctionXml = Array.isArray(params.fonctionIdListe)
     ? params.fonctionIdListe.map(f => `<spec:fonctionIdListe>${f}</spec:fonctionIdListe>`).join('\n')
     : '<spec:fonctionIdListe></spec:fonctionIdListe>';
@@ -136,7 +136,7 @@ function buildPayload_forfaitService(params) {
     xmlns:spec="http://xml.inetpsa.com/fdzsoa/forfait/Commerce/APVTechnique/Reseau/Specific"
     xmlns:io="http://xml.inetpsa.com/fdzsoa/Commerce/APVTechnique/Reseau/Specific/IO"
     xmlns:iden="http://xml.inetpsa.com/fdzsoa/ProduitProcess/Vehicule/Identification">
-  ${wsSecurityHeader()}
+  ${wsSecurityHeader(settings)}
   <soapenv:Body>
     <for:getForfait>
       <spec:ForfaitRequest>
@@ -151,7 +151,7 @@ function buildPayload_forfaitService(params) {
 </soapenv:Envelope>`;
 }
 
-function buildPayload_ibxDetailForfaitService(params) {
+function buildPayload_ibxDetailForfaitService(params, settings) {
   const niveauXml = params.niveau ? `<spec:niveau>${params.niveau}</spec:niveau>` : '';
 
   return `<soapenv:Envelope
@@ -160,7 +160,7 @@ function buildPayload_ibxDetailForfaitService(params) {
     xmlns:spec="http://xml.inetpsa.com/fdzsoa/ibxdetailforfait/Commerce/APVTechnique/Reseau/Specific"
     xmlns:io="http://xml.inetpsa.com/fdzsoa/Commerce/APVTechnique/Reseau/Specific/IO"
     xmlns:iden="http://xml.inetpsa.com/fdzsoa/ProduitProcess/Vehicule/Identification">
-  ${wsSecurityHeader()}
+  ${wsSecurityHeader(settings)}
   <soapenv:Body>
     <ibx:getIbxDetailForfait>
       <spec:ibxdetailforfaitRequest>
@@ -175,7 +175,7 @@ function buildPayload_ibxDetailForfaitService(params) {
 </soapenv:Envelope>`;
 }
 
-function buildPayload_ibxParametrageService(params) {
+function buildPayload_ibxParametrageService(params, settings) {
   const fonctionXml = Array.isArray(params.FonctionIdListe)
     ? params.FonctionIdListe.map(f => `<spec:FonctionIdListe>${f}</spec:FonctionIdListe>`).join('\n')
     : '<spec:FonctionIdListe></spec:FonctionIdListe>';
@@ -186,7 +186,7 @@ function buildPayload_ibxParametrageService(params) {
     xmlns:spec="http://xml.inetpsa.com/fdzsoa/ibxparametrage/Commerce/APVTechnique/Reseau/Specific"
     xmlns:io="http://xml.inetpsa.com/fdzsoa/Commerce/APVTechnique/Reseau/Specific/IO"
     xmlns:iden="http://xml.inetpsa.com/fdzsoa/ProduitProcess/Vehicule/Identification">
-  ${wsSecurityHeader()}
+  ${wsSecurityHeader(settings)}
   <soapenv:Body>
     <ibx:getIbxParametrage>
       <spec:ibxparametrageRequest>
@@ -199,14 +199,14 @@ function buildPayload_ibxParametrageService(params) {
 </soapenv:Envelope>`;
 }
 
-function buildPayload_ibxDetailtpService(params) {
+function buildPayload_ibxDetailtpService(params, settings) {
   return `<soapenv:Envelope
     xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
     xmlns:ibx="http://xml.inetpsa.com/Services/PsFdzIbxDetailTpObjects/IbxDetailTpService"
     xmlns:spec="http://xml.inetpsa.com/fdzsoa/ibxdetailtp/Commerce/APVTechnique/Reseau/Specific"
     xmlns:io="http://xml.inetpsa.com/fdzsoa/Commerce/APVTechnique/Reseau/Specific/IO"
     xmlns:iden="http://xml.inetpsa.com/fdzsoa/ProduitProcess/Vehicule/Identification">
-  ${wsSecurityHeader()}
+  ${wsSecurityHeader(settings)}
   <soapenv:Body>
     <ibx:getIbxDetailTp>
       <spec:ibxdetailtpRequest>
@@ -224,19 +224,19 @@ function buildPayload_ibxDetailtpService(params) {
 // HTTP call
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function basicAuth() {
-  return 'Basic ' + Buffer.from(`${USERNAME}:${PASSWORD}`).toString('base64');
+function basicAuth(settings) {
+  return 'Basic ' + Buffer.from(`${settings.DOCSOA_USERNAME}:${settings.DOCSOA_PASSWORD}`).toString('base64');
 }
 
-async function doPost(url, xml, extraHeaders = {}) {
+async function doPost(url, xml, settings, extraHeaders = {}) {
   const startedAt = Date.now();
 
   const headers = {
     'Content-Type':        'application/xml',
     'Accept':              'application/xml',
-    'Authorization':       basicAuth(),
-    'X-IBM-Client-Id':     IBM_CLIENT_ID,
-    'X-IBM-Client-Secret': IBM_CLIENT_SECRET,
+    'Authorization':       basicAuth(settings),
+    'X-IBM-Client-Id':     settings.DOCSOA_IBM_CLIENT_ID,
+    'X-IBM-Client-Secret': settings.DOCSOA_IBM_CLIENT_SECRET,
     ...extraHeaders,
   };
 
@@ -390,8 +390,9 @@ class DocSOARestClient {
   // ── functionsService ─────────────────────────────────────────────────────────
   // Lista gerarchica delle funzioni/categorie disponibili per un VIN
   async functionsService(params) {
-    const xml      = buildPayload_functionsService(params);
-    const rawXml   = await doPost(URLS.functionsService(), xml);
+    const settings = await getSettings();
+    const xml      = buildPayload_functionsService(params, settings);
+    const rawXml   = await doPost(URLS.functionsService(settings.DOCSOA_HOST.replace(/\/$/, '')), xml, settings);
     const clean    = stripNamespacePrefixes(rawXml);
     const parsed   = await parseXml(clean);
 
@@ -444,8 +445,9 @@ class DocSOARestClient {
   // ── forfaitService ───────────────────────────────────────────────────────────
   // Lista dei forfait (pacchetti manutenzione) per funzioni + VIN
   async forfaitService(params) {
-    const xml    = buildPayload_forfaitService(params);
-    const rawXml = await doPost(URLS.forfaitService(), xml);
+    const settings = await getSettings();
+    const xml    = buildPayload_forfaitService(params, settings);
+    const rawXml = await doPost(URLS.forfaitService(settings.DOCSOA_HOST.replace(/\/$/, '')), xml, settings);
     const clean  = stripNamespacePrefixes(rawXml);
     const parsed = await parseXml(clean);
 
@@ -468,8 +470,9 @@ class DocSOARestClient {
   // ── ibxDetailForfaitService ──────────────────────────────────────────────────
   // Dettaglio di un forfait specifico (codeFF)
   async ibxDetailForfaitService(params) {
-    const xml    = buildPayload_ibxDetailForfaitService(params);
-    const rawXml = await doPost(URLS.ibxDetailForfaitService(), xml);
+    const settings = await getSettings();
+    const xml    = buildPayload_ibxDetailForfaitService(params, settings);
+    const rawXml = await doPost(URLS.ibxDetailForfaitService(settings.DOCSOA_HOST.replace(/\/$/, '')), xml, settings);
     const clean  = stripNamespacePrefixes(rawXml);
     const parsed = await parseXml(clean);
 
@@ -489,8 +492,9 @@ class DocSOARestClient {
   // ── ibxParametrageService ────────────────────────────────────────────────────
   // Parametri QuickEstimate per le funzioni selezionate
   async ibxParametrageService(params) {
-    const xml    = buildPayload_ibxParametrageService(params);
-    const rawXml = await doPost(URLS.ibxParametrageService(), xml);
+    const settings = await getSettings();
+    const xml    = buildPayload_ibxParametrageService(params, settings);
+    const rawXml = await doPost(URLS.ibxParametrageService(settings.DOCSOA_HOST.replace(/\/$/, '')), xml, settings);
     const clean  = stripNamespacePrefixes(rawXml);
     const parsed = await parseXml(clean);
 
@@ -506,8 +510,9 @@ class DocSOARestClient {
   // ── ibxDetailtpService ───────────────────────────────────────────────────────
   // Dettaglio tempo/prezzo di una specifica TP (refTp)
   async ibxDetailtpService(params) {
-    const xml    = buildPayload_ibxDetailtpService(params);
-    const rawXml = await doPost(URLS.ibxDetailtpService(), xml);
+    const settings = await getSettings();
+    const xml    = buildPayload_ibxDetailtpService(params, settings);
+    const rawXml = await doPost(URLS.ibxDetailtpService(settings.DOCSOA_HOST.replace(/\/$/, '')), xml, settings);
     const clean  = stripNamespacePrefixes(rawXml);
     const parsed = await parseXml(clean);
 

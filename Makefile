@@ -1,16 +1,19 @@
-# Ogni artifact contiene solo la propria Lambda e il trasporto REST condiviso.
+# Ogni artifact contiene la Lambda e le librerie di trasporto/configurazione.
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 define build-service
 build-$(1):
-	mkdir -p "$(ARTIFACTS_DIR)/$(2)" "$(ARTIFACTS_DIR)/serviceClient"
+	mkdir -p "$(ARTIFACTS_DIR)/$(2)" "$(ARTIFACTS_DIR)/serviceClient" "$(ARTIFACTS_DIR)/runtimeConfig"
 	tar -C "$(2)" --exclude='./node_modules' --exclude='./__tests__' --exclude='./coverage' --exclude='./.env*' --exclude='./test*.js' -cf - . | tar -C "$(ARTIFACTS_DIR)/$(2)" -xf -
 	tar -C serviceClient --exclude='./node_modules' --exclude='./__tests__' --exclude='./coverage' --exclude='./.env*' -cf - . | tar -C "$(ARTIFACTS_DIR)/serviceClient" -xf -
+	tar -C runtimeConfig --exclude='./node_modules' --exclude='./__tests__' --exclude='./coverage' --exclude='./.env*' -cf - . | tar -C "$(ARTIFACTS_DIR)/runtimeConfig" -xf -
 	cd "$(ARTIFACTS_DIR)/$(2)" && npm ci --omit=dev --no-audit --no-fund
 	cd "$(ARTIFACTS_DIR)/serviceClient" && npm ci --omit=dev --no-audit --no-fund
+	cd "$(ARTIFACTS_DIR)/runtimeConfig" && npm ci --omit=dev --no-audit --no-fund
 endef
 
+$(eval $(call build-service,AgendaSoaFunction,agendaSoa))
 $(eval $(call build-service,AgendaSoaNagaFunction,agendaSoaNaga))
 $(eval $(call build-service,DmsFunction,dms))
 $(eval $(call build-service,JobCardFunction,jobcard))

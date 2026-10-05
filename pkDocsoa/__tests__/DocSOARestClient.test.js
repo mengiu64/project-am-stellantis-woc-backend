@@ -40,6 +40,30 @@ describe('DocSOARestClient', () => {
     logSpy.mockRestore();
   });
 
+  test('uses secret values for endpoint and authorization without env fallback', async () => {
+    process.env.WOC_CONFIG_SECRET_ID = 'test-config';
+    const spy = jest.spyOn(require('../../runtimeConfig'), 'loadSettings');
+    try {
+      spy.mockResolvedValue({
+        DOCSOA_HOST: 'https://secret.test/', DOCSOA_USERNAME: 'secret-user',
+        DOCSOA_PASSWORD: 'secret-pass', DOCSOA_IBM_CLIENT_ID: 'secret-client',
+        DOCSOA_IBM_CLIENT_SECRET: 'secret-client-pass',
+      });
+      axios.post.mockResolvedValue({ status: 200, data: soapEnvelope('<getFunctionsResponse/>') });
+      await client.functionsService({});
+      const [url, body, options] = axios.post.mock.calls[0];
+      expect(url).toContain('https://secret.test/applications/');
+      expect(body).toContain('<wsse:Username>secret-user</wsse:Username>');
+      expect(options.headers.Authorization).toBe('Basic ' + Buffer.from('secret-user:secret-pass').toString('base64'));
+      expect(options.headers['X-IBM-Client-Id']).toBe('secret-client');
+      spy.mockResolvedValue({});
+      await expect(client.forfaitService({})).rejects.toThrow('Missing configuration keys');
+    } finally {
+      delete process.env.WOC_CONFIG_SECRET_ID;
+      spy.mockRestore();
+    }
+  });
+
   test('vinParts splits the VIN into wmi, vds and vis', () => {
     expect(vinParts('ABCDEFGHIJKLMNOP')).toEqual({
       wmi: 'ABC',

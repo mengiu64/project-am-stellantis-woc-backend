@@ -43,7 +43,8 @@ function getDbConfig() {
  * @returns {boolean}
  */
 function isDbConfigured() {
-  return Boolean(process.env.MOPARDOC_DB_HOST && String(process.env.MOPARDOC_DB_HOST).trim());
+  return Boolean(process.env.MOPARDOC_DB_SECRET_ID ||
+    (process.env.MOPARDOC_DB_HOST && String(process.env.MOPARDOC_DB_HOST).trim()));
 }
 
 /**
@@ -84,21 +85,23 @@ function fetchSecretJson(secretId, extensionPort) {
 
 async function buildPool() {
   const cfg = getDbConfig();
-  if (!cfg.host) {
+  if (!cfg.host && !process.env.MOPARDOC_DB_SECRET_ID) {
     throw new Error('[moparDoc/db] Missing required environment variable: MOPARDOC_DB_HOST');
   }
 
   let { user, password, port } = cfg;
   let database = cfg.name;
 
-  if (!user || !password) {
+  if (!cfg.host || !user || !password) {
     const secret = await fetchSecretJson(cfg.secretId, cfg.extensionPort);
     user = user || secret.username;
     password = password || secret.password;
-    database = database || secret.dbname;
-    port = port || secret.port;
+    database = database || secret.proxydbname || secret.dbname;
+    port = port || secret.proxyport || secret.port;
+    cfg.host = cfg.host || secret.proxyhost;
   }
 
+  if (!cfg.host) throw new Error('[moparDoc/db] proxyhost is required in the database secret');
   return new Pool({
     host: cfg.host,
     port: port || 5432,

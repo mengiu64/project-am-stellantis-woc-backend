@@ -87,6 +87,25 @@ describe('db.js', () => {
   });
 
   describe('getPool', () => {
+    test('loads proxy metadata from the secret without an environment host', async () => {
+      const host = config.db.host;
+      config.db.host = undefined;
+      try {
+        const secret = { username: 'app', password: 'pw', proxyhost: 'proxy.test', proxyport: 5433, proxydbname: 'proxy-db' };
+        const mockRes = buildMockRes(200, JSON.stringify({ SecretString: JSON.stringify(secret) }));
+        http.get.mockImplementation((options, cb) => { cb(mockRes); return { on: jest.fn() }; });
+        await db.getPool();
+        expect(Pool).toHaveBeenCalledWith(expect.objectContaining({ host: 'proxy.test', port: 5433, database: 'proxy-db' }));
+        db._resetPool();
+        delete secret.proxyhost;
+        const missingHost = buildMockRes(200, JSON.stringify({ SecretString: JSON.stringify(secret) }));
+        http.get.mockImplementation((options, cb) => { cb(missingHost); return { on: jest.fn() }; });
+        await expect(db.getPool()).rejects.toThrow('proxyhost');
+      } finally {
+        config.db.host = host;
+      }
+    });
+
     test('fetches credentials from Secrets Manager when user/password are not set via env', async () => {
       const secret = { username: 'wiadvisor_app', password: 'pw', dbname: 'wiadvisor', port: 5432 };
       const mockRes = buildMockRes(200, JSON.stringify({ SecretString: JSON.stringify(secret) }));
