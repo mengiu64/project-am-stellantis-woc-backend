@@ -105,22 +105,36 @@ request authorizer, not frontend parameters; internal receivers require
 API Gateway IAM authentication.
 
 **Infrastructure:** `infrastructure/internal-api.yaml`
-adds `AWS_IAM` routes, API Gateway→Lambda permissions and per-role, per-operation
-`execute-api:Invoke` policies to the existing private REST API. It does not
+adds `AWS_IAM` routes, the `InternalIntegrationRole` integration role and per-role,
+per-operation `execute-api:Invoke` policies to the existing private REST API.
+API Gateway assumes the role (integration `Credentials`) to invoke receivers: there
+are no `AWS::Lambda::Permission` resources for `/internal`, so the Lambda console
+shows no API Gateway triggers for internal routes. The trust policy accepts
+`apigateway.amazonaws.com` without conditions: API Gateway does not provide
+`aws:SourceArn`/`aws:SourceAccount` when assuming the role (with those conditions
+the integration returns 500, verified in dev). Only principals with `iam:PassRole`
+on the role in the same account can attach it to an integration; the role can
+invoke only the 11 receivers. Add any new receiver to the role policy too
+(otherwise the integration returns 500). It does not
 create/modify the API, VPC endpoint, resource policy or stage. Supply `RestApiId`,
 `RootResourceId`, `Environment`, `StageName` and execution-role names (SAM
 `Internal*RoleName` outputs).
 After SAM deployment, CI for dev/stage/prod runs `infrastructure/deploy-internal-api.js`
-to update the existing `stla-woc-internal-api-<env>` stack using the current template,
-preserving API parameters and resolving execution roles from backend outputs.
+to update the existing `stla-woc-internal-api-<env>` stack using the current template
+through SAM CLI (the runner has no AWS CLI). Only execution-role names, read from
+backend outputs, are passed: API, root and stage keep the stack's existing values.
+Stack tags are always `Env=<env>` and `Project=bsn0027990` (SAM without `--tags`
+would remove them).
 Alignment errors fail the job; mismatched API/stage settings are rejected.
 Initial provisioning remains the infrastructure team's responsibility.
 When adding/renaming an inter-Lambda operation, update the receiver, consumer and
 caller policy in this template in the same commit: `serviceClient` architecture
 tests verify that every call has an explicit permission. Normal deployment also
 applies the policies, without manual role edits. New operations on `{operation}`
-routes do not require API publication; new routes/receivers still require a stage
-deployment by the infrastructure team. CI does not republish the shared gateway.
+routes do not require API publication; new routes/receivers and integration changes
+(e.g. `Credentials`) take effect only after a new stage deployment by the
+infrastructure team. CI does not republish the shared gateway: remove permissions or
+roles still used by the published stage only after publication.
 The infrastructure team must verify permission
 boundary/SCP support for `execute-api:Invoke`, private DNS and security-group
 HTTPS access to the VPC endpoint, then publish a new stage deployment after
@@ -186,6 +200,23 @@ started during this stage preparation. Lambda code and configuration are
 unchanged; no temporary probe was deployed either. Private DNS and HTTPS
 rules are configured, but VPC HTTP access and application flows must be
 verified after deploying receivers/consumers. Production was not modified.
+
+**Integration role as of 2026-10-05:** in dev and stage, `/internal`
+integrations invoke receivers through `InternalIntegrationRole`
+(`Credentials`), and the 11 internal-route `AWS::Lambda::Permission`
+resources were removed: Lambda policies keep only frontend route permissions
+(`AllowAPIGwRoute-*`) and the `dmlConfigSync` EventBridge rule. Deployments
+`hrvmig` (dev, previous `nu31of`) and `6jnbe0` (stage, previous `g37v82`)
+were published. Stacks `stla-woc-internal-api-<env>` now carry the
+`Env`/`Project` tags; in stage, `HqManagerRestPolicy` was aligned with the
+template (`getPackageListHQ`/`getPackageListSM`). In dev, all 11 receivers
+respond through the role and a real HQ `getPackageListHQ` smoke test (REST
+call to `dbmanager`) succeeded; in stage, 7 receivers were reached with
+non-destructive requests and IAM simulation confirms the permissions, but
+application flows must be verified after the REST code is deployed to
+`staging`. The dev CI role lacks `iam:UpdateAssumeRolePolicy`: future trust
+changes to the integration role in dev need this permission or the
+infrastructure team.
 
 Makefile targets package **only the current module, `serviceClient/` and `runtimeConfig/`**,
 installing each production dependency set in the artifact. Caches remain in

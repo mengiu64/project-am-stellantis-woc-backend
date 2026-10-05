@@ -2,8 +2,11 @@
 # Prerequisito: il resource Allow con Principal "*" deve coprire solo /api e /auth,
 # mai /internal. Per /internal l'Allow deriva dalle policy dei ruoli nello stesso
 # account; un Deny globale fuori aws:SourceVpce mantiene l'API privata.
+# API Gateway invoca i receiver con InternalIntegrationRole (Credentials dell'integrazione):
+# nessun AWS::Lambda::Permission, quindi nessun trigger API Gateway sulle Lambda.
+# Le modifiche alle integrazioni sono attive solo dopo un nuovo deployment dello stage.
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'WOC REST interno IAM: rotte e permessi su API privata esistente. Allineamento stack da CI; provisioning iniziale e pubblicazione stage a cura del team infrastruttura.'
+Description: 'WOC REST interno IAM: rotte, ruolo di integrazione API Gateway (nessun trigger Lambda) e permessi su API privata esistente. Allineamento stack da CI; provisioning iniziale e pubblicazione stage a cura del team infrastruttura.'
 Parameters:
   Environment:
     Type: String
@@ -70,6 +73,38 @@ Resources:
             Action: secretsmanager:GetSecretValue
             Resource:
               Fn::Sub: arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-internal-api-config-*
+  InternalIntegrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Ruolo assunto da API Gateway per invocare i receiver /internal senza permessi Lambda (nessun trigger)
+      PermissionsBoundary:
+        Fn::Sub: arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/StlaPermissionBoundary
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-internal-receivers
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dms
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dbmanager
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkeper
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkdocsoa
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkmenupricing
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-session
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-mypeople
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-v360
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-agendasoanaga
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-jobcard
+                  - Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dmlconfigsync
   InternalRoot:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -107,20 +142,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dms/invocations
         TimeoutInMillis: 29000
-  DmsInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dms
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dms/*
   DbManagerResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -150,20 +178,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dbmanager/invocations
         TimeoutInMillis: 29000
-  DbManagerInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dbmanager
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/*
   PkEperResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -193,20 +214,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkeper/invocations
         TimeoutInMillis: 29000
-  PkEperInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkeper
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/pkeper/*
   PkDocsoaResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -236,20 +250,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkdocsoa/invocations
         TimeoutInMillis: 29000
-  PkDocsoaInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkdocsoa
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/pkdocsoa/*
   PkMenupricingResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -279,20 +286,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkmenupricing/invocations
         TimeoutInMillis: 29000
-  PkMenupricingInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-pkmenupricing
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/pkmenupricing/*
   SessionResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -322,20 +322,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-session/invocations
         TimeoutInMillis: 29000
-  SessionInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-session
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/session/*
   MyPeopleResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -365,20 +358,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-mypeople/invocations
         TimeoutInMillis: 29000
-  MyPeopleInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-mypeople
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/mypeople/*
   V360Resource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -408,20 +394,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-v360/invocations
         TimeoutInMillis: 29000
-  V360InvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-v360
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/v360/*
   AgendaSoaNagaResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -451,20 +430,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-agendasoanaga/invocations
         TimeoutInMillis: 29000
-  AgendaSoaNagaInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-agendasoanaga
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/agendasoanaga/*
   JobCardResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -494,20 +466,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-jobcard/invocations
         TimeoutInMillis: 29000
-  JobCardInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-jobcard
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/jobcard/*
   DmlConfigSyncResource:
     Type: AWS::ApiGateway::Resource
     Properties:
@@ -537,20 +502,13 @@ Resources:
       Integration:
         Type: AWS_PROXY
         IntegrationHttpMethod: POST
+        Credentials:
+          Fn::GetAtt:
+          - InternalIntegrationRole
+          - Arn
         Uri:
           Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dmlconfigsync/invocations
         TimeoutInMillis: 29000
-  DmlConfigSyncInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName:
-        Fn::Sub: arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:lmb-np-bsn0027990-${Environment}-dmlconfigsync
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceAccount:
-        Ref: AWS::AccountId
-      SourceArn:
-        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dmlconfigsync/*
   PkManagerRestPolicy:
     Type: AWS::IAM::Policy
     Properties:

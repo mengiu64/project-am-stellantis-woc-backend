@@ -60,6 +60,26 @@ test('internal gateway authorizes IAM POSTs without managing the existing stage'
   expect(template).not.toMatch(/POST\/internal\/\*/);
 });
 
+test('API Gateway invokes internal receivers through its integration role, without Lambda triggers', () => {
+  const template = fs.readFileSync(path.join(root, 'infrastructure/internal-api.yaml'), 'utf8');
+  expect(template).not.toContain('Type: AWS::Lambda::Permission');
+  const integrations = [...template.matchAll(/^ {6}Integration:\r?\n((?: {8}.*\r?\n)+)/gm)].map((match) => match[1]);
+  expect(integrations).toHaveLength(11);
+  const receivers = integrations.map((integration) => {
+    expect(integration).toMatch(/Credentials:\s+Fn::GetAtt:\s+- InternalIntegrationRole\s+- Arn/);
+    return integration.match(/function:(lmb-np-bsn0027990-\$\{Environment\}-[a-z0-9]+)\/invocations/)[1];
+  });
+  const role = template.match(/^ {2}InternalIntegrationRole:\r?\n((?: {4}.*\r?\n)+)/m)[1];
+  expect(role).toContain('Service: apigateway.amazonaws.com');
+  // API Gateway non valorizza aws:SourceArn/aws:SourceAccount assumendo il ruolo: con queste condizioni ogni integrazione risponde 500.
+  expect(role).not.toMatch(/aws:Source(Arn|Account)/);
+  expect(role).toContain('policy/StlaPermissionBoundary');
+  expect(role).toContain('Action: lambda:InvokeFunction');
+  expect(role).not.toMatch(/function:\S*\*/);
+  expect([...role.matchAll(/function:(lmb-np-bsn0027990-\$\{Environment\}-[a-z0-9]+)\r?$/gm)].map((match) => match[1]).sort())
+    .toEqual([...new Set(receivers)].sort());
+});
+
 const consumerPolicies = {
   pkManager: 'PkManager', pkFavorite: 'PkFavorite', dms: 'Dms', jobcard: 'JobCard',
   djc: 'Djc', session: 'Session', hqManager: 'HqManager',

@@ -113,14 +113,26 @@ originale, non da un parametro frontend; i receiver interni accettano solo
 richieste autenticate IAM da API Gateway.
 
 **Infrastruttura:** `infrastructure/internal-api.yaml`
-aggiunge rotte `AWS_IAM`, permessi API Gateway→Lambda e policy
-`execute-api:Invoke` limitate alle operazioni di ciascun ruolo. Si applica al
+aggiunge rotte `AWS_IAM`, il ruolo di integrazione `InternalIntegrationRole`
+e policy `execute-api:Invoke` limitate alle operazioni di ciascun ruolo.
+API Gateway assume il ruolo (`Credentials` dell'integrazione) per invocare i
+receiver: non esistono `AWS::Lambda::Permission` per `/internal`, quindi la
+console Lambda non mostra trigger API Gateway per le rotte interne. La trust
+policy accetta `apigateway.amazonaws.com` senza condizioni: API Gateway non
+valorizza `aws:SourceArn`/`aws:SourceAccount` quando assume il ruolo (con le
+condizioni l'integrazione risponde 500, verificato in dev). Solo chi ha
+`iam:PassRole` sul ruolo nello stesso account può associarlo a un'integrazione;
+il ruolo può invocare solo gli 11 receiver. Un nuovo receiver
+va aggiunto anche alla policy del ruolo (altrimenti l'integrazione risponde 500). Si applica al
 REST API privato esistente: non crea/modifica API, endpoint VPC, resource policy
 o stage. Passare `RestApiId`, `RootResourceId`, `Environment`, `StageName` e i
 nomi dei ruoli execution (output `Internal*RoleName` del template SAM).
 Nei deploy CI di dev/stage/prod, dopo SAM, `infrastructure/deploy-internal-api.js`
-aggiorna lo stack esistente `stla-woc-internal-api-<env>` con il template corrente,
-conservando i parametri API e risolvendo i ruoli dagli output del backend.
+aggiorna lo stack esistente `stla-woc-internal-api-<env>` con il template corrente
+tramite SAM CLI (il runner non ha la AWS CLI). Passa solo i nomi dei ruoli
+execution, letti dagli output del backend: API, root e stage restano i valori
+già presenti nello stack. I tag dello stack sono sempre `Env=<env>` e
+`Project=bsn0027990` (SAM senza `--tags` li rimuoverebbe).
 Errori di allineamento bloccano il job; API/stage diversi da quelli configurati
 sono rifiutati. Il primo provisioning resta a cura del team infrastruttura.
 Per aggiungere/rinominare un'operazione inter-Lambda, aggiornare receiver, consumer
@@ -128,8 +140,10 @@ e la policy del chiamante in questo template nello stesso commit: i test
 architetturali di `serviceClient` verificano che ogni chiamata abbia un permesso.
 Il normale deploy applica anche le policy, senza interventi manuali sui ruoli.
 Le nuove operazioni sulle rotte `{operation}` non richiedono una pubblicazione
-API; nuove rotte/receiver richiedono invece il deployment dello stage dal team
-infrastruttura. La pipeline non ripubblica il gateway condiviso.
+API; nuove rotte/receiver e modifiche alle integrazioni (es. `Credentials`)
+diventano attive solo con un nuovo deployment dello stage, a cura del team
+infrastruttura. La pipeline non ripubblica il gateway condiviso: rimuovere
+permessi o ruoli ancora usati dallo stage pubblicato solo dopo la pubblicazione.
 Il team infrastruttura deve verificare che permission boundary/SCP consentano
 `execute-api:Invoke`, che DNS privato e SG consentano HTTPS verso il VPC endpoint,
 e pubblicare un nuovo deployment dello stage dopo la creazione delle rotte.
@@ -197,6 +211,23 @@ Codice e configurazione delle Lambda sono invariati; non e' stato distribuito
 nemmeno un probe temporaneo. DNS privato e regole HTTPS sono predisposti, ma
 il test HTTP dalla VPC e i flussi applicativi restano da verificare dopo il
 deploy dei receiver/consumer. Produzione non modificata.
+
+**Ruolo di integrazione al 2026-10-05:** in dev e stage le integrazioni
+`/internal` invocano i receiver con `InternalIntegrationRole` (`Credentials`)
+e sono stati rimossi gli 11 `AWS::Lambda::Permission` delle rotte interne:
+nelle Lambda restano solo i permessi delle rotte frontend (`AllowAPIGwRoute-*`)
+e la regola EventBridge di `dmlConfigSync`. Pubblicati i deployment `hrvmig`
+in dev (precedente `nu31of`) e `6jnbe0` in stage (precedente `g37v82`).
+Agli stack `stla-woc-internal-api-<env>` sono stati applicati i tag
+`Env`/`Project`; in stage la policy `HqManagerRestPolicy` e' stata allineata
+al template (`getPackageListHQ`/`getPackageListSM`). In dev gli 11 receiver
+rispondono tramite il ruolo e uno smoke reale di HQ `getPackageListHQ`
+(chiamata REST verso `dbmanager`) e' riuscito; in stage 7 receiver sono stati
+raggiunti con richieste non distruttive e la simulazione IAM conferma i
+permessi, ma i flussi applicativi restano da verificare dopo il deploy del
+codice REST su `staging`. Al ruolo CI dev manca `iam:UpdateAssumeRolePolicy`:
+in dev eventuali modifiche future alla trust del ruolo di integrazione
+richiedono questo permesso o il team infrastruttura.
 
 I target Makefile impacchettano **solo il modulo corrente, `serviceClient/` e `runtimeConfig/`**,
 installando le rispettive dipendenze di produzione nell'artifact. Le cache
