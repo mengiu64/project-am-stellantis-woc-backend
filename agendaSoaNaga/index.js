@@ -42,6 +42,7 @@ function resolveAction(event) {
 }
 
 exports.handler = async (event, context) => {
+  if (require('../serviceClient').isInternalRequest(event)) return require('./internal').handler(event);
   const action = resolveAction(event);
 
   if (!action || !handlers[action]) {

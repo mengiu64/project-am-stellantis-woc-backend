@@ -30,6 +30,7 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
+      "internal.js",
       "authService.js",
       "dmsService.js",
       "httpClient.js",

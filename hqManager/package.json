@@ -29,6 +29,7 @@
     ],
     "collectCoverageFrom": [
       "HqManager.js",
+      "repository.js",
       "index.js"
     ],
     "coverageReporters": [

@@ -1,8 +1,6 @@
 // jobcardSyncActivity.test.js
 // Aggiornamento di woc.jobcard_sync_activity (techreason/ack/businessreason/lastupdate)
 
-const path = require('path');
-
 const {
   syncJobcardActivity,
   fetchBusinessReason,
@@ -12,12 +10,8 @@ const {
   UPDATE_BUSINESSREASON_SQL,
 } = require('../jobcardSyncActivity');
 
-jest.mock('../../jobcard/authService', () => ({
-  getBearerToken: jest.fn(),
-}));
-jest.mock('../../jobcard/jobCardService', () => ({
-  getJobCardDetails: jest.fn(),
-}));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
+const { callService } = require('../../serviceClient');
 
 function makeLogger() {
   return { info: jest.fn(), warn: jest.fn(), error: jest.fn() };
@@ -25,8 +19,7 @@ function makeLogger() {
 
 function makeDeps(body) {
   return {
-    getBearerToken: jest.fn().mockResolvedValue('token-123'),
-    getJobCardDetails: jest.fn().mockResolvedValue(body),
+    callService: jest.fn().mockResolvedValue(body),
   };
 }
 
@@ -59,7 +52,7 @@ describe('jobcardSyncActivity', () => {
     it('concatena jobCardDetail.roInfo.dmsSynchroStatus e dmsReturnMessage', async () => {
       const deps = makeDeps(DETAILS_BODY);
       await expect(fetchBusinessReason('JCID-42', deps)).resolves.toBe('SYNCED - Job card Transaction successfull');
-      expect(deps.getJobCardDetails).toHaveBeenCalledWith('token-123', 'JCID-42');
+      expect(deps.callService).toHaveBeenCalledWith('jobcard', 'getJobCardDetails', { args: ['JCID-42'] });
     });
 
     it('estrae entrambi i campi dalla risposta reale di jobCardDetails', async () => {
@@ -102,14 +95,11 @@ describe('jobcardSyncActivity', () => {
     });
 
     it('usa di default i servizi della lambda jobcard', async () => {
-      const { getBearerToken } = require(path.resolve(__dirname, '../../jobcard/authService'));
-      const { getJobCardDetails } = require(path.resolve(__dirname, '../../jobcard/jobCardService'));
-      getBearerToken.mockResolvedValue('tok');
-      getJobCardDetails.mockResolvedValue(DETAILS_BODY);
+      callService.mockResolvedValue(DETAILS_BODY);
 
-      expect(loadJobcardServices()).toEqual({ getBearerToken, getJobCardDetails });
+      expect(loadJobcardServices()).toEqual({ callService });
       await expect(fetchBusinessReason('JCID-42')).resolves.toBe('SYNCED - Job card Transaction successfull');
-      expect(getJobCardDetails).toHaveBeenCalledWith('tok', 'JCID-42');
+      expect(callService).toHaveBeenCalledWith('jobcard', 'getJobCardDetails', { args: ['JCID-42'] });
     });
   });
 
@@ -190,7 +180,7 @@ describe('jobcardSyncActivity', () => {
       const outcome = await syncJobcardActivity({ pool, jobCardId: 'JCID-1', djcSyncStatus: 'REFUSAL', eventType: 'DMS_PUSH_REFUSAL', logger, deps });
 
       expect(outcome).toEqual({ techReasonUpdated: false, ack: 'KO', businessReason: null, businessReasonUpdated: false });
-      expect(deps.getJobCardDetails).not.toHaveBeenCalled();
+      expect(deps.callService).not.toHaveBeenCalled();
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(logger.warn).toHaveBeenCalled();
     });
@@ -208,20 +198,22 @@ describe('jobcardSyncActivity', () => {
       const outcome = await syncJobcardActivity({ pool, jobCardId: 'JCID-42', djcSyncStatus: 'FAILURE', eventType: 'DMS_PUSH_FAILURE', logger, deps });
 
       expect(outcome.techReasonUpdated).toBe(false);
-      expect(deps.getJobCardDetails).not.toHaveBeenCalled();
+      expect(deps.callService).not.toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalled();
     });
 
-    it('errore jobCardDetails: techreason resta aggiornato, businessreason no', async () => {
+    it.each(['Private REST timeout', 'Private REST jobcard HTTP 500'])('errore jobCardDetails %s: techreason resta aggiornato, businessreason no', async (message) => {
       pool.query.mockResolvedValue({ rows: [{ jobcardid: 'JCID-42' }] });
       const deps = makeDeps(DETAILS_BODY);
-      deps.getJobCardDetails.mockRejectedValue(new Error('DGT 500'));
+      deps.callService.mockRejectedValue(new Error(message));
 
       const outcome = await syncJobcardActivity({ pool, jobCardId: 'JCID-42', djcSyncStatus: 'FAILURE', eventType: 'DMS_PUSH_FAILURE', logger, deps });
 
       expect(outcome).toEqual({ techReasonUpdated: true, ack: 'KO', businessReason: null, businessReasonUpdated: false });
       expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(logger.error).toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('errore jobCardDetails'), {
+        jobCardId: 'JCID-42', errorMessage: message,
+      });
     });
 
     it('errore su UPDATE businessreason: non propaga', async () => {

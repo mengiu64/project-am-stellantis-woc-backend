@@ -29,6 +29,7 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
+      "internal.js",
       "PkConfigRepository.js",
       "ConfigPackagesRepository.js",
       "AnagSnowflakesRepository.js",

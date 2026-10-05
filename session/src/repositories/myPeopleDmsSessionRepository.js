@@ -1,25 +1,16 @@
 'use strict';
 
-const path = require('path');
 const { SessionRepository } = require('./sessionRepository');
 const { SessionNotFoundError } = require('../errors');
 
-// Cross-lambda-folder require, stesso pattern già usato da pkManager/PkManager.js
-// (require(path.resolve(__dirname, '../dms/...'))): il build di SessionFunction
-// (Metadata: BuildMethod: makefile, vedi Makefile) impacchetta myPeople/, dmlConfigSync/
-// e dbManager/ come cartelle sorelle di session/ dentro l'artifact di deploy, cosi'
-// questi require relativi continuano a risolvere correttamente anche a runtime in
-// Lambda. Caricati "on demand" (lazy) invece che in cima al file: myPeople/config.js
-// valida le proprie variabili d'ambiente non appena richiesto, e nei test unitari
-// questa repository viene istanziata con le funzioni già iniettate (vedi
-// costruttore), senza mai toccare i moduli reali. NOTA: session non richiede più
-// dms/ direttamente (dms/authService/dms/dmsService sono usati solo dalla lambda
-// "dmlConfigSync", che chiama i servizi DML live una volta al giorno) — il Makefile
-// continua comunque a impacchettare dms/ come cartella sorella perché è una
-// dipendenza transitiva di dmlConfigSync/index.js (non invocato da session, ma
-// comunque parte della stessa cartella sorella). dbManager/ (db.js +
-// AnagSnowflakesRepository.js) è invece usato direttamente da session per risolvere
-// `marketIso` (tabella woc.ang_snowflakes), stesso cluster Aurora "wiadvisor".
+// Il trasporto condiviso viene caricato solo quando serve: gli override
+// del costruttore restano indipendenti da rete e configurazione REST.
+function remoteOperation(service, operation) {
+  return async (...args) => {
+    const { callService } = require('../../../serviceClient');
+    return callService(service, operation, { args });
+  };
+}
 let _readUserProfiles;
 let _getDmsSettingsCache;
 let _registerDmsSettingsDealer;
@@ -34,26 +25,16 @@ let _getAddressByOics;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
-    ({ readUserProfiles: _readUserProfiles } = require(path.resolve(__dirname, '../../../myPeople/myPeopleService')));
+    _readUserProfiles = remoteOperation('mypeople', 'readUserProfiles');
   }
   return _readUserProfiles;
 }
 
-// dms/settings NON viene più chiamato live (dms/authService.getBearerToken +
-// dms/dmsService.getDmsSettings): è invece letto dalla cache popolata una volta
-// al giorno dalla lambda "dmlConfigSync" (tabella woc.dms_settings su Aurora
-// PostgreSQL, vedi sql/create_table_dms_settings.sql), stesso principio già
-// applicato a company-types/customer-titles (woc.dml_configurations). Session
-// non richiede quindi più dms/authService/dms/dmsService: solo dmlConfigSync/
-// (già cartella sorella impacchettata via Makefile per la cache DML) serve.
+// Le impostazioni DMS sono lette dalla cache del servizio dmlconfigsync,
+// non dai servizi DML live.
 function loadGetDmsSettingsCache() {
   if (!_getDmsSettingsCache) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
-    const { getDmsSettings } = require(path.resolve(__dirname, '../../../dmlConfigSync/DmsSettingsRepository'));
-    _getDmsSettingsCache = async ({ country, brand, dealer }) => {
-      const pool = await getPool();
-      return getDmsSettings(pool, { country, brand, dealer });
-    };
+    _getDmsSettingsCache = remoteOperation('dmlconfigsync', 'getDmsSettings');
   }
   return _getDmsSettingsCache;
 }
@@ -66,97 +47,39 @@ function loadGetDmsSettingsCache() {
 // Lambda), ma ne ignora sempre un eventuale errore (mai propagato/bloccante).
 function loadRegisterDmsSettingsDealer() {
   if (!_registerDmsSettingsDealer) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
-    const { registerDealer } = require(path.resolve(__dirname, '../../../dmlConfigSync/DmsSettingsRepository'));
-    _registerDmsSettingsDealer = async ({ country, brand, dealer }) => {
-      const pool = await getPool();
-      return registerDealer(pool, { country, brand, dealer });
-    };
+    _registerDmsSettingsDealer = remoteOperation('dmlconfigsync', 'registerDealer');
   }
   return _registerDmsSettingsDealer;
 }
 
-// company-types/customer-titles NON vengono più chiamati live (dms/getCompanyTypes,
-// dms/getCustomerTitles): sono invece letti dalla cache popolata una volta al giorno
-// dalla lambda "dmlConfigSync" (tabella woc.dml_configurations su Aurora PostgreSQL,
-// vedi sql/create_table_dml_configurations.sql), cosi' session non deve più chiamare
-// i due servizi DML ad ogni richiesta. CodeUri/BuildMethod: makefile di SessionFunction
-// impacchetta dmlConfigSync/ come cartella sorella di session/ (vedi Makefile), stesso
-// pattern già usato per myPeople/ e dms/.
+// Company-types/customer-titles provengono dalla cache giornaliera DML.
 function loadGetDmlConfiguration() {
   if (!_getDmlConfiguration) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
-    const { getDmlConfiguration } = require(path.resolve(__dirname, '../../../dmlConfigSync/DmlConfigRepository'));
-    _getDmlConfiguration = async ({ country, language }) => {
-      const pool = await getPool();
-      return getDmlConfiguration(pool, { country, language });
-    };
+    _getDmlConfiguration = remoteOperation('dmlconfigsync', 'getDmlConfiguration');
   }
   return _getDmlConfiguration;
 }
 
-// Loghi brand (campo OICs[].BRANDS di myPeople, CSV di codbrand numerici es. "30,31,33,43")
-// letti dalla stessa tabella woc.anag_brand (colonne codbrand/logo_s3_key) già usata dalla
-// lambda isStellantisBrand — stesso cluster Aurora "wiadvisor", stesso pool/utente
-// applicativo least-privilege di dmlConfigSync/db (già impacchettato come cartella sorella
-// di session/, vedi Makefile), quindi nessuna nuova variabile d'ambiente/permesso necessario.
+// Il servizio dbmanager possiede la query e restituisce codbrand -> logo_s3_key.
 function loadGetBrandLogos() {
   if (!_getBrandLogos) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dmlConfigSync/db'));
-    _getBrandLogos = async ({ codes }) => {
-      if (!Array.isArray(codes) || codes.length === 0) return {};
-      const pool = await getPool();
-      const { rows } = await pool.query({
-        text: 'SELECT codbrand, logo_s3_key FROM woc.anag_brand WHERE codbrand = ANY($1::varchar[])',
-        values: [codes],
-        statement_timeout: 5000,
-      });
-      const logosByCode = {};
-      for (const row of rows) {
-        if (row.logo_s3_key && String(row.logo_s3_key).trim() !== '') {
-          logosByCode[row.codbrand] = row.logo_s3_key;
-        }
-      }
-      return logosByCode;
-    };
+    _getBrandLogos = remoteOperation('dbmanager', 'getBrandLogos');
   }
   return _getBrandLogos;
 }
 
-// Codice ISO paese del dealer (marketIso), letto dalla tabella woc.ang_snowflakes
-// (snapshot dell'estrazione Snowflake "M2m-queries") a partire dal codmarket
-// dell'utente (Attributes.MARKETCODE). Stesso cluster Aurora "wiadvisor", stesso
-// pool/utente applicativo least-privilege del modulo dbManager (già impacchettato
-// come cartella sorella di session/, vedi Makefile), quindi nessuna nuova
-// variabile d'ambiente/permesso necessario.
+// Codice ISO paese del dealer a partire dal codmarket dell'utente.
 function loadGetCountryIsoCode() {
   if (!_getCountryIsoCode) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getCountryIsoCode } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
-    _getCountryIsoCode = async ({ market }) => {
-      const pool = await getPool();
-      return getCountryIsoCode(pool, { market });
-    };
+    _getCountryIsoCode = remoteOperation('dbmanager', 'getCountryIsoCode');
   }
   return _getCountryIsoCode;
 }
 
-// Sito fisico ARCAD (physicalsite <- gn_physical_site_arcad) e codice dealer
-// ARCAD (pdvId <- cd_dealer_arcad_code), letti dalla tabella woc.ang_snowflakes
-// a partire da mainSincom (Attributes.MAINSINCOM)/market (Attributes.MARKETCODE)/
-// brand (il brandReftech gia' risolto sopra)/oic (mainOic.CODE) — stessi criteri
-// di dbManager/AnagSnowflakesRepository.js::getPhysicalSiteAndPdvId. Stesso
-// cluster Aurora "wiadvisor", stesso pool/utente applicativo least-privilege di
-// dbManager (gia' impacchettato come cartella sorella di session/, vedi
-// Makefile): nessuna nuova variabile d'ambiente/permesso necessario.
+// Sito fisico e codice dealer ARCAD risolti da dbmanager.
 function loadGetPhysicalSiteAndPdvId() {
   if (!_getPhysicalSiteAndPdvId) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getPhysicalSiteAndPdvId } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
-    _getPhysicalSiteAndPdvId = async ({ mainSincom, market, brand, oic }) => {
-      const pool = await getPool();
-      return getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic });
-    };
+    _getPhysicalSiteAndPdvId = remoteOperation('dbmanager', 'getPhysicalSiteAndPdvId');
   }
   return _getPhysicalSiteAndPdvId;
 }
@@ -164,17 +87,11 @@ function loadGetPhysicalSiteAndPdvId() {
 // Elenco brand WebDAC (CD_CONTRACT_BRAND_WEBDAC_CODE) per ciascun oic (CODE di
 // User.OICs, matchato su cd_paired_oic_code), letto da woc.ang_snowflakes:
 // sovrascrive il CSV `brands` fornito da myPeople per ogni oic di session con
-// l'elenco effettivo/aggiornato in DB. Stesso cluster Aurora "wiadvisor",
-// stesso pool/modulo dbManager gia' impacchettato come cartella sorella di
-// session/ (vedi Makefile).
+// l'elenco effettivo/aggiornato restituito da dbmanager.
 function loadGetBrandsByOics() {
   if (!_getBrandsByOics) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getBrandsByOics } = require(path.resolve(__dirname, '../../../dbManager/AnagSnowflakesRepository'));
-    _getBrandsByOics = async ({ oics }) => {
-      const pool = await getPool();
-      return getBrandsByOics(pool, { oics });
-    };
+    const fetchBrands = remoteOperation('dbmanager', 'getBrandsByOics');
+    _getBrandsByOics = async (...args) => new Map(await fetchBrands(...args));
   }
   return _getBrandsByOics;
 }
@@ -183,16 +100,10 @@ function loadGetBrandsByOics() {
 // gli oic esplicitamente disabilitati (enablewoc = 0) vengono tolti
 // dall'elenco `oics` di session (v. HqRepository.js::getDisabledOics per il
 // criterio di default "abilitato" quando manca la riga di configurazione).
-// Stesso cluster Aurora "wiadvisor", stesso pool/modulo dbManager gia'
-// impacchettato come cartella sorella di session/ (vedi Makefile).
 function loadGetDisabledOics() {
   if (!_getDisabledOics) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getDisabledOics } = require(path.resolve(__dirname, '../../../dbManager/HqRepository'));
-    _getDisabledOics = async (pairs) => {
-      const pool = await getPool();
-      return getDisabledOics(pool, pairs);
-    };
+    const fetchDisabled = remoteOperation('dbmanager', 'getDisabledOics');
+    _getDisabledOics = async (...args) => new Set(await fetchDisabled(...args));
   }
   return _getDisabledOics;
 }
@@ -203,17 +114,11 @@ function loadGetDisabledOics() {
 // A differenza di enablewoc (opt-out, v. getDisabledOics sopra), qui il
 // default per una coppia (market, oic) senza riga di configurazione e'
 // "non abilitato" (false), coerente con getEnablingConfiguration
-// (dbManager/HqRepository.js, COALESCE(hae.enablesignature, 0)). Stesso
-// cluster Aurora "wiadvisor", stesso pool/modulo dbManager gia'
-// impacchettato come cartella sorella di session/ (vedi Makefile).
+// (dbManager/HqRepository.js, COALESCE(hae.enablesignature, 0)).
 function loadGetEnableSignatureByOics() {
   if (!_getEnableSignatureByOics) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getEnableSignatureByOics } = require(path.resolve(__dirname, '../../../dbManager/HqRepository'));
-    _getEnableSignatureByOics = async (pairs) => {
-      const pool = await getPool();
-      return getEnableSignatureByOics(pool, pairs);
-    };
+    const fetchSignature = remoteOperation('dbmanager', 'getEnableSignatureByOics');
+    _getEnableSignatureByOics = async (...args) => new Map(await fetchSignature(...args));
   }
   return _getEnableSignatureByOics;
 }
@@ -222,16 +127,10 @@ function loadGetEnableSignatureByOics() {
 // join con woc.ang_snowflakes su cd_paired_oic_code, v.
 // dbManager/HqRepository.js::getAddressByOics): sovrascrive gli stessi campi
 // di ciascun oic di session con l'indirizzo effettivo/aggiornato in DB.
-// Stesso cluster Aurora "wiadvisor", stesso pool/modulo dbManager gia'
-// impacchettato come cartella sorella di session/ (vedi Makefile).
 function loadGetAddressByOics() {
   if (!_getAddressByOics) {
-    const { getPool } = require(path.resolve(__dirname, '../../../dbManager/db'));
-    const { getAddressByOics } = require(path.resolve(__dirname, '../../../dbManager/HqRepository'));
-    _getAddressByOics = async ({ oics }) => {
-      const pool = await getPool();
-      return getAddressByOics(pool, { oics });
-    };
+    const fetchAddresses = remoteOperation('dbmanager', 'getAddressByOics');
+    _getAddressByOics = async (...args) => new Map(await fetchAddresses(...args));
   }
   return _getAddressByOics;
 }

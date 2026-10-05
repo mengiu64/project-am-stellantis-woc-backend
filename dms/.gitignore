@@ -1,5 +1,6 @@
 # Credentials — never commit
 .env
+!.env.example
 
 # Token cache — never commit
 .token.cache.json

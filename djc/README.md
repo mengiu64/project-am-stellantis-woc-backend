@@ -57,6 +57,21 @@ npm install
 cp .env.example .env   # solo se si usa saveJobcard — non serve per i metodi Save*
 ```
 
+### Sincronizzazione NAGA via REST privato
+
+Dopo `saveJobcard`, gli appuntamenti con `appointmentInternalId` usano
+`callService('agendasoanaga', 'updatenaga', nagaPayload)` da `../serviceClient`,
+autenticato **AWS_IAM / SigV4**. Non viene importato il codice della Lambda
+agendaSoaNaga e non sono necessarie le sue credenziali upstream nel consumer.
+Configurare `WOC_INTERNAL_API_URL` e `WOC_INTERNAL_TIMEOUT_MS=25000` come in
+`.env.example`; restano solo credenziali DGT/PingFederate e DB proprie di DJC.
+Il payload resta il corpo di dominio originale (incluso `apptId`), non un evento
+Lambda né un wrapper HTTP. Il ricevente ricostruisce i parametri del suo handler
+locale; il risultato è già separato dal wrapper HTTP.
+Errori di trasporto/non-2xx vengono loggati, senza modificare la risposta pubblica
+di salvataggio o interrompere gli appuntamenti successivi. I dati/cache DJC e
+l'autenticazione PingFederate/DGT del salvataggio restano invariati.
+
 ## Classe `DjcManager`
 
 ```js

@@ -28,24 +28,11 @@
  *   node index.js toggle <username> <vin> <packageCode>
  */
 
-const path = require('path');
+const { callService } = require('../serviceClient');
 const { getPool } = require('./db');
 const { listFavorites, toggleFavorite } = require('./FavoriteRepository');
 
 // ── Arricchimento DML (GET) ───────────────────────────────────────────────────
-
-// require lazy (dentro la funzione, non al top-level) come già fatto da
-// PkManager.js per dms/authService e dms/dmsService: dms/config.js valida a
-// require-time la presenza delle env DMS_PING_CLIENT_ID/SECRET e
-// DML_IBM_CLIENT_ID/SECRET, quindi caricare il modulo solo quando serve
-// davvero (una GET con almeno un preferito) evita di richiederle per POST o
-// per una GET senza preferiti, e permette ai test di mockare i due moduli con
-// jest.mock('../dms/...') indipendentemente dalle env reali.
-function loadDmsClient() {
-  const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
-  const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
-  return { getBearerToken, postDmsInquiry };
-}
 
 /**
  * Costruisce il Sender dinamico (ApplicationArea.Sender) delle inquiry DMS
@@ -71,18 +58,10 @@ function loadDmsClient() {
  * Il **frontend non passa (e non deve passare) mainSincom/market/brand/
  * lingua/country**: resolveSessionContext(body) resta un override
  * opzionale/di test (query string), ma nel flusso reale questi campi sono
- * assenti — vengono quindi risolti automaticamente da
- * resolveDynamicSenderFields usando SOLO lo `username` già autenticato
- * (mainSincom/market/language/dealerCountryCode, tramite
- * session/src/sessionContextCache.js con cache best-effort su
- * /tmp/session-context-<username>.json — utile perché lo stesso username può
- * richiedere l'arricchimento DML di più pacchetti preferiti nella stessa
- * invocazione/istanza Lambda "warm") e il `vin` della richiesta corrente
- * (brand, tramite v360/v360Service.js::getCachedBrand, cache best-effort su
- * /tmp/v360-getdetails-<vin>.json). Se la risoluzione fallisce (username/vin
- * assenti, myPeople/ASV360 irraggiungibili/...) i soli campi mancanti
- * restano non valorizzati — mai un'eccezione che blocchi la GET dei
- * preferiti.
+ * assenti — vengono risolti dal receiver dms/resolveSender usando SOLO
+ * lo `username` già autenticato e il `vin` corrente. Il receiver gestisce
+ * i fallback best-effort della risoluzione domain; errori di trasporto REST
+ * vengono invece propagati al chiamante.
  *
  * @param {object} [sessionContext]
  * @param {string} [sessionContext.mainSincom]
@@ -92,14 +71,13 @@ function loadDmsClient() {
  * @param {string} [sessionContext.dealerCountryCode]
  * @param {string} [username]
  * @param {string} [vin] - VIN della richiesta corrente, usato per risolvere automaticamente il brand via v360
- * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
+ * @returns {Promise<object>} sender override da passare a dms/inquiry
  */
 async function buildDmsSender(sessionContext = {}, username, vin) {
-  const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
-  const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
-    { username, vin },
-    sessionContext,
-  );
+  const { mainSincom, market, brand, language, dealerCountryCode } = await callService('dms', 'resolveSender', {
+    context: { username, vin },
+    overrides: sessionContext,
+  });
 
   const sender = {};
   if (mainSincom) sender.dealerNumberId = mainSincom;
@@ -130,11 +108,8 @@ async function buildDmsSender(sessionContext = {}, username, vin) {
 async function enrichFavoritesWithDms(vin, packageCodes, sender) {
   if (!packageCodes.length) return [];
 
-  const { getBearerToken, postDmsInquiry } = loadDmsClient();
-  const token = await getBearerToken();
-
   const responses = await Promise.all(
-    packageCodes.map((packageCode) => postDmsInquiry(token, {
+    packageCodes.map((packageCode) => callService('dms', 'inquiry', {
       PartsInquiryHeader: { MessageType: 'LFP', VehicleID: vin },
       package: packageCode,
       sender,
@@ -176,13 +151,9 @@ function resolveMethod(event) {
  * come comodità per i test.
  */
 function resolveUsername(event, body) {
-  const authz = (event.requestContext && event.requestContext.authorizer) || {};
-  if (authz) {
-    const sub = authz.sub || null;
-    if (!sub) {
-        return body.username || null;
-    }
-    return sub;
+  const context = event.requestContext;
+  if (context && Object.prototype.hasOwnProperty.call(context, 'authorizer')) {
+    return context.authorizer?.sub || null;
   }
   return body.username || null;
 }

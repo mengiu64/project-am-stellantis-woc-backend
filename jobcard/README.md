@@ -29,6 +29,41 @@ jobcard/
 - Accesso di rete agli endpoint:
   - `idfed-preprod.mpsa.com:443` (PingFederate)
   - `emea-aws.stage.np-api.stellantis.com` (DGT API)
+  - endpoint REST privati dei servizi `dms`, `session` e `agendasoanaga`
+
+### Chiamate tra servizi
+
+Le chiamate interne usano `../serviceClient` con autenticazione **AWS_IAM /
+SigV4**, non importano sorgenti di altre Lambda e non richiedono le relative
+credenziali PingFederate nel consumer:
+
+Configurare `WOC_INTERNAL_API_URL` (endpoint privato, stage `/wia`) e
+`WOC_INTERNAL_TIMEOUT_MS=25000`, come in `.env.example`. Le credenziali
+PingFederate/DGT e DB presenti nell'esempio sono solo quelle proprie di jobcard.
+
+| Servizio / operazione | Payload |
+|---|---|
+| `dms / resolveSender` | `{ context: { username, vin }, overrides }` |
+| `dms / inquiry` | corpo di dominio `{ PartsInquiryHeader, WorkLines, sender }` |
+| `session / getData` | `{ args: [username] }` |
+| `agendasoanaga / createnaga` | corpo di dominio originale di creazione |
+| `agendasoanaga / updatenaga` | corpo di dominio originale di aggiornamento, incluso `apptId` |
+
+Il client restituisce il risultato di dominio già separato dal wrapper HTTP.
+Il dispatcher riconosce prima gli eventi REST interni con `isInternalRequest`
+e li inoltra a `internal.js`, senza modificarne il payload né passare dal
+dispatcher delle azioni pubbliche.
+La cache della sessione e i token DMS restano nei servizi proprietari; la cache
+del dettaglio jobcard e i token DGT locali restano invariati.
+La sessione viene letta una sola volta per sincronizzazione e non viene letta
+senza username. Quando `requestContext.authorizer` è presente, solo `sub` è
+attendibile: il body è accettato soltanto in assenza di authorizer.
+
+Errori di trasporto/non-2xx sulla sessione o sulla risoluzione Sender sono
+loggati e gestiti best-effort (campi vuoti/override espliciti). Gli errori inquiry
+mantengono l'arricchimento best-effort e `dmsAvailable: false`. Errori NAGA sono
+loggati senza alterare la risposta pubblica di salvataggio; una creazione senza
+`rdvId` mantiene il warning e salta il relativo aggiornamento.
 
 ---
 
@@ -199,7 +234,7 @@ Aggiunto subito dopo `roInfo.sourceApplication`, con lo **stesso valore** di que
 
 #### Arricchimento DML (`jobs[].partInfo[]`/`jobs[].laborInfo[]`)
 
-Dopo `sanitizeJobCardDetails` ma **prima** di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene ulteriormente arricchita da `getDataFromDML` (v. `getCartPriceAndAvailability`/`applyDataFromDml`), che interroga il gateway DML (`dms/dmsService.js::postDmsInquiry`) per prezzo/disponibilità/sconto aggiornati di ricambi e manodopera. `getJobCardDetails` accetta un terzo parametro opzionale `sessionContext` (username/mainSincom/market/language/dealerCountryCode), propagato a `getDataFromDML` per costruire il Sender dinamico dell'inquiry DMS (v. `buildDmsSender`) — v. anche sezione `getCartPriceAndAvailability` nel README principale. La scrittura della cache omette i valori `undefined` durante la conversione DynamoDB, evitando che campi facoltativi non valorizzati impediscano di salvare e rileggere il dettaglio. Best-effort: eventuali problemi verso `dms` non fanno fallire la risposta di `getJobCardDetails`.
+Dopo `sanitizeJobCardDetails` ma **prima** di essere persistita in cache (`saveJobCardDetailsToTmp`), la risposta viene ulteriormente arricchita da `getDataFromDML` (v. `getCartPriceAndAvailability`/`applyDataFromDml`), che chiama `callService('dms', 'inquiry', domainBody)` per prezzo/disponibilità/sconto aggiornati di ricambi e manodopera. `getJobCardDetails` accetta un terzo parametro opzionale `sessionContext` (username/mainSincom/market/language/dealerCountryCode), propagato a `getDataFromDML` per costruire il Sender dinamico dell'inquiry DMS tramite `dms / resolveSender` (v. `buildDmsSender`). La scrittura della cache omette i valori `undefined` durante la conversione DynamoDB, evitando che campi facoltativi non valorizzati impediscano di salvare e rileggere il dettaglio. Best-effort: eventuali problemi verso `dms` non fanno fallire la risposta di `getJobCardDetails`.
 
 Ogni elemento di `partInfo[]`/`laborInfo[]` mantiene `dmsunknown` (solo per i ricambi: 1 se il partNumber non trova corrispondenza, 0 altrimenti). A livello di ciascun `job` viene inoltre aggiunto il flag `dmsOverride` (booleano): `true` se il prezzo cambia o viene applicato/modificato uno sconto DMS su almeno un `partInfo[]`/`laborInfo[]`; un semplice match senza variazioni di prezzo/sconto non basta. Se `dmsDiscountPercentage` del dettaglio coincide già con quello restituito dal DMS, lo sconto non viene riconciliato una seconda volta: prezzi invariati restano invariati e `dmsOverride` resta `false`, mentre un eventuale cambio di prezzo viene ricalcolato usando lo sconto già presente. Gli importi monetari ricalcolati sono arrotondati a due decimali (v. `applyDataFromDml`).
 

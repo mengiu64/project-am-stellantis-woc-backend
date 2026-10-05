@@ -1,8 +1,31 @@
 'use strict';
 
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
+
+const { callService } = require('../../serviceClient');
 const { resolveHqMarketsList } = require('../src/hqMarketsResolver');
 
 describe('session/src/hqMarketsResolver — resolveHqMarketsList', () => {
+  beforeEach(() => callService.mockReset());
+
+  it('HQ centrale chiama REST senza argomenti, HQ mercato conserva il filtro', async () => {
+    const rows = [{ market: '3109', description: 'France' }];
+    callService.mockResolvedValue(rows);
+    expect(await resolveHqMarketsList({ hqCentral: 1 })).toBe(rows);
+    expect(await resolveHqMarketsList({ hqMarket: 1, roles: ['HQNSC3109'] })).toBe(rows);
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', 'getMarkets', { args: [] }],
+      ['dbmanager', 'getMarkets', { args: [{ markets: ['3109'] }] }],
+    ]);
+  });
+
+  it('gli errori HTTP REST sono loggati e ritornano elenco vuoto', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    callService.mockRejectedValue(new Error('HTTP 503'));
+    expect(await resolveHqMarketsList({ hqCentral: 1 })).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 503'));
+    errorSpy.mockRestore();
+  });
   it('ritorna [] per un dealer (hqCentral=0, hqMarket=0), senza chiamare fetchMarketsFn', async () => {
     const fetchMarketsFn = jest.fn();
 

@@ -1,164 +1,156 @@
 'use strict';
 
-// Verifica che, in assenza di override iniettati nel costruttore, la repository
-// carichi (lazy) i moduli reali di myPeople/dmlConfigSync tramite require(path.resolve(...)),
-// esattamente come farebbe in produzione (Lambda con SessionFunction impacchettata
-// con myPeople/ e dmlConfigSync/ come cartelle sorelle — vedi Makefile). I moduli reali
-// vengono qui sostituiti con dei mock (stesso percorso relativo, stessa profondità
-// di cartelle di src/repositories/myPeopleDmsSessionRepository.js rispetto alla
-// root del repo) per non dipendere da AWS/Secrets Manager/rete in questo test.
-jest.mock('../../../myPeople/myPeopleService', () => ({
-  readUserProfiles: jest.fn().mockResolvedValue({
-    Response: {
-      RC: '0',
-      STATUS: 'SUCCESS',
-      User: {
-        Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
-        OICs: [{ CODE: '00007584', BRANDS: '00,77,66,57,70,83', MAIN: 'Y' }],
-      },
-    },
-  }),
-}));
+jest.mock('../../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
 
-jest.mock('../../../dmlConfigSync/db', () => ({
-  getPool: jest.fn().mockResolvedValue({
-    __fakePool: true,
-    query: jest.fn().mockResolvedValue({
-      rows: [
-        { codbrand: '00', logo_s3_key: 'assets/images/logo/brand-stla/FIAT.png' },
-        { codbrand: '83', logo_s3_key: 'assets/images/logo/brand-stla/ALFAROMEO.png' },
-        { codbrand: '77', logo_s3_key: null }, // riga presente ma senza logo: deve essere scartata
-      ],
-    }),
-  }),
-}));
-
-jest.mock('../../../dmlConfigSync/DmlConfigRepository', () => ({
-  getDmlConfiguration: jest.fn().mockResolvedValue({ companyTypes: [], customerTitles: [] }),
-}));
-
-jest.mock('../../../dmlConfigSync/DmsSettingsRepository', () => ({
-  getDmsSettings: jest.fn().mockResolvedValue({ success: true, data: [] }),
-  registerDealer: jest.fn().mockResolvedValue(undefined),
-}));
-
-jest.mock('../../../dbManager/db', () => ({
-  getPool: jest.fn().mockResolvedValue({ __fakeDbManagerPool: true, query: jest.fn() }),
-}));
-
-jest.mock('../../../dbManager/AnagSnowflakesRepository', () => ({
-  getCountryIsoCode: jest.fn().mockResolvedValue('IT'),
-  getPhysicalSiteAndPdvId: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
-  getBrandsByOics: jest.fn().mockResolvedValue(new Map()),
-}));
-
-jest.mock('../../../dbManager/HqRepository', () => ({
-  getDisabledOics: jest.fn().mockResolvedValue(new Set()),
-  getEnableSignatureByOics: jest.fn().mockResolvedValue(new Map()),
-  getAddressByOics: jest.fn().mockResolvedValue(new Map()),
-}));
-
+const { callService } = require('../../../serviceClient');
 const { MyPeopleDmsSessionRepository } = require('../../src/repositories/myPeopleDmsSessionRepository');
-const myPeopleService = require('../../../myPeople/myPeopleService');
-const dmlConfigSyncDb = require('../../../dmlConfigSync/db');
-const dmlConfigRepository = require('../../../dmlConfigSync/DmlConfigRepository');
-const dmsSettingsRepository = require('../../../dmlConfigSync/DmsSettingsRepository');
-const dbManagerDb = require('../../../dbManager/db');
-const anagSnowflakesRepository = require('../../../dbManager/AnagSnowflakesRepository');
-const hqRepository = require('../../../dbManager/HqRepository');
 
-describe('MyPeopleDmsSessionRepository — lazy loading dei moduli reali (myPeople/dmlConfigSync)', () => {
-  afterEach(() => jest.clearAllMocks());
+describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
+  let results;
+  let repository;
+  let errorSpy;
 
-  test('usa i moduli reali (myPeople/myPeopleService, dmlConfigSync/db+DmlConfigRepository+DmsSettingsRepository) quando non vengono iniettati override', async () => {
-    const repository = new MyPeopleDmsSessionRepository();
-    const data = await repository.getSessionData('0073741.d235');
-
-    expect(myPeopleService.readUserProfiles).toHaveBeenCalledWith({ username: '0073741.d235' });
-    expect(dmlConfigSyncDb.getPool).toHaveBeenCalledTimes(3); // loadGetDmsSettingsCache + loadGetDmlConfiguration + loadGetBrandLogos
-    expect(dbManagerDb.getPool).toHaveBeenCalledTimes(4); // loadGetCountryIsoCode + loadGetPhysicalSiteAndPdvId + loadGetBrandsByOics + loadGetAddressByOics (oicPairs vuoto: MARKET assente sull'OIC di test, loadGetDisabledOics non invocata)
-    expect(anagSnowflakesRepository.getBrandsByOics).toHaveBeenCalledWith(
-      { __fakeDbManagerPool: true, query: expect.any(Function) },
-      { oics: ['00007584'] },
-    );
-    expect(hqRepository.getDisabledOics).not.toHaveBeenCalled();
-    expect(hqRepository.getEnableSignatureByOics).not.toHaveBeenCalled();
-    expect(hqRepository.getAddressByOics).toHaveBeenCalledWith(
-      { __fakeDbManagerPool: true, query: expect.any(Function) },
-      { oics: ['00007584'] },
-    );
-    expect(anagSnowflakesRepository.getCountryIsoCode).toHaveBeenCalledWith(
-      { __fakeDbManagerPool: true, query: expect.any(Function) },
-      { market: '1000' },
-    );
-    expect(anagSnowflakesRepository.getPhysicalSiteAndPdvId).toHaveBeenCalledWith(
-      { __fakeDbManagerPool: true, query: expect.any(Function) },
-      { mainSincom: '0073741', market: '1000', brand: 'FT', oic: '00007584' },
-    );
-    expect(dmsSettingsRepository.getDmsSettings).toHaveBeenCalledWith(
-      { __fakePool: true, query: expect.any(Function) },
-      { country: 'IT', brand: 'FT', dealer: '0073741' },
-    );
-    expect(dmsSettingsRepository.registerDealer).not.toHaveBeenCalled(); // cache-hit: nessuna registrazione necessaria
-    expect(dmlConfigRepository.getDmlConfiguration).toHaveBeenCalledWith(
-      { __fakePool: true, query: expect.any(Function) },
-      { country: 'it', language: 'it' },
-    );
-    expect(data.codmarket).toBe('1000');
-    expect(data.marketIso).toBe('IT');
-    expect(data.sincom).toBe('0073741');
-    expect(data.brandvehic_reftech).toBe('FT');
-    expect(data.isdml).toBe(true);
-    expect(data.companytypes).toEqual([]);
-    expect(data.customertitles).toEqual([]);
-    expect(data.physicalsite).toBe('PS001');
-    expect(data.pdvId).toBe('DLR001');
-
-    // loadGetBrandLogos: usa lo stesso pool (getPool) per interrogare woc.anag_brand
-    // con i codici brand dedotti da OICs[].BRANDS ("00,77,66,57,70,83").
-    const pool = await dmlConfigSyncDb.getPool.mock.results[0].value;
-    expect(pool.query).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining('woc.anag_brand'),
-      values: [['00', '77', '66', '57', '70', '83']],
-    }));
-    expect(data.oics).toEqual([
-      {
-        code: '00007584',
-        brands: '00,77,66,57,70,83',
-        brandLogos: [
-          'assets/images/logo/brand-stla/FIAT.png',
-          'assets/images/logo/brand-stla/ALFAROMEO.png',
-        ],
-        main: 'Y',
-        djcListParameter: null,
-        feaEnabled: false,
-        address: null,
-        zipcode: null,
-        city: null,
+  beforeEach(() => {
+    results = {
+      readUserProfiles: {
+        Response: {
+          RC: '0', STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MARKETCODE: '1000', MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [{ CODE: '00007584', MARKET: '1000', BRANDS: '00,77,83', MAIN: 'Y' }],
+          },
+        },
       },
+      getDmsSettings: { success: true, data: [] },
+      getDmlConfiguration: { companyTypes: [], customerTitles: [] },
+      registerDealer: undefined,
+      getCountryIsoCode: 'IT',
+      getPhysicalSiteAndPdvId: { physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' },
+      getBrandsByOics: [],
+      getDisabledOics: [],
+      getEnableSignatureByOics: [['1000|00007584', true]],
+      getAddressByOics: [['00007584', { address: 'Via Roma', zipcode: '00100', city: 'Roma' }]],
+      getBrandLogos: { '00': 'assets/FIAT.png', 83: 'assets/ALFAROMEO.png' },
+    };
+    callService.mockReset().mockImplementation(async (_, operation) => results[operation]);
+    repository = new MyPeopleDmsSessionRepository();
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => errorSpy.mockRestore());
+
+  test('usa i nomi receiver e gli argomenti originali, senza pool', async () => {
+    const data = await repository.getSessionData('0073741.d235');
+    const expected = [
+      ['mypeople', 'readUserProfiles', { args: [{ username: '0073741.d235' }] }],
+      ['dmlconfigsync', 'getDmsSettings', { args: [{ country: 'IT', brand: 'FT', dealer: '0073741' }] }],
+      ['dmlconfigsync', 'getDmlConfiguration', { args: [{ country: 'it', language: 'it' }] }],
+      ['dbmanager', 'getCountryIsoCode', { args: [{ market: '1000' }] }],
+      ['dbmanager', 'getPhysicalSiteAndPdvId', { args: [{ mainSincom: '0073741', market: '1000', brand: 'FT', oic: '00007584' }] }],
+      ['dbmanager', 'getBrandsByOics', { args: [{ oics: ['00007584'] }] }],
+      ['dbmanager', 'getDisabledOics', { args: [[{ market: '1000', oic: '00007584' }]] }],
+      ['dbmanager', 'getEnableSignatureByOics', { args: [[{ market: '1000', oic: '00007584' }]] }],
+      ['dbmanager', 'getAddressByOics', { args: [{ oics: ['00007584'] }] }],
+      ['dbmanager', 'getBrandLogos', { args: [{ codes: ['00', '77', '83'] }] }],
+    ];
+    expect(callService.mock.calls).toEqual(expected);
+    expect(data).toMatchObject({
+      codmarket: '1000', marketIso: 'IT', sincom: '0073741', brandvehic_reftech: 'FT',
+      isdml: true, companytypes: [], customertitles: [], physicalsite: 'PS001', pdvId: 'DLR001',
+      oics: [{
+        code: '00007584', market: '1000', brands: '00,77,83',
+        brandLogos: ['assets/FIAT.png', 'assets/ALFAROMEO.png'],
+        main: 'Y', djcListParameter: '1000_00007584', feaEnabled: true,
+        address: 'Via Roma', zipcode: '00100', city: 'Roma',
+      }],
+    });
+  });
+
+  test('cache-miss registra il dealer prima di completare, conservando i default', async () => {
+    results.getDmsSettings = null;
+    let release;
+    const registration = new Promise((resolve) => { release = resolve; });
+    callService.mockImplementation(async (_, operation) => operation === 'registerDealer'
+      ? registration : results[operation]);
+    let completed = false;
+    const pending = repository.getSessionData('0073741.d235').then((value) => { completed = true; return value; });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(completed).toBe(false);
+    expect(callService).toHaveBeenCalledWith('dmlconfigsync', 'registerDealer', {
+      args: [{ country: 'IT', brand: 'FT', dealer: '0073741' }],
+    });
+
+    release();
+    expect(await pending).toMatchObject({ isdml: false, dmlcustomerupdate: null, dmldiscount: null });
+  });
+
+  test('ricostruisce Map e Set dagli array JSON del receiver', async () => {
+    results.getBrandsByOics = [['00007584', ['83', '00']]];
+    results.getDisabledOics = ['1000|disabled'];
+    results.readUserProfiles.Response.User.OICs.push({
+      CODE: 'disabled', MARKET: '1000', BRANDS: '77', MAIN: 'N',
+    });
+    callService.mockImplementation(async (_, operation) => {
+      const value = results[operation];
+      return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+    expect(data.oics).toHaveLength(1);
+    expect(data.oics[0]).toMatchObject({
+      code: '00007584', brands: '83,00',
+      brandLogos: ['assets/ALFAROMEO.png', 'assets/FIAT.png'],
+      feaEnabled: true, address: 'Via Roma', zipcode: '00100', city: 'Roma',
+    });
+    expect(callService).toHaveBeenCalledWith('dbmanager', 'getBrandLogos', {
+      args: [{ codes: ['83', '00'] }],
+    });
+  });
+
+  test('errori di registrazione restano intenzionalmente best-effort e loggati', async () => {
+    results.getDmsSettings = null;
+    callService.mockImplementation(async (_, operation) => {
+      if (operation === 'registerDealer') throw new Error('HTTP 503');
+      return results[operation];
+    });
+    expect(await repository.getSessionData('0073741.d235')).toMatchObject({ isdml: false });
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('registrazione dealer dms/settings'));
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 503'));
+  });
+
+  test.each([
+    ['getDmsSettings', { isdml: false, dmlcustomerupdate: null, dmldiscount: null }],
+    ['getDmlConfiguration', { companytypes: [], customertitles: [] }],
+    ['getCountryIsoCode', { marketIso: null }],
+    ['getPhysicalSiteAndPdvId', { physicalsite: null, pdvId: null }],
+    ['getBrandsByOics', { oics: [expect.objectContaining({ brands: '00,77,83' })] }],
+    ['getDisabledOics', { oics: [expect.objectContaining({ code: '00007584' })] }],
+    ['getEnableSignatureByOics', { oics: [expect.objectContaining({ feaEnabled: false })] }],
+    ['getAddressByOics', { oics: [expect.objectContaining({ address: null, zipcode: null, city: null })] }],
+    ['getBrandLogos', { oics: [expect.objectContaining({ brandLogos: [] })] }],
+  ])('%s conserva degradazione intenzionale e log su rifiuto HTTP', async (failed, defaults) => {
+    callService.mockImplementation(async (_, operation) => {
+      if (operation === failed) throw new Error('HTTP 502');
+      return results[operation];
+    });
+    expect(await repository.getSessionData('0073741.d235')).toMatchObject(defaults);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 502'));
+    if (failed === 'getDmsSettings') {
+      expect(callService.mock.calls.some(([, operation]) => operation === 'registerDealer')).toBe(false);
+    }
+  });
+
+  test('errori myPeople non vengono nascosti o trasformati in sessione vuota', async () => {
+    callService.mockRejectedValue(new Error('HTTP 503'));
+    await expect(repository.getSessionData('0073741.d235')).rejects.toThrow('HTTP 503');
+    expect(callService.mock.calls).toEqual([
+      ['mypeople', 'readUserProfiles', { args: [{ username: '0073741.d235' }] }],
     ]);
   });
 
-  test('cache-miss su dms/settings: registra (best-effort) la combinazione country/brand/dealer', async () => {
-    dmsSettingsRepository.getDmsSettings.mockResolvedValueOnce(null);
-
-    const repository = new MyPeopleDmsSessionRepository();
-    const data = await repository.getSessionData('0073741.d235');
-
-    expect(dmsSettingsRepository.registerDealer).toHaveBeenCalledWith(
-      { __fakePool: true, query: expect.any(Function) },
-      { country: 'IT', brand: 'FT', dealer: '0073741' },
-    );
-    expect(data.isdml).toBe(false);
-  });
-
-  test('riusa i moduli già caricati (cache) su una seconda chiamata', async () => {
-    const repository = new MyPeopleDmsSessionRepository();
+  test('riutilizza gli adapter lazy ma esegue le chiamate su ogni richiesta', async () => {
     await repository.getSessionData('0073741.d235');
     await repository.getSessionData('0073741.d235');
-
-    // require() viene invocato una sola volta grazie alla cache lazy interna,
-    // ma la funzione risolta viene comunque chiamata ad ogni getSessionData().
-    expect(myPeopleService.readUserProfiles).toHaveBeenCalledTimes(2);
+    expect(callService.mock.calls.filter(([service]) => service === 'mypeople')).toHaveLength(2);
   });
 });

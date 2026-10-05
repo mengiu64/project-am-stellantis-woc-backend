@@ -27,7 +27,8 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
-      "src/**/*.js"
+      "src/**/*.js",
+      "internal.js"
     ],
     "coverageReporters": [
       "html",

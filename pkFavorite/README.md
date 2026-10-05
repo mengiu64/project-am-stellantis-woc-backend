@@ -38,7 +38,13 @@ Risposta:
   "username": "0062230.d001",
   "vin": "VF3CABHW6GT204366",
   "favorites": [
-    { "package": "42001AER01FR0201", "createdAt": "2026-01-01T09:00:00.000Z" }
+    {
+      "Code": "42001AER01FR0201",
+      "PackageDescription": "FORFAIT VIDANGE",
+      "PartsAvailablity": true,
+      "TotalPriceInclTax": 74,
+      "TotalPriceExclTax": 59.2
+    }
   ]
 }
 ```
@@ -78,6 +84,31 @@ CLI di test), si accetta un `username` passato esplicitamente, solo per
 comodità di test locali.
 
 Se `authorizer.sub` è mancante nella richiesta reale, la lambda risponde `401`.
+Anche un `username` presente nel body/query viene ignorato quando esiste un
+authorizer senza `sub`.
+
+## Arricchimento DMS tramite REST privato
+
+Non vengono importati sorgenti né `.env` di altre Lambda. Il packaging deve
+includere la sola libreria condivisa `../serviceClient` accanto a `pkFavorite`.
+Le chiamate DMS sono `POST` IAM SigV4 su API privata:
+
+- `dms/resolveSender`: `{ context: { username, vin }, overrides }`;
+- `dms/inquiry`: `{ PartsInquiryHeader: { MessageType: "LFP", VehicleID: vin },
+  package: packageCode, sender }`, una chiamata per codice preferito.
+
+Configurare `WOC_INTERNAL_API_URL` (base HTTPS), `AWS_REGION` (fallback
+`AWS_DEFAULT_REGION`) ed eventualmente `WOC_INTERNAL_TIMEOUT_MS` (default
+25000 ms). Il ruolo Lambda/provider chain fornisce le credenziali AWS e deve
+avere `execute-api:Invoke` sulle due rotte, oltre all'accesso di rete all'API.
+Credenziali e token upstream sono gestiti solo dal receiver `dms`.
+Il client restituisce la risposta domain senza envelope REST; qui si continua
+a estrarre `UpSelling.Packages` e i cinque campi indicati sopra.
+
+Le inquiry rimangono concorrenti (`Promise.all`) e vengono combinate nello
+stesso ordine dei preferiti. Senza preferiti non si effettuano inquiry.
+Un errore remoto di risoluzione/inquiry interrompe la GET con `502`.
+La persistenza locale Aurora e l'operazione POST toggle sono invariate.
 
 ## Database (Aurora PostgreSQL via RDS Proxy)
 
@@ -104,4 +135,9 @@ si vuole passare da Secrets Manager/estensione Lambda, anche
 
 ```
 npm test
+npm run test:coverage
 ```
+
+I test mockano `../../serviceClient` e il database locale: nessuna chiamata AWS
+o upstream reale. Sono coperti payload REST, concorrenza, errori remoti e
+authorizer senza `sub`.

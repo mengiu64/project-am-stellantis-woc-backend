@@ -24,7 +24,6 @@
  *   node test.js price   eper         ZAC5JABL9PJK00363   93825368   854265
  */
 
-require('dotenv').config();
 const { PkManager } = require('./PkManager');
 
 const [, , command, arg1, arg2, arg3, arg4, arg5] = process.argv;
@@ -115,4 +114,3 @@ function printUsage() {
     process.exit(1);
   }
 })();
-

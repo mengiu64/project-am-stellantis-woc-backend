@@ -33,19 +33,26 @@ jest.mock('../config', () => ({
   }),
 }));
 jest.mock('../httpClient');
-jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
-jest.mock('../../dbManager/AnagSnowflakesRepository', () => ({ getPhysicalSiteAndSincom: jest.fn() }));
-jest.mock('../../session/src/sessionContextCache', () => ({ getCachedSessionContext: jest.fn() }));
-jest.mock('../../v360/v360Service', () => ({ getCachedBrand: jest.fn() }));
-jest.mock('../../v360/s3ConfigRepository', () => ({ S3ConfigRepository: jest.fn() }));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }));
 
 const { httpsRequest } = require('../httpClient');
-const { getPool } = require('../../dbManager/db');
-const { getPhysicalSiteAndSincom } = require('../../dbManager/AnagSnowflakesRepository');
-const { getCachedSessionContext } = require('../../session/src/sessionContextCache');
-const { getCachedBrand } = require('../../v360/v360Service');
-const { S3ConfigRepository } = require('../../v360/s3ConfigRepository');
-const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea, resolveDynamicSenderFields, _resetBrandOwnerRepository } = require('../dmsService');
+const { callService } = require('../../serviceClient');
+const getPhysicalSiteAndSincom = jest.fn();
+const getCachedSessionContext = jest.fn();
+const getCachedBrand = jest.fn();
+const mockGetBrandOwners = jest.fn();
+beforeEach(() => {
+  callService.mockImplementation((service, operation, payload = {}) => {
+    const handlers = {
+      'dbmanager/getPhysicalSiteAndSincom': getPhysicalSiteAndSincom,
+      'session/getContext': getCachedSessionContext,
+      'v360/getBrand': getCachedBrand,
+      'v360/getBrandOwners': mockGetBrandOwners,
+    };
+    return handlers[`${service}/${operation}`](...(payload.args || []));
+  });
+});
+const { getDmsSettings, getCompanyTypes, getCustomerTitles, postDmsInquiry, buildTypeSection, buildUpSellingPackages, buildWorkLines, buildApplicationArea, resolveDynamicSenderFields } = require('../dmsService');
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -567,15 +574,10 @@ describe('postDmsInquiry — ApplicationArea built internally', () => {
 // market (solo chiave di lookup, non un campo Sender) + brand in body.sender.
 
 describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (woc.ang_snowflakes)', () => {
-  let mockGetBrandOwners;
-
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    getPool.mockResolvedValue({ fakePool: true });
-    mockGetBrandOwners = jest.fn().mockResolvedValue([]);
-    S3ConfigRepository.mockImplementation(() => ({ getBrandOwners: mockGetBrandOwners }));
-    _resetBrandOwnerRepository();
+    mockGetBrandOwners.mockResolvedValue([]);
   });
 
   afterEach(() => console.warn.mockRestore());
@@ -603,7 +605,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
 
     const area = await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
 
-    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({
       mainSincom: '0710740',
       market: '1000',
       brand: 'FT',
@@ -632,7 +634,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
       dealerNumberId: '0710740', market: '1000', brand: 'FT', pairedOicCode: '00000357',
     });
 
-    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({
       mainSincom: '0710740',
       market: '1000',
       brand: 'FT',
@@ -647,7 +649,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
 
     await buildApplicationArea({ dealerNumberId: '0710740', market: '1000', brand: 'FT' });
 
-    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({
       mainSincom: '0710740',
       market: '1000',
       brand: 'FT',
@@ -746,7 +748,7 @@ describe('buildApplicationArea — dynamic physicalSiteId/dealerNumberIdSource (
       sender: { dealerNumberId: '0710740', market: '1000', brand: 'FT' },
     });
 
-    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({ fakePool: true }, {
+    expect(getPhysicalSiteAndSincom).toHaveBeenCalledWith({
       mainSincom: '0710740',
       market: '1000',
       brand: 'FT',
