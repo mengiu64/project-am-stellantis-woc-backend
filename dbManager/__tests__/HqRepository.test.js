@@ -640,7 +640,7 @@ describe('HqRepository', () => {
 
       expect(result).toBe(0);
       expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('select deleted from woc.hq_pk_oic'),
+        expect.stringContaining('select deleted from woc.hq_pk_market'),
         ['1000'],
       );
     });

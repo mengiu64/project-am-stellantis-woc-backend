@@ -105,7 +105,9 @@ async function resolveCodmarket(event = {}, body = {}) {
  *
  * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
  * (che a cascata disabilita anche il mercato, v. sotto),
- * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr)/
+ * insertDomain(market, descr) (domini condivisi da tutti gli OIC del
+ * mercato, woc.hq_pk_domain non ha una colonna "oic")/
+ * setDomain(market, iddomain, descr)/
  * deleteDomain(market, iddomain) (cancellazione logica, deleted = 1)/
  * setDomainVisible(payload) (payload.domain, array di { iddomain, value },
  * loop) e insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
@@ -120,11 +122,9 @@ async function resolveCodmarket(event = {}, body = {}) {
  * (i domini cancellati logicamente sono esclusi, include anche
  * domVisible/pkVisible).
  *
- * initializeOicPkList(market, oic) inizializza, se necessario, la
- * configurazione PK dell'oic (copiandone i domini dal mercato/comuni via
- * copyDomainFromMarket quando l'oic non e' ancora configurato, v.
- * checkIsPkMarketEnabled/checkIsPkOicConfigured in HqRepository.js) e ne
- * ritorna la lista pacchetti (getPackageList).
+ * initializeOicPkList(market, oic) e' un semplice alias di getPackageList:
+ * i domini sono condivisi da tutti gli OIC del mercato, quindi non serve
+ * piu' alcuna inizializzazione/copia per il singolo OIC.
  *
  * insertAudit(event, section, market, actiontype, descr) e
  * searchAudit(market, section, datefrom, dateto, actiontype, username)
@@ -276,13 +276,15 @@ class HqManager {
   }
 
   /**
+   * I domini sono condivisi da tutti gli OIC del mercato (woc.hq_pk_domain
+   * non ha la colonna "oic", v. dbManager/HqRepository.js::insertDomain).
+   *
    * @param {string} market
-   * @param {string} oic
    * @param {string} descr
    * @returns {Promise<number>} l'iddomain generato
    */
-  async insertDomain(market, oic, descr) {
-    return repository.insertDomain(market, oic, descr);
+  async insertDomain(market, descr) {
+    return repository.insertDomain(market, descr);
   }
 
   /**
@@ -383,37 +385,16 @@ class HqManager {
   }
 
   /**
-   * Inizializza, se necessario, la configurazione PK dell'oic indicato e ne
-   * ritorna la lista pacchetti:
-   * - se il mercato e' abilitato a livello market (checkIsPkMarketEnabled
-   *   ritorna 1, cascata di setMarketEnable: tutti gli oic sono deleted =
-   *   1), la configurazione e' gia' condivisa a livello mercato e si
-   *   ritorna direttamente getPackageList(market, oic);
-   * - altrimenti (mercato gestito a livello di singolo oic) si verifica se
-   *   l'oic e' gia' configurato (checkIsPkOicConfigured); se non lo e'
-   *   (ritorna 1, nessuna riga trovata) si ripulisce prima (v.
-   *   deleteOicPkHierarchy: DELETE di eventuali hq_pk_packages/hq_pk_domain
-   *   residui di una precedente configurazione dell'oic, con una riga di
-   *   audit "pkList"/"reset") e si copiano poi in hq_pk_domain i domini del
-   *   mercato (o quelli comuni, v. copyDomainFromMarket) prima di ritornare
-   *   getPackageList(market, oic).
+   * Ritorna la lista pacchetti del mercato (ed eventualmente OIC) indicato.
+   * I domini sono condivisi da tutti gli OIC del mercato (v. insertDomain):
+   * non serve piu' alcuna inizializzazione/copia per il singolo OIC, questo
+   * metodo e' quindi un semplice alias di getPackageList.
    *
    * @param {string} market
    * @param {string} oic
    * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
   async initializeOicPkList(market, oic) {
-    const isPkMarketEnabled = await repository.checkIsPkMarketEnabled(market);
-
-    if (isPkMarketEnabled === 1) {
-      return repository.getPackageList(market, oic);
-    }
-
-    const isPkOicConfigured = await repository.checkIsPkOicConfigured(market, oic);
-    if (isPkOicConfigured === 1) {
-      await repository.copyDomainFromMarket(market, oic);
-    }
-
     return repository.getPackageList(market, oic);
   }
 

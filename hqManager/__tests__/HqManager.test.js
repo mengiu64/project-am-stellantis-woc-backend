@@ -24,7 +24,7 @@ describe('HqManager — consumer REST', () => {
     ['getVehicleInspection', ['1000', 'EXTERIOR'], 'getVehicleInspection'],
     ['setMarketEnable', ['1000'], 'setPkMarketEnable'],
     ['setMarketDisable', ['1000'], 'setPkMarketDisable'],
-    ['insertDomain', ['1000', '00006821', 'Meccanica'], 'insertDomain'],
+    ['insertDomain', ['1000', 'Meccanica'], 'insertDomain'],
     ['setDomain', ['1000', 42, 'Meccanica'], 'setDomain'],
     ['deleteDomain', ['1000', 42], 'deleteDomain'],
     ['insertPackage', ['1000', '00006821', 42, 'Tagliando', 60, 100.5], 'insertPackage'],
@@ -153,19 +153,13 @@ describe('HqManager — consumer REST', () => {
     expect(callService).toHaveBeenCalledTimes(1);
   });
 
-  test.each([
-    [1, undefined, ['checkIsPkMarketEnabled', 'getPackageList']],
-    [0, 1, ['checkIsPkMarketEnabled', 'checkIsPkOicConfigured', 'copyDomainFromMarket', 'getPackageList']],
-    [0, 0, ['checkIsPkMarketEnabled', 'checkIsPkOicConfigured', 'getPackageList']],
-  ])('initializeOicPkList conserva decisioni e ordine (%s,%s)', async (enabled, configured, operations) => {
+  test('initializeOicPkList e un alias di getPackageList (nessuna inizializzazione dominio)', async () => {
     const packages = [{ market: '1000', oic: 'a' }];
-    callService.mockImplementation(async (_, operation) => ({
-      checkIsPkMarketEnabled: enabled, checkIsPkOicConfigured: configured, getPackageList: packages,
-    })[operation]);
+    callService.mockResolvedValue(packages);
     expect(await manager.initializeOicPkList('1000', 'a')).toBe(packages);
-    expect(callService.mock.calls).toEqual(operations.map((operation) => [
-      'dbmanager', operation, { args: operation === 'checkIsPkMarketEnabled' ? ['1000'] : ['1000', 'a'] },
-    ]));
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', 'getPackageList', { args: ['1000', 'a'] }],
+    ]);
   });
 
   test.each([

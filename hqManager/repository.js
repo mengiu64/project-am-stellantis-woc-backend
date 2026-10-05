@@ -8,7 +8,7 @@ const OPERATIONS = [
   'insertPackage', 'setPackage', 'deletePackage', 'setPackageVisible',
   'getPackageList', 'clonePk', 'cloneVeicInspection', 'insertAudit', 'searchAudit',
   'getAnagSection', 'getAnagAllocation',
-  'checkIsPkMarketEnabled', 'checkIsPkOicConfigured', 'copyDomainFromMarket',
+  'checkIsPkMarketEnabled', 'deleteOicPkHierarchy',
 ];
 
 // Nessun pool locale: ogni operazione conserva nome e ordine degli argomenti

@@ -35,8 +35,9 @@
  *     tutti i suoi OIC.
  *   - setOicEnable(market, oic): abilita l'OIC (woc.hq_pk_oic) e, a cascata,
  *     disabilita il mercato (woc.hq_pk_market).
- *   - insertDomain(market, oic, descr): crea un nuovo dominio
- *     (woc.hq_pk_domain).
+ *   - insertDomain(market, descr): crea un nuovo dominio (woc.hq_pk_domain,
+ *     condiviso da tutti gli OIC del mercato: la tabella non ha una colonna
+ *     "oic").
  *   - setDomain(market, iddomain, descr): aggiorna la descr del dominio.
  *   - deleteDomain(market, iddomain): cancella logicamente il dominio
  *     (woc.hq_pk_domain.deleted = 1).
@@ -54,11 +55,9 @@
  *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
  *     la configurazione "a livello mercato"), incluso il flag "visible" di
  *     dominio/pacchetto (domVisible/pkVisible).
- *   - initializeOicPkList(market, oic): inizializza, se necessario, la
- *     configurazione PK dell'oic (copiandone i domini dal mercato/comuni se
- *     l'oic non e' ancora configurato e il mercato non e' gestito a livello
- *     market, v. HqManager.js::initializeOicPkList) e ne ritorna la lista
- *     pacchetti (stesso formato di getPackageList).
+ *   - initializeOicPkList(market, oic): alias di getPackageList(market, oic)
+ *     (i domini sono condivisi da tutti gli OIC del mercato: non serve piu'
+ *     alcuna inizializzazione/copia per il singolo OIC).
  *   - clonePk(marketTarget, marketOrig): clona, per il mercato marketOrig,
  *     tutta la gerarchia hq_pk_oic/hq_pk_domain/hq_pk_packages nel nuovo
  *     mercato marketTarget (v. dbManager/HqRepository.clonePk).
@@ -90,7 +89,7 @@
  *   node index.js setMarketEnable <market>
  *   node index.js setMarketDisable <market>
  *   node index.js setOicEnable <market> <oic>
- *   node index.js insertDomain <market> <oic> <descr>
+ *   node index.js insertDomain <market> <descr>
  *   node index.js setDomain <market> <iddomain> <descr>
  *   node index.js insertPackage <market> <oic> <iddomain> <descr> <timeop> <pricewithvat>
  *   node index.js setPackage <idpackage> <iddomain> <descr> <timeop> <pricewithvat>
@@ -230,8 +229,8 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'insertDomain') {
-      const newIddomain = await manager.insertDomain(market, oic, descr);
-      return response(200, { success: true, market, oic, descr, iddomain: newIddomain });
+      const newIddomain = await manager.insertDomain(market, descr);
+      return response(200, { success: true, market, descr, iddomain: newIddomain });
     }
 
     if (action === 'setDomain') {

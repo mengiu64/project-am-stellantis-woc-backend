@@ -203,13 +203,13 @@ describe('hqManager/index.js', () => {
 
       const res = await handler({
         action: 'insertDomain',
-        body: { market: '3110', oic: '00006821', descr: 'Meccanica' },
+        body: { market: '3110', descr: 'Meccanica' },
       });
 
-      expect(instance.insertDomain).toHaveBeenCalledWith('3110', '00006821', 'Meccanica');
+      expect(instance.insertDomain).toHaveBeenCalledWith('3110', 'Meccanica');
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
-        success: true, market: '3110', oic: '00006821', descr: 'Meccanica', iddomain: 42,
+        success: true, market: '3110', descr: 'Meccanica', iddomain: 42,
       });
     });
 
