@@ -1,4 +1,7 @@
 # Non modifica API policy, VPC endpoint o stage preesistenti. Non contiene un Deployment.
+# Prerequisito: il resource Allow con Principal "*" deve coprire solo /api e /auth,
+# mai /internal. Per /internal l'Allow deriva dalle policy dei ruoli nello stesso
+# account; un Deny globale fuori aws:SourceVpce mantiene l'API privata.
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'WOC REST interno IAM: rotte e permessi su API privata esistente. Applicazione e deployment stage a cura del team infrastruttura.'
 Parameters:

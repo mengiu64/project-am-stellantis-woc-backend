@@ -119,6 +119,15 @@ nomi dei ruoli execution (output `Internal*RoleName` del template SAM).
 Il team infrastruttura deve verificare che permission boundary/SCP consentano
 `execute-api:Invoke`, che DNS privato e SG consentano HTTPS verso il VPC endpoint,
 e pubblicare un nuovo deployment dello stage dopo la creazione delle rotte.
+La resource policy del gateway non deve concedere `Allow` con `Principal: "*"`
+su `/internal/*`: nello stesso account tale Allow potrebbe autorizzare chiamate
+non previste dalle policy dei ruoli. Limitare l'Allow frontend ai resource ARN
+`<api-arn>/*/*/api`, `<api-arn>/*/*/api/*`, `<api-arn>/*/*/auth` e
+`<api-arn>/*/*/auth/*`, mantenendo la condizione `aws:SourceVpce`. Aggiungere
+un Deny `execute-api:Invoke`, `Principal: "*"`, Resource `<api-arn>/*`,
+con `StringNotEquals: { "aws:SourceVpce": "<vpce-id>" }`. Per le rotte interne
+l'Allow deriva dalle policy execution nello stesso account. Pubblicare di nuovo
+lo stage dopo la modifica della resource policy, gestita fuori da questo template.
 Configurare nel backend `InternalApiId`/`InternalApiStage` prima dell'attivazione.
 In CI configurare per ambiente `WOC_INTERNAL_API_ID`, opzionalmente
 `WOC_INTERNAL_API_STAGE` (default `wia`) e `WOC_INTERNAL_API_READY=true` solo
@@ -135,15 +144,21 @@ La raggiungibilità HTTP interna va verificata dalla VPC: il DNS privato non
 è risolvibile dal terminale usato per questa revisione.
 
 **Stato dev al 2026-10-05:** applicato lo stack `stla-woc-internal-api-dev`
-(`CREATE_COMPLETE`) e pubblicato il deployment `b7m5mj` sullo stage `wia`
-(precedente: `3esyvy`). Le 11 rotte interne POST usano `AWS_IAM`; aggiunte 9
+(`CREATE_COMPLETE`) e pubblicato il deployment finale `nu31of` sullo stage `wia`
+(deployment precedenti: `3esyvy`, `b7m5mj`). Le 11 rotte interne POST usano `AWS_IAM`; aggiunte 9
 policy inline ai ruoli execution esistenti, senza modificare trust o permission
 boundary. La simulazione IAM consente le 67 chiamate ruolo/operazione previste;
 i 34 metodi applicativi pubblicati preesistenti risultano invariati.
-DNS privato e regole SG sono predisposti, ma resta da verificare HTTP dalla VPC
-dopo il deploy dei receiver. Nessun codice Lambda distribuito e nessun flag CI
-di readiness abilitato in questa attivazione infrastrutturale. Stage e prod
-non sono stati modificati.
+Il codice Lambda del commit `cb20783` e' stato distribuito dalla pipeline dev
+con successo; le variabili REST e il flag readiness sono configurati solo
+nell'environment GitHub `dev`. Corretta anche la resource policy del gateway
+come sopra. Un probe temporaneo nella VPC, con ruolo session e trasporto di
+produzione, ha verificato `dbmanager/getBrandLogos` con lista vuota (200),
+un'operazione non consentita al ruolo (403) e una chiamata senza firma
+(404, mapping preesistente `MISSING_AUTHENTICATION_TOKEN`). Il probe e il suo
+log group sono stati rimossi; nessuna scrittura di dominio eseguita. Questo
+smoke test non sostituisce la verifica dei flussi applicativi completi.
+Stage e prod non sono stati modificati.
 
 I target Makefile impacchettano **solo il modulo corrente e `serviceClient/`**,
 installando le rispettive dipendenze di produzione nell'artifact. Le cache

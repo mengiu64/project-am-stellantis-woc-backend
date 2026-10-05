@@ -111,7 +111,16 @@ create/modify the API, VPC endpoint, resource policy or stage. Supply `RestApiId
 boundary/SCP support for `execute-api:Invoke`, private DNS and security-group
 HTTPS access to the VPC endpoint, then publish a new stage deployment after
 creating the routes. Configure backend `InternalApiId`/`InternalApiStage` before
-activation. Coordinate rollout: receivers, routes and policies must be ready
+activation. The gateway resource policy must not grant `Allow` with
+`Principal: "*"` on `/internal/*`: within the same account, that Allow could
+authorize calls not granted by execution-role policies. Scope the frontend
+Allow to resource ARNs `<api-arn>/*/*/api`, `<api-arn>/*/*/api/*`,
+`<api-arn>/*/*/auth` and `<api-arn>/*/*/auth/*`, retaining the `aws:SourceVpce`
+condition. Add a Deny for `execute-api:Invoke`, `Principal: "*"`, Resource
+`<api-arn>/*`, with `StringNotEquals: { "aws:SourceVpce": "<vpce-id>" }`.
+Internal routes rely on execution-role Allow policies in the same account.
+Republish the stage after changing this externally managed resource policy.
+Coordinate rollout: receivers, routes and policies must be ready
 before activating migrated consumers; there is no in-process fallback.
 CI requires environment variables `WOC_INTERNAL_API_ID`, optionally
 `WOC_INTERNAL_API_STAGE` (default `wia`) and `WOC_INTERNAL_API_READY=true`
@@ -126,15 +135,20 @@ verified from the VPC: private DNS is not resolvable from the terminal used
 for this revision.
 
 **Dev status as of 2026-10-05:** stack `stla-woc-internal-api-dev` applied
-(`CREATE_COMPLETE`) and deployment `b7m5mj` published to stage `wia`
-(previous: `3esyvy`). The 11 internal POST routes use `AWS_IAM`; 9 inline
+(`CREATE_COMPLETE`) and final deployment `nu31of` published to stage `wia`
+(previous deployments: `3esyvy`, `b7m5mj`). The 11 internal POST routes use `AWS_IAM`; 9 inline
 policies were added to existing execution roles without changing trust or
 permission boundaries. IAM simulation allows all 67 expected role/operation
 calls; the 34 previously published application methods are unchanged.
-Private DNS and security-group rules are configured, but HTTP access from the
-VPC must still be verified after deploying receivers. No Lambda code was
-deployed and no CI readiness flag was enabled during this infrastructure
-activation. Stage and prod environments were not modified.
+Lambda code from commit `cb20783` was successfully deployed by the dev pipeline;
+REST variables and the readiness flag are configured only in the GitHub `dev`
+environment. The gateway resource policy was also corrected as described above.
+A temporary VPC probe using the session role and production transport verified
+`dbmanager/getBrandLogos` with an empty list (200), an operation forbidden to
+the role (403), and an unsigned call (404, the existing
+`MISSING_AUTHENTICATION_TOKEN` mapping). The probe and its log group were removed;
+no domain writes were performed. This smoke test does not replace verification
+of complete application flows. Stage and prod environments were not modified.
 
 Makefile targets package **only the current module and `serviceClient/`**,
 installing each production dependency set in the artifact. Caches remain in
