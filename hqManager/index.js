@@ -29,12 +29,8 @@
  *   - insertVehicleInspection(market, type, descr): crea una nuova voce di
  *     controllo veicolo; registra anche una riga di audit con username
  *     risolto da HqManager.js::resolveUsername.
- *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market) e
- *     disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic).
- *   - setMarketDisable(market): disabilita il mercato e riabilita a cascata
- *     tutti i suoi OIC.
- *   - setOicEnable(market, oic): abilita l'OIC (woc.hq_pk_oic) e, a cascata,
- *     disabilita il mercato (woc.hq_pk_market).
+ *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market).
+ *   - setMarketDisable(market): disabilita il mercato (woc.hq_pk_market).
  *   - insertDomain(market, descr): crea un nuovo dominio (woc.hq_pk_domain,
  *     condiviso da tutti gli OIC del mercato: la tabella non ha una colonna
  *     "oic").
@@ -51,15 +47,15 @@
  *     woc.hq_pk_packages.
  *   - setPackageVisible(payload): aggiorna il flag "visible", in un loop,
  *     per ciascun elemento { idpackage, value } dell'array payload.package.
- *   - getPackageList(market, oic): elenco della gerarchia mercato -> OIC ->
- *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
- *     la configurazione "a livello mercato"), incluso il flag "visible" di
- *     dominio/pacchetto (domVisible/pkVisible).
- *   - initializeOicPkList(market, oic): alias di getPackageList(market, oic)
- *     (i domini sono condivisi da tutti gli OIC del mercato: non serve piu'
- *     alcuna inizializzazione/copia per il singolo OIC).
+ *   - getPackageListHQ(market): elenco della gerarchia mercato -> dominio ->
+ *     pacchetto "a livello mercato" (nessun OIC, pk.oic IS NULL), incluso il
+ *     flag "visible" di dominio/pacchetto (domVisible/pkVisible).
+ *   - getPackageListSM(market, oic): elenco della stessa gerarchia ma per i
+ *     soli pacchetti del singolo OIC indicato (pk.oic = oic) (i domini sono
+ *     condivisi da tutti gli OIC del mercato: non serve piu' alcuna
+ *     inizializzazione/copia per il singolo OIC).
  *   - clonePk(marketTarget, marketOrig): clona, per il mercato marketOrig,
- *     tutta la gerarchia hq_pk_oic/hq_pk_domain/hq_pk_packages nel nuovo
+ *     tutta la gerarchia hq_pk_domain/hq_pk_packages nel nuovo
  *     mercato marketTarget (v. dbManager/HqRepository.clonePk).
  *   - cloneVeicInspection(marketTarget, marketOrig, type): cancella
  *     logicamente le voci di controllo veicolo gia' presenti in
@@ -88,7 +84,6 @@
  *   node index.js insertVehicleInspection <market> <type> <descr>
  *   node index.js setMarketEnable <market>
  *   node index.js setMarketDisable <market>
- *   node index.js setOicEnable <market> <oic>
  *   node index.js insertDomain <market> <descr>
  *   node index.js setDomain <market> <iddomain> <descr>
  *   node index.js insertPackage <market> <oic> <iddomain> <descr> <timeop> <pricewithvat>
@@ -111,7 +106,6 @@ const VALID_ACTIONS = [
   'insertVehicleInspection',
   'setMarketEnable',
   'setMarketDisable',
-  'setOicEnable',
   'insertDomain',
   'setDomain',
   'deleteDomain',
@@ -120,8 +114,8 @@ const VALID_ACTIONS = [
   'setPackage',
   'deletePackage',
   'setPackageVisible',
-  'getPackageList',
-  'initializeOicPkList',
+  'getPackageListHQ',
+  'getPackageListSM',
   'clonePk',
   'cloneVeicInspection',
   'insertAudit',
@@ -223,11 +217,6 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, market });
     }
 
-    if (action === 'setOicEnable') {
-      await manager.setOicEnable(market, oic);
-      return response(200, { success: true, market, oic });
-    }
-
     if (action === 'insertDomain') {
       const newIddomain = await manager.insertDomain(market, descr);
       return response(200, { success: true, market, descr, iddomain: newIddomain });
@@ -268,14 +257,14 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, package: body.package });
     }
 
-    if (action === 'getPackageList') {
-      const packages = await manager.getPackageList(market, oic);
-      return response(200, { success: true, market, oic: oic ?? null, packages });
+    if (action === 'getPackageListHQ') {
+      const packages = await manager.getPackageListHQ(market);
+      return response(200, { success: true, market, packages });
     }
 
-    if (action === 'initializeOicPkList') {
-      const packages = await manager.initializeOicPkList(market, oic);
-      return response(200, { success: true, market, oic: oic ?? null, packages });
+    if (action === 'getPackageListSM') {
+      const packages = await manager.getPackageListSM(market, oic);
+      return response(200, { success: true, market, oic, packages });
     }
 
     if (action === 'clonePk') {

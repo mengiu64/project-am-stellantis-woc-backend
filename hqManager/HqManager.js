@@ -103,8 +103,7 @@ async function resolveCodmarket(event = {}, body = {}) {
  * dell'audit, il codmarket risolto da resolveCodmarket (v. sotto: stessa
  * sessione dell'utente autenticato, "" se non risolvibile).
  *
- * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
- * (che a cascata disabilita anche il mercato, v. sotto),
+ * setMarketEnable(market)/setMarketDisable(market),
  * insertDomain(market, descr) (domini condivisi da tutti gli OIC del
  * mercato, woc.hq_pk_domain non ha una colonna "oic")/
  * setDomain(market, iddomain, descr)/
@@ -114,17 +113,19 @@ async function resolveCodmarket(event = {}, body = {}) {
  * setPackage(idpackage, iddomain, descr, timeop, pricewithvat)/
  * deletePackage(idpackage)/setPackageVisible(payload) (payload.package,
  * array di { idpackage, value }, loop) espongono la
- * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto
- * (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
+ * gerarchia di configurazione mercato -> dominio -> pacchetto
+ * (woc.hq_pk_market/hq_pk_domain/hq_pk_packages; la tabella woc.hq_pk_oic
+ * non e' piu' usata).
  *
- * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
- * pacchetto configurata per il mercato (ed eventualmente l'OIC) richiesto
- * (i domini cancellati logicamente sono esclusi, include anche
- * domVisible/pkVisible).
+ * getPackageListHQ(market) legge la gerarchia mercato -> dominio ->
+ * pacchetto "a livello mercato" (nessun OIC, pk.oic IS NULL) configurata
+ * per il mercato richiesto (i domini cancellati logicamente sono esclusi,
+ * include anche domVisible/pkVisible).
  *
- * initializeOicPkList(market, oic) e' un semplice alias di getPackageList:
- * i domini sono condivisi da tutti gli OIC del mercato, quindi non serve
- * piu' alcuna inizializzazione/copia per il singolo OIC.
+ * getPackageListSM(market, oic) legge la stessa gerarchia ma per i soli
+ * pacchetti del singolo OIC richiesto (pk.oic = oic); i domini sono
+ * condivisi da tutti gli OIC del mercato, quindi non serve alcuna
+ * inizializzazione/copia per il singolo OIC.
  *
  * insertAudit(event, section, market, actiontype, descr) e
  * searchAudit(market, section, datefrom, dateto, actiontype, username)
@@ -261,21 +262,6 @@ class HqManager {
   }
 
   /**
-   * Abilita l'OIC e, a cascata, disabilita il mercato (woc.hq_pk_market),
-   * dato che una volta configurato manualmente almeno un OIC del mercato la
-   * configurazione "a livello mercato" (setMarketEnable, che abilita tutti
-   * gli OIC in blocco) non deve piu' applicarsi.
-   *
-   * @param {string} market
-   * @param {string} oic
-   * @returns {Promise<void>}
-   */
-  async setOicEnable(market, oic) {
-    await repository.setOicEnable(market, oic);
-    return repository.setPkMarketDisable(market);
-  }
-
-  /**
    * I domini sono condivisi da tutti gli OIC del mercato (woc.hq_pk_domain
    * non ha la colonna "oic", v. dbManager/HqRepository.js::insertDomain).
    *
@@ -376,32 +362,33 @@ class HqManager {
   }
 
   /**
+   * Ritorna la lista pacchetti "a livello mercato" (nessun OIC) del
+   * mercato indicato.
+   *
    * @param {string} market
-   * @param {string|null} [oic]
-   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+   * @returns {Promise<Array<{ market: string, oic: null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
-  async getPackageList(market, oic) {
-    return repository.getPackageList(market, oic);
+  async getPackageListHQ(market) {
+    return repository.getPackageListHQ(market);
   }
 
   /**
-   * Ritorna la lista pacchetti del mercato (ed eventualmente OIC) indicato.
+   * Ritorna la lista pacchetti del singolo OIC (del mercato indicato).
    * I domini sono condivisi da tutti gli OIC del mercato (v. insertDomain):
-   * non serve piu' alcuna inizializzazione/copia per il singolo OIC, questo
-   * metodo e' quindi un semplice alias di getPackageList.
+   * non serve piu' alcuna inizializzazione/copia per il singolo OIC.
    *
    * @param {string} market
    * @param {string} oic
-   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+   * @returns {Promise<Array<{ market: string, oic: string, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
-  async initializeOicPkList(market, oic) {
-    return repository.getPackageList(market, oic);
+  async getPackageListSM(market, oic) {
+    return repository.getPackageListSM(market, oic);
   }
 
   /**
-   * Clona, per il mercato indicato (marketOrig), tutte le righe di
-   * woc.hq_pk_oic/hq_pk_domain/hq_pk_packages in un nuovo mercato
-   * (marketTarget). Vedi dbManager/HqRepository.clonePk per i dettagli.
+   * Clona, per il mercato indicato (marketOrig), le gerarchie
+   * hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget). Vedi
+   * dbManager/HqRepository.clonePk per i dettagli.
    *
    * @param {string} marketTarget
    * @param {string} marketOrig

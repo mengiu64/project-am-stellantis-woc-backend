@@ -3,10 +3,10 @@
 const OPERATIONS = [
   'getEnablingConfiguration', 'setEnablingConfiguration',
   'getVehicleInspection', 'setVehicleInspectionVisible', 'deletetVehicleInspection',
-  'insertVehicleInspection', 'setPkMarketEnable', 'setPkMarketDisable', 'setOicEnable',
+  'insertVehicleInspection', 'setPkMarketEnable', 'setPkMarketDisable',
   'insertDomain', 'setDomain', 'deleteDomain', 'setDomainVisible',
   'insertPackage', 'setPackage', 'deletePackage', 'setPackageVisible',
-  'getPackageList', 'clonePk', 'cloneVeicInspection', 'insertAudit', 'searchAudit',
+  'getPackageListHQ', 'getPackageListSM', 'clonePk', 'cloneVeicInspection', 'insertAudit', 'searchAudit',
   'getAnagSection', 'getAnagAllocation',
   'checkIsPkMarketEnabled', 'deleteOicPkHierarchy',
 ];
