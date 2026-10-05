@@ -77,21 +77,23 @@ function fetchSecretJson(secretId, extensionPort) {
 
 async function buildPool() {
   const cfg = getDbConfig();
-  if (!cfg.host) {
+  if (!cfg.host && !process.env.JOBCARD_DB_SECRET_ID) {
     throw new Error('[jobcard/db] Missing required environment variable: JOBCARD_DB_HOST');
   }
 
   let { user, password, port } = cfg;
   let database = cfg.name;
 
-  if (!user || !password) {
+  if (!cfg.host || !user || !password) {
     const secret = await fetchSecretJson(cfg.secretId, cfg.extensionPort);
     user = user || secret.username;
     password = password || secret.password;
-    database = database || secret.dbname;
-    port = port || secret.port;
+    database = database || secret.proxydbname || secret.dbname;
+    port = port || secret.proxyport || secret.port;
+    cfg.host = cfg.host || secret.proxyhost;
   }
 
+  if (!cfg.host) throw new Error('[jobcard/db] proxyhost is required in the database secret');
   return new Pool({
     host: cfg.host,
     port: port || 5432,

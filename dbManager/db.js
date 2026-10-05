@@ -62,19 +62,22 @@ function fetchSecretJson(secretId) {
  * (config.db) oppure, se assenti, dal secret Secrets Manager.
  */
 async function buildPool() {
+  let host = config.db.host;
   let { user, password, port } = config.db;
   let database = config.db.name;
 
-  if (!user || !password) {
+  if (!host || !user || !password) {
     const secret = await fetchSecretJson(config.secrets.dbSecretId);
     user = user || secret.username;
     password = password || secret.password;
-    database = database || secret.dbname;
-    port = port || secret.port;
+    database = database || secret.proxydbname || secret.dbname;
+    port = port || secret.proxyport || secret.port;
+    host = host || secret.proxyhost;
   }
 
+  if (!host) throw new Error('[db] proxyhost is required in the database secret');
   return new Pool({
-    host: config.db.host,
+    host,
     port: port || 5432,
     database: database || 'wiadvisor',
     user,

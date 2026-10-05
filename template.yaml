@@ -48,11 +48,11 @@ Parameters:
   # TmpCacheTable/DynamoDB): va creato una tantum fuori banda (Console/CLI
   # AWS) con un JSON { "DMS_PING_URL": "...", "DMS_PING_CLIENT_ID": "...",
   # "DMS_PING_CLIENT_SECRET": "...", "DML_BASE_URL": "...", ... } (v. README
-  # per l'elenco completo delle chiavi). Se il secret non esiste ancora o non
-  # è raggiungibile, <modulo>/config.js ricade automaticamente sulle variabili
-  # d'ambiente/default storici (nessuna interruzione di servizio). Una volta
+  # per l'elenco completo delle chiavi). Predisporre il secret e l'accesso di
+  # rete prima del deploy: DMS in Lambda non ripiega su env/default. Una volta
   # creato, aggiornare il suo valore via Console/CLI (UpdateSecret) NON
-  # richiede un nuovo `sam deploy`: un solo posto da modificare/ruotare,
+  # richiede un nuovo `sam deploy`; i container warm usano la cache fino al riciclo.
+  # Un solo posto da modificare/ruotare,
   # invece di dover cercare la stessa credenziale duplicata in più Lambda —
   # e nessuna credenziale in chiaro nella configurazione delle Lambda.
   ServiceUrlsSecretId:
@@ -64,102 +64,18 @@ Parameters:
       dms/jobcard/djc/v360.
 
   # ── AgendaSOA / AgendaSOA-Naga ────────────────────────────────────────────
-  AgendaSoaHost:
-    Type: String
-  AgendaSoaUsername:
-    Type: String
-  AgendaSoaPassword:
-    Type: String
-    NoEcho: true
-  AgendaSoaApiKey:
-    Type: String
-    NoEcho: true
-
   # IBM API Connect target environment for the DML gateway (X-Target-Env header).
   # This is a DML/IBM API Connect concept ("stage"/"prod" catalog), independent
   # of the AWS SAM "Environment" parameter (dev/stage/prod stack). It must NOT be
   # tied to !Ref Environment: the "ps-dev" catalog only authorizes "stage" today,
   # so wiring it to the AWS dev stack's Environment ("dev") causes DML to reject
   # the call with "explicit deny in an identity-based policy" (403).
-  DmlXTargetEnv:
-    Type: String
-    Default: stage
-
   # ── MoparDoc: credenziali lette a runtime da SSM -> Secrets Manager (nessun parametro CFN) ──
 
   # ── pkEper (WsIQPckEper SOAP — FCA/Stellantis) ────────────────────────────
-  EperHost:
-    Type: String
-  EperCoddealer:
-    Type: String
-  EperCodmarket:
-    Type: String
-  EperLingua:
-    Type: String
-    Default: IT
-
   # ── pkDocsoa (PSA/Stellantis) ─────────────────────────────────────────────
-  DocsoaHost:
-    Type: String
-  DocsoaUsername:
-    Type: String
-  DocsoaPassword:
-    Type: String
-    NoEcho: true
-  DocsoaIbmClientId:
-    Type: String
-    NoEcho: true
-  DocsoaIbmClientSecret:
-    Type: String
-    NoEcho: true
-  DocsoaCodbrand:
-    Type: String
-  DocsoaLangue:
-    Type: String
-  DocsoaPays:
-    Type: String
-  DocsoaCodepdv:
-    Type: String
-
   # ── pkMenupricing (Opel/Vauxhall SOAP) ────────────────────────────────────
-  MenupricingWsdl:
-    Type: String
-  MenupricingUsr:
-    Type: String
-  MenupricingPws:
-    Type: String
-    NoEcho: true
-  MenupricingUsrReq:
-    Type: String
-  MenupricingPwsReq:
-    Type: String
-    NoEcho: true
-  MpLanguageCode:
-    Type: String
-  MpCountryCode:
-    Type: String
-  MpDealerIdentificationCode:
-    Type: String
-  MpManufacturer:
-    Type: String
-
   # ── myPeople (IURSMA readUserProfiles — PSA/Stellantis) ──────────────────
-  MyPeopleHost:
-    Type: String
-    Default: https://api-basic-preprod.groupe-psa.com
-  MyPeopleIbmClientId:
-    Type: String
-    NoEcho: true
-  MyPeopleUsername:
-    Type: String
-    NoEcho: true
-  MyPeoplePassword:
-    Type: String
-    NoEcho: true
-  MyPeopleIdentifier:
-    Type: String
-    NoEcho: true
-    Description: Fixed identifier value required by the readUserProfiles API (constant, not a per-call input)
   MyPeopleExtensionLayerArn:
     Type: String
     Default: arn:aws:lambda:eu-west-1:015030872274:layer:AWS-Parameters-and-Secrets-Lambda-Extension:90
@@ -170,18 +86,6 @@ Parameters:
       https://docs.aws.amazon.com/systems-manager/latest/userguide/ps-integration-lambda-extensions.html#intel
 
   # ── pkFavorite (pacchetti/forfait preferiti del dealer per VIN — Aurora PostgreSQL) ──
-  PkFavoriteDbHost:
-    Type: String
-    Description: >-
-      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
-      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
-      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
-  PkFavoriteDbPort:
-    Type: String
-    Default: '5432'
-  PkFavoriteDbName:
-    Type: String
-    Default: wiadvisor
   PkFavoriteDbSecretId:
     Type: String
     Default: sm-np-bsn0027990-dev-aurora-app
@@ -198,18 +102,6 @@ Parameters:
       il nome standard del cluster dell'ambiente.
 
   # ── pkDocsoa (functionServiceDb — tabella woc.listfunctions su Aurora PostgreSQL) ──
-  DocsoaDbHost:
-    Type: String
-    Description: >-
-      Endpoint del database (consigliato: l'endpoint dell'RDS Proxy, es.
-      rdsproxy-np-bsn0027990-<env>.proxy-xxxx.eu-west-1.rds.amazonaws.com, NON l'endpoint
-      diretto del cluster Aurora, per beneficiare del pooling di connessioni verso le Lambda)
-  DocsoaDbPort:
-    Type: String
-    Default: '5432'
-  DocsoaDbName:
-    Type: String
-    Default: wiadvisor
   DocsoaDbSecretId:
     Type: String
     Default: sm-np-bsn0027990-dev-aurora-app
@@ -244,11 +136,7 @@ Globals:
     Handler: index.handler
     Environment:
       Variables:
-        WOC_INTERNAL_API_URL: !If
-          - HasInternalApi
-          - !Sub "https://${InternalApiId}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${InternalApiStage}"
-          - ''
-        WOC_INTERNAL_TIMEOUT_MS: '25000'
+        WOC_INTERNAL_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-internal-api-config"
     VpcConfig:
       SubnetIds: !Ref VpcSubnetIds
       SecurityGroupIds: !Ref VpcSecurityGroupIds
@@ -301,9 +189,12 @@ Resources:
     # la Lambda riusa quella esistente invece di crearne una in automatico
     # (evita il conflitto AlreadyExists sul replace del FunctionName).
     DependsOn: AgendaSoaFunctionLogGroup
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-agendasoa"
-      CodeUri: agendaSoa/
+      CodeUri: ./
+      Handler: agendaSoa/index.handler
       # Layer AWS Parameters and Secrets Lambda Extension (Req 7.2): fornisce l'endpoint
       # localhost:2773 per il recupero dei segreti mTLS.
       Layers:
@@ -318,12 +209,13 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-agendasoa-config-*"
       Environment:
         Variables:
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-agendasoa-config"
           # Id dei segreti mTLS su Secrets Manager (Req 7.3).
           AGENDA_SOA_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
           AGENDA_SOA_KEY_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-key"
@@ -366,12 +258,13 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-agendasoanaga-config-*"
       Environment:
         Variables:
-          AGENDA_SOA_HOST:     !Ref AgendaSoaHost
-          AGENDA_SOA_USERNAME: !Ref AgendaSoaUsername
-          AGENDA_SOA_PASSWORD: !Ref AgendaSoaPassword
-          AGENDA_SOA_API_KEY:  !Ref AgendaSoaApiKey
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-agendasoanaga-config"
           # Id dei segreti mTLS su Secrets Manager (Req 7.3).
           AGENDA_SOA_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
           AGENDA_SOA_KEY_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-key"
@@ -411,7 +304,6 @@ Resources:
       Environment:
         Variables:
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          DML_X_TARGET_ENV:     !Ref DmlXTargetEnv
   DmsFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -452,9 +344,6 @@ Resources:
       Environment:
         Variables:
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
-          JOBCARD_DB_HOST:      !Ref DocsoaDbHost
-          JOBCARD_DB_PORT:      !Ref DocsoaDbPort
-          JOBCARD_DB_NAME:      !Ref DocsoaDbName
           JOBCARD_DB_SECRET_ID: !Ref DocsoaDbSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
   JobCardFunctionLogGroup:
@@ -498,9 +387,6 @@ Resources:
         Variables:
           SERVICE_URLS_SECRET_ID: !Ref ServiceUrlsSecretId
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
-          DJC_DB_HOST:      !Ref DocsoaDbHost
-          DJC_DB_PORT:      !Ref DocsoaDbPort
-          DJC_DB_NAME:      !Ref DocsoaDbName
           DJC_DB_SECRET_ID: !Ref DocsoaDbSecretId
   DjcFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -569,9 +455,6 @@ Resources:
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
           # moparDoc/db.js — Aurora "wiadvisor" via RDS Proxy (woc.mopardoc_inspection_media),
           # stesso Aurora/secret di DJC_DB_* (nessun nuovo parametro CFN).
-          MOPARDOC_DB_HOST:      !Ref DocsoaDbHost
-          MOPARDOC_DB_PORT:      !Ref DocsoaDbPort
-          MOPARDOC_DB_NAME:      !Ref DocsoaDbName
           MOPARDOC_DB_SECRET_ID: !Ref DocsoaDbSecretId
           PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: "2773"
 
@@ -688,10 +571,13 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-pkeper-config-*"
       Environment:
         Variables:
-          EPER_HOST: !Ref EperHost
-
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-pkeper-config"
   PkEperFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -724,13 +610,13 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-pkdocsoa-config-*"
       Environment:
         Variables:
-          DOCSOA_HOST:              !Ref DocsoaHost
-          DOCSOA_USERNAME:          !Ref DocsoaUsername
-          DOCSOA_PASSWORD:          !Ref DocsoaPassword
-          DOCSOA_IBM_CLIENT_ID:     !Ref DocsoaIbmClientId
-          DOCSOA_IBM_CLIENT_SECRET: !Ref DocsoaIbmClientSecret
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-pkdocsoa-config"
           DOCSOA_CERT_SECRET_ID:    !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
           DOCSOA_KEY_SECRET_ID:     !Sub "sm-np-bsn0027990-${Environment}-apic-key"
 
@@ -753,14 +639,13 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-pkmenupricing-config-*"
       Environment:
         Variables:
-          MENUPRICING_WSDL:    !Ref MenupricingWsdl
-          MENUPRICING_USR:     !Ref MenupricingUsr
-          MENUPRICING_PWS:     !Ref MenupricingPws
-          MENUPRICING_USR_REQ: !Ref MenupricingUsrReq
-          MENUPRICING_PWS_REQ: !Ref MenupricingPwsReq
-
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-pkmenupricing-config"
   PkMenupricingFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -823,19 +708,13 @@ Resources:
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-pkmanager-config-*"
       Environment:
         Variables:
-          EPER_CODDEALER:               !Ref EperCoddealer
-          EPER_CODMARKET:                !Ref EperCodmarket
-          EPER_LINGUA:                  !Ref EperLingua
-          DOCSOA_CODBRAND:              !Ref DocsoaCodbrand
-          DOCSOA_LANGUE:                !Ref DocsoaLangue
-          DOCSOA_PAYS:                  !Ref DocsoaPays
-          DOCSOA_CODEPDV:               !Ref DocsoaCodepdv
-          MP_LANGUAGE_CODE:             !Ref MpLanguageCode
-          MP_COUNTRY_CODE:              !Ref MpCountryCode
-          MP_DEALER_IDENTIFICATION_CODE: !Ref MpDealerIdentificationCode
-          MP_MANUFACTURER:              !Ref MpManufacturer
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-pkmanager-config"
   PkManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -904,13 +783,13 @@ Resources:
               Resource:
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
                 - !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-mypeople-config-*"
       Environment:
         Variables:
-          MYPEOPLE_HOST:            !Ref MyPeopleHost
-          MYPEOPLE_IBM_CLIENT_ID:   !Ref MyPeopleIbmClientId
-          MYPEOPLE_USERNAME:        !Ref MyPeopleUsername
-          MYPEOPLE_PASSWORD:        !Ref MyPeoplePassword
-          MYPEOPLE_IDENTIFIER:      !Ref MyPeopleIdentifier
+          WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-mypeople-config"
           MYPEOPLE_CERT_SECRET_ID:  !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
           MYPEOPLE_KEY_SECRET_ID:   !Sub "sm-np-bsn0027990-${Environment}-apic-key"
 
@@ -946,9 +825,6 @@ Resources:
               Resource: "*"
       Environment:
         Variables:
-          PKFAVORITE_DB_HOST:      !Ref PkFavoriteDbHost
-          PKFAVORITE_DB_PORT:      !Ref PkFavoriteDbPort
-          PKFAVORITE_DB_NAME:      !Ref PkFavoriteDbName
           PKFAVORITE_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
   PkFavoriteFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -987,9 +863,6 @@ Resources:
               Resource: "*"
       Environment:
         Variables:
-          DBMANAGER_DB_HOST:      !Ref DocsoaDbHost
-          DBMANAGER_DB_PORT:      !Ref DocsoaDbPort
-          DBMANAGER_DB_NAME:      !Ref DocsoaDbName
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
 
   DbManagerFunctionLogGroup:
@@ -1045,9 +918,6 @@ Resources:
               Resource: "*"
       Environment:
         Variables:
-          DMLCONFIGSYNC_DB_HOST:      !Ref PkFavoriteDbHost
-          DMLCONFIGSYNC_DB_PORT:      !Ref PkFavoriteDbPort
-          DMLCONFIGSYNC_DB_NAME:      !Ref PkFavoriteDbName
           DMLCONFIGSYNC_DB_SECRET_ID: !Ref PkFavoriteDbSecretId
       Events:
         DailySync:

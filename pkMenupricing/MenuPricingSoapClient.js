@@ -6,16 +6,13 @@ const xml2js = require('xml2js');
 const https  = require('https');
 
 // ─── Configurazione (da .env) ──────────────────────────────────────────────────
-const MENUPRICING_WSDL    = process.env.MENUPRICING_WSDL;   // base URL senza /Menus o /SecuredMenus
-const MENUPRICING_USR     = process.env.MENUPRICING_USR;    // credenziali WS-Security (applicazione)
-const MENUPRICING_PWS     = process.env.MENUPRICING_PWS;
-const MENUPRICING_USR_REQ = process.env.MENUPRICING_USR_REQ; // credenziali nel body della richiesta
-const MENUPRICING_PWS_REQ = process.env.MENUPRICING_PWS_REQ;
-
-// getJobs   → /Menus          (servizio pubblico)
-// getJobDetails → /SecuredMenus  (servizio autenticato)
-const URL_MENUS   = `${MENUPRICING_WSDL}/Menus`;
-const URL_SECURED = `${MENUPRICING_WSDL}/SecuredMenus`;
+async function getSettings() {
+  const { loadSettings, requireSettings } = require('../runtimeConfig');
+  return requireSettings(await loadSettings(), [
+    'MENUPRICING_WSDL', 'MENUPRICING_USR', 'MENUPRICING_PWS',
+    'MENUPRICING_USR_REQ', 'MENUPRICING_PWS_REQ',
+  ]);
+}
 
 const NS_MENUS   = 'http://www.cliffordthames.com/ebusiness/menus/';
 const NS_WSSE    = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd';
@@ -105,7 +102,7 @@ function buildWsSecurityHeader(user, password) {
 /**
  * Assembla l'intera SOAP envelope (replica buildRequest PHP)
  */
-function buildRequest(params, method) {
+function buildRequest(params, method, settings) {
   // Primo livello = nome metodo (es: 'getJobs' o 'getJobDetails')
   const innerKey   = Object.keys(params[method])[0]; // 'jobsRequest' o 'jobDetailsRequest'
   const innerValue = params[method][innerKey];
@@ -117,7 +114,7 @@ function buildRequest(params, method) {
     `</${method}>`
   );
 
-  const header = buildWsSecurityHeader(MENUPRICING_USR, MENUPRICING_PWS);
+  const header = buildWsSecurityHeader(settings.MENUPRICING_USR, settings.MENUPRICING_PWS);
 
   return (
     `<?xml version="1.0" encoding="utf-8"?>` +
@@ -162,8 +159,8 @@ async function parseResponse(xmlStr) {
 // Chiamata HTTP
 // ═══════════════════════════════════════════════════════════════════════════════
 
-async function callMethodJob(params, method, endpointUrl) {
-  const soapEnvelope = buildRequest(params, method);
+async function callMethodJob(params, method, endpointUrl, settings) {
+  const soapEnvelope = buildRequest(params, method, settings);
   const startedAt = Date.now();
 
   console.log(JSON.stringify({
@@ -233,16 +230,17 @@ class MenuPricingSoapClient {
   // e manufacturer sono opzionali e, se assenti, vengono risolti da MP_LANGUAGE_CODE/
   // MP_MANUFACTURER (env).
   async getJobs({ vin, dealerIdentificationCode, countryCode, languageCode, manufacturer }) {
-    languageCode = languageCode ?? process.env.MP_LANGUAGE_CODE;
-    manufacturer = manufacturer ?? process.env.MP_MANUFACTURER;
+    const settings = await getSettings();
+    languageCode = languageCode ?? settings.MP_LANGUAGE_CODE;
+    manufacturer = manufacturer ?? settings.MP_MANUFACTURER;
     console.log('[MenuPricingSoapClient.getJobs] parametri chiamata:', { vin, dealerIdentificationCode, countryCode, languageCode, manufacturer });
     const params = {
       getJobs: {
         jobsRequest: {
           dealerDetails: {
             vehicleFileID:            '0',
-            user:                     MENUPRICING_USR_REQ,
-            password:                 MENUPRICING_PWS_REQ,
+            user:                     settings.MENUPRICING_USR_REQ,
+            password:                 settings.MENUPRICING_PWS_REQ,
             manufacturer,
             languageCode,
             dealerIdentificationCode,
@@ -254,7 +252,7 @@ class MenuPricingSoapClient {
       },
     };
 
-    const body = await callMethodJob(params, 'getJobs', URL_MENUS);
+    const body = await callMethodJob(params, 'getJobs', `${settings.MENUPRICING_WSDL}/Menus`, settings);
     return elaborateGetJobs(body);
   }
 
@@ -264,16 +262,17 @@ class MenuPricingSoapClient {
   // languageCode e manufacturer sono opzionali e, se assenti, vengono risolti da
   // MP_LANGUAGE_CODE/MP_MANUFACTURER (env).
   async getJobDetails({ vin, dealerIdentificationCode, countryCode, id, languageCode, manufacturer }) {
-    languageCode = languageCode ?? process.env.MP_LANGUAGE_CODE;
-    manufacturer = manufacturer ?? process.env.MP_MANUFACTURER;
+    const settings = await getSettings();
+    languageCode = languageCode ?? settings.MP_LANGUAGE_CODE;
+    manufacturer = manufacturer ?? settings.MP_MANUFACTURER;
     console.log('[MenuPricingSoapClient.getJobDetails] parametri chiamata:', { vin, dealerIdentificationCode, countryCode, id, languageCode, manufacturer });
     const params = {
       getJobDetails: {
         jobDetailsRequest: {
           dealerDetails: {
             vehicleFileID:            '0',
-            user:                     MENUPRICING_USR_REQ,
-            password:                 MENUPRICING_PWS_REQ,
+            user:                     settings.MENUPRICING_USR_REQ,
+            password:                 settings.MENUPRICING_PWS_REQ,
             manufacturer,
             languageCode,
             dealerIdentificationCode,
@@ -292,7 +291,7 @@ class MenuPricingSoapClient {
       },
     };
 
-    const body = await callMethodJob(params, 'getJobDetails', URL_SECURED);
+    const body = await callMethodJob(params, 'getJobDetails', `${settings.MENUPRICING_WSDL}/SecuredMenus`, settings);
     return elaborateGetJobDetails(body);
   }
 

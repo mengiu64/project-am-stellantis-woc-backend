@@ -1,6 +1,14 @@
 'use strict';
 
 jest.mock('../config', () => ({
+  getMyPeopleConfig: jest.fn(async () => ({
+    host: 'https://api.test',
+    basePath: '/applications/mypeople/iursma/v1',
+    ibmClientId: 'test-client-id',
+    username: 'mwppnr16',
+    password: 'FntP0P31',
+    identifier: 'B1FD759A-B3E8-4185-BF09-4FA5EF706021',
+  })),
   myPeople: {
     host: 'https://api.test',
     basePath: '/applications/mypeople/iursma/v1',

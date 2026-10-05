@@ -24,7 +24,7 @@ if (fs.existsSync(envFile)) {
 // Secrets Manager (vedi db.js) invece che da env var dirette.
 const REQUIRED_ENV = ['PKFAVORITE_DB_HOST'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
+if (missing.length > 0 && !process.env.PKFAVORITE_DB_SECRET_ID) {
   throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
 }
 

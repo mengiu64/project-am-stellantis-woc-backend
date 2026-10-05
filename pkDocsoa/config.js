@@ -32,7 +32,7 @@ if (fs.existsSync(envFile)) {
 
 const REQUIRED_ENV = ['DOCSOA_DB_HOST'];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
+if (missing.length > 0 && !process.env.DOCSOA_DB_SECRET_ID) {
   throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
 }
 
