@@ -29,7 +29,7 @@ const REQUIRED_ENV = [
   'MYPEOPLE_IDENTIFIER',
 ];
 const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
-if (missing.length > 0) {
+if (missing.length > 0 && !process.env.WOC_CONFIG_SECRET_ID) {
   throw new Error(`[config] Missing required environment variables: ${missing.join(', ')}`);
 }
 
@@ -53,4 +53,17 @@ module.exports = {
     keySecretId: process.env.MYPEOPLE_KEY_SECRET_ID || 'sm-np-bsn0027990-dev-apic-key',
     extensionPort: Number(process.env.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || 2773,
   },
+};
+
+module.exports.getMyPeopleConfig = async () => {
+  const { loadSettings, requireSettings } = require('../runtimeConfig');
+  const settings = requireSettings(await loadSettings(), REQUIRED_ENV);
+  return {
+    host: settings.MYPEOPLE_HOST.replace(/\/$/, ''),
+    basePath: settings.MYPEOPLE_BASE_PATH || '/applications/mypeople/iursma/v1',
+    ibmClientId: settings.MYPEOPLE_IBM_CLIENT_ID,
+    username: settings.MYPEOPLE_USERNAME,
+    password: settings.MYPEOPLE_PASSWORD,
+    identifier: settings.MYPEOPLE_IDENTIFIER,
+  };
 };

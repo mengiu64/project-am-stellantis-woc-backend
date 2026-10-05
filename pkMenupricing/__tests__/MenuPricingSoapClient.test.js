@@ -36,6 +36,30 @@ describe('MenuPricingSoapClient', () => {
     logSpy.mockRestore();
   });
 
+  test('uses secret credentials for both SOAP header and dealer body', async () => {
+    process.env.WOC_CONFIG_SECRET_ID = 'test-config';
+    const spy = jest.spyOn(require('../../runtimeConfig'), 'loadSettings');
+    try {
+      spy.mockResolvedValue({
+        MENUPRICING_WSDL: 'https://secret.test', MENUPRICING_USR: 'secret-user',
+        MENUPRICING_PWS: 'secret-pass', MENUPRICING_USR_REQ: 'secret-dealer',
+        MENUPRICING_PWS_REQ: 'secret-dealer-pass',
+      });
+      axios.post.mockResolvedValue({ data: soapEnvelope('<getJobsResponse/>') });
+      await client.getJobs({ vin: 'VIN123' });
+      const [url, body] = axios.post.mock.calls[0];
+      expect(url).toBe('https://secret.test/Menus');
+      expect(body).toContain('<wsse:Username>secret-user</wsse:Username>');
+      expect(body).toContain('user="secret-dealer"');
+      expect(body).toContain('password="secret-dealer-pass"');
+      spy.mockResolvedValue({});
+      await expect(client.getJobDetails({ vin: 'VIN123' })).rejects.toThrow('Missing configuration keys');
+    } finally {
+      delete process.env.WOC_CONFIG_SECRET_ID;
+      spy.mockRestore();
+    }
+  });
+
   test('getJobs returns indexed jobs for a successful response', async () => {
     process.env.DEBUG_SOAP = '1';
     axios.post.mockResolvedValue({

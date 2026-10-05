@@ -10,6 +10,29 @@ const axios = require('axios');
 const { getHttpsAgent } = require('../src/certService');
 const { buildClient } = require('../src/clientFactory');
 
+test('loads required AgendaSOA settings from the secret', async () => {
+  axios.create.mockReturnValue({
+    interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
+  });
+  process.env.WOC_CONFIG_SECRET_ID = 'test-config';
+  const spy = jest.spyOn(require('../../runtimeConfig'), 'loadSettings');
+  try {
+    spy.mockResolvedValue({
+      AGENDA_SOA_HOST: 'https://secret.test', AGENDA_SOA_USERNAME: 'secret-user',
+      AGENDA_SOA_PASSWORD: 'secret-pass', AGENDA_SOA_API_KEY: 'secret-key',
+    });
+    const client = await buildClient({ httpsAgent: {} });
+    expect(client).toEqual(expect.objectContaining({
+      host: 'https://secret.test', username: 'secret-user', password: 'secret-pass', apiKey: 'secret-key',
+    }));
+    spy.mockResolvedValue({});
+    await expect(buildClient({ httpsAgent: {} })).rejects.toThrow('Missing configuration keys');
+  } finally {
+    delete process.env.WOC_CONFIG_SECRET_ID;
+    spy.mockRestore();
+  }
+});
+
 describe('clientFactory', () => {
   let mockHttp;
 

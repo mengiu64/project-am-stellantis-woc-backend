@@ -9,7 +9,12 @@ async function callService(service, operation, payload = {}) {
   if (!SERVICES.has(service) || !/^[a-zA-Z][a-zA-Z0-9-]*$/.test(operation)) {
     throw new Error('[serviceClient] servizio/operazione non validi');
   }
-  const base = process.env.WOC_INTERNAL_API_URL;
+  const { loadSettings, requireSettings } = require('../runtimeConfig');
+  const settings = await loadSettings('WOC_INTERNAL_CONFIG_SECRET_ID');
+  if (process.env.WOC_INTERNAL_CONFIG_SECRET_ID) {
+    requireSettings(settings, ['WOC_INTERNAL_API_URL', 'WOC_INTERNAL_TIMEOUT_MS']);
+  }
+  const base = settings.WOC_INTERNAL_API_URL;
   const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
   if (!base || !region) {
     throw new Error('[serviceClient] WOC_INTERNAL_API_URL e AWS_REGION sono obbligatori');
@@ -19,7 +24,7 @@ async function callService(service, operation, payload = {}) {
     throw new Error('[serviceClient] WOC_INTERNAL_API_URL deve essere un URL HTTPS senza credenziali/query');
   }
   url.pathname = `${url.pathname.replace(/\/$/, '')}/internal/${service}/${operation}`;
-  const timeout = Number(process.env.WOC_INTERNAL_TIMEOUT_MS || 25000);
+  const timeout = Number(settings.WOC_INTERNAL_TIMEOUT_MS ?? 25000);
   if (!Number.isFinite(timeout) || timeout <= 0) {
     throw new Error('[serviceClient] WOC_INTERNAL_TIMEOUT_MS deve essere positivo');
   }

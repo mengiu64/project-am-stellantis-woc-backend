@@ -87,6 +87,20 @@ describe('djc/db.js', () => {
   });
 
   describe('getPool', () => {
+    test('uses proxy metadata from the secret when no host is configured', async () => {
+      delete process.env.DJC_DB_HOST;
+      process.env.DJC_DB_SECRET_ID = 'test-db-secret';
+      mockSecretResponse({
+        username: 'app', password: 'pw', host: 'cluster.test', port: 5432, dbname: 'cluster-db',
+        proxyhost: 'proxy.test', proxyport: 5433, proxydbname: 'proxy-db',
+      });
+      await db.getPool();
+      expect(Pool).toHaveBeenCalledWith(expect.objectContaining({ host: 'proxy.test', port: 5433, database: 'proxy-db' }));
+      db._resetPool();
+      mockSecretResponse({ username: 'app', password: 'pw', host: 'cluster.test' });
+      await expect(db.getPool()).rejects.toThrow('proxyhost');
+    });
+
     test('fetches credentials from Secrets Manager (default secret id/port) when user/password are not set', async () => {
       mockSecretResponse({ username: 'wiadvisor_app', password: 'pw', dbname: 'wiadvisor', port: 5432 });
 

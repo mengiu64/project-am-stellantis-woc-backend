@@ -101,8 +101,10 @@ Le risposte sono `{"data":<risultato>}`; gli errori usano HTTP non-2xx e
 dal consumer. Il trasporto non ritenta automaticamente le scritture.
 Gli endpoint frontend e i relativi contratti restano invariati.
 
-Ogni consumer configura `WOC_INTERNAL_API_URL` (base URL comprensivo dello
-stage), `AWS_REGION` e opzionalmente `WOC_INTERNAL_TIMEOUT_MS` (default 25000).
+Ogni consumer configura il riferimento `WOC_INTERNAL_CONFIG_SECRET_ID` e
+`AWS_REGION`. Un unico secret `sm-np-bsn0027990-<env>-internal-api-config`
+condivide tra tutti i consumer `WOC_INTERNAL_API_URL` (URL con stage) e
+`WOC_INTERNAL_TIMEOUT_MS` (25000). I valori env sono ammessi solo in locale.
 In Lambda le credenziali IAM arrivano dal ruolo execution; in CLI dalla
 credential chain AWS. Non copiare credenziali temporanee in `.env` o codice.
 Token PingFederate, certificati e accessi DB restano solo nei servizi proprietari.
@@ -158,12 +160,91 @@ un'operazione non consentita al ruolo (403) e una chiamata senza firma
 (404, mapping preesistente `MISSING_AUTHENTICATION_TOKEN`). Il probe e il suo
 log group sono stati rimossi; nessuna scrittura di dominio eseguita. Questo
 smoke test non sostituisce la verifica dei flussi applicativi completi.
-Stage e prod non sono stati modificati.
+Durante il rilascio dev, stage e prod non sono stati modificati.
 
-I target Makefile impacchettano **solo il modulo corrente e `serviceClient/`**,
+**Preparazione stage al 2026-10-05 (senza deploy applicativo):** nell'account
+`651022779727`, regione `eu-west-1`, applicato lo stack
+`stla-woc-internal-api-stage` (`CREATE_COMPLETE`) sul gateway privato
+`ydex27d49l`, root resource `nort6bmcj9`, VPC endpoint
+`vpce-0a8c958adc9c09f44`. Pubblicato il deployment `g37v82` sullo stage `wia`
+(precedente: `74usrv`). Predisposte 11 rotte POST IAM, 9 policy execution e
+permessi API Gateway verso i receiver; corretta la resource policy come sopra.
+I 26 metodi frontend pubblicati e le impostazioni dello stage sono invariati.
+Verificate tramite simulazione IAM le 67 chiamate previste e il rifiuto di
+un'operazione fuori allowlist per ciascun ruolo; trust, permission boundary
+e policy preesistenti dei ruoli non sono stati modificati.
+
+Nell'environment GitHub `stage` sono configurate `WOC_INTERNAL_API_ID=ydex27d49l`,
+`WOC_INTERNAL_API_STAGE=wia`, `WOC_INTERNAL_API_READY=true`. Il flag indica
+che l'infrastruttura e' predisposta, non che i receiver siano gia' aggiornati.
+La modifica locale del workflow assegna `environment: stage` a `deploy-stage`;
+deve essere inclusa, insieme alla migrazione REST, nel codice pubblicato su
+`staging` dal responsabile del rilascio. Nessun commit, push o avvio della
+pipeline applicativa e' stato effettuato per questa preparazione stage.
+Codice e configurazione delle Lambda sono invariati; non e' stato distribuito
+nemmeno un probe temporaneo. DNS privato e regole HTTPS sono predisposti, ma
+il test HTTP dalla VPC e i flussi applicativi restano da verificare dopo il
+deploy dei receiver/consumer. Produzione non modificata.
+
+I target Makefile impacchettano **solo il modulo corrente, `serviceClient/` e `runtimeConfig/`**,
 installando le rispettive dipendenze di produzione nell'artifact. Le cache
 continuano a essere gestite dalle Lambda proprietarie (session/v360/jobcard/
 dmlConfigSync), non da copie del loro codice dentro i consumer.
+
+### Configurazione delle integrazioni in Secrets Manager
+
+In AWS credenziali, URL upstream, identificativi e default delle integrazioni
+sono letti a runtime dai secret, non inseriti nelle variabili d'ambiente della
+Lambda o passati come parametri CloudFormation. `.env` e le tabelle dei valori
+nelle sezioni successive descrivono lo sviluppo locale e le chiavi del JSON
+dei secret: non sono istruzioni per aggiungere quei valori all'ambiente AWS.
+Restano nell'ambiente soltanto riferimenti a secret/SSM e impostazioni tecniche
+(bucket, tabelle, cache e TLS). Anche URL e timeout REST interni sono nel
+singolo secret condiviso `internal-api-config`, letto tramite
+`WOC_INTERNAL_CONFIG_SECRET_ID`; la policy del template infrastrutturale
+consente la lettura soltanto ai nove ruoli consumer.
+
+| Proprietario | Secret `sm-np-bsn0027990-<env>-...` | Chiavi |
+|---|---|---|
+| agendaSoa | `agendasoa-config` | `AGENDA_SOA_HOST`, `AGENDA_SOA_USERNAME`, `AGENDA_SOA_PASSWORD`, `AGENDA_SOA_API_KEY` |
+| agendaSoaNaga | `agendasoanaga-config` | stesse chiavi AgendaSOA |
+| pkEper | `pkeper-config` | `EPER_HOST` |
+| pkDocsoa | `pkdocsoa-config` | `DOCSOA_HOST`, `DOCSOA_USERNAME`, `DOCSOA_PASSWORD`, `DOCSOA_IBM_CLIENT_ID`, `DOCSOA_IBM_CLIENT_SECRET` |
+| pkMenupricing | `pkmenupricing-config` | `MENUPRICING_WSDL`, `MENUPRICING_USR`, `MENUPRICING_PWS`, `MENUPRICING_USR_REQ`, `MENUPRICING_PWS_REQ`; eventuali default `MP_*` |
+| myPeople | `mypeople-config` | `MYPEOPLE_HOST`, `MYPEOPLE_USERNAME`, `MYPEOPLE_PASSWORD`, `MYPEOPLE_IBM_CLIENT_ID`, `MYPEOPLE_IDENTIFIER`; opzionale `MYPEOPLE_BASE_PATH` |
+| pkManager | `pkmanager-config` | default di dominio `EPER_*`, `DOCSOA_*`, `MP_*`, senza credenziali upstream |
+
+Il template configura `WOC_CONFIG_SECRET_ID` per questi sette proprietari e
+permessi `secretsmanager:GetSecretValue` limitati al relativo secret.
+`runtimeConfig/` e' una libreria tecnica condivisa, non una Lambda: legge il JSON,
+condivide le letture concorrenti e mantiene la configurazione nel container warm.
+Non copia i valori in `process.env`. Errori di lettura o chiavi obbligatorie
+mancanti interrompono la chiamata, senza fallback agli env. Anche un riferimento
+secret mancante in Lambda genera un errore; senza riferimento il fallback `.env`
+e' riservato a locale/CLI. Dopo una rotazione, i container gia' warm possono
+mantenere la configurazione precedente fino al riciclo.
+
+Le connessioni DB di jobcard, djc, dbManager, pkFavorite, dmlConfigSync,
+pkDocsoa e moparDoc leggono `proxyhost`, `proxyport` e `proxydbname` dal secret
+Aurora applicativo gia' usato per `username`/`password`. Non sovrascrivere
+`host`/`port`/`dbname` del cluster: possono essere usati da altri servizi.
+DMS legge anche `DML_X_TARGET_ENV` dal secret condiviso `service-urls`, con URL,
+path e credenziali; in Lambda non ripiega su configurazioni env/default.
+Le integrazioni gia' configurate tramite secret/SSM mantengono quel meccanismo.
+
+**Prerequisiti di rilascio:** secret e policy sono stati predisposti in dev e
+stage, senza stampare o salvare localmente i valori. La rimozione dei valori
+dall'ambiente AWS avviene con il deploy di questo template e del relativo codice,
+non prima: il codice precedente ne ha ancora bisogno. Stage non e' stato
+deployato; il rilascio applicativo resta a carico del responsabile. Prima di
+rilasciare in prod occorre predisporre gli stessi secret e la raggiungibilita'
+di Secrets Manager dalla VPC.
+
+L'inventario comprende anche Lambda esterne a questo repository: auth,
+authorizer, b2b-authorizer, db-check, health, presign, apic-consumer e diagnostiche.
+Non sono state modificate. I rispettivi proprietari devono verificare soprattutto
+credenziali di introspection e configurazione IDP/DB; bucket, TTL e code possono
+restare impostazioni tecniche.
 
 ### agendaSoa
 
@@ -901,7 +982,7 @@ pkMenupricing/
 
 ### pkManager
 
-> **REST IAM:** l'artifact contiene solo questa Lambda e `serviceClient/`. Configurare `WOC_INTERNAL_API_URL`; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
+> **REST IAM:** l'artifact contiene solo questa Lambda e le librerie tecniche `serviceClient/` e `runtimeConfig/`. Configurare `WOC_INTERNAL_CONFIG_SECRET_ID` in AWS; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
 
 #### Handlers disponibili
 
@@ -1024,7 +1105,7 @@ Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recu
 
 L'accesso ai dati è isolato dietro un'interfaccia `SessionRepository`, implementata da `S3SessionRepository` (flusso `codmarket`, usato solo dalla CLI) e da `MyPeopleDmsSessionRepository` (flusso `username`, usato dall'handler HTTP tramite `sub` e dalla CLI tramite `--username`), per permettere di aggiungere/sostituire sorgenti dati senza impattare l'handler HTTP (stessa architettura del modulo `translations`).
 
-> **REST IAM:** l'artifact contiene solo questa Lambda e `serviceClient/`. Configurare `WOC_INTERNAL_API_URL`; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
+> **REST IAM:** l'artifact contiene solo questa Lambda e le librerie tecniche `serviceClient/` e `runtimeConfig/`. Configurare `WOC_INTERNAL_CONFIG_SECRET_ID` in AWS; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
 
 #### Mappatura myPeople/dms → campi di sessione
 
@@ -1131,7 +1212,7 @@ Lambda per il recupero dei **profili utente** tramite l'API PSA/Stellantis `read
 |---|---|---|
 | `username` | ✅ | Identificativo utente (es. `0073741.d235`) |
 
-> L'`identifier` non è più un parametro di input: è un valore costante configurato tramite la variabile d'ambiente `MYPEOPLE_IDENTIFIER` (vedi sezione Variabili d'ambiente).
+> L'`identifier` non è più un parametro di input: in AWS è la chiave `MYPEOPLE_IDENTIFIER` del secret `mypeople-config`; solo in locale può essere letto da `.env`.
 
 #### Utilizzo CLI
 
@@ -1352,7 +1433,7 @@ Ad ogni esecuzione (le due sync condividono lo stesso bearer token PingFederate,
 
 Ogni mercato/dealer viene processato in isolamento (`Promise.allSettled`): un elemento che fallisce (rete, credenziali, DB) non blocca la sync degli altri elementi abilitati; il risultato per-elemento (`success`/`error`) viene loggato e restituito nel summary (`results` per i mercati, `dealerResults` per i dealer).
 
-> **Nota tecnica:** DmlConfigSyncFunction contiene solo `dmlConfigSync/` e `serviceClient/`, e chiama dms via REST IAM. Mantiene il proprio accesso alla cache Aurora/RDS Proxy e al secret applicativo già configurati.
+> **Nota tecnica:** DmlConfigSyncFunction contiene solo `dmlConfigSync/`, `serviceClient/` e `runtimeConfig/`, e chiama dms via REST IAM. Mantiene il proprio accesso alla cache Aurora/RDS Proxy e al secret applicativo già configurati.
 
 #### Funzioni principali
 
@@ -1592,7 +1673,7 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 
 > **Nota:** i dati di sessione sono letti da un unico file JSON su S3 (`session/session_data.json`, stesso bucket di `translations`), indicizzato per codice mercato a 4 caratteri. Se il mercato richiesto non è presente nel file la Lambda risponde `404`.
 
-> **REST IAM:** l'artifact contiene solo questa Lambda e `serviceClient/`. Configurare `WOC_INTERNAL_API_URL`; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
+> **REST IAM:** l'artifact contiene solo questa Lambda e le librerie tecniche `serviceClient/` e `runtimeConfig/`. Configurare `WOC_INTERNAL_CONFIG_SECRET_ID` in AWS; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
 
 ### myPeople
 
@@ -1629,7 +1710,7 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 
 > **Nota:** stesse due variabili d'ambiente (e stessi valori) di `isStellantisBrand`. La Lambda legge da SSM l'ARN del secret e l'endpoint RDS Proxy, poi le credenziali da Secrets Manager; connessione TLS via RDS Proxy, in VPC. Regola di naming: `-dev` in dev, `-stage` in stage, in produzione nessun `np-` né suffisso ambiente (`/app/BSN0027990/...`).
 >
-> **REST IAM:** l'artifact contiene solo questa Lambda e `serviceClient/`. Configurare `WOC_INTERNAL_API_URL`; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
+> **REST IAM:** l'artifact contiene solo questa Lambda e le librerie tecniche `serviceClient/` e `runtimeConfig/`. Configurare `WOC_INTERNAL_CONFIG_SECRET_ID` in AWS; credenziali upstream e accessi DB/cache restano nei servizi destinatari.
 
 ### pkFavorite
 
@@ -1661,7 +1742,7 @@ WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.co
 WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
-> **Nota:** stesso cluster Aurora/RDS Proxy e stesso secret Secrets Manager di `pkFavorite` (in `template.yaml` riusa infatti i parametri `PkFavoriteDbHost`/`PkFavoriteDbSecretId`, nessun nuovo parametro CloudFormation). Richiede inoltre **tutte** le variabili d'ambiente della sezione `dms` qui sopra (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), necessarie per chiamare `dms.getCompanyTypes`/`dms.getCustomerTitles`/`dms.getDmsSettings`.
+> **Nota:** stesso cluster Aurora/RDS Proxy e stesso secret applicativo di `pkFavorite` (`PkFavoriteDbSecretId`); host/porta/database del proxy sono nel JSON del secret. DMS viene chiamato tramite REST IAM e conserva nel proprio secret URL, target e credenziali: non copiarli in dmlConfigSync.
 
 ---
 

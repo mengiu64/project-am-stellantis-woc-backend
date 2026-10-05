@@ -51,6 +51,7 @@ class PkManager {
    * @param {object} [wsConfig.menupricing]  { languageCode, countryCode, dealerIdentificationCode, manufacturer }
    */
   constructor(wsConfig = {}) {
+    this.wsOverrides = wsConfig;
     // Array dei dettagli pacchetto valorizzato da getValidPackagesDetail()
     this.pkDetailList = [];
 
@@ -79,6 +80,33 @@ class PkManager {
         ...wsConfig.menupricing,
       },
     };
+  }
+
+  async _loadConfig() {
+    if (this.configLoaded || (!process.env.WOC_CONFIG_SECRET_ID && !process.env.AWS_LAMBDA_FUNCTION_NAME)) return;
+    const { loadSettings } = require('../runtimeConfig');
+    const settings = await loadSettings();
+    const mapping = {
+      eper: {
+        coddealer: 'EPER_CODDEALER', codmarket: 'EPER_CODMARKET',
+        lingua: 'EPER_LINGUA', ticket: 'EPER_TICKET',
+      },
+      docsoa: {
+        codbrand: 'DOCSOA_CODBRAND', ldp: 'DOCSOA_LDP', langue: 'DOCSOA_LANGUE',
+        pays: 'DOCSOA_PAYS', codePdv: 'DOCSOA_CODEPDV', typeInternet: 'DOCSOA_TYPE_INTERNET',
+      },
+      menupricing: {
+        languageCode: 'MP_LANGUAGE_CODE', countryCode: 'MP_COUNTRY_CODE',
+        dealerIdentificationCode: 'MP_DEALER_IDENTIFICATION_CODE', manufacturer: 'MP_MANUFACTURER',
+      },
+    };
+    for (const [service, fields] of Object.entries(mapping)) {
+      for (const [field, key] of Object.entries(fields)) {
+        this.wsConfig[service][field] = settings[key];
+      }
+      Object.assign(this.wsConfig[service], this.wsOverrides[service]);
+    }
+    this.configLoaded = true;
   }
 
   // ── getConfigPackages ────────────────────────────────────────────────────────
@@ -187,7 +215,7 @@ class PkManager {
     this.pkDetailList = Object.values(detailMap);
 
     return detailMap;
-  } 
+  }
 
   // ── _buildDmsSender ───────────────────────────────────────────────────────────
   // Deriva ApplicationArea.Sender per la inquiry DML tramite lo STESSO
@@ -221,6 +249,7 @@ class PkManager {
   //                                session quando wsConfig non li fornisce
   // @returns {Promise<object>} sender override da passare a dms/inquiry
   async _buildDmsSender(market, vehicleId, username) {
+    await this._loadConfig();
     const { eper, docsoa, menupricing } = this.wsConfig;
     const overrides = {
       mainSincom: menupricing?.dealerIdentificationCode ?? eper?.coddealer ?? docsoa?.codePdv,
@@ -359,6 +388,7 @@ class PkManager {
   //                              non è stato recuperabile restano invece
   //                              { error, category } (non normalizzate).
   async getPkList(codbrand, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode, username) {
+    await this._loadConfig();
     console.log('[PkManager.getPkList] parametri chiamata:', { codbrand, documentId, customerId, vehicleId, market, dealerIdentificationCode });
 
     // 0) risolvo pkwstouse (eper/docsoa/menupricing) leggendo HQ_PKCONFIG tramite
@@ -496,6 +526,7 @@ class PkManager {
   // ── _fetchDetail ─────────────────────────────────────────────────────────────
   // Chiama il metodo di dettaglio specifico per ws e codice pacchetto.
   async _fetchDetail(pkwstouse, VIN, code, rowData) {
+    await this._loadConfig();
     const key = (pkwstouse ?? '').toLowerCase();
 
     if (key === 'eper') {
@@ -931,6 +962,7 @@ class PkManager {
   // ── _fetchLiveMap ────────────────────────────────────────────────────────────
   // Chiama il WS appropriato e normalizza il risultato in { [codice]: obj }
   async _fetchLiveMap(pkwstouse, VIN) {
+    await this._loadConfig();
     const key = (pkwstouse ?? '').toLowerCase();
 
     if (key === 'eper') {

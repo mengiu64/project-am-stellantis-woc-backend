@@ -7,7 +7,6 @@
 .aws-sam/
 cert/
 language/
-agendaSoa/
 **/__tests__/
 **/node_modules/
 **/node-compile-cache/

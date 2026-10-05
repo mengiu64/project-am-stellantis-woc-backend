@@ -94,8 +94,10 @@ Responses are `{"data":<result>}`; errors use non-2xx HTTP and
 Writes are never automatically retried. Frontend routes and contracts remain
 unchanged.
 
-Consumers configure `WOC_INTERNAL_API_URL` (including the stage), `AWS_REGION`
-and optionally `WOC_INTERNAL_TIMEOUT_MS` (default 25000). Lambda uses its
+Consumers configure `WOC_INTERNAL_CONFIG_SECRET_ID` and `AWS_REGION`. One
+`sm-np-bsn0027990-<env>-internal-api-config` secret shares `WOC_INTERNAL_API_URL`
+(including stage) and `WOC_INTERNAL_TIMEOUT_MS` (25000) across all consumers.
+Environment values are supported only locally. Lambda uses its
 execution role; CLI uses the AWS credential chain. Never copy temporary
 credentials into `.env` or source. Upstream tokens, certificates and DB access
 remain in their owning services. Forwarded usernames come from the original
@@ -148,11 +150,87 @@ A temporary VPC probe using the session role and production transport verified
 the role (403), and an unsigned call (404, the existing
 `MISSING_AUTHENTICATION_TOKEN` mapping). The probe and its log group were removed;
 no domain writes were performed. This smoke test does not replace verification
-of complete application flows. Stage and prod environments were not modified.
+of complete application flows. Stage and prod environments were not modified
+during the dev rollout.
 
-Makefile targets package **only the current module and `serviceClient/`**,
+**Stage preparation as of 2026-10-05 (no application deployment):** in account
+`651022779727`, region `eu-west-1`, stack `stla-woc-internal-api-stage`
+(`CREATE_COMPLETE`) was applied to private gateway `ydex27d49l`, root resource
+`nort6bmcj9`, VPC endpoint `vpce-0a8c958adc9c09f44`. Deployment `g37v82` was
+published to stage `wia` (previous: `74usrv`). Added 11 IAM POST routes,
+9 execution-role policies and API Gateway permissions for receivers;
+corrected the resource policy as described above. All 26 previously published
+frontend methods and existing stage settings are unchanged. IAM simulation
+verified the 67 expected calls and rejection of an unlisted operation for
+each role; existing trust, permission boundaries and role policies are unchanged.
+
+The GitHub `stage` environment has `WOC_INTERNAL_API_ID=ydex27d49l`,
+`WOC_INTERNAL_API_STAGE=wia`, `WOC_INTERNAL_API_READY=true`. This flag means
+the infrastructure is prepared, not that receivers have already been updated.
+The local workflow change assigns `environment: stage` to `deploy-stage`;
+the release owner must include it, together with the REST migration, in the
+code published to `staging`. No commit, push or application pipeline was
+started during this stage preparation. Lambda code and configuration are
+unchanged; no temporary probe was deployed either. Private DNS and HTTPS
+rules are configured, but VPC HTTP access and application flows must be
+verified after deploying receivers/consumers. Production was not modified.
+
+Makefile targets package **only the current module, `serviceClient/` and `runtimeConfig/`**,
 installing each production dependency set in the artifact. Caches remain in
 their owning Lambda services, not copies of their source in consumers.
+
+### Integration configuration in Secrets Manager
+
+In AWS, credentials, upstream URLs, identifiers and integration defaults are
+read from secrets at runtime, not placed in Lambda environment variables or
+passed as CloudFormation parameters. `.env` and the value tables below document
+local development and JSON secret keys: they are not instructions to add those
+values to AWS environments. Only secret/SSM references and technical settings
+(buckets, tables, caches and TLS) remain in env. Internal REST URL and timeout
+also reside in the single shared `internal-api-config` secret, read through
+`WOC_INTERNAL_CONFIG_SECRET_ID`; the infrastructure template grants read access
+only to the nine consumer roles.
+
+| Owner | Secret `sm-np-bsn0027990-<env>-...` | Keys |
+|---|---|---|
+| agendaSoa | `agendasoa-config` | `AGENDA_SOA_HOST`, `AGENDA_SOA_USERNAME`, `AGENDA_SOA_PASSWORD`, `AGENDA_SOA_API_KEY` |
+| agendaSoaNaga | `agendasoanaga-config` | same AgendaSOA keys |
+| pkEper | `pkeper-config` | `EPER_HOST` |
+| pkDocsoa | `pkdocsoa-config` | `DOCSOA_HOST`, `DOCSOA_USERNAME`, `DOCSOA_PASSWORD`, `DOCSOA_IBM_CLIENT_ID`, `DOCSOA_IBM_CLIENT_SECRET` |
+| pkMenupricing | `pkmenupricing-config` | `MENUPRICING_WSDL`, `MENUPRICING_USR`, `MENUPRICING_PWS`, `MENUPRICING_USR_REQ`, `MENUPRICING_PWS_REQ`; optional `MP_*` defaults |
+| myPeople | `mypeople-config` | `MYPEOPLE_HOST`, `MYPEOPLE_USERNAME`, `MYPEOPLE_PASSWORD`, `MYPEOPLE_IBM_CLIENT_ID`, `MYPEOPLE_IDENTIFIER`; optional `MYPEOPLE_BASE_PATH` |
+| pkManager | `pkmanager-config` | `EPER_*`, `DOCSOA_*`, `MP_*` domain defaults, without upstream credentials |
+
+The template configures `WOC_CONFIG_SECRET_ID` for these seven owners and
+`secretsmanager:GetSecretValue` permissions restricted to each owner's secret.
+`runtimeConfig/` is a shared technical library, not a Lambda: it reads JSON,
+shares concurrent reads and caches settings for the warm container lifetime.
+It never copies values into `process.env`. Retrieval errors or missing required
+keys fail the call without environment fallback. Missing secret references also
+fail in Lambda; `.env` fallback without a reference is only for local/CLI usage.
+Following rotation, existing warm containers may retain the previous settings
+until recycled.
+
+The DB connections in jobcard, djc, dbManager, pkFavorite, dmlConfigSync,
+pkDocsoa and moparDoc read `proxyhost`, `proxyport` and `proxydbname` from the
+existing Aurora application secret containing `username`/`password`. Do not
+overwrite the cluster's `host`/`port`/`dbname`: other services may use them.
+DMS also reads `DML_X_TARGET_ENV` from the shared `service-urls` secret, together
+with URLs, paths and credentials; Lambda does not fall back to env/defaults.
+Integrations already using secret/SSM configuration retain that mechanism.
+
+**Release prerequisites:** secrets and policies have been prepared in dev and
+stage without printing or saving their values locally. Removing values from
+AWS environments happens when deploying this template and matching code, not
+before: the previous code still requires them. Stage has not been deployed;
+its application release remains with the release owner. Before releasing to
+prod, prepare equivalent secrets and Secrets Manager connectivity from the VPC.
+
+The inventory also includes Lambda functions outside this repository: auth,
+authorizer, b2b-authorizer, db-check, health, presign, apic-consumer and diagnostics.
+They were not modified. Their owners must review introspection credentials and
+IDP/DB configuration in particular; buckets, TTLs and queues may remain technical
+environment settings.
 
 ### agendaSoa
 
@@ -703,7 +781,7 @@ pkMenupricing/
 
 ### pkManager
 
-> **REST IAM:** the artifact contains only this Lambda and `serviceClient/`. Use `WOC_INTERNAL_API_URL`; upstream credentials and DB/cache access belong to the receiving services.
+> **REST IAM:** the artifact contains only this Lambda and the technical libraries `serviceClient/` and `runtimeConfig/`. Use `WOC_INTERNAL_CONFIG_SECRET_ID` in AWS; upstream credentials and DB/cache access belong to the receiving services.
 
 #### Available handlers
 
@@ -1198,7 +1276,7 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 
 > **Note:** same two environment variables (and same values) as `isStellantisBrand`. The Lambda reads the secret ARN and RDS Proxy endpoint from SSM, then the credentials from Secrets Manager; TLS connection via RDS Proxy, inside the VPC. Naming rule: `-dev` in dev, `-stage` in stage, in prod no `np-` nor environment suffix (`/app/BSN0027990/...`).
 >
-> **REST IAM:** the artifact contains only this Lambda and `serviceClient/`. Use `WOC_INTERNAL_API_URL`; upstream credentials and DB/cache access belong to the receiving services.
+> **REST IAM:** the artifact contains only this Lambda and the technical libraries `serviceClient/` and `runtimeConfig/`. Use `WOC_INTERNAL_CONFIG_SECRET_ID` in AWS; upstream credentials and DB/cache access belong to the receiving services.
 
 ### dmlConfigSync
 
@@ -1212,7 +1290,7 @@ WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.co
 WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
-> **Note:** same Aurora cluster/RDS Proxy and same Secrets Manager secret as `pkFavorite` (in `template.yaml` it reuses the `PkFavoriteDbHost`/`PkFavoriteDbSecretId` parameters, no new CloudFormation parameter). Also requires **all** the `dms` environment variables above (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), needed to call `dms.getCompanyTypes`/`dms.getCustomerTitles`/`dms.getDmsSettings`.
+> **Note:** same Aurora cluster/RDS Proxy and application secret as `pkFavorite` (`PkFavoriteDbSecretId`); proxy host/port/database are JSON secret fields. DMS is called over REST IAM and retains its URLs, target and credentials in its own secret: do not copy them into dmlConfigSync.
 
 ---
 
