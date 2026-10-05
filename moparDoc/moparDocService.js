@@ -16,6 +16,7 @@ const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
 const { getBearerToken } = require('./authService');
 const { getConfig } = require('./config');
+const inspectionMetadataRepository = require('./InspectionMetadataRepository');
 
 /**
  * Costruisce le options per una richiesta POST JSON verso uno dei gateway.
@@ -277,8 +278,10 @@ async function getJobCardAndDocumentList(params) {
   // Log: informa che verrà recuperata sia la JobCard che i documenti associati
   console.log(`[getJobCardAndDocumentList] Recupero JobCard e Documenti per VIN=${params.vin}, dealer=${params.dealerCode || params.rrdi}, market=${params.market}`);
 
-  // Effettua la richiesta POST al servizio MoparDocs Services e ritorna il risultato
-  return postJson('moparDocsServices', '/getJobCardAndDocumentList', payload);
+  // Effettua la richiesta POST al servizio MoparDocs Services
+  const result = await postJson('moparDocsServices', '/getJobCardAndDocumentList', payload);
+  // Arricchisce ogni documento con InspectionMetadata (da Aurora; null se assente o DB non disponibile)
+  return inspectionMetadataRepository.enrichDocumentLists(result);
 }
 
 /**
@@ -314,10 +317,21 @@ async function getDocumentsInfo(params) {
 }
 
 /**
- * getDocuments — Recupera lista documenti associati a JobCard.
+ * getDocuments — Recupera lista documenti associati a JobCard, arricchendo ogni
+ * documento con InspectionMetadata (da Aurora; null se assente o DB non disponibile).
  * @param {{vin: string, JobCardIds?: number[]}} params
  */
 async function getDocuments(params) {
+  const result = await fetchDocuments(params);
+  return inspectionMetadataRepository.enrichDocumentLists(result);
+}
+
+/**
+ * fetchDocuments — Chiamata upstream /getDocuments senza arricchimento
+ * (usata internamente da deleteDocumentsByVin, che non necessita dei metadati).
+ * @param {{vin: string, JobCardIds?: number[]}} params
+ */
+async function fetchDocuments(params) {
   // Valida il campo obbligatorio: vin
   const required = ['vin'];
   // Filtra i campi mancanti dall'array required
@@ -431,6 +445,26 @@ async function getDocumentsDownloadUrl(params) {
 }
 
 /**
+ * deleteInspectionMetadataSafely — Cancella da Aurora i metadati di ispezione dei
+ * documenti cancellati su Mopar (esclusi gli id riportati in ErrorDocumentID).
+ * Non lancia mai: eventuali errori DB sono solo loggati.
+ * @param {Array<string|number>} documents - id richiesti in cancellazione
+ * @param {object} deleteResult - risposta upstream di DeleteDocuments
+ * @returns {Promise<void>}
+ */
+async function deleteInspectionMetadataSafely(documents, deleteResult) {
+  try {
+    const failedIds = new Set(
+      (Array.isArray(deleteResult && deleteResult.ErrorDocumentID) ? deleteResult.ErrorDocumentID : []).map((id) => String(id))
+    );
+    const deletedIds = documents.filter((id) => !failedIds.has(String(id)));
+    await inspectionMetadataRepository.deleteByDocumentIds(deletedIds);
+  } catch (err) {
+    console.error(`[deleteDocumentsByVin] Cancellazione metadati di ispezione fallita (esito invariato): ${err && err.message}`);
+  }
+}
+
+/**
  * deleteDocumentsByVin — Azione accorpata: cancella uno o piu' documenti Mopar di un veicolo
  * fornendo solo { source, vin, Documents }, senza conoscere il JobCardId numerico reale.
  * Orchestra internamente getDocuments (per risolvere il JobCardId) e DeleteDocuments.
@@ -476,8 +510,8 @@ async function deleteDocumentsByVin(params) {
   try {
     // Log: sta per essere invocata getDocuments per risolvere i JobCardId reali associati al VIN
     console.log(`[deleteDocumentsByVin] Invocazione getDocuments per VIN=${params.vin} (riuso azione esistente, nessuna chiamata HTTP diretta)`);
-    // Riusa la funzione esistente getDocuments passando solo { vin }; eventuali Upstream_Failure si propagano al catch esterno
-    const documentsResult = await getDocuments({ vin: params.vin });
+    // Riusa la chiamata upstream di getDocuments (senza arricchimento metadati) passando solo { vin }; eventuali Upstream_Failure si propagano al catch esterno
+    const documentsResult = await fetchDocuments({ vin: params.vin });
     // Estrae la jobCardList dall'esito di getDocuments (shape: { errorCode, errorMessage, jobCardList })
     const jobCardList = documentsResult && documentsResult.jobCardList;
     // Log dell'esito di getDocuments con soli metadati non sensibili: numero di job card trovate
@@ -560,6 +594,10 @@ async function deleteDocumentsByVin(params) {
     const result = await DeleteDocuments({ source: params.source, JobCardId, Documents: params.Documents });
     // Log dell'esito di DeleteDocuments con soli metadati non sensibili: JobCardId risolto ed errorCode restituito dall'upstream
     console.log(`[deleteDocumentsByVin] Esito DeleteDocuments: JobCardId=${JobCardId}, errorCode=${result && result.errorCode !== undefined ? result.errorCode : 'n/d'}`);
+
+    // Cancella i metadati di ispezione dei documenti effettivamente cancellati (esclusi quelli in ErrorDocumentID).
+    // Non bloccante: un errore DB viene solo loggato e non altera l'esito.
+    await deleteInspectionMetadataSafely(params.Documents, result);
 
     // Ritorna l'oggetto di successo con il JobCardId risolto, i documenti cancellati e l'esito grezzo dell'upstream
     return { success: true, JobCardId, deleted: params.Documents, result };
@@ -666,6 +704,8 @@ function httpsPutBinary(presignedUrl, buffer, contentType) {
  *   2) getUploadDocURL -> ottiene DocumentId + URL pre-firmata (S3)
  *   3) PUT del binario sulla URL pre-firmata (upload effettivo su S3)
  *   4) uploadedDoc     -> notifica il completamento dell'upload
+ *   5) salvataggio (non bloccante) dei metadati di ispezione opzionali su Aurora
+ *      (woc.mopardoc_inspection_media, v. InspectionMetadataRepository.js)
  * NON modifica i metodi esistenti: li riusa cosi' come sono.
  *
  * @param {object} params
@@ -680,9 +720,17 @@ function httpsPutBinary(presignedUrl, buffer, contentType) {
  * @param {string} params.Filetype         - Estensione/tipo file (es. "jpeg")
  * @param {string} params.FileContentBase64 - Contenuto del file codificato in Base64
  * @param {string|number} [params.Size]    - Dimensione in byte; se assente viene calcolata dal binario
- * @returns {Promise<object>} Riepilogo con JobCardId, DocumentId ed esiti dei singoli step
+ * @param {string} [params.Kind]           - Metadato di ispezione opzionale: pin | general
+ * @param {string} [params.TabId]          - Metadato di ispezione opzionale: vehicle | tyres | dashboard
+ * @param {string} [params.DamageArea]     - Metadato di ispezione opzionale: front | left | right | top | rear | generic
+ * @param {string} [params.Description]    - Metadato di ispezione opzionale (max 1000 caratteri)
+ * @param {number|string} [params.PosX]    - Metadato di ispezione opzionale: coordinata X percentuale 0..100
+ * @param {number|string} [params.PosY]    - Metadato di ispezione opzionale: coordinata Y percentuale 0..100
+ * @param {string} [params.CapturedAt]     - Metadato di ispezione opzionale: data/ora ISO 8601
+ * @param {{createdBy?: string|null}} [options] - Opzioni interne (NON dal body): createdBy = utente autenticato (authorizer.sub)
+ * @returns {Promise<object>} Riepilogo con JobCardId, DocumentId, metadataSaved ed esiti dei singoli step
  */
-async function createJobCardAndUploadDocument(params) {
+async function createJobCardAndUploadDocument(params, options = {}) {
   // Log di ingresso con soli metadati non sensibili (nessun contenuto file, nessun token)
   console.log(`[createJobCardAndUploadDocument] Avvio flusso accorpato: VIN=${params && params.vin}, Filename=${params && params.Filename}`);
 
@@ -821,17 +869,36 @@ async function createJobCardAndUploadDocument(params) {
     // Log esito step 4
     console.log('[createJobCardAndUploadDocument] STEP 4/4 OK: upload notificato');
 
+    // ── STEP 5: salvataggio metadati di ispezione (Aurora, non bloccante) ──
+    // L'upload Mopar e' gia' riuscito: un errore qui NON deve far fallire la risposta.
+    let metadataStep;
+    try {
+      metadataStep = await inspectionMetadataRepository.saveInspectionMetadata({
+        documentId, // Chiave: id documento Mopar (= ID in DocumentList di getDocuments)
+        jobCardId, // Job card appena creata
+        vin: params.vin, // VIN veicolo
+        createdBy: options && options.createdBy !== undefined ? options.createdBy : null, // Identita' dall'authorizer (mai dal body)
+        metadata: params, // I campi Kind/TabId/DamageArea/Description/PosX/PosY/CapturedAt vengono normalizzati dal repository
+      });
+    } catch (metaErr) {
+      console.error(`[createJobCardAndUploadDocument] STEP 5 salvataggio metadati di ispezione fallito (upload comunque riuscito): ${metaErr && metaErr.message}`);
+      metadataStep = { saved: false, reason: 'db-error' };
+    }
+    console.log(`[createJobCardAndUploadDocument] STEP 5 metadati di ispezione: saved=${metadataStep.saved} (${metadataStep.reason})`);
+
     // Restituisce un riepilogo completo dell'operazione accorpata (nessun token/URL firmato nel payload di ritorno)
     return {
       success: true, // Esito complessivo positivo
       JobCardId: jobCardId, // Id job card creata
       DocumentId: documentId, // Id documento caricato
       uploadHttpStatus: putResult.statusCode, // Status HTTP dell'upload su S3
+      metadataSaved: metadataStep.saved, // true se i metadati di ispezione sono stati salvati su Aurora
       steps: { // Esiti grezzi dei singoli step upstream (utili al front-end/troubleshooting)
         createJobCard: jobCardResult, // Risposta di createJobCard
         createAccessToken: accessTokenResult, // Risposta di createAccessToken (null se l'AccessToken era gia' presente in createJobCard)
         getUploadDocURL: uploadUrlResult, // Risposta di getUploadDocURL
         uploadedDoc: uploadedResult, // Risposta di uploadedDoc
+        saveInspectionMetadata: metadataStep, // Esito STEP 5: { saved, reason } (reason: saved | no-metadata | db-not-configured | missing-keys | db-error)
       },
     };
   } catch (err) {

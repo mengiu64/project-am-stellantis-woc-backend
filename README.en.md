@@ -16,6 +16,7 @@ Stellantis – WOC BackEnd: collection of Node.js Lambdas for integration with S
    - [agendaSoaNaga](#agendasoanaga)
    - [dms](#dms)
    - [jobcard](#jobcard)
+   - [moparDoc](#mopardoc)
    - [v360](#v360)
    - [pkEper](#pkeper)
    - [pkDocsoa](#pkdocsoa)
@@ -367,6 +368,8 @@ Before being returned, the response is enriched by `sanitizeJobCardDetails` with
 
 Additionally, before being persisted to cache (`saveJobCardDetailsToTmp`), the response is also enriched with data from the DML gateway (`getDataFromDML`/`getCartPriceAndAvailability`, see below): `jobs[].partInfo[]`/`jobs[].laborInfo[]` already receive updated price/availability/discount, using the same (optional) `sessionContext` passed to `getJobCardDetails` — best-effort, does not block the response if `dms` is unreachable.
 
+Recalculated monetary amounts are rounded to two decimal places. If `dmsDiscountPercentage` already matches the DML value, the discount is not recalculated: when the price is unchanged, `jobs[].dmsOverride` remains `false`; a changed DML price is still updated using the existing discount.
+
 See `jobcard/README.md` for the full rule table.
 
 #### `getCartPriceAndAvailability` (`dml` action) — dynamic Sender
@@ -426,6 +429,60 @@ node index.js details <jobCardId>
 # e.g.: node index.js list 0062219 vin=VIN123 page=2
 # e.g.: node index.js details 79
 ```
+
+---
+
+### moparDoc
+
+Lambda for the MoparDoc/job-docs gateways (documents attached to job cards):
+`createJobCard`, `createAccessToken`, `getUploadDocURL`, `uploadedDoc`,
+`getDocuments`, `getJobCardAndDocumentList`, `deleteDocumentsByVin`,
+`createJobCardAndUploadDocument` and the other actions listed in `moparDoc/index.js`.
+See the Italian `README.md` and `moparDoc/README.md` for the full details.
+
+#### Inspection photo metadata (`woc.mopardoc_inspection_media`)
+
+`createJobCardAndUploadDocument` accepts optional, nullable inspection metadata
+that is **not** forwarded to Mopar but stored on Aurora
+(`moparDoc/InspectionMetadataRepository.js` + `moparDoc/db.js`):
+
+| Field | Type | Allowed values |
+|---|---|---|
+| `Kind` | string | `pin` \| `general` |
+| `TabId` | string | `vehicle` \| `tyres` \| `dashboard` |
+| `DamageArea` | string | `front` \| `left` \| `right` \| `top` \| `rear` \| `generic` |
+| `Description` | string | max 1000 chars (longer values are truncated) |
+| `PosX`, `PosY` | number (or numeric string) | 0..100 (percentage on the diagram) |
+| `CapturedAt` | string | ISO 8601 date-time |
+
+- **Normalization (never a 400 because of metadata):** strings are trimmed;
+  empty/whitespace/missing → `null`; values outside the enum whitelists,
+  non-finite or out-of-range numbers, unparsable dates and wrong types → `null`
+  + `console.warn`. When **all** metadata are `null` no row is written.
+- **Write:** after the successful Mopar upload (non-blocking STEP 5) UPSERT on
+  `document_id` (= Mopar `DocumentId`) with `jobcard_id`, `vin` and
+  `created_by` = `requestContext.authorizer.sub` (internal option set by
+  `index.js`, cannot be overridden by the body; falls back to `body.UserName`
+  only when the event has no `requestContext.authorizer` at all, e.g. direct
+  invocation/CLI). The response keeps all existing fields and adds
+  `metadataSaved` (boolean) and `steps.saveInspectionMetadata`
+  (`{ saved, reason }`, reason = `saved` | `no-metadata` | `db-not-configured` |
+  `missing-keys` | `db-error`). DB failure or missing configuration still
+  returns `200` with `metadataSaved: false`.
+- **Read:** `getDocuments` and `getJobCardAndDocumentList` add
+  `InspectionMetadata` to every document of `jobCardList[].DocumentList[]` (and
+  of a top-level `DocumentList[]` if present), matched by `ID`:
+  `{ Kind, TabId, DamageArea, Description, PosX, PosY, CapturedAt }` (`PosX`/`PosY`
+  numbers, `CapturedAt` ISO string) or `null` (no row / DB unavailable; on DB
+  errors the upstream response is otherwise unchanged).
+- **Delete:** `deleteDocumentsByVin`, after a successful `DeleteDocuments`,
+  physically deletes the rows of the deleted documents (excluding those in
+  `ErrorDocumentID`); DB errors are only logged.
+
+> **Table must be created manually:** `sql/create_table_mopardoc_inspection_media.sql`
+> is **not** run by the pipeline; apply it on Aurora (DEV/stage/prod) before
+> deploying. Without the table (or without `MOPARDOC_DB_HOST`) uploads still
+> work, with `metadataSaved: false` and `InspectionMetadata: null`.
 
 ---
 
@@ -772,7 +829,7 @@ Lambda for **updating the DJC synchronization status** of a job card. It receive
 
 After the UPDATE on `woc.comunication_asyncro_djc` (even when the record is missing there), `jobcardSyncActivity.js` updates the `woc.jobcard_sync_activity` row with `jobcardid` = `jobCardId` (created by jobcard/djc on every `saveJobcard`):
 
-1. `techreason` = `djc_sync_status` mapped from `eventType`, `lastupdate` = `now()`;
+1. `techreason` = `djc_sync_status` mapped from `eventType`, `ack` = `OK` for `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` and `KO` for `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
 2. calls the **jobcard** Lambda's `getJobCardDetails` **in-process** (`jobcard/authService` + `jobcard/jobCardService`, bundled via the `build-SynchStatusFunction` Makefile target) and stores `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
 
 Fully **best-effort**: DB/DGT errors are only logged and the response to DJC is unchanged. If the row does not exist, `jobCardDetails` is not called. If the UPDATE on `comunication_asyncro_djc` fails (5xx), this step is skipped.
@@ -818,7 +875,7 @@ The 4 supported `eventType` values (mapped to the corresponding DB status):
 ```
 synch-status/
 ├── index.js                    # Lambda handler (parsing + validation + Aurora UPDATE)
-├── jobcardSyncActivity.js      # techreason/businessreason on woc.jobcard_sync_activity (in-process jobCardDetails)
+├── jobcardSyncActivity.js      # techreason/ack/businessreason on woc.jobcard_sync_activity (in-process jobCardDetails)
 ├── config.js                   # Centralized configuration
 ├── logger.js                   # Structured logging + traceId
 ├── package.json                # Dependencies (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
@@ -837,7 +894,7 @@ arn:aws:iam::237024525379:role/stla-rol-np-bsn0027990-dev-synch-status
 
 > Same naming rule: `-dev` in dev, `-stage` in stage, in **prod** no `np-` and no environment suffix (`stla-rol-bsn0027990-prod-synch-status`). Permissions equivalent to `isStellantisBrand` must already be attached to that role (when `Role` is set, SAM ignores `Policies`).
 >
-> For the in-process `jobCardDetails` call the role must **also** have the `JobCardFunction` permissions used by that flow: `secretsmanager:GetSecretValue` on `ServiceUrlsSecretId`, `DocsoaDbSecretId` and `sm-np-bsn0027990-<env>-apic-cert`/`-apic-key`, `kms:Decrypt`, `s3:GetObject` on `TranslationsBucket`, `dynamodb:GetItem`/`PutItem` on `TmpCacheTable`. Without them `techreason` is saved but `businessreason` is not (error only in the logs).
+> For the in-process `jobCardDetails` call the role must **also** have the `JobCardFunction` permissions used by that flow: `secretsmanager:GetSecretValue` on `ServiceUrlsSecretId`, `DocsoaDbSecretId` and `sm-np-bsn0027990-<env>-apic-cert`/`-apic-key`, `kms:Decrypt`, `s3:GetObject` on `TranslationsBucket`, `dynamodb:GetItem`/`PutItem` on `TmpCacheTable`. Without them `techreason`/`ack` are saved but `businessreason` is not (error only in the logs).
 
 #### DB connection (shared/dbClient.js)
 
@@ -954,6 +1011,20 @@ DBMANAGER_DB_HOST=...
 DBMANAGER_DB_PORT=5432
 DBMANAGER_DB_NAME=...
 DBMANAGER_DB_SECRET_ID=...
+```
+
+### moparDoc
+
+```env
+MOPARDOC_PING_CLIENT_ID=...         # PingFederate Client ID (moparDoc-dedicated)
+MOPARDOC_PING_CLIENT_SECRET=...     # PingFederate Client Secret (moparDoc-dedicated)
+MOPARDOC_IBM_CLIENT_ID=...          # X-IBM-Client-Id (job-docs connector + MoparDocs Browser API)
+MOPARDOC_IBM_CLIENT_SECRET=...      # X-IBM-Client-Secret (job-docs connector + MoparDocs Browser API)
+MOPARDOC_DB_HOST=...                # RDS Proxy endpoint, Aurora "wiadvisor" (woc.mopardoc_inspection_media); optional: if empty inspection metadata is ignored
+MOPARDOC_DB_SECRET_ID=...           # wiadvisor_app Aurora secret (default sm-np-bsn0027990-dev-aurora-app); locally MOPARDOC_DB_USER/MOPARDOC_DB_PASSWORD can be used instead
+MOPARDOC_DB_PORT=5432               # optional (default from secret / 5432)
+MOPARDOC_DB_NAME=wiadvisor          # optional (default from secret / wiadvisor)
+MOPARDOC_DB_SSL=true                # false only for local Postgres without TLS
 ```
 
 ### v360
@@ -1082,11 +1153,11 @@ DMLCONFIGSYNC_DB_SSL=true                     # (optional) default true
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
 AWS_REGION=eu-west-1                                                  # (optional in Lambda: already set automatically by AWS)
 ```
 
-> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is automatically set by `template.yaml` (`!Sub "rds-np-bsn0027990-${Environment}-aurora"`), no DB secret/credential required (uses only the RDS management API via IAM, no database connection).
+> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is set by the `AuroraAutoStartClusterIdentifier` template parameter (by default the migrated stage cluster; when empty it falls back to the historical name). The IAM policy targets the same cluster. No DB secret/credential is required (only the RDS management API is used).
 
 ---
 
@@ -1124,7 +1195,7 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 1 | 27 | `PkManager` |
 | **translations** | 5 | 42 | `index`, `errors`, `repositoryFactory`, `handlers/translations`, `repositories/S3TranslationsRepository` |
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
-| **synch-status** | 3 | 76 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
+| **synch-status** | 3 | 81 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
 | **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
 | **Total** | **44+** | **491+** | |
@@ -1144,13 +1215,13 @@ cd agendaSoa && npm run test:coverage
 | **pkManager** | 99.01% ✅ | 90.47% ✅ | 100% ✅ | 100% ✅ |
 | **translations** | 98.94% ✅ | 94.64% ✅ | 100% ✅ | 98.9% ✅ |
 | **session** | 98.19% ✅ | 94.17% ✅ | 100% ✅ | 99.52% ✅ |
-| **synch-status** | 95.13% ✅ | 94% ✅ | 100% ✅ | 95.13% ✅ |
+| **synch-status** | 95.16% ✅ | 94.11% ✅ | 100% ✅ | 95.16% ✅ |
 | **dmlConfigSync** | 97.46% ✅ | 92.43% ✅ | 96.77% ✅ | 97.18% ✅ |
 | **auroraAutoStart** | 100% ✅ | 100% ✅ | 100% ✅ | 100% ✅ |
 
 > Minimum enforced threshold: **90%** on all criteria. CI automatically fails if not reached.
 >
-> **Note (`synch-status`):** all 3 suites (`__tests__/config.test.js`, `index.test.js`, `jobcardSyncActivity.test.js`) pass (76 tests). The `validator.js` module (Joi) was dead code — never invoked by `index.js`, which validates payloads with `_validatePayload` — and was removed together with the `joi` dependency. Aggregate coverage remains above 90% on all criteria (branch 94%, `jobcardSyncActivity.js` at 100%); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70) are comfortably met.
+> **Note (`synch-status`):** all 3 suites (`__tests__/config.test.js`, `index.test.js`, `jobcardSyncActivity.test.js`) pass (81 tests). The `validator.js` module (Joi) was dead code — never invoked by `index.js`, which validates payloads with `_validatePayload` — and was removed together with the `joi` dependency. Aggregate coverage remains above 90% on all criteria (branch 94.11%, `jobcardSyncActivity.js` at 100%); the per-file thresholds defined in `synch-status/package.json` (index 90/85, config 80/70) are comfortably met.
 
 ### Test structure
 
@@ -1208,7 +1279,7 @@ cd agendaSoa && npm run test:coverage
 
 #### synch-status
 - **index (handler)** – parses the `body` (JSON string or object), 400 on invalid JSON body; payload validation (required fields `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` among the 4 supported, `timestamp` ISO 8601) with 400 and error details; `eventType` → `djc_sync_status` mapping; **UPDATE-only** on `woc.comunication_asyncro_djc` (never INSERT) with `version` increment; 404 when the record does not exist (must be created first by another Lambda); 503 on Aurora connection error, 504 on query timeout, 500 on generic error; no token validation (security delegated to the IBM APIC gateway)
-- **jobcardSyncActivity** – UPDATE of `techreason`/`lastupdate` then `businessreason`/`lastupdate` on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus` (also from the real `jobCardDetails` response); missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
+- **jobcardSyncActivity** – UPDATE of `techreason`/`ack` (OK/KO from the 4 `eventType`s, `null` if unknown)/`lastupdate` then `businessreason`/`lastupdate` on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus` (also from the real `jobCardDetails` response); missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
 - **config** – `getInstance()`/`reset()` singleton pattern, configuration structure (AWS/OAuth/APIC/Logging/Timeouts/API endpoints sections), environment resolution from env (`ENVIRONMENT`, default `dev`), `getByPath()` (nested paths, `null` when not found), log level handling
 
 #### dmlConfigSync

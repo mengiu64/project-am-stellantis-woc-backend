@@ -171,10 +171,10 @@ exports.handler = async (event, context) => {
         statement_timeout: 5000
       });
 
-      // Esito su woc.jobcard_sync_activity (techreason = djc_sync_status,
+      // Esito su woc.jobcard_sync_activity (techreason = djc_sync_status, ack = OK/KO,
       // businessreason = dmsSynchroStatus da jobCardDetails): best-effort, eseguito
       // anche se il record su comunication_asyncro_djc non esiste.
-      await syncJobcardActivity({ pool, jobCardId, djcSyncStatus, logger });
+      await syncJobcardActivity({ pool, jobCardId, djcSyncStatus, eventType, logger });
 
       // 🔴 MODIFICATO: Verifica che il record sia stato trovato e aggiornato
       // Se nessuna riga ritornata → il record non esiste → errore 404
