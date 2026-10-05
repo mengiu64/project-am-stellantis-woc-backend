@@ -4871,7 +4871,7 @@ jobs:
         env:
           WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
           WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
-        run: node infrastructure/deploy-internal-api.js dev
+        run: node infrastructure/deploy-internal-api.js dev s3-np-bsn0027990-dev-ops
 
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
@@ -4981,7 +4981,7 @@ jobs:
         env:
           WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
           WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
-        run: node infrastructure/deploy-internal-api.js stage
+        run: node infrastructure/deploy-internal-api.js stage s3-np-bsn0027990-stage-ops
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
@@ -5090,4 +5090,4 @@ jobs:
         env:
           WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
           WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
-        run: node infrastructure/deploy-internal-api.js prod
+        run: node infrastructure/deploy-internal-api.js prod "${{ vars.S3_BUCKET }}"
