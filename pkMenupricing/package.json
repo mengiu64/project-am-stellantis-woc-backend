@@ -26,6 +26,7 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
+      "internal.js",
       "MenuPricingSoapClient.js"
     ],
     "coverageReporters": [

@@ -7,13 +7,13 @@ jest.mock('../FavoriteRepository', () => ({
   listFavorites: jest.fn(),
   toggleFavorite: jest.fn(),
 }));
-jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }));
 
 const { getPool } = require('../db');
 const { listFavorites, toggleFavorite } = require('../FavoriteRepository');
-const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
+const { callService } = require('../../serviceClient');
+const postDmsInquiry = jest.fn();
+const resolveDynamicSenderFields = jest.fn();
 const { handler } = require('../index');
 
 const FAKE_POOL = { query: jest.fn() };
@@ -30,6 +30,12 @@ function apiGwEvent({ method, authorizerSub, query, body }) {
 describe('pkfavorite index.handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    callService.mockImplementation((service, operation, payload) => {
+      if (service !== 'dms') throw new Error(`Unexpected service: ${service}`);
+      return operation === 'resolveSender'
+        ? resolveDynamicSenderFields(payload.context, payload.overrides)
+        : postDmsInquiry(payload);
+    });
     getPool.mockResolvedValue(FAKE_POOL);
     // Nessuna risoluzione automatica di default: i singoli test che vogliono
     // verificarla la sovrascrivono esplicitamente. Di default si comporta
@@ -46,6 +52,47 @@ describe('pkfavorite index.handler', () => {
     expect(listFavorites).not.toHaveBeenCalled();
   });
 
+  it.each(['GET', 'POST'])('rejects body/query username when authorizer.sub is missing (%s)', async (method) => {
+    const res = await handler(apiGwEvent({
+      method,
+      query: { username: 'spoofed', vin: 'VIN' },
+      body: { username: 'spoofed', vin: 'VIN', package: 'PK' },
+    }));
+    expect(res.statusCode).toBe(401);
+    expect(getPool).not.toHaveBeenCalled();
+    expect(listFavorites).not.toHaveBeenCalled();
+    expect(toggleFavorite).not.toHaveBeenCalled();
+    expect(callService).not.toHaveBeenCalled();
+  });
+
+  it('does not trust body identity when the authorizer field is null', async () => {
+    const res = await handler({
+      method: 'POST',
+      requestContext: { authorizer: null },
+      body: { username: 'spoofed', vin: 'VIN', package: 'PK' },
+    });
+    expect(res.statusCode).toBe(401);
+    expect(getPool).not.toHaveBeenCalled();
+  });
+
+  it('maps remote sender-resolution errors to 502 without making an inquiry', async () => {
+    listFavorites.mockResolvedValue([{ packageCode: 'PK' }]);
+    callService.mockRejectedValueOnce(new Error('dms/resolveSender HTTP 503'));
+    const res = await handler(apiGwEvent({
+      method: 'GET', authorizerSub: 'user', query: { vin: 'VIN', username: 'spoofed' },
+    }));
+    expect(res.statusCode).toBe(502);
+    expect(JSON.parse(res.body).message).toBe('dms/resolveSender HTTP 503');
+    expect(callService).toHaveBeenCalledWith('dms', 'resolveSender', {
+      context: { username: 'user', vin: 'VIN' },
+      overrides: {
+        mainSincom: undefined, market: undefined, brand: undefined,
+        language: undefined, dealerCountryCode: undefined,
+      },
+    });
+    expect(postDmsInquiry).not.toHaveBeenCalled();
+  });
+
   it('GET: returns 400 when vin is missing', async () => {
     const event = apiGwEvent({ method: 'GET', authorizerSub: '0062230.d001' });
     const res = await handler(event);
@@ -55,7 +102,6 @@ describe('pkfavorite index.handler', () => {
 
   it('GET: lists favorites for username only (from authorizer), enriched via DML (LFP) using vin from query', async () => {
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({
       UpSelling: {
         Packages: [
@@ -82,8 +128,7 @@ describe('pkfavorite index.handler', () => {
     expect(listFavorites).toHaveBeenCalledWith(FAKE_POOL, {
       username: '0062230.d001',
     });
-    expect(getBearerToken).toHaveBeenCalledTimes(1);
-    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', {
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', {
       PartsInquiryHeader: { MessageType: 'LFP', VehicleID: 'VF3CABHW6GT204366' },
       package: 'FORFAIT',
       // Nessun dato di sessione (mainSincom/market/brand/...) in query, e
@@ -91,10 +136,10 @@ describe('pkfavorite index.handler', () => {
       // dinamico contiene solo serviceId (username da authorizer.sub).
       sender: { serviceId: '0062230.d001' },
     });
-    expect(resolveDynamicSenderFields).toHaveBeenCalledWith(
-      { username: '0062230.d001', vin: 'VF3CABHW6GT204366' },
-      expect.anything(),
-    );
+    expect(callService).toHaveBeenCalledWith('dms', 'resolveSender', {
+      context: { username: '0062230.d001', vin: 'VF3CABHW6GT204366' },
+      overrides: expect.anything(),
+    });
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body);
     expect(parsed).toEqual({
@@ -116,7 +161,6 @@ describe('pkfavorite index.handler', () => {
       { packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' },
       { packageCode: 'TAGLIANDO', createdAt: '2026-01-02T09:00:00Z' },
     ]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry
       .mockResolvedValueOnce({ UpSelling: { Packages: [{ Code: 'A1', PackageDescription: 'Pkg A1', PartsAvailablity: true, TotalPriceInclTax: 10, TotalPriceExclTax: 8 }] } })
       .mockResolvedValueOnce({ UpSelling: { Packages: [{ Code: 'B1', PackageDescription: 'Pkg B1', PartsAvailablity: false, TotalPriceInclTax: 20, TotalPriceExclTax: 16 }] } });
@@ -147,7 +191,6 @@ describe('pkfavorite index.handler', () => {
       { packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' },
       { packageCode: 'TAGLIANDO', createdAt: '2026-01-02T09:00:00Z' },
     ]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
 
     const event = apiGwEvent({
@@ -174,13 +217,12 @@ describe('pkfavorite index.handler', () => {
       market: '10102',
     };
     expect(postDmsInquiry).toHaveBeenCalledTimes(2);
-    expect(postDmsInquiry).toHaveBeenNthCalledWith(1, 'fake-bearer-token', expect.objectContaining({ sender: expectedSender }));
-    expect(postDmsInquiry).toHaveBeenNthCalledWith(2, 'fake-bearer-token', expect.objectContaining({ sender: expectedSender }));
+    expect(callService).toHaveBeenNthCalledWith(2, 'dms', 'inquiry', expect.objectContaining({ sender: expectedSender }));
+    expect(callService).toHaveBeenNthCalledWith(3, 'dms', 'inquiry', expect.objectContaining({ sender: expectedSender }));
   });
 
   it('GET: accepts codmarket/codbrand/marketIso as fallback query param names for market/brand/dealerCountryCode', async () => {
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
 
     const event = apiGwEvent({
@@ -196,7 +238,7 @@ describe('pkfavorite index.handler', () => {
 
     await handler(event);
 
-    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
       sender: expect.objectContaining({ market: '10102', brand: 'AP', dealerCountryCode: 'FR' }),
     }));
   });
@@ -207,7 +249,6 @@ describe('pkfavorite index.handler', () => {
     // costruito interamente a partire da username+vin, tramite
     // dms/dmsService.js::resolveDynamicSenderFields (session + v360).
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
     resolveDynamicSenderFields.mockResolvedValue({
       mainSincom: '0062230',
@@ -229,7 +270,7 @@ describe('pkfavorite index.handler', () => {
       { username: '0062230.d001', vin: 'VF3CABHW6GT204366' },
       expect.anything(),
     );
-    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
       sender: {
         dealerNumberId: '0062230',
         serviceId: '0062230.d001',
@@ -243,7 +284,6 @@ describe('pkfavorite index.handler', () => {
 
   it('GET: i parametri espliciti in query hanno priorità sulla risoluzione automatica', async () => {
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
     // Simula il comportamento reale di resolveDynamicSenderFields: gli
     // override espliciti (query) vincono sempre sulla risoluzione automatica.
@@ -263,7 +303,7 @@ describe('pkfavorite index.handler', () => {
 
     await handler(event);
 
-    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
       sender: expect.objectContaining({
         dealerNumberId: '1234567', // esplicito, non sovrascritto dalla risoluzione automatica
         brand: 'AP', // esplicito, non sovrascritto dalla risoluzione automatica
@@ -276,7 +316,6 @@ describe('pkfavorite index.handler', () => {
 
   it('GET: se la risoluzione automatica fallisce, il Sender ricade sui soli campi già disponibili (nessun errore propagato)', async () => {
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockResolvedValue({ UpSelling: { Packages: [] } });
     resolveDynamicSenderFields.mockResolvedValue({}); // best-effort: es. myPeople/v360 irraggiungibili
 
@@ -289,7 +328,7 @@ describe('pkfavorite index.handler', () => {
     const res = await handler(event);
 
     expect(res.statusCode).toBe(200);
-    expect(postDmsInquiry).toHaveBeenCalledWith('fake-bearer-token', expect.objectContaining({
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
       sender: { serviceId: '0062230.d001' },
     }));
   });
@@ -306,12 +345,11 @@ describe('pkfavorite index.handler', () => {
       { packageCode: 'P2', createdAt: '2026-01-01T09:00:00Z' },
       { packageCode: 'P3', createdAt: '2026-01-01T09:00:00Z' },
     ]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
 
     const callOrder = [];
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    postDmsInquiry.mockImplementation(async (_token, { package: packageCode }) => {
+    postDmsInquiry.mockImplementation(async ({ package: packageCode }) => {
       callOrder.push({ packageCode, startedAt: Date.now() });
       await delay(50);
       return { UpSelling: { Packages: [] } };
@@ -348,7 +386,6 @@ describe('pkfavorite index.handler', () => {
 
     const res = await handler(event);
 
-    expect(getBearerToken).not.toHaveBeenCalled();
     expect(postDmsInquiry).not.toHaveBeenCalled();
     const parsed = JSON.parse(res.body);
     expect(parsed.favorites).toEqual([]);
@@ -356,7 +393,6 @@ describe('pkfavorite index.handler', () => {
 
   it('GET: maps DML gateway errors to 502', async () => {
     listFavorites.mockResolvedValue([{ packageCode: 'FORFAIT', createdAt: '2026-01-01T09:00:00Z' }]);
-    getBearerToken.mockResolvedValue('fake-bearer-token');
     postDmsInquiry.mockRejectedValue(new Error('[dms] inquiry failed: HTTP 500 - ...'));
 
     const event = apiGwEvent({

@@ -1,0 +1,22 @@
+'use strict';
+
+const OPERATIONS = [
+  'getEnablingConfiguration', 'setEnablingConfiguration',
+  'getVehicleInspection', 'setVehicleInspectionVisible', 'deletetVehicleInspection',
+  'insertVehicleInspection', 'setPkMarketEnable', 'setPkMarketDisable', 'setOicEnable',
+  'insertDomain', 'setDomain', 'deleteDomain', 'setDomainVisible',
+  'insertPackage', 'setPackage', 'deletePackage', 'setPackageVisible',
+  'getPackageList', 'clonePk', 'cloneVeicInspection', 'insertAudit', 'searchAudit',
+  'getAnagSection', 'getAnagAllocation',
+  'checkIsPkMarketEnabled', 'checkIsPkOicConfigured', 'copyDomainFromMarket',
+];
+
+// Nessun pool locale: ogni operazione conserva nome e ordine degli argomenti
+// della repository remota, escluso il pool posseduto dal receiver.
+module.exports = Object.fromEntries(OPERATIONS.map((operation) => [
+  operation,
+  async (...args) => {
+    const { callService } = require('../serviceClient');
+    return callService('dbmanager', operation, { args });
+  },
+]));

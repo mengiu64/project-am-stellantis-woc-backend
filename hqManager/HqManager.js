@@ -1,6 +1,21 @@
 'use strict';
 
-const path = require('path');
+const repository = require('./repository');
+
+function resolveIdentity(event, body) {
+  const authz = event.requestContext && event.requestContext.authorizer;
+  return authz ? (authz.sub || null) : (body.username || null);
+}
+
+async function getSessionData(username) {
+  try {
+    const { callService } = require('../serviceClient');
+    return (await callService('session', 'getData', { args: [username] })) || {};
+  } catch (err) {
+    console.error(`[hqManager] lettura sessione REST fallita: ${err.message}`);
+    return {};
+  }
+}
 
 /**
  * Risolve lo `username` "leggibile" da registrare nell'audit HQ
@@ -8,16 +23,13 @@ const path = require('path');
  * autenticato (event.requestContext.authorizer.sub — MAI un valore fornito
  * nel body, salvo invocazione diretta/CLI senza requestContext.authorizer,
  * stesso pattern di session/pkFavorite) viene usato per recuperare
- * firstname/lastname dalla sessione utente (session/src/sessionContextCache.js
- * ::getCachedSessionData, stessa cache condivisa DynamoDB di
- * session/jobcard/pkFavorite/pkManager — richiede session/myPeople/
- * dmlConfigSync imbarcati come sibling da Makefile::build-HqManagerFunction,
- * v. template.yaml), concatenati come "firstname lastname".
+ * firstname/lastname dalla sessione utente tramite session/getData REST,
+ * concatenati come "firstname lastname".
  *
  * Se firstname/lastname non sono risolvibili (sessione non trovata,
  * myPeople irraggiungibile, utente HQ senza profilo, ecc. — resa
- * interamente best-effort da getCachedSessionData, che non solleva mai
- * un'eccezione) si ricade sul solo identificativo tecnico, cosi' l'audit
+ * best-effort, con log esplicito degli errori REST) si ricade sul solo
+ * identificativo tecnico, cosi' l'audit
  * registra comunque un `username` non nullo quando l'identita' e' nota.
  *
  * @param {object} [event]
@@ -25,12 +37,10 @@ const path = require('path');
  * @returns {Promise<string|null>}
  */
 async function resolveUsername(event = {}, body = {}) {
-  const authz = (event.requestContext && event.requestContext.authorizer) || {};
-  const usernameKey = authz.sub || body.username || null;
+  const usernameKey = resolveIdentity(event, body);
   if (!usernameKey) return null;
 
-  const { getCachedSessionData } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
-  const session = (await getCachedSessionData(usernameKey)) || {};
+  const session = await getSessionData(usernameKey);
   const firstname = session.firstname || '';
   const lastname = session.lastname || '';
   const fullName = `${firstname} ${lastname}`.trim();
@@ -42,8 +52,7 @@ async function resolveUsername(event = {}, body = {}) {
  * Risolve il `codmarket` (mercato) dell'utente autenticato da registrare
  * come `market` nell'audit HQ (woc.hq_audit, v.
  * HqRepository.js::insertAudit), con lo stesso meccanismo/identificativo
- * tecnico e la stessa sessione (session/src/sessionContextCache.js
- * ::getCachedSessionData) usati da resolveUsername (v. sopra) per
+ * tecnico e la stessa sessione REST usati da resolveUsername (v. sopra) per
  * firstname/lastname.
  *
  * Best-effort come resolveUsername: se l'identita' non e' risolvibile o la
@@ -58,26 +67,18 @@ async function resolveUsername(event = {}, body = {}) {
  * @returns {Promise<string>}
  */
 async function resolveCodmarket(event = {}, body = {}) {
-  const authz = (event.requestContext && event.requestContext.authorizer) || {};
-  const usernameKey = authz.sub || body.username || null;
+  const usernameKey = resolveIdentity(event, body);
   if (!usernameKey) return '';
 
-  const { getCachedSessionData } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
-  const session = (await getCachedSessionData(usernameKey)) || {};
+  const session = await getSessionData(usernameKey);
 
   return session.codmarket || '';
 }
 
 /**
- * HqManager.js — wrapper applicativo su dbManager/HqRepository.js (Aurora
- * PostgreSQL, db "wiadvisor", schema "woc"), stesso pattern di
- * PkManager.js/getConfigPackages: il pool ("pg") e la repository vengono
- * richiesti a runtime, con path relativo risolto tramite
- * path.resolve(__dirname, '../dbManager/...'), non staticamente in cima al
- * file, cosi' che il require funzioni sia in locale (sibling folder nel
- * repository) sia una volta impacchettato in Lambda (dove dbManager/ viene
- * copiato come sibling da Makefile::build-HqManagerFunction, vedi
- * template.yaml — HqManagerFunction usa BuildMethod: makefile).
+ * HqManager.js — orchestrazione applicativa sulle operazioni REST dbmanager.
+ * Il receiver possiede pool, SQL e accesso S3; questo modulo conserva ordine
+ * delle scritture e dell'audit, senza importare altre Lambda.
  *
  * getEnablingConfiguration(codmarket) espone la configurazione di
  * abilitazione WOC/firma digitale per ciascun sito del mercato richiesto
@@ -148,16 +149,12 @@ class HqManager {
    * @returns {Promise<Array<{ siteName: string|null, oic: string|null, address: string|null, legalEntity: string|null, enableWOC: number, enableSignature: number }>>}
    */
   async getEnablingConfiguration(codmarket) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getEnablingConfiguration } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return getEnablingConfiguration(pool, codmarket);
+    return repository.getEnablingConfiguration(codmarket);
   }
 
   /**
    * Crea/aggiorna (upsert), in un loop, la riga di configurazione per
-   * ciascun elemento dell'array configurations, riusando lo stesso pool.
+   * ciascun elemento dell'array configurations, tramite chiamate REST sequenziali.
    * Per ciascun elemento registra anche una riga di audit (woc.hq_audit,
    * sezione "enablingConfiguration", actiontype "update"), con lo username
    * risolto da resolveUsername (v. sopra: firstname+lastname della sessione
@@ -175,13 +172,9 @@ class HqManager {
 
     const username = await resolveUsername(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setEnablingConfiguration, insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { codmarket, oic, enableWOC, enableSignature } of configurations) {
-      await setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
-      await insertAudit(pool, username, 'enablingConfiguration', codmarket, 'update', `oic: ${oic} enabled: ${enableWOC} enableSignature:${enableSignature}`);
+      await repository.setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature);
+      await repository.insertAudit(username, 'enablingConfiguration', codmarket, 'update', `oic: ${oic} enabled: ${enableWOC} enableSignature:${enableSignature}`);
     }
   }
 
@@ -191,18 +184,14 @@ class HqManager {
    * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
    */
   async getVehicleInspection(market, type) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return getVehicleInspection(pool, market, type);
+    return repository.getVehicleInspection(market, type);
   }
 
   /**
    * Aggiorna il flag "visible" per ciascun elemento { id, value } contenuto
    * in una delle chiavi array note del payload (conditions, equipment,
    * damagearea, receptions, vehicleconfiguration — solo una e' presente per
-   * chiamata), riusando lo stesso pool.
+   * chiamata), tramite chiamate REST sequenziali.
    *
    * @param {{ conditions?: Array<{id:number, value:number}>, equipment?: Array<{id:number, value:number}>, damagearea?: Array<{id:number, value:number}>, receptions?: Array<{id:number, value:number}>, vehicleconfiguration?: Array<{id:number, value:number}> }} payload
    * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
@@ -219,12 +208,8 @@ class HqManager {
     const username = await resolveUsername(event, payload);
     const codmarket = await resolveCodmarket(event, payload);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { id, value } of payload[key]) {
-      await setVehicleInspectionVisible(pool, id, value, username, codmarket);
+      await repository.setVehicleInspectionVisible(id, value, username, codmarket);
     }
   }
 
@@ -240,11 +225,7 @@ class HqManager {
     const username = await resolveUsername(event);
     const codmarket = await resolveCodmarket(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deletetVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return deletetVehicleInspection(pool, id, value, username, codmarket);
+    return repository.deletetVehicleInspection(id, value, username, codmarket);
   }
 
   /**
@@ -260,11 +241,7 @@ class HqManager {
     const username = await resolveUsername(event);
     const codmarket = await resolveCodmarket(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return insertVehicleInspection(pool, market, type, descr, username, codmarket);
+    return repository.insertVehicleInspection(market, type, descr, username, codmarket);
   }
 
   /**
@@ -272,11 +249,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setMarketEnable(market) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPkMarketEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setPkMarketEnable(pool, market);
+    return repository.setPkMarketEnable(market);
   }
 
   /**
@@ -284,11 +257,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setMarketDisable(market) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPkMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setPkMarketDisable(pool, market);
+    return repository.setPkMarketDisable(market);
   }
 
   /**
@@ -302,12 +271,8 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setOicEnable(market, oic) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setOicEnable, setPkMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await setOicEnable(pool, market, oic);
-    return setPkMarketDisable(pool, market);
+    await repository.setOicEnable(market, oic);
+    return repository.setPkMarketDisable(market);
   }
 
   /**
@@ -317,11 +282,7 @@ class HqManager {
    * @returns {Promise<number>} l'iddomain generato
    */
   async insertDomain(market, oic, descr) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return insertDomain(pool, market, oic, descr);
+    return repository.insertDomain(market, oic, descr);
   }
 
   /**
@@ -331,11 +292,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setDomain(market, iddomain, descr) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setDomain(pool, market, iddomain, descr);
+    return repository.setDomain(market, iddomain, descr);
   }
 
   /**
@@ -344,17 +301,12 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async deleteDomain(market, iddomain) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deleteDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return deleteDomain(pool, market, iddomain);
+    return repository.deleteDomain(market, iddomain);
   }
 
   /**
    * Aggiorna il flag "visible", in un loop, per ciascun elemento
-   * { iddomain, value } dell'array presente in payload.domain, riusando lo
-   * stesso pool.
+   * { iddomain, value } dell'array presente in payload.domain, in sequenza.
    *
    * @param {{ domain: Array<{ iddomain: number, value: number }> }} payload
    * @returns {Promise<void>}
@@ -365,12 +317,8 @@ class HqManager {
       throw new Error('"domain" is required');
     }
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setDomainVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { iddomain, value } of domain) {
-      await setDomainVisible(pool, iddomain, value);
+      await repository.setDomainVisible(iddomain, value);
     }
   }
 
@@ -384,11 +332,7 @@ class HqManager {
    * @returns {Promise<number>} l'idpackage generato
    */
   async insertPackage(market, oic, iddomain, descr, timeop, pricewithvat) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertPackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat);
+    return repository.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
   }
 
   /**
@@ -400,11 +344,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setPackage(idpackage, iddomain, descr, timeop, pricewithvat) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat);
+    return repository.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
   }
 
   /**
@@ -412,17 +352,12 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async deletePackage(idpackage) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deletePackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return deletePackage(pool, idpackage);
+    return repository.deletePackage(idpackage);
   }
 
   /**
    * Aggiorna il flag "visible", in un loop, per ciascun elemento
-   * { idpackage, value } dell'array presente in payload.package, riusando lo
-   * stesso pool.
+   * { idpackage, value } dell'array presente in payload.package, in sequenza.
    *
    * @param {{ package: Array<{ idpackage: number, value: number }> }} payload
    * @returns {Promise<void>}
@@ -433,12 +368,8 @@ class HqManager {
       throw new Error('"package" is required');
     }
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPackageVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { idpackage, value } of pkg) {
-      await setPackageVisible(pool, idpackage, value);
+      await repository.setPackageVisible(idpackage, value);
     }
   }
 
@@ -448,11 +379,7 @@ class HqManager {
    * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
   async getPackageList(market, oic) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getPackageList } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return getPackageList(pool, market, oic);
+    return repository.getPackageList(market, oic);
   }
 
   /**
@@ -473,27 +400,18 @@ class HqManager {
    * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
   async initializeOicPkList(market, oic) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const {
-      checkIsPkMarketEnabled,
-      checkIsPkOicConfigured,
-      copyDomainFromMarket,
-      getPackageList,
-    } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    const isPkMarketEnabled = await checkIsPkMarketEnabled(pool, market);
+    const isPkMarketEnabled = await repository.checkIsPkMarketEnabled(market);
 
     if (isPkMarketEnabled === 1) {
-      return getPackageList(pool, market, oic);
+      return repository.getPackageList(market, oic);
     }
 
-    const isPkOicConfigured = await checkIsPkOicConfigured(pool, market, oic);
+    const isPkOicConfigured = await repository.checkIsPkOicConfigured(market, oic);
     if (isPkOicConfigured === 1) {
-      await copyDomainFromMarket(pool, market, oic);
+      await repository.copyDomainFromMarket(market, oic);
     }
 
-    return getPackageList(pool, market, oic);
+    return repository.getPackageList(market, oic);
   }
 
   /**
@@ -506,11 +424,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async clonePk(marketTarget, marketOrig) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { clonePk } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await clonePk(pool, marketTarget, marketOrig);
+    await repository.clonePk(marketTarget, marketOrig);
   }
 
   /**
@@ -526,11 +440,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async cloneVeicInspection(marketTarget, marketOrig, type) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { cloneVeicInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await cloneVeicInspection(pool, marketTarget, marketOrig, type);
+    await repository.cloneVeicInspection(marketTarget, marketOrig, type);
   }
 
   /**
@@ -551,11 +461,7 @@ class HqManager {
   async insertAudit(event, section, market, actiontype, descr) {
     const username = await resolveUsername(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await insertAudit(pool, username, section, market, actiontype, descr);
+    await repository.insertAudit(username, section, market, actiontype, descr);
     return username;
   }
 
@@ -571,29 +477,21 @@ class HqManager {
    *   100 righe (per creationdate).
    */
   async searchAudit(market, section, datefrom, dateto, actiontype, username) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { searchAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return searchAudit(pool, market, section, datefrom, dateto, actiontype, username);
+    return repository.searchAudit(market, section, datefrom, dateto, actiontype, username);
   }
 
   /**
    * @returns {Promise<Array<{ section: string }>>}
    */
   async getAnagSection() {
-    const { getAnagSection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    return getAnagSection();
+    return repository.getAnagSection();
   }
 
   /**
    * @returns {Promise<Array<{ type: string }>>}
    */
   async getAnagAllocation() {
-    const { getAnagAllocation } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    return getAnagAllocation();
+    return repository.getAnagAllocation();
   }
 }
 

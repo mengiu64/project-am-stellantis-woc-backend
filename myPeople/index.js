@@ -45,6 +45,7 @@ function resolveParams(event) {
 }
 
 exports.handler = async (event) => {
+  if (require('../serviceClient').isInternalRequest(event)) return require('./internal').handler(event);
   const { username } = resolveParams(event);
 
   try {

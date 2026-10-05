@@ -1,30 +1,15 @@
 'use strict';
 
-// ─── Mock dei client fratelli (pkEper / pkDocsoa / pkMenupricing) ─────────────
-// PkManager.js li richiede dinamicamente con path.resolve(__dirname, '../<sibling>/...'),
-// che risolve allo stesso file assoluto raggiunto da qui con '../../<sibling>/...'.
-jest.mock('../../pkEper/WsIQPckEper', () => ({ WsIQPckEper: jest.fn() }));
-jest.mock('../../pkDocsoa/DocSOARestClient', () => ({ DocSOARestClient: jest.fn() }));
-jest.mock('../../pkMenupricing/MenuPricingSoapClient', () => ({ MenuPricingSoapClient: jest.fn() }));
-jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
-// dbManager (usato da getPkList per risolvere pkwstouse da HQ_PKCONFIG via
-// dbManager.getPkwstouse(pool, { codmarket, codbrand })), stesso pattern dei
-// mock sopra: PkManager.js lo richiede con path.resolve(__dirname, '../dbManager/...').
-jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
-jest.mock('../../dbManager/PkConfigRepository', () => ({ getPkwstouse: jest.fn() }));
-// woc.config_packages (letta da PkManager.getConfigPackages, sostituisce la
-// precedente costante statica CONFIG_PACKAGES) — stesso pattern di mock sopra.
-jest.mock('../../dbManager/ConfigPackagesRepository', () => ({ getConfigPackages: jest.fn() }));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }));
 
-const { WsIQPckEper } = require('../../pkEper/WsIQPckEper');
-const { DocSOARestClient } = require('../../pkDocsoa/DocSOARestClient');
-const { MenuPricingSoapClient } = require('../../pkMenupricing/MenuPricingSoapClient');
-const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
-const { getPool } = require('../../dbManager/db');
-const { getPkwstouse } = require('../../dbManager/PkConfigRepository');
-const { getConfigPackages: getConfigPackagesFromDb } = require('../../dbManager/ConfigPackagesRepository');
+const { callService } = require('../../serviceClient');
+const remoteMethods = {};
+const getPkwstouse = jest.fn();
+const getConfigPackagesFromDb = jest.fn();
+const postDmsInquiry = jest.fn();
+const resolveDynamicSenderFields = jest.fn();
+// Ogni risposta simulata appartiene a un'operazione REST, non a un client Lambda.
+const mockReceiver = (service, methods) => { remoteMethods[service] = methods; };
 const { PkManager } = require('../PkManager');
 
 // Dati equivalenti alla precedente costante statica CONFIG_PACKAGES, ora servita
@@ -60,9 +45,22 @@ describe('PkManager', () => {
     // il mock di dbManager.getPkwstouse ritorna semplicemente il codbrand
     // ricevuto, così i valori storici usati nei test ('eper', 'docsoa',
     // 'menupricing') continuano a fluire invariati come pkwstouse risolto.
-    getPool.mockResolvedValue({});
-    getPkwstouse.mockImplementation(async (pool, { codbrand }) => codbrand);
-    getConfigPackagesFromDb.mockImplementation(async (pool, { pkwstouse }) => (
+    for (const service of Object.keys(remoteMethods)) delete remoteMethods[service];
+    callService.mockImplementation((service, operation, payload) => {
+      if (service === 'dbmanager') {
+        return operation === 'getPkwstouse'
+          ? getPkwstouse(...payload.args)
+          : getConfigPackagesFromDb(...payload.args);
+      }
+      if (service === 'dms') {
+        return operation === 'resolveSender'
+          ? resolveDynamicSenderFields(payload.context, payload.overrides)
+          : postDmsInquiry(payload);
+      }
+      return remoteMethods[service][operation](payload.params);
+    });
+    getPkwstouse.mockImplementation(async ({ codbrand }) => codbrand);
+    getConfigPackagesFromDb.mockImplementation(async ({ pkwstouse }) => (
       STATIC_CONFIG_PACKAGES[(pkwstouse ?? '').toLowerCase()] ?? {}
     ));
     // Di default si comporta come il vero dms/dmsService.js
@@ -169,11 +167,12 @@ describe('PkManager', () => {
       expect(await manager.getConfigPackages('EPER')).toEqual(await manager.getConfigPackages('eper'));
     });
 
-    test('queries dbManager.ConfigPackagesRepository via getPool', async () => {
+    test('queries dbmanager via REST without a local pool', async () => {
       const manager = new PkManager();
       await manager.getConfigPackages('eper');
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(getConfigPackagesFromDb).toHaveBeenCalledWith({}, { pkwstouse: 'eper' });
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getConfigPackages', {
+        args: [{ pkwstouse: 'eper' }],
+      });
     });
 
     test('throws for unrecognized pkwstouse', async () => {
@@ -197,7 +196,7 @@ describe('PkManager', () => {
         '7210E221': { $: { codicePosizione: 'P1' } },
         'OTHER-CODE': { $: {} },
       });
-      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList }));
+      mockReceiver('pkeper', { getCompletePkEperList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'eper', 'VIN123');
@@ -212,7 +211,7 @@ describe('PkManager', () => {
       const getCompletePkEperList = jest.fn().mockResolvedValue({
         error: { errorMessage: 'boom' },
       });
-      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList }));
+      mockReceiver('pkeper', { getCompletePkEperList });
 
       const manager = new PkManager();
       await expect(manager.getValidPackages('1000', 'eper', 'VIN123')).rejects.toThrow('eper: boom');
@@ -220,7 +219,7 @@ describe('PkManager', () => {
 
     test('eper: returns empty object when no codes match', async () => {
       const getCompletePkEperList = jest.fn().mockResolvedValue({ 'UNMATCHED': {} });
-      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList }));
+      mockReceiver('pkeper', { getCompletePkEperList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'eper', 'VIN123');
@@ -232,7 +231,7 @@ describe('PkManager', () => {
         success: true,
         data: { '221000135012': { detail: 'x' } },
       });
-      MenuPricingSoapClient.mockImplementation(() => ({ getCompletePkMpList }));
+      mockReceiver('pkmenupricing', { getCompletePkMpList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'menupricing', 'VIN123');
@@ -242,7 +241,7 @@ describe('PkManager', () => {
 
     test('menupricing: throws when result.success is false', async () => {
       const getCompletePkMpList = jest.fn().mockResolvedValue({ success: false, message: 'nope' });
-      MenuPricingSoapClient.mockImplementation(() => ({ getCompletePkMpList }));
+      mockReceiver('pkmenupricing', { getCompletePkMpList });
 
       const manager = new PkManager();
       await expect(manager.getValidPackages('1000', 'menupricing', 'VIN123'))
@@ -251,7 +250,7 @@ describe('PkManager', () => {
 
     test('menupricing: falls back to empty object when data is missing', async () => {
       const getCompletePkMpList = jest.fn().mockResolvedValue({ success: true });
-      MenuPricingSoapClient.mockImplementation(() => ({ getCompletePkMpList }));
+      mockReceiver('pkmenupricing', { getCompletePkMpList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'menupricing', 'VIN123');
@@ -267,7 +266,7 @@ describe('PkManager', () => {
           { noCodeField: true },
         ],
       });
-      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList }));
+      mockReceiver('pkdocsoa', { getCompletePkSOAList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
@@ -283,7 +282,7 @@ describe('PkManager', () => {
           { refAff: 'UNMATCHED', label: 'Ignore me' },
         ],
       });
-      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList }));
+      mockReceiver('pkdocsoa', { getCompletePkSOAList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
@@ -296,7 +295,7 @@ describe('PkManager', () => {
         success: true,
         data: { code: '42001A', label: 'Mechanic 1' },
       });
-      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList }));
+      mockReceiver('pkdocsoa', { getCompletePkSOAList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
@@ -306,7 +305,7 @@ describe('PkManager', () => {
 
     test('docsoa: throws when result.success is false', async () => {
       const getCompletePkSOAList = jest.fn().mockResolvedValue({ success: false, message: 'ko' });
-      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList }));
+      mockReceiver('pkdocsoa', { getCompletePkSOAList });
 
       const manager = new PkManager();
       await expect(manager.getValidPackages('1000', 'docsoa', 'VIN123'))
@@ -315,7 +314,7 @@ describe('PkManager', () => {
 
     test('docsoa: falls back to empty array when data is missing', async () => {
       const getCompletePkSOAList = jest.fn().mockResolvedValue({ success: true });
-      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList }));
+      mockReceiver('pkdocsoa', { getCompletePkSOAList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackages('1000', 'docsoa', 'VIN123');
@@ -335,7 +334,7 @@ describe('PkManager', () => {
   describe('getValidPackagesDetail', () => {
     test('returns {} when there are no valid packages', async () => {
       const getCompletePkEperList = jest.fn().mockResolvedValue({});
-      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList }));
+      mockReceiver('pkeper', { getCompletePkEperList });
 
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'eper', 'VIN123');
@@ -352,7 +351,7 @@ describe('PkManager', () => {
         listaOperazioni: { operazione: [{ codice: 'OP1', descrizione: 'Op uno', tempo: '1.5' }] },
         listaRicambi: { ricambio: [{ posizione: '1', codice: 'SP1', descrizione: 'Ricambio uno', quantita: '2', prezzo: '10' }] },
       });
-      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList, getPackageDetailsPR }));
+      mockReceiver('pkeper', { getCompletePkEperList, getPackageDetailsPR });
 
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'eper', 'VIN123');
@@ -403,7 +402,7 @@ describe('PkManager', () => {
             },
           },
         });
-      DocSOARestClient.mockImplementation(() => ({ getCompletePkSOAList, ibxDetailForfaitService }));
+      mockReceiver('pkdocsoa', { getCompletePkSOAList, ibxDetailForfaitService });
 
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'docsoa', 'VF3CABHW6GT204366');
@@ -435,7 +434,7 @@ describe('PkManager', () => {
           listaRicambi: [],
         },
       });
-      MenuPricingSoapClient.mockImplementation(() => ({ getCompletePkMpList, getJobDetails }));
+      mockReceiver('pkmenupricing', { getCompletePkMpList, getJobDetails });
 
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'menupricing', 'VIN123');
@@ -463,7 +462,7 @@ describe('PkManager', () => {
         '7210E221': { codicePosizione: 'P1' },
       });
       const getPackageDetailsPR = jest.fn().mockRejectedValue('plain string failure');
-      WsIQPckEper.mockImplementation(() => ({ getCompletePkEperList, getPackageDetailsPR }));
+      mockReceiver('pkeper', { getCompletePkEperList, getPackageDetailsPR });
 
       const manager = new PkManager();
       const result = await manager.getValidPackagesDetail('1000', 'eper', 'VIN123');
@@ -477,7 +476,7 @@ describe('PkManager', () => {
   describe('_fetchDetail', () => {
     test('eper: falls back to rowData fields without $ wrapper', async () => {
       const getPackageDetailsPR = jest.fn().mockResolvedValue({ detail: 'ok' });
-      WsIQPckEper.mockImplementation(() => ({ getPackageDetailsPR }));
+      mockReceiver('pkeper', { getPackageDetailsPR });
 
       const manager = new PkManager();
       await manager._fetchDetail('eper', 'VIN123', '7210E221', {
@@ -493,7 +492,7 @@ describe('PkManager', () => {
     test('docsoa: builds request from VIN parts and uses forfait when found', async () => {
       const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: { forfait: { ref_fo: '95R04A' } } });
       const ibxDetailtpService      = jest.fn();
-      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+      mockReceiver('pkdocsoa', { ibxDetailForfaitService, ibxDetailtpService });
 
       const manager = new PkManager();
       const result  = await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', {});
@@ -515,7 +514,7 @@ describe('PkManager', () => {
     test('docsoa: falls back to ibxDetailtpService (isFixedPrice 0) when forfait is not found', async () => {
       const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: null, message: 'Empty resultat' });
       const ibxDetailtpService      = jest.fn().mockResolvedValue({ data: { tp: { ref: '95R04A' } } });
-      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+      mockReceiver('pkdocsoa', { ibxDetailForfaitService, ibxDetailtpService });
 
       const manager = new PkManager();
       const result  = await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', {});
@@ -539,7 +538,7 @@ describe('PkManager', () => {
       // richiesto da ibxDetailtpService): vanno usati per scopi diversi.
       const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: null, message: 'Empty resultat' });
       const ibxDetailtpService      = jest.fn().mockResolvedValue({ data: { tp: { ref: 'TP-REF-999' } } });
-      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+      mockReceiver('pkdocsoa', { ibxDetailForfaitService, ibxDetailtpService });
 
       const manager  = new PkManager();
       const rowData  = { refAff: '95R04A', ref: 'TP-REF-999' };
@@ -554,7 +553,7 @@ describe('PkManager', () => {
     test('docsoa: falls back to code as refTp when rowData.ref is missing', async () => {
       const ibxDetailForfaitService = jest.fn().mockResolvedValue({ data: null, message: 'Empty resultat' });
       const ibxDetailtpService      = jest.fn().mockResolvedValue({ data: { tp: { ref: '95R04A' } } });
-      DocSOARestClient.mockImplementation(() => ({ ibxDetailForfaitService, ibxDetailtpService }));
+      mockReceiver('pkdocsoa', { ibxDetailForfaitService, ibxDetailtpService });
 
       const manager = new PkManager();
       await manager._fetchDetail('docsoa', 'VF3CABHW6GT204366', '95R04A', { codice: '95R04A' });
@@ -578,7 +577,7 @@ describe('PkManager', () => {
 
     test('eper: falls back to empty string when neither $ wrapper nor plain fields are present', async () => {
       const getPackageDetailsPR = jest.fn().mockResolvedValue({ detail: 'ok' });
-      WsIQPckEper.mockImplementation(() => ({ getPackageDetailsPR }));
+      mockReceiver('pkeper', { getPackageDetailsPR });
 
       const manager = new PkManager();
       await manager._fetchDetail('eper', 'VIN123', '7210E221', {});
@@ -883,14 +882,12 @@ describe('PkManager', () => {
         },
       ];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       const result = await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
       expect(result).toEqual({ success: true });
-      expect(getBearerToken).toHaveBeenCalled();
-      expect(postDmsInquiry).toHaveBeenCalledWith('TOKEN123', expect.objectContaining({
+      expect(postDmsInquiry).toHaveBeenCalledWith(expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({
           DocumentID: 'DOC1',
           CustomerIdDms: 'CUST1',
@@ -912,12 +909,11 @@ describe('PkManager', () => {
       const manager = new PkManager();
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('TOKEN123', expect.objectContaining({
+      expect(postDmsInquiry).toHaveBeenCalledWith(expect.objectContaining({
         workLines: [expect.objectContaining({ workLineReference: '001' })],
       }));
     });
@@ -926,12 +922,11 @@ describe('PkManager', () => {
       const manager = new PkManager();
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.ApplicationArea).toBeUndefined();
     });
 
@@ -939,12 +934,11 @@ describe('PkManager', () => {
       const manager = new PkManager();
       manager.pkDetailList = [{ codice: 'PK1', listaOperazioni: [{ COD: 'OP1' }], listaRicambi: [{ COD: 'SP1' }] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.WorkLines).toBeUndefined();
     });
 
@@ -956,12 +950,11 @@ describe('PkManager', () => {
       });
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.sender).toEqual({
         dealerNumberId: 'MP-DEALER',
         dealerNumberIdSource: 'MP-DEALER',
@@ -980,12 +973,11 @@ describe('PkManager', () => {
       });
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.sender).toEqual({
         dealerNumberId: 'EPER-DEALER',
         dealerNumberIdSource: 'EPER-DEALER',
@@ -1004,7 +996,6 @@ describe('PkManager', () => {
       });
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123', '1000');
@@ -1012,8 +1003,8 @@ describe('PkManager', () => {
       // Il lookup su woc.ang_snowflakes NON è più eseguito qui: pkManager passa
       // solo `market` a dms/dmsService.js::postDmsInquiry, che lo usa per il
       // lookup centralizzato (vedi dms/__tests__/dmsService.test.js).
-      expect(getPool).not.toHaveBeenCalled();
-      const [, body] = postDmsInquiry.mock.calls[0];
+      expect(callService.mock.calls.some(([service]) => service === 'dbmanager')).toBe(false);
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.sender).toEqual({
         dealerNumberId: 'MP-DEALER',
         dealerNumberIdSource: 'MP-DEALER',
@@ -1032,12 +1023,11 @@ describe('PkManager', () => {
       });
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123');
 
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.sender.market).toBeUndefined();
       expect(body.sender.physicalSiteId).toBe('SITE001');
       expect(body.sender.dealerNumberIdSource).toBe('MP-DEALER');
@@ -1050,7 +1040,6 @@ describe('PkManager', () => {
       });
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123', '1000', '0062230.d001');
@@ -1059,7 +1048,7 @@ describe('PkManager', () => {
         { username: '0062230.d001', vin: 'VIN123' },
         expect.objectContaining({ mainSincom: 'MP-DEALER', market: '1000', brand: 'FT' }),
       );
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.sender.serviceId).toBe('0062230.d001');
     });
 
@@ -1067,7 +1056,6 @@ describe('PkManager', () => {
       const manager = new PkManager();
       manager.pkDetailList = [{ listaOperazioni: [], listaRicambi: [] }];
 
-      getBearerToken.mockResolvedValue('TOKEN123');
       postDmsInquiry.mockResolvedValue({ success: true });
       resolveDynamicSenderFields.mockResolvedValue({
         mainSincom: '0062230',
@@ -1079,7 +1067,7 @@ describe('PkManager', () => {
 
       await manager.getPriceAndAvailability('DOC1', 'CUST1', 'VIN123', undefined, '0062230.d001');
 
-      const [, body] = postDmsInquiry.mock.calls[0];
+      const [body] = postDmsInquiry.mock.calls[0];
       expect(body.sender).toEqual({
         dealerNumberId: '0062230',
         dealerNumberIdSource: '0062230',
@@ -1108,8 +1096,8 @@ describe('PkManager', () => {
 
       await manager.getPkList('FIAT', 'DOC1', 'CUST1', 'VIN123', '1000');
 
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(getPkwstouse).toHaveBeenCalledWith({}, { codmarket: '1000', codbrand: 'FIAT' });
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getPkwstouse', { args: [{ codmarket: '1000', codbrand: 'FIAT' }] });
+      expect(getPkwstouse).toHaveBeenCalledWith({ codmarket: '1000', codbrand: 'FIAT' });
       expect(manager.getValidPackagesDetail).toHaveBeenCalledWith('1000', 'menupricing', 'VIN123');
     });
 

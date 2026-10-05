@@ -11,14 +11,13 @@
  *                       o KO (DMS_PUSH_REFUSAL / DMS_PUSH_FAILURE), lastupdate = now()
  *   2) businessreason = roInfo.dmsSynchroStatus + dmsReturnMessage restituiti
  *                       da jobCardDetails
- *                       (jobcard/jobCardService.js, imbarcato in-process via
- *                       Makefile), lastupdate = now()
+ *                       (servizio REST privato jobcard), lastupdate = now()
  *
  * Interamente best-effort: ogni errore viene loggato e mai propagato, così la
  * risposta verso DJC resta invariata.
  */
 
-const path = require('path');
+const { callService } = require('../serviceClient');
 
 const EVENT_TYPE_TO_ACK = Object.freeze({
   DMS_PUSH_SUCCESS_WITHOUT_UPDATE: 'OK',
@@ -40,13 +39,10 @@ const UPDATE_BUSINESSREASON_SQL = `
   RETURNING jobcardid`;
 
 /**
- * Carica in modo lazy i servizi della lambda jobcard (cartella sorella), così
- * il loro albero di dipendenze viene caricato solo quando serve.
+ * Espone il client REST iniettabile nei test.
  */
 function loadJobcardServices() {
-  const { getBearerToken } = require(path.resolve(__dirname, '../jobcard/authService'));
-  const { getJobCardDetails } = require(path.resolve(__dirname, '../jobcard/jobCardService'));
-  return { getBearerToken, getJobCardDetails };
+  return { callService };
 }
 
 /**
@@ -57,8 +53,7 @@ function loadJobcardServices() {
  * @returns {Promise<string|null>}
  */
 async function fetchBusinessReason(jobCardId, deps = loadJobcardServices()) {
-  const token = await deps.getBearerToken();
-  const body = await deps.getJobCardDetails(token, jobCardId);
+  const body = await deps.callService('jobcard', 'getJobCardDetails', { args: [jobCardId] });
   const roInfo = body?.jobCardDetail?.roInfo ?? body?.roInfo;
   const reasonParts = [roInfo?.dmsSynchroStatus, roInfo?.dmsReturnMessage]
     .filter((value) => typeof value === 'string' && value.trim() !== '');

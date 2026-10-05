@@ -1,581 +1,200 @@
 'use strict';
 
-// HqManager.js richiede dbManager/db e dbManager/HqRepository dinamicamente con
-// path.resolve(__dirname, '../dbManager/...'), che risolve allo stesso file
-// assoluto raggiunto da qui con '../../dbManager/...' — stesso pattern di mock
-// gia' usato in pkManager/__tests__/PkManager.test.js.
-jest.mock('../../dbManager/db', () => ({ getPool: jest.fn() }));
-jest.mock('../../dbManager/HqRepository', () => ({
-  getEnablingConfiguration: jest.fn(),
-  setEnablingConfiguration: jest.fn(),
-  getVehicleInspection: jest.fn(),
-  setVehicleInspectionVisible: jest.fn(),
-  deletetVehicleInspection: jest.fn(),
-  insertVehicleInspection: jest.fn(),
-  setPkMarketEnable: jest.fn(),
-  setPkMarketDisable: jest.fn(),
-  setOicEnable: jest.fn(),
-  insertDomain: jest.fn(),
-  setDomain: jest.fn(),
-  deleteDomain: jest.fn(),
-  setDomainVisible: jest.fn(),
-  insertPackage: jest.fn(),
-  setPackage: jest.fn(),
-  deletePackage: jest.fn(),
-  setPackageVisible: jest.fn(),
-  clonePk: jest.fn(),
-  cloneVeicInspection: jest.fn(),
-  getPackageList: jest.fn(),
-  checkIsPkMarketEnabled: jest.fn(),
-  checkIsPkOicConfigured: jest.fn(),
-  copyDomainFromMarket: jest.fn(),
-  insertAudit: jest.fn(),
-  searchAudit: jest.fn(),
-  getAnagSection: jest.fn(),
-  getAnagAllocation: jest.fn(),
-}));
-// resolveUsername (v. HqManager.js) risolve firstname/lastname dell'utente
-// autenticato tramite session/src/sessionContextCache.js::getCachedSessionData
-// (stesso pattern di mock cross-folder di dbManager/db e dbManager/HqRepository
-// sopra: path.resolve(__dirname, '../session/src/sessionContextCache') da
-// hqManager/ risolve allo stesso file assoluto raggiunto da qui con
-// '../../session/src/sessionContextCache').
-jest.mock('../../session/src/sessionContextCache', () => ({ getCachedSessionData: jest.fn() }));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
 
-const { getPool } = require('../../dbManager/db');
-const {
-  getEnablingConfiguration,
-  setEnablingConfiguration,
-  getVehicleInspection,
-  setVehicleInspectionVisible,
-  deletetVehicleInspection,
-  insertVehicleInspection,
-  setPkMarketEnable,
-  setPkMarketDisable,
-  setOicEnable,
-  insertDomain,
-  setDomain,
-  deleteDomain,
-  setDomainVisible,
-  insertPackage,
-  setPackage,
-  deletePackage,
-  setPackageVisible,
-  getPackageList,
-  checkIsPkMarketEnabled,
-  checkIsPkOicConfigured,
-  copyDomainFromMarket,
-  clonePk,
-  cloneVeicInspection,
-  insertAudit,
-  searchAudit,
-  getAnagSection,
-  getAnagAllocation,
-} = require('../../dbManager/HqRepository');
-const { getCachedSessionData } = require('../../session/src/sessionContextCache');
+const { callService } = require('../../serviceClient');
 const { HqManager } = require('../HqManager');
+const repository = require('../repository');
 
-describe('HqManager', () => {
+describe('HqManager — consumer REST', () => {
   let manager;
-  const fakePool = { query: jest.fn() };
+  let errorSpy;
+  const event = { requestContext: { authorizer: { sub: 'mario.rossi' } } };
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    getCachedSessionData.mockResolvedValue(null);
-    getPool.mockResolvedValue(fakePool);
+    callService.mockReset().mockResolvedValue(undefined);
     manager = new HqManager();
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  describe('getEnablingConfiguration', () => {
-    it('resolves the pool and delegates to HqRepository.getEnablingConfiguration', async () => {
-      const rows = [
-        { siteName: 'BRANDINI S.P.A.', oic: '00006821', address: 'VIA COPERNICO 123', legalEntity: '0073741', enableWOC: 1, enableSignature: 0 },
-      ];
-      getEnablingConfiguration.mockResolvedValue(rows);
+  afterEach(() => errorSpy.mockRestore());
 
-      const result = await manager.getEnablingConfiguration('1000');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(getEnablingConfiguration).toHaveBeenCalledWith(fakePool, '1000');
-      expect(result).toBe(rows);
-    });
+  test.each([
+    ['getEnablingConfiguration', ['1000'], 'getEnablingConfiguration'],
+    ['getVehicleInspection', ['1000', 'EXTERIOR'], 'getVehicleInspection'],
+    ['setMarketEnable', ['1000'], 'setPkMarketEnable'],
+    ['setMarketDisable', ['1000'], 'setPkMarketDisable'],
+    ['insertDomain', ['1000', '00006821', 'Meccanica'], 'insertDomain'],
+    ['setDomain', ['1000', 42, 'Meccanica'], 'setDomain'],
+    ['deleteDomain', ['1000', 42], 'deleteDomain'],
+    ['insertPackage', ['1000', '00006821', 42, 'Tagliando', 60, 100.5], 'insertPackage'],
+    ['setPackage', [7, 42, 'Tagliando', 60, 100.5], 'setPackage'],
+    ['deletePackage', [7], 'deletePackage'],
+    ['getPackageList', ['1000', '00006821'], 'getPackageList'],
+    ['searchAudit', ['1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi'], 'searchAudit'],
+    ['getAnagSection', [], 'getAnagSection'],
+    ['getAnagAllocation', [], 'getAnagAllocation'],
+  ])('%s restituisce il valore dominio senza pool o wrapper', async (method, args, operation) => {
+    const rawValue = [{ id: 7 }];
+    callService.mockResolvedValue(rawValue);
+    expect(await manager[method](...args)).toBe(rawValue);
+    expect(callService.mock.calls).toEqual([['dbmanager', operation, { args }]]);
   });
 
-  describe('setEnablingConfiguration', () => {
-    it('throws when configurations is missing/empty', async () => {
-      await expect(manager.setEnablingConfiguration(undefined)).rejects.toThrow('"configurations" is required');
-      await expect(manager.setEnablingConfiguration([])).rejects.toThrow('"configurations" is required');
-      expect(getPool).not.toHaveBeenCalled();
-    });
-
-    it('resolves the pool once and delegates to HqRepository.setEnablingConfiguration for each element, with insertAudit and username "firstname lastname" resolved from the session of event.requestContext.authorizer.sub', async () => {
-      setEnablingConfiguration.mockResolvedValue(undefined);
-      insertAudit.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
-
-      await manager.setEnablingConfiguration([
-        { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
-        { codmarket: '1000', oic: '00010925', enableWOC: 1, enableSignature: 0 },
-      ], { requestContext: { authorizer: { sub: 'mario.rossi' } } });
-
-      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setEnablingConfiguration).toHaveBeenCalledTimes(2);
-      expect(setEnablingConfiguration).toHaveBeenNthCalledWith(1, fakePool, '1000', '00000989', 1, 1);
-      expect(setEnablingConfiguration).toHaveBeenNthCalledWith(2, fakePool, '1000', '00010925', 1, 0);
-      expect(insertAudit).toHaveBeenCalledTimes(2);
-      expect(insertAudit).toHaveBeenNthCalledWith(1, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'oic: 00000989 enabled: 1 enableSignature:1');
-      expect(insertAudit).toHaveBeenNthCalledWith(2, fakePool, 'Mario Rossi', 'enablingConfiguration', '1000', 'update', 'oic: 00010925 enabled: 1 enableSignature:0');
-    });
-
-    it('falls back to the sub itself when the session has no firstname/lastname', async () => {
-      setEnablingConfiguration.mockResolvedValue(undefined);
-      insertAudit.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue(null);
-
-      await manager.setEnablingConfiguration([
-        { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
-      ], { requestContext: { authorizer: { sub: 'mario.rossi' } } });
-
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'enablingConfiguration', '1000', 'update', 'oic: 00000989 enabled: 1 enableSignature:1');
-    });
-
-    it('uses username=null when the event has no requestContext.authorizer.sub (e.g. CLI/direct invocation)', async () => {
-      setEnablingConfiguration.mockResolvedValue(undefined);
-      insertAudit.mockResolvedValue(undefined);
-
-      await manager.setEnablingConfiguration([
-        { codmarket: '1000', oic: '00000989', enableWOC: 1, enableSignature: 1 },
-      ]);
-
-      expect(getCachedSessionData).not.toHaveBeenCalled();
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'enablingConfiguration', '1000', 'update', 'oic: 00000989 enabled: 1 enableSignature:1');
-    });
+  test.each(Object.keys(repository))('%s propaga errori HTTP/trasporto', async (operation) => {
+    const error = new Error('HTTP 503');
+    callService.mockRejectedValue(error);
+    await expect(repository[operation]('1000', null)).rejects.toBe(error);
+    expect(callService).toHaveBeenCalledWith('dbmanager', operation, { args: ['1000', null] });
   });
 
-  describe('getVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.getVehicleInspection', async () => {
-      const rows = [{ id: 1, market: '1000', type: 'EXTERIOR', descr: 'Controllo carrozzeria', visible: 1, deleted: 0 }];
-      getVehicleInspection.mockResolvedValue(rows);
-
-      const result = await manager.getVehicleInspection('1000', 'EXTERIOR');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(getVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR');
-      expect(result).toBe(rows);
-    });
+  test('configurazioni e audit restano sequenziali, con identita autenticata', async () => {
+    callService.mockImplementation(async (service) => service === 'session'
+      ? { firstname: 'Mario', lastname: 'Rossi' }
+      : undefined);
+    await manager.setEnablingConfiguration([
+      { codmarket: '1000', oic: 'a', enableWOC: 1, enableSignature: 0 },
+      { codmarket: '1000', oic: 'b', enableWOC: 0, enableSignature: 1 },
+    ], event);
+    expect(callService.mock.calls).toEqual([
+      ['session', 'getData', { args: ['mario.rossi'] }],
+      ['dbmanager', 'setEnablingConfiguration', { args: ['1000', 'a', 1, 0] }],
+      ['dbmanager', 'insertAudit', { args: ['Mario Rossi', 'enablingConfiguration', '1000', 'update', 'oic: a enabled: 1 enableSignature:0'] }],
+      ['dbmanager', 'setEnablingConfiguration', { args: ['1000', 'b', 0, 1] }],
+      ['dbmanager', 'insertAudit', { args: ['Mario Rossi', 'enablingConfiguration', '1000', 'update', 'oic: b enabled: 0 enableSignature:1'] }],
+    ]);
   });
 
-  describe('setVehicleInspectionVisible', () => {
-    it('throws when the payload has none of the known array keys', async () => {
-      await expect(manager.setVehicleInspectionVisible({})).rejects.toThrow(
-        '"payload" must contain an array in one of: conditions, equipment, damagearea, receptions, vehicleconfiguration',
-      );
-      expect(getPool).not.toHaveBeenCalled();
-    });
-
-    it('resolves the pool once and delegates to HqRepository.setVehicleInspectionVisible for each element of "conditions", with username=null and codmarket="" when no event is passed', async () => {
-      setVehicleInspectionVisible.mockResolvedValue(undefined);
-
-      await manager.setVehicleInspectionVisible({
-        conditions: [{ id: 7, value: 0 }, { id: 8, value: 1 }],
-      });
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setVehicleInspectionVisible).toHaveBeenCalledTimes(2);
-      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0, null, '');
-      expect(setVehicleInspectionVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1, null, '');
-    });
-
-    it('resolves username and codmarket from the session of event.requestContext.authorizer.sub', async () => {
-      setVehicleInspectionVisible.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' });
-
-      await manager.setVehicleInspectionVisible(
-        { conditions: [{ id: 7, value: 0 }] },
-        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
-      );
-
-      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
-      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 7, 0, 'Mario Rossi', '1000');
-    });
-
-    it('falls back to codmarket="" when the session has no codmarket', async () => {
-      setVehicleInspectionVisible.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
-
-      await manager.setVehicleInspectionVisible(
-        { conditions: [{ id: 7, value: 0 }] },
-        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
-      );
-
-      expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 7, 0, 'Mario Rossi', '');
-    });
-
-    it.each(['equipment', 'damagearea', 'receptions', 'vehicleconfiguration'])(
-      'also accepts the "%s" array key',
-      async (key) => {
-        setVehicleInspectionVisible.mockResolvedValue(undefined);
-
-        await manager.setVehicleInspectionVisible({ [key]: [{ id: 1, value: 1 }] });
-
-        expect(setVehicleInspectionVisible).toHaveBeenCalledWith(fakePool, 1, 1, null, '');
-      },
-    );
+  test('un errore di scrittura interrompe il loop prima dell audit e degli elementi successivi', async () => {
+    callService.mockRejectedValue(new Error('HTTP 500'));
+    await expect(manager.setEnablingConfiguration([
+      { codmarket: '1000', oic: 'a', enableWOC: 1, enableSignature: 0 },
+      { codmarket: '1000', oic: 'b', enableWOC: 0, enableSignature: 1 },
+    ])).rejects.toThrow('HTTP 500');
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', 'setEnablingConfiguration', { args: ['1000', 'a', 1, 0] }],
+    ]);
   });
 
-  describe('deletetVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.deletetVehicleInspection, with username=null and codmarket="" when no event is passed', async () => {
-      deletetVehicleInspection.mockResolvedValue(undefined);
+  test.each(HqManager.VEHICLE_INSPECTION_ARRAY_KEYS)('gestisce il loop %s', async (key) => {
+    await manager.setVehicleInspectionVisible({ [key]: [{ id: 7, value: 0 }, { id: 8, value: 1 }] });
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', 'setVehicleInspectionVisible', { args: [7, 0, null, ''] }],
+      ['dbmanager', 'setVehicleInspectionVisible', { args: [8, 1, null, ''] }],
+    ]);
+  });
 
-      await manager.deletetVehicleInspection(1, 1);
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, null, '');
-    });
-
-    it('resolves username and codmarket from the session of event.requestContext.authorizer.sub', async () => {
-      deletetVehicleInspection.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' });
-
-      await manager.deletetVehicleInspection(1, 1, { requestContext: { authorizer: { sub: 'mario.rossi' } } });
-
-      expect(deletetVehicleInspection).toHaveBeenCalledWith(fakePool, 1, 1, 'Mario Rossi', '1000');
+  test.each([
+    [{}, { username: 'cli' }, 'cli'],
+    [{ requestContext: {} }, { username: 'cli' }, 'cli'],
+    [{ requestContext: { authorizer: {} } }, { username: 'spoofed' }, null],
+    [{ requestContext: { authorizer: { sub: '' } } }, { username: 'spoofed' }, null],
+    [event, { username: 'spoofed' }, 'mario.rossi'],
+  ])('risolve identita senza fallback client se authorizer e presente', async (evt, body, username) => {
+    callService.mockImplementation(async (service) => service === 'session'
+      ? { firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' }
+      : undefined);
+    await manager.setVehicleInspectionVisible({ ...body, conditions: [{ id: 7, value: 1 }] }, evt);
+    const sessionCalls = callService.mock.calls.filter(([service]) => service === 'session');
+    expect(sessionCalls).toEqual(username ? [
+      ['session', 'getData', { args: [username] }],
+      ['session', 'getData', { args: [username] }],
+    ] : []);
+    expect(callService).toHaveBeenLastCalledWith('dbmanager', 'setVehicleInspectionVisible', {
+      args: [7, 1, username ? 'Mario Rossi' : null, username ? '1000' : ''],
     });
   });
 
-  describe('insertVehicleInspection', () => {
-    it('resolves the pool and delegates to HqRepository.insertVehicleInspection, with username=null and codmarket="" when no event is passed', async () => {
-      insertVehicleInspection.mockResolvedValue(undefined);
-
-      await manager.insertVehicleInspection('1000', 'EXTERIOR', 'Controllo carrozzeria');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', null, '');
-    });
-
-    it('resolves username and codmarket from the session of event.requestContext.authorizer.sub', async () => {
-      insertVehicleInspection.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' });
-
-      await manager.insertVehicleInspection(
-        '1000', 'EXTERIOR', 'Controllo carrozzeria',
-        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
-      );
-
-      expect(insertVehicleInspection).toHaveBeenCalledWith(fakePool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'Mario Rossi', '1000');
+  test.each([null, {}, { firstname: 'Mario' }, { lastname: 'Rossi' }])('usa nome disponibile e default mercato', async (session) => {
+    callService.mockImplementation(async (service) => service === 'session' ? session : undefined);
+    await manager.deletetVehicleInspection(1, 1, event);
+    const name = session && [session.firstname, session.lastname].filter(Boolean).join(' ');
+    expect(callService).toHaveBeenLastCalledWith('dbmanager', 'deletetVehicleInspection', {
+      args: [1, 1, name || 'mario.rossi', ''],
     });
   });
 
-  describe('setMarketEnable', () => {
-    it('resolves the pool and delegates to HqRepository.setPkMarketEnable', async () => {
-      setPkMarketEnable.mockResolvedValue(undefined);
-
-      await manager.setMarketEnable('1000');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setPkMarketEnable).toHaveBeenCalledWith(fakePool, '1000');
+  test('errori REST di sessione sono esplicitamente loggati e best-effort', async () => {
+    callService.mockImplementation(async (service) => {
+      if (service === 'session') throw new Error('HTTP 502');
+    });
+    await manager.insertVehicleInspection('1000', 'EXTERIOR', 'Controllo', event);
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 502'));
+    expect(callService).toHaveBeenLastCalledWith('dbmanager', 'insertVehicleInspection', {
+      args: ['1000', 'EXTERIOR', 'Controllo', 'mario.rossi', ''],
     });
   });
 
-  describe('setMarketDisable', () => {
-    it('resolves the pool and delegates to HqRepository.setPkMarketDisable', async () => {
-      setPkMarketDisable.mockResolvedValue(undefined);
-
-      await manager.setMarketDisable('1000');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setPkMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
+  test('insertAudit restituisce lo username risolto', async () => {
+    callService.mockImplementation(async (service) => service === 'session'
+      ? { firstname: 'Mario', lastname: 'Rossi' } : undefined);
+    expect(await manager.insertAudit(event, 'domain', '1000', 'create', 'Nuovo dominio')).toBe('Mario Rossi');
+    expect(callService).toHaveBeenLastCalledWith('dbmanager', 'insertAudit', {
+      args: ['Mario Rossi', 'domain', '1000', 'create', 'Nuovo dominio'],
     });
   });
 
-  describe('setOicEnable', () => {
-    it('resolves the pool, delegates to HqRepository.setOicEnable and cascades a setMarketDisable', async () => {
-      setOicEnable.mockResolvedValue(undefined);
-      setPkMarketDisable.mockResolvedValue(undefined);
-
-      await manager.setOicEnable('1000', '00006821');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setOicEnable).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(setPkMarketDisable).toHaveBeenCalledWith(fakePool, '1000');
-    });
+  test('insertAudit senza identita conserva null', async () => {
+    expect(await manager.insertAudit({}, 'domain', '1000', 'create', 'Nuovo dominio')).toBeNull();
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', 'insertAudit', { args: [null, 'domain', '1000', 'create', 'Nuovo dominio'] }],
+    ]);
   });
 
-  describe('insertDomain', () => {
-    it('resolves the pool and delegates to HqRepository.insertDomain', async () => {
-      insertDomain.mockResolvedValue(42);
-
-      const result = await manager.insertDomain('1000', '00006821', 'Meccanica');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertDomain).toHaveBeenCalledWith(fakePool, '1000', '00006821', 'Meccanica');
-      expect(result).toBe(42);
-    });
+  test('setOicEnable completa abilitazione prima di disabilitare il mercato', async () => {
+    await manager.setOicEnable('1000', 'a');
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', 'setOicEnable', { args: ['1000', 'a'] }],
+      ['dbmanager', 'setPkMarketDisable', { args: ['1000'] }],
+    ]);
+    callService.mockClear().mockRejectedValue(new Error('HTTP 503'));
+    await expect(manager.setOicEnable('1000', 'a')).rejects.toThrow('HTTP 503');
+    expect(callService).toHaveBeenCalledTimes(1);
   });
 
-  describe('setDomain', () => {
-    it('resolves the pool and delegates to HqRepository.setDomain', async () => {
-      setDomain.mockResolvedValue(undefined);
-
-      await manager.setDomain('1000', 42, 'Meccanica');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setDomain).toHaveBeenCalledWith(fakePool, '1000', 42, 'Meccanica');
-    });
+  test.each([
+    [1, undefined, ['checkIsPkMarketEnabled', 'getPackageList']],
+    [0, 1, ['checkIsPkMarketEnabled', 'checkIsPkOicConfigured', 'copyDomainFromMarket', 'getPackageList']],
+    [0, 0, ['checkIsPkMarketEnabled', 'checkIsPkOicConfigured', 'getPackageList']],
+  ])('initializeOicPkList conserva decisioni e ordine (%s,%s)', async (enabled, configured, operations) => {
+    const packages = [{ market: '1000', oic: 'a' }];
+    callService.mockImplementation(async (_, operation) => ({
+      checkIsPkMarketEnabled: enabled, checkIsPkOicConfigured: configured, getPackageList: packages,
+    })[operation]);
+    expect(await manager.initializeOicPkList('1000', 'a')).toBe(packages);
+    expect(callService.mock.calls).toEqual(operations.map((operation) => [
+      'dbmanager', operation, { args: operation === 'checkIsPkMarketEnabled' ? ['1000'] : ['1000', 'a'] },
+    ]));
   });
 
-  describe('deleteDomain', () => {
-    it('resolves the pool and delegates to HqRepository.deleteDomain', async () => {
-      deleteDomain.mockResolvedValue(undefined);
-
-      await manager.deleteDomain('1000', 42);
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(deleteDomain).toHaveBeenCalledWith(fakePool, '1000', 42);
-    });
+  test.each([
+    ['setDomainVisible', 'domain', 'iddomain'],
+    ['setPackageVisible', 'package', 'idpackage'],
+  ])('%s invoca una REST per elemento', async (method, key, idKey) => {
+    await manager[method]({ [key]: [{ [idKey]: 7, value: 0 }, { [idKey]: 8, value: 1 }] });
+    expect(callService.mock.calls).toEqual([
+      ['dbmanager', method, { args: [7, 0] }],
+      ['dbmanager', method, { args: [8, 1] }],
+    ]);
   });
 
-  describe('setDomainVisible', () => {
-    it('throws when payload.domain is missing/empty', async () => {
-      await expect(manager.setDomainVisible({})).rejects.toThrow('"domain" is required');
-      await expect(manager.setDomainVisible({ domain: [] })).rejects.toThrow('"domain" is required');
-      expect(getPool).not.toHaveBeenCalled();
-    });
-
-    it('resolves the pool once and delegates to HqRepository.setDomainVisible for each element', async () => {
-      setDomainVisible.mockResolvedValue(undefined);
-
-      await manager.setDomainVisible({
-        domain: [{ iddomain: 7, value: 0 }, { iddomain: 8, value: 1 }],
-      });
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setDomainVisible).toHaveBeenCalledTimes(2);
-      expect(setDomainVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0);
-      expect(setDomainVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1);
-    });
+  test.each([
+    ['clonePk', ['2000', '1000']],
+    ['cloneVeicInspection', ['2000', null, 'EXTERIOR']],
+  ])('%s conserva ritorno void', async (method, args) => {
+    callService.mockResolvedValue({ success: true });
+    expect(await manager[method](...args)).toBeUndefined();
+    expect(callService.mock.calls).toEqual([['dbmanager', method, { args }]]);
   });
 
-  describe('insertPackage', () => {
-    it('resolves the pool and delegates to HqRepository.insertPackage', async () => {
-      insertPackage.mockResolvedValue(7);
-
-      const result = await manager.insertPackage('1000', '00006821', 42, 'Tagliando', 60, 100.5);
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertPackage).toHaveBeenCalledWith(fakePool, '1000', '00006821', 42, 'Tagliando', 60, 100.5);
-      expect(result).toBe(7);
-    });
-  });
-
-  describe('setPackage', () => {
-    it('resolves the pool and delegates to HqRepository.setPackage', async () => {
-      setPackage.mockResolvedValue(undefined);
-
-      await manager.setPackage(7, 42, 'Tagliando', 60, 100.5);
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setPackage).toHaveBeenCalledWith(fakePool, 7, 42, 'Tagliando', 60, 100.5);
-    });
-  });
-
-  describe('deletePackage', () => {
-    it('resolves the pool and delegates to HqRepository.deletePackage', async () => {
-      deletePackage.mockResolvedValue(undefined);
-
-      await manager.deletePackage(7);
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(deletePackage).toHaveBeenCalledWith(fakePool, 7);
-    });
-  });
-
-  describe('setPackageVisible', () => {
-    it('throws when payload.package is missing/empty', async () => {
-      await expect(manager.setPackageVisible({})).rejects.toThrow('"package" is required');
-      await expect(manager.setPackageVisible({ package: [] })).rejects.toThrow('"package" is required');
-      expect(getPool).not.toHaveBeenCalled();
-    });
-
-    it('resolves the pool once and delegates to HqRepository.setPackageVisible for each element', async () => {
-      setPackageVisible.mockResolvedValue(undefined);
-
-      await manager.setPackageVisible({
-        package: [{ idpackage: 7, value: 0 }, { idpackage: 8, value: 1 }],
-      });
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(setPackageVisible).toHaveBeenCalledTimes(2);
-      expect(setPackageVisible).toHaveBeenNthCalledWith(1, fakePool, 7, 0);
-      expect(setPackageVisible).toHaveBeenNthCalledWith(2, fakePool, 8, 1);
-    });
-  });
-
-  describe('getPackageList', () => {
-    it('resolves the pool and delegates to HqRepository.getPackageList', async () => {
-      const packages = [{
-        market: '1000', oic: '00006821', domainDescr: 'Meccanica', idpackage: 7, packageDescr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
-      }];
-      getPackageList.mockResolvedValue(packages);
-
-      const result = await manager.getPackageList('1000', '00006821');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(result).toBe(packages);
-    });
-  });
-
-  describe('initializeOicPkList', () => {
-    it('when the market is enabled (checkIsPkMarketEnabled = 1), returns getPackageList without copying domains', async () => {
-      checkIsPkMarketEnabled.mockResolvedValue(1);
-      const packages = [{ market: '1000', oic: '00006821' }];
-      getPackageList.mockResolvedValue(packages);
-
-      const result = await manager.initializeOicPkList('1000', '00006821');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(checkIsPkMarketEnabled).toHaveBeenCalledWith(fakePool, '1000');
-      expect(checkIsPkOicConfigured).not.toHaveBeenCalled();
-      expect(copyDomainFromMarket).not.toHaveBeenCalled();
-      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(result).toBe(packages);
-    });
-
-    it('when the market is not enabled and the oic is not configured (checkIsPkOicConfigured = 1), copies domains before returning getPackageList', async () => {
-      checkIsPkMarketEnabled.mockResolvedValue(0);
-      checkIsPkOicConfigured.mockResolvedValue(1);
-      copyDomainFromMarket.mockResolvedValue(undefined);
-      const packages = [{ market: '1000', oic: '00006821' }];
-      getPackageList.mockResolvedValue(packages);
-
-      const result = await manager.initializeOicPkList('1000', '00006821');
-
-      expect(checkIsPkMarketEnabled).toHaveBeenCalledWith(fakePool, '1000');
-      expect(checkIsPkOicConfigured).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(copyDomainFromMarket).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(result).toBe(packages);
-    });
-
-    it('when the market is not enabled but the oic is already configured (checkIsPkOicConfigured = 0), does not copy domains', async () => {
-      checkIsPkMarketEnabled.mockResolvedValue(0);
-      checkIsPkOicConfigured.mockResolvedValue(0);
-      const packages = [{ market: '1000', oic: '00006821' }];
-      getPackageList.mockResolvedValue(packages);
-
-      const result = await manager.initializeOicPkList('1000', '00006821');
-
-      expect(checkIsPkOicConfigured).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(copyDomainFromMarket).not.toHaveBeenCalled();
-      expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
-      expect(result).toBe(packages);
-    });
-  });
-
-  describe('clonePk', () => {
-    it('resolves the pool and delegates to HqRepository.clonePk', async () => {
-      clonePk.mockResolvedValue(undefined);
-
-      const result = await manager.clonePk('2000', '1000');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(clonePk).toHaveBeenCalledWith(fakePool, '2000', '1000');
-      expect(result).toBeUndefined();
-    });
-  });
-
-  describe('cloneVeicInspection', () => {
-    it('resolves the pool and delegates to HqRepository.cloneVeicInspection', async () => {
-      cloneVeicInspection.mockResolvedValue(undefined);
-
-      const result = await manager.cloneVeicInspection('2000', '1000', 'EXTERIOR');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(cloneVeicInspection).toHaveBeenCalledWith(fakePool, '2000', '1000', 'EXTERIOR');
-      expect(result).toBeUndefined();
-    });
-  });
-
-  describe('insertAudit', () => {
-    it('resolves the pool and delegates to HqRepository.insertAudit, with username "firstname lastname" resolved from the session of event.requestContext.authorizer.sub, and returns the resolved username', async () => {
-      insertAudit.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
-
-      const result = await manager.insertAudit(
-        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
-        'domain', '1000', 'create', 'Nuovo dominio',
-      );
-
-      expect(getCachedSessionData).toHaveBeenCalledWith('mario.rossi');
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'Mario Rossi', 'domain', '1000', 'create', 'Nuovo dominio');
-      expect(result).toBe('Mario Rossi');
-    });
-
-    it('falls back to the sub itself when the session has no firstname/lastname', async () => {
-      insertAudit.mockResolvedValue(undefined);
-      getCachedSessionData.mockResolvedValue(null);
-
-      const result = await manager.insertAudit(
-        { requestContext: { authorizer: { sub: 'mario.rossi' } } },
-        'domain', '1000', 'create', 'Nuovo dominio',
-      );
-
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'mario.rossi', 'domain', '1000', 'create', 'Nuovo dominio');
-      expect(result).toBe('mario.rossi');
-    });
-
-    it('uses username=null when the event has no requestContext.authorizer.sub (e.g. CLI/direct invocation)', async () => {
-      insertAudit.mockResolvedValue(undefined);
-
-      const result = await manager.insertAudit({}, 'domain', '1000', 'create', 'Nuovo dominio');
-
-      expect(getCachedSessionData).not.toHaveBeenCalled();
-      expect(insertAudit).toHaveBeenCalledWith(fakePool, null, 'domain', '1000', 'create', 'Nuovo dominio');
-      expect(result).toBeNull();
-    });
-  });
-
-  describe('searchAudit', () => {
-    it('resolves the pool and delegates to HqRepository.searchAudit, including username as an additional filter', async () => {
-      const audits = [{
-        id: 1, username: 'mario.rossi', creationdate: '2024-01-01', section: 'domain', market: '1000', actiontype: 'create', descr: 'Nuovo dominio',
-      }];
-      searchAudit.mockResolvedValue(audits);
-
-      const result = await manager.searchAudit('1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi');
-
-      expect(getPool).toHaveBeenCalledTimes(1);
-      expect(searchAudit).toHaveBeenCalledWith(fakePool, '1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi');
-      expect(result).toBe(audits);
-    });
-  });
-
-  describe('getAnagSection', () => {
-    it('delegates to HqRepository.getAnagSection without resolving a pool', async () => {
-      const sections = [{ section: 'domain' }, { section: 'conditions' }];
-      getAnagSection.mockResolvedValue(sections);
-
-      const result = await manager.getAnagSection();
-
-      expect(getPool).not.toHaveBeenCalled();
-      expect(getAnagSection).toHaveBeenCalledWith();
-      expect(result).toBe(sections);
-    });
-  });
-
-  describe('getAnagAllocation', () => {
-    it('delegates to HqRepository.getAnagAllocation without resolving a pool', async () => {
-      const allocations = [{ type: 'create' }, { type: 'update' }];
-      getAnagAllocation.mockResolvedValue(allocations);
-
-      const result = await manager.getAnagAllocation();
-
-      expect(getPool).not.toHaveBeenCalled();
-      expect(getAnagAllocation).toHaveBeenCalledWith();
-      expect(result).toBe(allocations);
-    });
+  test.each([
+    ['setEnablingConfiguration', undefined], ['setEnablingConfiguration', []],
+    ['setDomainVisible', undefined], ['setDomainVisible', {}], ['setDomainVisible', { domain: [] }],
+    ['setPackageVisible', undefined], ['setPackageVisible', {}], ['setPackageVisible', { package: [] }],
+    ['setVehicleInspectionVisible', undefined], ['setVehicleInspectionVisible', {}],
+  ])('%s valida prima di usare REST', async (method, payload) => {
+    await expect(manager[method](payload)).rejects.toThrow();
+    expect(callService).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,26 @@ permissions:
   contents: read
 
 jobs:
+  test-serviceClient:
+    name: serviceClient
+    runs-on: linux-m-x86
+    defaults:
+      run:
+        working-directory: serviceClient
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: serviceClient/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (>=90%)
+        run: npm run test:coverage
+
   test-agendaSoa:
     name: agendaSoa
     runs-on: linux-m-x86
@@ -4642,10 +4662,12 @@ jobs:
 
   deploy-dev:
     name: Deploy to AWS (SAM) — dev
+    environment: dev
     concurrency:
       group: deploy-stla-woc-backend-dev
       cancel-in-progress: false
     needs:
+      - test-serviceClient
       - test-agendaSoa
       - test-agendaSoaNaga
       - test-dms
@@ -4708,7 +4730,12 @@ jobs:
           fi
 
       - name: SAM Build
-        run: sam build --parallel
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_READY: ${{ vars.WOC_INTERNAL_API_READY }}
+        run: |
+          test -n "$WOC_INTERNAL_API_ID" && test "$WOC_INTERNAL_API_READY" = true || { echo "Configurare WOC_INTERNAL_API_ID e WOC_INTERNAL_API_READY=true dopo rotte/policy IAM e deployment dello stage"; exit 1; }
+          sam build --parallel
 
       - name: Free disk space (pre-deploy)
         run: |
@@ -4727,6 +4754,8 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=dev \
+              InternalApiId="${{ vars.WOC_INTERNAL_API_ID }}" \
+              InternalApiStage="${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}" \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
               ServiceUrlsSecretId="sm-np-bsn0027990-dev-service-urls" \
@@ -4771,6 +4800,7 @@ jobs:
       group: deploy-stla-woc-backend-stage
       cancel-in-progress: false
     needs:
+      - test-serviceClient
       - test-agendaSoa
       - test-agendaSoaNaga
       - test-dms
@@ -4833,7 +4863,12 @@ jobs:
           fi
 
       - name: SAM Build
-        run: sam build --parallel
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_READY: ${{ vars.WOC_INTERNAL_API_READY }}
+        run: |
+          test -n "$WOC_INTERNAL_API_ID" && test "$WOC_INTERNAL_API_READY" = true || { echo "Configurare WOC_INTERNAL_API_ID e WOC_INTERNAL_API_READY=true dopo rotte/policy IAM e deployment dello stage"; exit 1; }
+          sam build --parallel
 
       - name: Free disk space (pre-deploy)
         run: |
@@ -4852,6 +4887,8 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=stage \
+              InternalApiId="${{ vars.WOC_INTERNAL_API_ID }}" \
+              InternalApiStage="${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}" \
               VpcSubnetIds="${{ secrets.STAGE_VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.STAGE_VPC_SECURITY_GROUP_IDS }}" \
               ServiceUrlsSecretId="sm-np-bsn0027990-stage-service-urls" \
@@ -4897,6 +4934,7 @@ jobs:
       group: deploy-stla-woc-backend-prod
       cancel-in-progress: false
     needs:
+      - test-serviceClient
       - test-agendaSoa
       - test-agendaSoaNaga
       - test-dms
@@ -4960,7 +4998,12 @@ jobs:
           fi
 
       - name: SAM Build
-        run: sam build --parallel
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_READY: ${{ vars.WOC_INTERNAL_API_READY }}
+        run: |
+          test -n "$WOC_INTERNAL_API_ID" && test "$WOC_INTERNAL_API_READY" = true || { echo "Configurare WOC_INTERNAL_API_ID e WOC_INTERNAL_API_READY=true dopo rotte/policy IAM e deployment dello stage"; exit 1; }
+          sam build --parallel
 
       - name: Free disk space (pre-deploy)
         run: |
@@ -4979,6 +5022,8 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=prod \
+              InternalApiId="${{ vars.WOC_INTERNAL_API_ID }}" \
+              InternalApiStage="${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}" \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
               ServiceUrlsSecretId="sm-np-bsn0027990-prod-service-urls" \

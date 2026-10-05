@@ -77,7 +77,7 @@ const path = require('path');
 
 const { getBearerToken } = require('./authService');
 const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getDataFromDMLFromTmp } = require('./jobCardService');
-const { getCachedSessionData } = require('../session/src/sessionContextCache');
+const { callService, isInternalRequest } = require('../serviceClient');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -95,9 +95,8 @@ const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml'];
  * identità risolta (v. buildDmsSender).
  */
 function resolveUsername(event, body) {
-  const authz = (event && event.requestContext && event.requestContext.authorizer) || null;
-  if (authz) {
-    return authz.sub || null;
+  if (event?.requestContext && Object.prototype.hasOwnProperty.call(event.requestContext, 'authorizer')) {
+    return event.requestContext.authorizer?.sub || null;
   }
   return body.username || null;
 }
@@ -255,33 +254,24 @@ function resolveReceptionDelivery(payload, appointment) {
 }
 
 /**
- * Risolve in un'unica chiamata i dati usati sia da buildCreateNagaPayload sia
- * da buildUpdateNagaPayload: i dati di sessione (myPeople, via
- * session/src/sessionContextCache.js::getCachedSessionData, cache condivisa
- * DynamoDB TmpCacheTable, chiave `session:context:<username>` — STESSO
- * meccanismo già usato da jobCardService.js::buildDmsSender per il Sender
- * dinamico dell'inquiry DMS) e il VIN (da
- * payload.vehicleInfo.identification.vin, stesso payload di saveJobcard).
- * Calcolato una sola volta per saveJobcard (non per singolo appuntamento),
- * cosi' una eventuale sequenza createnaga+updatenaga sullo stesso
- * appuntamento non richiama due volte myPeople.
- *
- * NON viene più letto un file /tmp/session.json o /tmp/VIN.json: quei file
- * non sono mai stati scritti da nessun modulo del progetto e, anche se lo
- * fossero stati, /tmp è locale all'istanza del singolo container Lambda e
- * non è mai condiviso tra funzioni diverse (v. commento in
- * session/src/dynamoCache.js).
- *
- * Interamente best-effort: se `username` è assente o myPeople non è
- * raggiungibile, getCachedSessionData ritorna null e session vale {} — i soli
- * campi da essa derivati restano null nei payload create/updatenaga.
+ * Risolve una sola volta per saveJobcard la sessione tramite REST privato
+ * (session/getData) e il VIN dal payload. La cache resta responsabilità del
+ * servizio session. Se manca username o il trasporto fallisce, usa {} e
+ * registra esplicitamente l'errore senza bloccare la sincronizzazione NAGA.
  *
  * @param {object} payload - payload di saveJobcard (jobCardPayload)
  * @param {string|null} [username] - username autenticato (authorizer.sub)
  * @returns {Promise<{ session: object, vin: string|null }>}
  */
 async function resolveNagaContext(payload, username) {
-  const session = (await getCachedSessionData(username)) ?? {};
+  let session = {};
+  if (username) {
+    try {
+      session = (await callService('session', 'getData', { args: [username] })) ?? {};
+    } catch (err) {
+      console.warn('[jobCard] session getData non disponibile:', err.message ?? err);
+    }
+  }
   const vin = payload?.vehicleInfo?.identification?.vin ?? null;
   return { session, vin };
 }
@@ -391,31 +381,17 @@ function buildUpdateNagaPayload(payload, appointment, { session, vin }) {
 }
 
 /**
- * Estrae l'appointmentInternalId dalla risposta Lambda (già in formato HTTP
- * response, v. agendaSoaNaga/src/handlers/createnaga.js::response) dell'azione
- * "createnaga": il body è una stringa JSON `{ success, data }`, dove `data` è
- * la risposta grezza del servizio NAGA — es.
- * `{ isValid, rdvId, smsConsent, panierURL, errorMessage, dossierId, ... }` —
- * e il campo da usare come appointmentInternalId è `rdvId`. Cerca il campo sia
- * annidato in `data` sia (fallback) alla radice, per tollerare piccole
- * differenze di forma della risposta upstream. Ritorna null (invece di
- * sollevare un'eccezione) se il body manca/non è parsabile o il campo non è
- * presente — coerente con l'approccio best-effort del resto di questa
- * sincronizzazione.
+ * Estrae rdvId dal risultato di dominio createnaga, già separato dal wrapper
+ * HTTP dal client REST. Mantiene il fallback alla radice e ritorna null se
+ * il campo manca, coerentemente con la sincronizzazione best-effort.
  */
-function extractAppointmentInternalId(lambdaResult) {
-  try {
-    const parsedBody = JSON.parse(lambdaResult?.body ?? '{}');
-    return parsedBody?.data?.rdvId ?? parsedBody?.rdvId ?? null;
-  } catch (_) {
-    return null;
-  }
+function extractAppointmentInternalId(result) {
+  return result?.data?.rdvId ?? result?.rdvId ?? null;
 }
 
 /**
- * Per ciascun elemento di payload.appointments[], richiama in-process le
- * azioni "createnaga"/"updatenaga" della lambda agendaSoaNaga (stesso pattern
- * di require cross-cartella già usato da pkManager/PkManager.js) per
+ * Per ciascun elemento di payload.appointments[], richiama via REST privato le
+ * azioni "createnaga"/"updatenaga" del servizio agendaSoaNaga per
  * sincronizzare l'appuntamento NAGA dopo un saveJobcard riuscito:
  *  - se appointmentInternalId è assente/vuoto (null o ""), crea prima un nuovo
  *    appuntamento NAGA (azione "createnaga", v. buildCreateNagaPayload): solo
@@ -443,16 +419,12 @@ async function syncAppointmentsToNaga(payload, username) {
 
   for (const appointment of appointments) {
     try {
-      const agendaSoaNaga = require('../agendaSoaNaga/index');
       let apptId = appointment?.appointmentInternalId || null;
 
       if (!apptId) {
         const createPayload = buildCreateNagaPayload(payload, appointment, context);
-        const createResult = await agendaSoaNaga.handler({
-          action: 'createnaga',
-          body: JSON.stringify(createPayload),
-        });
-        console.log('[jobCard] agendaSoaNaga createnaga result:', createResult?.statusCode);
+        const createResult = await callService('agendasoanaga', 'createnaga', createPayload);
+        console.log('[jobCard] agendaSoaNaga createnaga result:', createResult);
 
         apptId = extractAppointmentInternalId(createResult);
         if (!apptId) {
@@ -468,12 +440,8 @@ async function syncAppointmentsToNaga(payload, username) {
       }
 
       const nagaPayload = buildUpdateNagaPayload(payload, { ...appointment, appointmentInternalId: apptId }, context);
-      const result = await agendaSoaNaga.handler({
-        action: 'updatenaga',
-        pathParameters: { apptId: String(apptId) },
-        body: JSON.stringify(nagaPayload),
-      });
-      console.log('[jobCard] agendaSoaNaga updatenaga result:', result?.statusCode);
+      const result = await callService('agendasoanaga', 'updatenaga', nagaPayload);
+      console.log('[jobCard] agendaSoaNaga updatenaga result:', result);
     } catch (err) {
       console.error('[jobCard] agendaSoaNaga sync error:', err.message ?? err);
     }
@@ -528,6 +496,7 @@ function resolveActionAndBody(event) {
 }
 
 exports.handler = async (event) => {
+  if (isInternalRequest(event)) return require('./internal').handler(event);
   const { action, body } = resolveActionAndBody(event);
 
   if (!action || !VALID_ACTIONS.includes(action)) {
@@ -544,11 +513,9 @@ exports.handler = async (event) => {
   try {
     let result;
     if (action === 'dml') {
-      // Legge /tmp/<jobCardId>.json salvato da una precedente "details" e
-      // chiama il gateway DML (jobCardService.getDataFromDMLFromTmp gestisce
-      // internamente il proprio token verso dms/authService). Se il file
-      // manca, getDataFromDMLFromTmp richiama DGT (getJobCardDetails) per
-      // rigenerarlo, recuperando un bearerToken PingFederate solo in quel caso.
+      // Legge il dettaglio dalla cache DynamoDB e chiama il servizio REST dms,
+      // proprietario del token upstream. Se manca il dettaglio, richiama DGT
+      // (getJobCardDetails) per rigenerarlo con un bearerToken locale.
       result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id, undefined, resolveSessionContext(event, body));
     } else {
       if (action === 'saveJobcard') {

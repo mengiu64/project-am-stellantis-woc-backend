@@ -1,6 +1,6 @@
 'use strict';
 
-const path = require('path');
+const { callService } = require('../serviceClient');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
@@ -547,8 +547,8 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * disposizione il jobCardDetail appena recuperato/sanificato (da cui si
  * legge il VIN). Il **frontend non passa (e non deve passare) mainSincom/
  * market/brand/lingua/country**: se `sessionContext` non li contiene già,
- * vengono risolti automaticamente da `dms/dmsService.js
- * ::resolveDynamicSenderFields({ username, vin })` — STESSO meccanismo
+ * vengono risolti automaticamente da `callService('dms', 'resolveSender',
+ * { context: { username, vin }, overrides })` — STESSO meccanismo
  * centralizzato usato anche da pkFavorite/index.js::buildDmsSender e
  * pkManager/PkManager.js::_buildDmsSender, cosicché tutti i chiamanti
  * dell'inquiry DMS risolvano il Sender dinamico con gli identici criteri:
@@ -599,7 +599,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da jobCardDetail.roInfo.stellantisBrand, o (ultimo fallback) da v360 getdetails.data.brandCode per il VIN
  * @param {string} [sessionContext.language]         - override esplicito (opzionale); se assente, risolto da session.language
  * @param {string} [sessionContext.dealerCountryCode] - override esplicito (opzionale); se assente, risolto da session.marketIso
- * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
+ * @returns {Promise<object>} sender override per l'inquiry REST dms
  */
 async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   const { username } = sessionContext;
@@ -619,11 +619,13 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
     overrides.brand = stellantisBrand;
   }
 
-  const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
-  const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
-    { username, vin },
-    overrides,
-  );
+  let resolved = overrides;
+  try {
+    resolved = await callService('dms', 'resolveSender', { context: { username, vin }, overrides });
+  } catch (err) {
+    console.warn('[jobCard] DMS resolveSender non disponibile, uso gli override:', err.message ?? err);
+  }
+  const { mainSincom, market, brand, language, dealerCountryCode } = resolved;
 
   const sender = {};
   if (mainSincom) sender.dealerNumberId = mainSincom;
@@ -644,7 +646,7 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
 }
 
 /**
- * Interroga il gateway DML (dms/dmsService.js::postDmsInquiry, MessageType=WL)
+ * Interroga il servizio REST privato dms (inquiry, MessageType=WL)
  * per prezzo/disponibilita di ricambi e manodopera del jobCardDetail appena
  * recuperato/sanificato, sullo stesso modello di
  * pkManager/PkManager.js::getPriceAndAvailability(). A differenza di
@@ -660,12 +662,9 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
  *                                 jobs[].partInfo[]/laborInfo[]
  * @param {object} [sessionContext] - dati di sessione gia' disponibili al chiamante,
  *                                 usati per costruire un Sender dinamico — v. buildDmsSender()
- * @returns {Promise<object>} risposta di postDmsInquiry (InquiryResponse)
+ * @returns {Promise<object>} risultato di dominio InquiryResponse
  */
 async function getCartPriceAndAvailability(jobCardDetail, sessionContext = {}) {
-  const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
-  const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
-
   const documentId = jobCardDetail?.roInfo?.jobCardSrpId ?? null;
   const vehicleId = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
 
@@ -708,8 +707,7 @@ async function getCartPriceAndAvailability(jobCardDetail, sessionContext = {}) {
     sender: await buildDmsSender(jobCardDetail, sessionContext),
   };
 
-  const token = await getBearerToken();
-  return postDmsInquiry(token, body);
+  return callService('dms', 'inquiry', body);
 }
 
 /**

@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('./repositoryFactory');
 const { resolveHqMarketsList } = require('./hqMarketsResolver');
+const { isInternalRequest } = require('../../serviceClient');
 
 const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
 
@@ -26,6 +27,8 @@ const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
  * @returns {Promise<object>} { statusCode, body }
  */
 async function handler(event = {}) {
+  if (isInternalRequest(event)) return require('../internal').handler(event);
+
   const { sub, roles, profile } = getAuthContext(event);
 
   if (!sub) {

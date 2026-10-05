@@ -49,6 +49,7 @@ function response(statusCode, payload) {
 }
 
 exports.handler = async (event = {}) => {
+  if (require('../serviceClient').isInternalRequest(event)) return require('./internal').handler(event);
   // Supporta sia l'invocazione diretta { action, body } sia un evento API
   // Gateway (query string + body JSON), come gli altri moduli del repo.
   const body = event.action

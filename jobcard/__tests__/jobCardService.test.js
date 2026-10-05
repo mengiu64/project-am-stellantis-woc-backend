@@ -23,14 +23,14 @@ jest.mock('../dynamoCache', () => ({
   setCacheItem: jest.fn((key, value) => Promise.resolve(value)),
 }));
 jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
 
 const { httpsRequest } = require('../httpClient');
 const { getCacheItem, setCacheItem } = require('../dynamoCache');
 const { getBearerToken: getDgtBearerToken } = require('../authService');
-const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
+const { callService } = require('../../serviceClient');
+const postDmsInquiry = jest.fn();
+const resolveDynamicSenderFields = jest.fn();
 const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
 
 describe('jobCardService', () => {
@@ -38,7 +38,12 @@ describe('jobCardService', () => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    getBearerToken.mockResolvedValue('DML-TOKEN');
+    callService.mockImplementation((service, operation, payload) => {
+      if (service !== 'dms') throw new Error(`Unexpected service: ${service}`);
+      if (operation === 'resolveSender') return resolveDynamicSenderFields(payload.context, payload.overrides);
+      if (operation === 'inquiry') return postDmsInquiry(payload);
+      throw new Error(`Unexpected operation: ${operation}`);
+    });
     getDgtBearerToken.mockResolvedValue('DGT-TOKEN');
     postDmsInquiry.mockResolvedValue({ success: true });
     // Di default si comporta come il vero dms/dmsService.js
@@ -290,7 +295,7 @@ describe('jobCardService', () => {
     const sessionContext = { username: 'mario.rossi', mainSincom: '0062219' };
     const result = await getJobCardDetails('token', '79', sessionContext);
 
-    expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
       PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-79', VehicleID: 'VIN79' }),
     }));
     expect(setCacheItem).toHaveBeenCalledTimes(1);
@@ -1024,9 +1029,9 @@ describe('jobCardService', () => {
 
       const result = await getCartPriceAndAvailability(jobCardDetail);
 
-      expect(getBearerToken).toHaveBeenCalled();
+      expect(callService).toHaveBeenCalledWith('dms', 'resolveSender', expect.any(Object));
       expect(result).toEqual({ success: true });
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', {
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', {
         PartsInquiryHeader: {
           DocumentID: 'JCID-84226',
           CustomerIdDms: null,
@@ -1055,7 +1060,7 @@ describe('jobCardService', () => {
     test('handles missing roInfo/vehicleInfo/jobs by sending null/empty values', async () => {
       await getCartPriceAndAvailability({});
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', {
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', {
         PartsInquiryHeader: {
           DocumentID: null,
           CustomerIdDms: null,
@@ -1084,7 +1089,7 @@ describe('jobCardService', () => {
 
       await getDataFromDML(jobCardDetail);
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
     });
@@ -1102,6 +1107,32 @@ describe('jobCardService', () => {
   // lookup lato dms, non un campo Sender).
 
   describe('buildDmsSender', () => {
+    test('calls private REST with context and overrides, without a consumer DMS token', async () => {
+      await buildDmsSender(
+        { vehicleInfo: { identification: { vin: 'VIN' } }, roInfo: { stellantisBrand: 'OV' } },
+        { username: 'trusted', mainSincom: '123' },
+      );
+      expect(callService).toHaveBeenCalledWith('dms', 'resolveSender', {
+        context: { username: 'trusted', vin: 'VIN' },
+        overrides: { username: 'trusted', mainSincom: '123', brand: 'OV' },
+      });
+      expect(getDgtBearerToken).not.toHaveBeenCalled();
+    });
+
+    test.each(['Private REST timeout', 'Private REST HTTP 503'])('keeps explicit sender overrides and logs %s', async (message) => {
+      resolveDynamicSenderFields.mockRejectedValueOnce(new Error(message));
+      await expect(buildDmsSender({}, { username: 'trusted', mainSincom: '123' })).resolves.toEqual({
+        serviceId: 'trusted', dealerNumberId: '123',
+      });
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('resolveSender'), message);
+    });
+
+    test.each(['Private REST timeout', 'Private REST HTTP 502'])('propagates inquiry %s to the existing enrichment boundary', async (message) => {
+      postDmsInquiry.mockRejectedValueOnce(new Error(message));
+      await expect(getCartPriceAndAvailability({})).rejects.toThrow(message);
+      expect(getDgtBearerToken).not.toHaveBeenCalled();
+    });
+
     test('returns {} when resolveDynamicSenderFields resolves nothing', async () => {
       const result = await buildDmsSender({});
 
@@ -2106,7 +2137,7 @@ describe('jobCardService', () => {
       const result = await getDataFromDMLFromTmp('79');
 
       expect(getCacheItem).toHaveBeenCalledWith('jobcard:jobcarddetails:79');
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
       expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
@@ -2128,7 +2159,7 @@ describe('jobCardService', () => {
 
       const result = await getDataFromDMLFromTmp('80');
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-2', VehicleID: 'VIN2' }),
       }));
       expect(result).toEqual({ dmsAvailable: true, ...jobCardDetail });

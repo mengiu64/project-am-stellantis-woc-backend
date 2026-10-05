@@ -27,6 +27,7 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
+      "internal.js",
       "DocSOARestClient.js",
       "certService.js",
       "db.js",

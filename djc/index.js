@@ -27,6 +27,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { DjcManager } = require('./DjcManager');
+const { callService } = require('../serviceClient');
 // authService/jobCardService (client PingFederate/DGT condiviso con jobcard)
 // vengono richiesti solo dai rami "saveJobcard" (require lazy più sotto): le
 // altre azioni (SaveRoInfo, ecc.) non chiamano la DGT e non devono richiedere
@@ -157,9 +158,8 @@ function buildUpdateNagaPayload(payload, appointment) {
 
 /**
  * Se payload.appointments[] contiene un elemento con appointmentInternalId
- * valorizzato, richiama in-process l'azione "updatenaga" della lambda
- * agendaSoaNaga (stesso pattern di require cross-cartella già usato da
- * pkManager/PkManager.js) per sincronizzare l'appuntamento NAGA dopo un
+ * valorizzato, richiama via REST privato l'azione "updatenaga" del servizio
+ * agendaSoaNaga per sincronizzare l'appuntamento NAGA dopo un
  * saveJobcard riuscito. Best-effort: eventuali errori vengono loggati ma non
  * fanno fallire la risposta di saveJobcard (già persistita con successo sulla DGT).
  */
@@ -170,14 +170,9 @@ async function syncAppointmentsToNaga(payload) {
     if (!appointment?.appointmentInternalId) continue;
 
     try {
-      const agendaSoaNaga = require('../agendaSoaNaga/index');
       const nagaPayload = buildUpdateNagaPayload(payload, appointment);
-      const result = await agendaSoaNaga.handler({
-        action: 'updatenaga',
-        pathParameters: { apptId: String(appointment.appointmentInternalId) },
-        body: JSON.stringify(nagaPayload),
-      });
-      console.log('[djc] agendaSoaNaga updatenaga result:', result?.statusCode);
+      const result = await callService('agendasoanaga', 'updatenaga', nagaPayload);
+      console.log('[djc] agendaSoaNaga updatenaga result:', result);
     } catch (err) {
       console.error('[djc] agendaSoaNaga updatenaga error:', err.message ?? err);
     }

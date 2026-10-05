@@ -15,9 +15,9 @@
  *      "session" al primo cache-miss): per ciascuna combinazione chiama
  *      dms/getDmsSettings e upserta il risultato in woc.dms_settings.
  *
- * Entrambe condividono lo stesso bearer token/credenziali IBM (dms/authService),
- * recuperato una sola volta per esecuzione. La lambda "session" legge entrambe
- * le cache invece di chiamare i tre servizi DML ad ogni richiesta.
+ * Le chiamate a dms sono REST IAM; token e credenziali IBM restano nella
+ * Lambda dms. Session legge entrambe le cache tramite le rotte REST interne
+ * di questo servizio, invece di chiamare i tre servizi DML ad ogni richiesta.
  *
  * Ogni mercato/dealer viene processato in isolamento (Promise.allSettled): un
  * elemento che fallisce (rete, credenziali, DB) non deve bloccare la sync
@@ -27,62 +27,20 @@
  *   node index.js sync
  */
 
-const path = require('path');
+const { callService, isInternalRequest } = require('../serviceClient');
 const { getPool } = require('./db');
 const { listEnabledMarkets, upsertDmlConfiguration } = require('./DmlConfigRepository');
 const { listEnabledDealers, upsertDmsSettings } = require('./DmsSettingsRepository');
 
-// Cross-lambda-folder require, stesso pattern già usato da pkManager/PkManager.js
-// e session/src/repositories/myPeopleDmsSessionRepository.js (require(path.resolve(
-// __dirname, '../dms/...'))): il build di DmlConfigSyncFunction (Metadata:
-// BuildMethod: makefile, vedi Makefile) impacchetta dms/ come cartella sorella di
-// dmlConfigSync/ dentro l'artifact di deploy, cosi' questi require relativi
-// continuano a risolvere correttamente anche a runtime in Lambda. Caricati "on
-// demand" (lazy) invece che in cima al file: dms/config.js valida le proprie
-// variabili d'ambiente non appena richiesto, e nei test unitari questo modulo
-// viene eseguito con le funzioni già iniettate (vedi runSync).
-let _getBearerToken;
-let _getCompanyTypes;
-let _getCustomerTitles;
-let _getDmsSettings;
-
-function loadGetBearerToken() {
-  if (!_getBearerToken) {
-    ({ getBearerToken: _getBearerToken } = require(path.resolve(__dirname, '../dms/authService')));
-  }
-  return _getBearerToken;
-}
-
-function loadGetCompanyTypes() {
-  if (!_getCompanyTypes) {
-    ({ getCompanyTypes: _getCompanyTypes } = require(path.resolve(__dirname, '../dms/dmsService')));
-  }
-  return _getCompanyTypes;
-}
-
-function loadGetCustomerTitles() {
-  if (!_getCustomerTitles) {
-    ({ getCustomerTitles: _getCustomerTitles } = require(path.resolve(__dirname, '../dms/dmsService')));
-  }
-  return _getCustomerTitles;
-}
-
-function loadGetDmsSettings() {
-  if (!_getDmsSettings) {
-    ({ getDmsSettings: _getDmsSettings } = require(path.resolve(__dirname, '../dms/dmsService')));
-  }
-  return _getDmsSettings;
-}
-
 /**
  * Sincronizza un singolo mercato: chiama company-types + customer-titles
- * (in parallelo, stesso bearer token) e upserta il risultato.
+ * (in parallelo, REST IAM) e upserta il risultato.
  * @returns {Promise<{country: string, language: string, success: true}>}
  */
-async function syncMarket(pool, token, { country, language }, { getCompanyTypesFn, getCustomerTitlesFn, upsertFn }) {
+async function syncMarket(pool, { country, language }, { getCompanyTypesFn, getCustomerTitlesFn, upsertFn }) {
   const [companyTypesResponse, customerTitlesResponse] = await Promise.all([
-    getCompanyTypesFn(token, { country, language }),
-    getCustomerTitlesFn(token, { country, language }),
+    getCompanyTypesFn({ country, language }),
+    getCustomerTitlesFn({ country, language }),
   ]);
 
   await upsertFn(pool, {
@@ -101,12 +59,12 @@ async function syncMarket(pool, token, { country, language }, { getCompanyTypesF
 
 /**
  * Sincronizza una singola combinazione country+brand+dealer: chiama
- * dms/settings (stesso bearer token dei mercati) e upserta il risultato in
+ * dms/settings via REST IAM e upserta il risultato in
  * woc.dms_settings.
  * @returns {Promise<{country: string, brand: string, dealer: string, success: true}>}
  */
-async function syncDealer(pool, token, { country, brand, dealer }, { getDmsSettingsFn, upsertDmsSettingsFn }) {
-  const settings = await getDmsSettingsFn(token, { country, brand, dealer });
+async function syncDealer(pool, { country, brand, dealer }, { getDmsSettingsFn, upsertDmsSettingsFn }) {
+  const settings = await getDmsSettingsFn({ country, brand, dealer });
 
   await upsertDmsSettingsFn(pool, { country, brand, dealer, settings });
 
@@ -130,10 +88,9 @@ async function runSync({
   getPoolFn = getPool,
   listEnabledMarketsFn = listEnabledMarkets,
   listEnabledDealersFn = listEnabledDealers,
-  getBearerTokenFn,
-  getCompanyTypesFn,
-  getCustomerTitlesFn,
-  getDmsSettingsFn,
+  getCompanyTypesFn = (params) => callService('dms', 'company-types', params),
+  getCustomerTitlesFn = (params) => callService('dms', 'customer-titles', params),
+  getDmsSettingsFn = (params) => callService('dms', 'settings', params),
   upsertFn = upsertDmlConfiguration,
   upsertDmsSettingsFn = upsertDmsSettings,
 } = {}) {
@@ -148,28 +105,12 @@ async function runSync({
     return { success: true, results: [], dealerResults: [] };
   }
 
-  // Nota: i loader lazy (dms/authService, dms/dmsService) vengono risolti solo
-  // qui sotto, uno alla volta e solo se effettivamente necessari — se getBearerToken
-  // fallisce, i restanti loader non vengono mai chiamati (evita require
-  // cross-folder inutili, es. nei test che sostituiscono solo getBearerTokenFn).
-  const getBearerToken = getBearerTokenFn || loadGetBearerToken();
-
-  let token;
-  try {
-    token = await getBearerToken();
-  } catch (err) {
-    throw new Error(`[dmlConfigSync] getBearerToken failed: ${err.message}`);
-  }
-
   let results = [];
   if (markets.length > 0) {
-    const getCompanyTypes = getCompanyTypesFn || loadGetCompanyTypes();
-    const getCustomerTitles = getCustomerTitlesFn || loadGetCustomerTitles();
-
     const outcomes = await Promise.allSettled(
-      markets.map((market) => syncMarket(pool, token, market, {
-        getCompanyTypesFn: getCompanyTypes,
-        getCustomerTitlesFn: getCustomerTitles,
+      markets.map((market) => syncMarket(pool, market, {
+        getCompanyTypesFn,
+        getCustomerTitlesFn,
         upsertFn,
       })),
     );
@@ -186,11 +127,9 @@ async function runSync({
 
   let dealerResults = [];
   if (dealers.length > 0) {
-    const getDmsSettings = getDmsSettingsFn || loadGetDmsSettings();
-
     const dealerOutcomes = await Promise.allSettled(
-      dealers.map((dealerEntry) => syncDealer(pool, token, dealerEntry, {
-        getDmsSettingsFn: getDmsSettings,
+      dealers.map((dealerEntry) => syncDealer(pool, dealerEntry, {
+        getDmsSettingsFn,
         upsertDmsSettingsFn,
       })),
     );
@@ -209,7 +148,8 @@ async function runSync({
   return { success, results, dealerResults };
 }
 
-exports.handler = async () => {
+exports.handler = async (event = {}) => {
+  if (isInternalRequest(event)) return require('./internal').handler(event);
   const summary = await runSync();
   console.log('[dmlConfigSync] risultato sync:', JSON.stringify(summary));
   return summary;

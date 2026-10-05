@@ -24,6 +24,7 @@
       "**/__tests__/**/*.test.js"
     ],
     "collectCoverageFrom": [
+      "internal.js",
       "certService.js",
       "httpClient.js",
       "myPeopleService.js"

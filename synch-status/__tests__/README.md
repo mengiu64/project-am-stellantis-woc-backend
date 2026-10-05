@@ -10,6 +10,21 @@ Lambda `synch-status` riceve **SOLTANTO 4 eventi specifici** da DJC e li registr
 - La lambda assume che il token ricevuto sia SEMPRE valido
 - Il codice si concentra SOLO su validazione payload e registrazione dati in Aurora
 
+### Aggiornamento businessreason via REST privato
+
+`jobcardSyncActivity.js` usa `../serviceClient` con autenticazione **AWS_IAM /
+SigV4**: `callService('jobcard', 'getJobCardDetails', { args: [jobCardId] })`.
+Configurare `WOC_INTERNAL_API_URL` e `WOC_INTERNAL_TIMEOUT_MS=25000` come in
+`../.env.example`; non servono credenziali PingFederate/DGT di jobcard.
+Non importa più `jobcard/authService` né `jobcard/jobCardService` e non recupera
+token upstream nel consumer. La firma locale nel servizio proprietario rimane
+`getJobCardDetails(bearerToken, jobCardId, sessionContext)`; il ricevente gestisce
+token e cache e restituisce l'esatto risultato di dominio, senza wrapper HTTP.
+La composizione di `businessreason` e la risposta pubblica restano invariate.
+Timeout/errori non-2xx sono esplicitamente loggati: l'aggiornamento
+`techreason/ack` già eseguito resta valido e `businessreason` non viene scritto.
+I test sostituiscono il client REST e verificano payload, timeout e HTTP 500.
+
 ### I 4 Eventi Supportati:
 1. **DMS_PUSH_SUCCESS_WITHOUT_UPDATE** → Status DB: `SUCCESS_WITHOUT_UPDATE` (nessun errore)
 2. **DMS_PUSH_SUCCESS_WITH_UPDATE** → Status DB: `SUCCESS_WITH_UPDATE` (nessun errore)

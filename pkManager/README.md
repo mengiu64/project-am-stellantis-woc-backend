@@ -12,17 +12,51 @@ pkManager/
 ├── __tests__/
 │   └── PkManager.test.js ← test automatici (Jest)
 ├── package.json
-└── .env              ← credenziali WS (non committare)
+└── .env              ← configurazione locale (non committare)
 ```
 
-Carica automaticamente i `.env` dei moduli fratello (`pkEper`, `pkDocsoa`, `pkMenupricing`) senza sovrascrivere variabili già definite.
+Carica solo il proprio `.env`. Non importa codice né carica `.env` di altre
+Lambda: tutte le integrazioni passano tramite `../serviceClient`, libreria
+condivisa inclusa dal packaging (senza sorgenti delle Lambda sorelle).
+
+## Integrazioni REST private
+
+Le chiamate sono `POST /internal/<service>/<operation>` firmate IAM SigV4.
+Configurare `WOC_INTERNAL_API_URL` (base HTTPS), `AWS_REGION` (oppure
+`AWS_DEFAULT_REGION`) e, facoltativamente, `WOC_INTERNAL_TIMEOUT_MS`
+(default 25000 ms). Le credenziali AWS provengono dalla provider chain/ruolo
+Lambda; il ruolo deve avere `execute-api:Invoke` sulle sole rotte necessarie
+e accesso di rete all'API privata.
+
+| Servizio | Operazioni | Payload |
+|----------|------------|---------|
+| `dbmanager` | `getConfigPackages`, `getPkwstouse` | `{ args: [{ pkwstouse }] }`, `{ args: [{ codmarket, codbrand }] }` |
+| `dms` | `resolveSender`, `inquiry` | `{ context: { username, vin }, overrides }`, corpo domain dell'inquiry |
+| `pkeper` | `getCompletePkEperList`, `getPackageDetailsPR` | `{ params, config: { coddealer, codmarket } }` |
+| `pkdocsoa` | `getCompletePkSOAList`, `ibxDetailForfaitService`, `ibxDetailtpService` | `{ params, config: {} }` |
+| `pkmenupricing` | `getCompletePkMpList`, `getJobDetails` | `{ params, config: {} }` |
+
+I parametri dei metodi sono invariati. Il client rimuove soltanto l'envelope
+REST esterno `{ data }`: le risposte originali dei receiver (anche
+`{ success, data, message }`) vengono interpretate qui come prima.
+Token PingFederate e credenziali upstream restano esclusivamente nei receiver.
+Non servono credenziali DB o upstream dei servizi remoti in questa Lambda.
+
+Gli errori di trasporto/non-2xx si propagano; un errore di dettaglio resta
+`{ error, category }` per il singolo pacchetto. `getPkList` conserva i pacchetti
+se DMS fallisce e valorizza `dmlWarning`. La concorrenza dei dettagli è
+controllata da `PK_DETAIL_FETCH_CONCURRENCY` (default 1).
+
+Per il Sender, se l'evento ha un authorizer si usa solo `authorizer.sub`;
+se manca `sub`, non si usa mai `body.username`. Il fallback al body è
+ammesso esclusivamente senza authorizer (invocazione diretta/CLI).
 
 ## Setup
 
 ```bash
 cd pkManager
 cp .env.example .env   # se disponibile, altrimenti crea .env manualmente
-# edita .env con i valori reali per tutti e tre i WS
+# edita .env con endpoint REST privato, regione e override domain necessari
 npm install
 ```
 
@@ -52,7 +86,9 @@ MP_MANUFACTURER=
 
 ## Test automatici
 
-Suite Jest con mock dei client `WsIQPckEper`, `DocSOARestClient`, `MenuPricingSoapClient` (coverage ≥90% branches/functions/lines/statements, come negli altri moduli `jobcard`/`dms`/`v360`).
+Suite Jest con mock di `../../serviceClient`, senza chiamate AWS/rete reali.
+Verifica payload REST, parsing domain, errori remoti e identità
+(coverage ≥90% branches/functions/lines/statements).
 
 ```bash
 npm test               # esegue la suite Jest
@@ -101,11 +137,11 @@ node index.js getValidPackagesDetail menupricing  W0VZT6GT7M1017935 1000
 
 | Metodo                    | Argomenti                          | Descrizione                                                                                         |
 |---------------------------|------------------------------------|-----------------------------------------------------------------------------------------------------|
-| `getConfigPackages`       | `pkwstouse`                        | Mappa `{ DEPARTMENT: [codici] }` per il ws indicato, letta da `woc.config_packages` (Aurora PostgreSQL) tramite `dbManager/ConfigPackagesRepository.js` (non più una costante statica) |
+| `getConfigPackages`       | `pkwstouse`                        | Mappa `{ DEPARTMENT: [codici] }` per il ws indicato, letta da `woc.config_packages` tramite REST `dbmanager/getConfigPackages` |
 | `getValidPackages`        | `market` `pkwstouse` `VIN`         | Intersezione tra config e pacchetti live dal WS: `{ CATEGORY: { [codice]: obj } }`                 |
 | `getValidPackagesDetail`  | `market` `pkwstouse` `VIN`         | Chiama `getValidPackages` poi recupera in parallelo il dettaglio di ogni pacchetto: `{ [codice]: detail }` |
-| `getPriceAndAvailability` | `market` `pkwstouse` `VIN`         | Arricchisce il dettaglio di `getValidPackagesDetail` con `AV_LOCAL`/`PRICE`/`SCONTO` per ogni riga  |
-| `<br/>`               | `codbrand` `documentId` `customerId` `vehicleId` `market` `dealerIdentificationCode` | Orchestratore end-to-end: risolve `pkwstouse` da `HQ_PKCONFIG` chiamando `dbManager.getPkwstouse(pool, { codmarket: market, codbrand })` (vedi `dbManager/README` se presente, o `dbManager/PkConfigRepository.js`), poi `getValidPackagesDetail` + `getPriceAndAvailability`, poi **normalizza** ogni pacchetto allo stesso set di chiavi (vedi sotto), a prescindere dal `pkwstouse` risolto |
+| `getPriceAndAvailability` | `documentId` `customerId` `vehicleId` `[market]` `[username]` | Interroga REST `dms/inquiry` (WL) usando `pkDetailList` e il Sender dinamico |
+| `getPkList`               | `codbrand` `documentId` `customerId` `vehicleId` `[market]` `[dealerIdentificationCode]` `[username]` | Risolve `pkwstouse` da `HQ_PKCONFIG` tramite REST `dbmanager/getPkwstouse`, recupera dettagli e prezzo/disponibilità, arricchisce le righe con `AV_LOCAL`/`PRICE`/`SCONTO`, poi **normalizza** ogni pacchetto allo stesso set di chiavi (vedi sotto) |
 
 ### Metodi di dettaglio per ws
 

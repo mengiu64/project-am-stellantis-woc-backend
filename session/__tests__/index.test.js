@@ -1,6 +1,10 @@
 'use strict';
 
 jest.mock('dotenv', () => ({ config: jest.fn() }));
+jest.mock('../../serviceClient', () => ({
+  isInternalRequest: jest.fn((event) => /^\/internal\//.test(event.path || event.rawPath || '')),
+}));
+jest.mock('../internal', () => ({ handler: jest.fn() }));
 jest.mock('../src/repositoryFactory');
 jest.mock('../src/hqMarketsResolver');
 
@@ -8,6 +12,7 @@ const { buildRepository, buildMyPeopleDmsRepository } = require('../src/reposito
 const { resolveHqMarketsList } = require('../src/hqMarketsResolver');
 const { handler, runCli, DEFAULT_MARKET, getAuthContext, resolveRoleFlags } = require('../src/index');
 const { SessionNotFoundError } = require('../src/errors');
+const internal = require('../internal');
 
 describe('session/src/index — handler', () => {
   let mockRepository;
@@ -22,6 +27,22 @@ describe('session/src/index — handler', () => {
   });
 
   afterEach(() => jest.clearAllMocks());
+
+  it('instrada le richieste interne prima dell authorizer pubblico senza cicli', async () => {
+    const event = {
+      path: '/internal/session/getData',
+      httpMethod: 'POST',
+      requestContext: { identity: { userArn: 'arn:aws:iam::123456789012:role/internal' } },
+      body: JSON.stringify({ args: ['0073741.d235'] }),
+    };
+    const result = { statusCode: 200, body: JSON.stringify({ data: { sincom: '0073741' } }) };
+    internal.handler.mockResolvedValue(result);
+
+    expect(await handler(event)).toBe(result);
+    expect(internal.handler).toHaveBeenCalledWith(event);
+    expect(buildMyPeopleDmsRepository).not.toHaveBeenCalled();
+    expect(buildRepository).not.toHaveBeenCalled();
+  });
 
   it('DEFAULT_MARKET e\' "1000" di default', () => {
     expect(DEFAULT_MARKET).toBe('1000');

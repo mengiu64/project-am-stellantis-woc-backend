@@ -62,6 +62,84 @@ project-am-stellantis-woc-backend/
 
 ## Modules
 
+### REST communication between Lambdas
+
+Lambdas are independent services: no module imports another Lambda's classes,
+handlers, DB pool or configuration. `serviceClient/` is shared HTTP transport
+only (AWS SigV4 with execution-role credentials, timeout and response validation),
+not shared domain logic.
+
+| Caller | REST services called |
+|---|---|
+| pkManager | pkEper, pkDocsoa, pkMenupricing, dbManager, dms |
+| pkFavorite | dms |
+| dms | session, v360, dbManager |
+| jobcard | dms, session, agendaSoaNaga |
+| djc | agendaSoaNaga |
+| session | myPeople, dmlConfigSync, dbManager |
+| hqManager | session, dbManager |
+| dmlConfigSync | dms |
+| synch-status | jobcard |
+
+The internal contract is `POST /internal/<service>/<operation>`, with lowercase
+service names and a JSON body. Repository operations accept `{"args":[...]}`
+(no pool/token); package clients accept `{"params":{...},"config":{...}}`
+(dealer settings, never upstream credentials). `dms/inquiry` accepts the domain
+payload, `dms/resolveSender` accepts
+`{"context":{"username":"...","vin":"..."},"overrides":{...}}`, and
+`agendasoanaga/updatenaga` accepts the appointment payload including `apptId`;
+`agendasoanaga/createnaga` accepts the appointment payload without an ID.
+Responses are `{"data":<result>}`; errors use non-2xx HTTP and
+`{"message":"..."}`. DB Sets/Maps use wire arrays reconstructed by the consumer.
+Writes are never automatically retried. Frontend routes and contracts remain
+unchanged.
+
+Consumers configure `WOC_INTERNAL_API_URL` (including the stage), `AWS_REGION`
+and optionally `WOC_INTERNAL_TIMEOUT_MS` (default 25000). Lambda uses its
+execution role; CLI uses the AWS credential chain. Never copy temporary
+credentials into `.env` or source. Upstream tokens, certificates and DB access
+remain in their owning services. Forwarded usernames come from the original
+request authorizer, not frontend parameters; internal receivers require
+API Gateway IAM authentication.
+
+**Infrastructure (no automatic deployment):** `infrastructure/internal-api.yaml`
+adds `AWS_IAM` routes, API Gateway→Lambda permissions and per-role, per-operation
+`execute-api:Invoke` policies to the existing private REST API. It does not
+create/modify the API, VPC endpoint, resource policy or stage. Supply `RestApiId`,
+`RootResourceId`, `Environment`, `StageName` and execution-role names (SAM
+`Internal*RoleName` outputs). The infrastructure team must verify permission
+boundary/SCP support for `execute-api:Invoke`, private DNS and security-group
+HTTPS access to the VPC endpoint, then publish a new stage deployment after
+creating the routes. Configure backend `InternalApiId`/`InternalApiStage` before
+activation. Coordinate rollout: receivers, routes and policies must be ready
+before activating migrated consumers; there is no in-process fallback.
+CI requires environment variables `WOC_INTERNAL_API_ID`, optionally
+`WOC_INTERNAL_API_STAGE` (default `wia`) and `WOC_INTERNAL_API_READY=true`
+only after the routes/policies are ready; otherwise build/deployment is blocked.
+For dev, these variables are configured in the GitHub `dev` environment used by
+the `deploy-dev` job; they are not shared with stage/prod deployments.
+
+Dev discovery identified private REST API `e0l4j2x2je`, stage `wia`, associated
+with VPC endpoint `vpce-00aba910dc66a9a4e`. Existing application routes use a
+cookie authorizer and cannot serve scheduled jobs. HTTP connectivity must be
+verified from the VPC: private DNS is not resolvable from the terminal used
+for this revision.
+
+**Dev status as of 2026-10-05:** stack `stla-woc-internal-api-dev` applied
+(`CREATE_COMPLETE`) and deployment `b7m5mj` published to stage `wia`
+(previous: `3esyvy`). The 11 internal POST routes use `AWS_IAM`; 9 inline
+policies were added to existing execution roles without changing trust or
+permission boundaries. IAM simulation allows all 67 expected role/operation
+calls; the 34 previously published application methods are unchanged.
+Private DNS and security-group rules are configured, but HTTP access from the
+VPC must still be verified after deploying receivers. No Lambda code was
+deployed and no CI readiness flag was enabled during this infrastructure
+activation. Stage and prod environments were not modified.
+
+Makefile targets package **only the current module and `serviceClient/`**,
+installing each production dependency set in the artifact. Caches remain in
+their owning Lambda services, not copies of their source in consumers.
+
 ### agendaSoa
 
 Central routing Lambda for appointment management via the **AgendaSOA REST** service.
@@ -212,13 +290,8 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > **best-effort**: if even one of the
 > three fields is missing, or the query fails, the flow continues without
 > modifying `physicalSiteId`/`dealerNumberIdSource` (just a log warning) — it
-> never blocks the call to the DML gateway. Because of this, every Lambda
-> function that bundles `dms/` in-process (`JobCardFunction`,
-> `PkManagerFunction`, `PkFavoriteFunction`) as well as `DmsFunction` itself
-> also requires the `dbManager/` source code (built via
-> `Metadata: BuildMethod: makefile`, see `Makefile`) and the `DBMANAGER_DB_*`
-> environment variables (same Aurora "wiadvisor" as
-> `PkManagerFunction`/`SessionFunction`).
+> never blocks the call to the DML gateway. DmsFunction calls dbManager
+> over REST IAM; only dbManager owns its DB pool and `DBMANAGER_DB_*` settings.
 >
 > **`DealerNumberIDSource` per "brand owner" (`config/brandowner.json`)**: the
 > `dealerNumberIdSource` resolved above from `woc.ang_snowflakes`
@@ -291,18 +364,10 @@ Same credentials/authentication as `settings` (PingFederate bearer token, `X-IBM
 > **best-effort** (try/catch + `console.warn`, never an exception that blocks
 > building the Sender): if `username`/`vin` are missing, or session/myPeople/
 > v360 aren't reachable, the unresolved fields simply stay absent and
-> `config.sender`'s static defaults apply for those fields. Because of this,
-> besides `dbManager/`, every Lambda that bundles `dms/` in-process
-> (`JobCardFunction`, `PkManagerFunction`, `PkFavoriteFunction`) must also
-> bundle `session/` (+ `myPeople/` and `dmlConfigSync/`, which `session`
-> depends on) and `v360/` as sibling folders (see `Makefile`), and declare the
-> same `MYPEOPLE_*`/`DMLCONFIGSYNC_DB_*`/`V360_PING_*`/`ASV_*`/
-> `CONFIG_BUCKET_NAME` variables already used by `SessionFunction`/
-> `V360Function` in `template.yaml`. The `dms` lambda itself **never calls**
-> `resolveDynamicSenderFields` from its own handler: it stays "lightweight"
-> (it doesn't bundle `session`/`myPeople`/`dmlConfigSync`/`v360`), even though
-> the function lives in this file — it's meant to be called by `postDmsInquiry`
-> callers.
+> `config.sender`'s static defaults apply for those fields. DmsFunction resolves
+> session and vehicle data through their REST services; consumers use
+> `dms/resolveSender`. No Lambda bundles another service's source or credentials.
+> The public dms handler also resolves the Sender for `inquiry`.
 
 #### CLI usage
 
@@ -408,18 +473,9 @@ resolution of everything else to
 Resolution is entirely **best-effort**: if `sessionContext`/`vin` are missing
 or session/myPeople/v360 aren't reachable, the unresolved fields simply stay
 absent from the `sender` — never an exception that blocks
-`getCartPriceAndAvailability`. `JobCardFunction` therefore requires, in
-addition to `../dms/authService`/`../dms/dmsService`/`../dbManager` (already
-present for `buildApplicationArea`'s `physicalSiteId`/`dealerNumberIdSource`
-lookup), also the `../session` source (+ `../myPeople` and
-`../dmlConfigSync`, which `session` depends on) and `../v360` (built via
-`Metadata: BuildMethod: makefile`, see `Makefile`), with the same
-`MYPEOPLE_*`/`DMLCONFIGSYNC_DB_*`/`V360_PING_*`/`ASV_*`/`CONFIG_BUCKET_NAME`
-variables already used by `SessionFunction`/`V360Function` in
-`template.yaml` — not because `jobCardService.js` accesses these folders
-directly, but because
-`dms/dmsService.js::resolveDynamicSenderFields`/`buildApplicationArea`,
-bundled **in-process**, need them for the centralized resolution.
+`getCartPriceAndAvailability`. JobCardFunction calls dms over REST IAM;
+session, vehicle and DB lookups remain in their owning services, without
+sibling Lambda source or credentials in the jobcard artifact.
 
 #### CLI usage
 
@@ -633,7 +689,7 @@ pkMenupricing/
 
 ### pkManager
 
-Orchestrator Lambda that manages **package configuration and validation** across multiple web services (ePer, DocSOA, MenuPricing), determining which configured packages are actually available for a VIN and fetching their details. It requires the source code of the three sibling modules (`pkEper`, `pkDocsoa`, `pkMenupricing`) via relative paths, plus `dbManager` (used by `getPkList` to resolve `pkwstouse` from `HQ_PKCONFIG`, given `codbrand` + `market`/`codmarket`): in AWS it is therefore built with a custom `Makefile` (`Metadata: BuildMethod: makefile` in `template.yaml`) that recreates the same sibling folder structure inside the Lambda package.
+> **REST IAM:** the artifact contains only this Lambda and `serviceClient/`. Use `WOC_INTERNAL_API_URL`; upstream credentials and DB/cache access belong to the receiving services.
 
 #### Available handlers
 
@@ -830,7 +886,7 @@ Lambda for **updating the DJC synchronization status** of a job card. It receive
 After the UPDATE on `woc.comunication_asyncro_djc` (even when the record is missing there), `jobcardSyncActivity.js` updates the `woc.jobcard_sync_activity` row with `jobcardid` = `jobCardId` (created by jobcard/djc on every `saveJobcard`):
 
 1. `techreason` = `djc_sync_status` mapped from `eventType`, `ack` = `OK` for `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` and `KO` for `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
-2. calls the **jobcard** Lambda's `getJobCardDetails` **in-process** (`jobcard/authService` + `jobcard/jobCardService`, bundled via the `build-SynchStatusFunction` Makefile target) and stores `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+2. calls the **jobcard** Lambda's `getJobCardDetails` over REST IAM (jobcard owns token and cache) and stores `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
 
 Fully **best-effort**: DB/DGT errors are only logged and the response to DJC is unchanged. If the row does not exist, `jobCardDetails` is not called. If the UPDATE on `comunication_asyncro_djc` fails (5xx), this step is skipped.
 
@@ -875,7 +931,7 @@ The 4 supported `eventType` values (mapped to the corresponding DB status):
 ```
 synch-status/
 ├── index.js                    # Lambda handler (parsing + validation + Aurora UPDATE)
-├── jobcardSyncActivity.js      # techreason/ack/businessreason on woc.jobcard_sync_activity (in-process jobCardDetails)
+├── jobcardSyncActivity.js      # techreason/ack/businessreason on woc.jobcard_sync_activity (REST IAM jobCardDetails)
 ├── config.js                   # Centralized configuration
 ├── logger.js                   # Structured logging + traceId
 ├── package.json                # Dependencies (pg, @aws-sdk/client-secrets-manager, @aws-sdk/client-ssm, ...)
@@ -894,7 +950,7 @@ arn:aws:iam::237024525379:role/stla-rol-np-bsn0027990-dev-synch-status
 
 > Same naming rule: `-dev` in dev, `-stage` in stage, in **prod** no `np-` and no environment suffix (`stla-rol-bsn0027990-prod-synch-status`). Permissions equivalent to `isStellantisBrand` must already be attached to that role (when `Role` is set, SAM ignores `Policies`).
 >
-> For the in-process `jobCardDetails` call the role must **also** have the `JobCardFunction` permissions used by that flow: `secretsmanager:GetSecretValue` on `ServiceUrlsSecretId`, `DocsoaDbSecretId` and `sm-np-bsn0027990-<env>-apic-cert`/`-apic-key`, `kms:Decrypt`, `s3:GetObject` on `TranslationsBucket`, `dynamodb:GetItem`/`PutItem` on `TmpCacheTable`. Without them `techreason`/`ack` are saved but `businessreason` is not (error only in the logs).
+> The role needs `execute-api:Invoke` for the internal jobcard detail operation. Upstream secrets and DynamoDB access remain owned by JobCardFunction, not synch-status.
 
 #### DB connection (shared/dbClient.js)
 
@@ -986,13 +1042,8 @@ DMS_PING_CLIENT_SECRET=...          # PingFederate Client Secret (dms-dedicated)
 DML_IBM_CLIENT_ID=...              # X-IBM-Client-Id for DML APIs
 DML_IBM_CLIENT_SECRET=...          # X-IBM-Client-Secret for DML APIs
 DML_X_TARGET_ENV=stage             # Target environment (stage / prod)
-# For the centralized (best-effort) lookup of physicalSiteId/
-# dealerNumberIdSource on woc.ang_snowflakes in buildApplicationArea() — same
-# variables/same "wiadvisor" Aurora as PkManagerFunction/SessionFunction
-DBMANAGER_DB_HOST=...
-DBMANAGER_DB_PORT=5432
-DBMANAGER_DB_NAME=...
-DBMANAGER_DB_SECRET_ID=...
+WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
+WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
 ### jobcard
@@ -1002,15 +1053,8 @@ JOBCARD_PING_CLIENT_ID=...          # PingFederate Client ID (jobcard-dedicated)
 JOBCARD_PING_CLIENT_SECRET=...      # PingFederate Client Secret (jobcard-dedicated)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id for DGT APIs
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret for DGT APIs
-# Required because the dms/ source code is bundled in-process (Makefile):
-# dms/dmsService.js::buildApplicationArea performs the best-effort lookup of
-# physicalSiteId/dealerNumberIdSource on woc.ang_snowflakes — same
-# variables/same "wiadvisor" Aurora as PkManagerFunction/SessionFunction.
-# jobCardService.js no longer accesses dbManager directly.
-DBMANAGER_DB_HOST=...
-DBMANAGER_DB_PORT=5432
-DBMANAGER_DB_NAME=...
-DBMANAGER_DB_SECRET_ID=...
+WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
+WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
 ### moparDoc
@@ -1092,6 +1136,8 @@ MP_LANGUAGE_CODE=...
 MP_COUNTRY_CODE=...
 MP_DEALER_IDENTIFICATION_CODE=...
 MP_MANUFACTURER=...
+WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
+WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
 ### translations
@@ -1110,6 +1156,8 @@ TRANSLATIONS_DEFAULT_LANG=en        # (optional) default language when "lang" is
 SESSION_BUCKET_NAME=...              # S3 bucket name with session data (required)
 SESSION_DATA_KEY=session/session_data.json  # (optional) S3 key of the session data JSON file
 SESSION_DEFAULT_MARKET=1000          # (optional) default market when "codmarket" is not passed
+WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
+WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
 > **Note:** session data is read from a single JSON file on S3 (`session/session_data.json`, same bucket as `translations`), keyed by 4-character market code. If the requested market is not present in the file, the Lambda responds with `404`.
@@ -1130,11 +1178,13 @@ RDS_PROXY_ENDPOINT=...                     # RDS Proxy endpoint for Aurora Postg
 ```env
 DB_SECRET_ARN_PARAM=/app/np-BSN0027990-dev/DB_SECRET_ARN          # SSM parameter with the ARN of the DB credentials secret
 RDS_PROXY_ENDPOINT_PARAM=/app/np-BSN0027990-dev/RDS_PROXY_ENDPOINT # SSM parameter with the RDS Proxy endpoint
+WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
+WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
 > **Note:** same two environment variables (and same values) as `isStellantisBrand`. The Lambda reads the secret ARN and RDS Proxy endpoint from SSM, then the credentials from Secrets Manager; TLS connection via RDS Proxy, inside the VPC. Naming rule: `-dev` in dev, `-stage` in stage, in prod no `np-` nor environment suffix (`/app/BSN0027990/...`).
 >
-> In addition, for the in-process `jobCardDetails` (`businessreason` update), `template.yaml` sets the same `JobCardFunction` variables used by that flow: `SERVICE_URLS_SECRET_ID`, `DML_X_TARGET_ENV`, `DBMANAGER_DB_*`, `MYPEOPLE_*`, `DMLCONFIGSYNC_DB_*`, `CONFIG_BUCKET_NAME`, `DYNAMO_CACHE_TABLE_NAME`, `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT`.
+> **REST IAM:** the artifact contains only this Lambda and `serviceClient/`. Use `WOC_INTERNAL_API_URL`; upstream credentials and DB/cache access belong to the receiving services.
 
 ### dmlConfigSync
 
@@ -1144,6 +1194,8 @@ DMLCONFIGSYNC_DB_PORT=5432                    # (optional) default 5432
 DMLCONFIGSYNC_DB_NAME=wiadvisor               # (optional) default wiadvisor
 DMLCONFIGSYNC_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app  # (optional) secret id with user/password/dbname/port
 DMLCONFIGSYNC_DB_SSL=true                     # (optional) default true
+WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
+WOC_INTERNAL_TIMEOUT_MS=25000
 ```
 
 > **Note:** same Aurora cluster/RDS Proxy and same Secrets Manager secret as `pkFavorite` (in `template.yaml` it reuses the `PkFavoriteDbHost`/`PkFavoriteDbSecretId` parameters, no new CloudFormation parameter). Also requires **all** the `dms` environment variables above (`DMS_PING_CLIENT_ID`, `DMS_PING_CLIENT_SECRET`, `DML_IBM_CLIENT_ID`, `DML_IBM_CLIENT_SECRET`, `DML_X_TARGET_ENV`), needed to call `dms.getCompanyTypes`/`dms.getCustomerTitles`/`dms.getDmsSettings`.
@@ -1260,7 +1312,7 @@ cd agendaSoa && npm run test:coverage
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods
-- **PkManager** – constructor (config from env vars), `getConfigPackages` (map per ws, read from `woc.config_packages` via `dbManager/ConfigPackagesRepository.js`), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalization via `_normalizePkDetail`, error-item handling), docsoa forfait→tempario fallback (`ibxDetailtpService`, using `rowData.ref` as `refTp`), `_fetchDetail`/`_fetchLiveMap` with mocks of the three sibling clients
+- **PkManager** – constructor (config from env vars), `getConfigPackages` (map per ws, read from `woc.config_packages` via `dbManager/ConfigPackagesRepository.js`), `getValidPackages` (config/live WS intersection), `getValidPackagesDetail` (parallel detail fetch, `isFixedPrice`/`packageType` per ws), `getPriceAndAvailability`, `getPkList` (normalization via `_normalizePkDetail`, error-item handling), docsoa forfait→tempario fallback (`ibxDetailtpService`, using `rowData.ref` as `refTp`), `_fetchDetail`/`_fetchLiveMap` with mocks of REST calls to the three services
 
 #### translations
 - **index** – CLI/Lambda dispatch to the `translations` handler
