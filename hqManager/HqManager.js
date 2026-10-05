@@ -103,7 +103,10 @@ async function resolveCodmarket(event = {}, body = {}) {
  * dell'audit, il codmarket risolto da resolveCodmarket (v. sotto: stessa
  * sessione dell'utente autenticato, "" se non risolvibile).
  *
- * setMarketEnable(market)/setMarketDisable(market),
+ * setMarketEnable(market)/setMarketDisable(market)/
+ * checkIsPkMarketEnabled(market) (legge il flag "deleted" di
+ * woc.hq_pk_market: 0 = abilitato, 1 = disabilitato, undefined se il
+ * mercato non ha una riga configurata),
  * insertDomain(market, descr) (domini condivisi da tutti gli OIC del
  * mercato, woc.hq_pk_domain non ha una colonna "oic")/
  * setDomain(market, iddomain, descr)/
@@ -259,6 +262,17 @@ class HqManager {
    */
   async setMarketDisable(market) {
     return repository.setPkMarketDisable(market);
+  }
+
+  /**
+   * Verifica se il mercato indicato e' abilitato (woc.hq_pk_market.deleted:
+   * 0 = abilitato, 1 = disabilitato).
+   *
+   * @param {string} market
+   * @returns {Promise<number|undefined>} il valore di "deleted" della riga trovata
+   */
+  async checkIsPkMarketEnabled(market) {
+    return repository.checkIsPkMarketEnabled(market);
   }
 
   /**

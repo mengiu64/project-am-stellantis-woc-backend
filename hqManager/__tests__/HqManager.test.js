@@ -24,6 +24,7 @@ describe('HqManager — consumer REST', () => {
     ['getVehicleInspection', ['1000', 'EXTERIOR'], 'getVehicleInspection'],
     ['setMarketEnable', ['1000'], 'setPkMarketEnable'],
     ['setMarketDisable', ['1000'], 'setPkMarketDisable'],
+    ['checkIsPkMarketEnabled', ['1000'], 'checkIsPkMarketEnabled'],
     ['insertDomain', ['1000', 'Meccanica'], 'insertDomain'],
     ['setDomain', ['1000', 42, 'Meccanica'], 'setDomain'],
     ['deleteDomain', ['1000', 42], 'deleteDomain'],

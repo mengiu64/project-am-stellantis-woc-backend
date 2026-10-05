@@ -31,6 +31,9 @@
  *     risolto da HqManager.js::resolveUsername.
  *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market).
  *   - setMarketDisable(market): disabilita il mercato (woc.hq_pk_market).
+ *   - checkIsPkMarketEnabled(market): legge il flag "deleted" di
+ *     woc.hq_pk_market per il mercato indicato (0 = abilitato,
+ *     1 = disabilitato, undefined se il mercato non ha una riga configurata).
  *   - insertDomain(market, descr): crea un nuovo dominio (woc.hq_pk_domain,
  *     condiviso da tutti gli OIC del mercato: la tabella non ha una colonna
  *     "oic").
@@ -84,6 +87,7 @@
  *   node index.js insertVehicleInspection <market> <type> <descr>
  *   node index.js setMarketEnable <market>
  *   node index.js setMarketDisable <market>
+ *   node index.js checkIsPkMarketEnabled <market>
  *   node index.js insertDomain <market> <descr>
  *   node index.js setDomain <market> <iddomain> <descr>
  *   node index.js insertPackage <market> <oic> <iddomain> <descr> <timeop> <pricewithvat>
@@ -106,6 +110,7 @@ const VALID_ACTIONS = [
   'insertVehicleInspection',
   'setMarketEnable',
   'setMarketDisable',
+  'checkIsPkMarketEnabled',
   'insertDomain',
   'setDomain',
   'deleteDomain',
@@ -215,6 +220,11 @@ exports.handler = async (event = {}) => {
     if (action === 'setMarketDisable') {
       await manager.setMarketDisable(market);
       return response(200, { success: true, market });
+    }
+
+    if (action === 'checkIsPkMarketEnabled') {
+      const deleted = await manager.checkIsPkMarketEnabled(market);
+      return response(200, { success: true, market, deleted });
     }
 
     if (action === 'insertDomain') {

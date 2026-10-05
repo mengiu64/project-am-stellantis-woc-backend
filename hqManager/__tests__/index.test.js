@@ -26,6 +26,7 @@ function makeManagerInstance(overrides = {}) {
     insertVehicleInspection: jest.fn(),
     setMarketEnable: jest.fn(),
     setMarketDisable: jest.fn(),
+    checkIsPkMarketEnabled: jest.fn(),
     insertDomain: jest.fn(),
     setDomain: jest.fn(),
     deleteDomain: jest.fn(),
@@ -181,6 +182,18 @@ describe('hqManager/index.js', () => {
       expect(instance.setMarketDisable).toHaveBeenCalledWith('3110');
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110' });
+    });
+
+    it('dispatches checkIsPkMarketEnabled (direct invocation payload)', async () => {
+      const instance = makeManagerInstance({
+        checkIsPkMarketEnabled: jest.fn().mockResolvedValue(0),
+      });
+
+      const res = await handler({ action: 'checkIsPkMarketEnabled', body: { market: '3110' } });
+
+      expect(instance.checkIsPkMarketEnabled).toHaveBeenCalledWith('3110');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', deleted: 0 });
     });
 
     it('dispatches insertDomain (direct invocation payload)', async () => {
