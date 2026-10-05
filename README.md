@@ -1932,6 +1932,13 @@ npm audit --audit-level=high
 
 Il job fallisce se vengono rilevate vulnerabilità di livello **high** o **critical** nelle dipendenze.  
 I risultati sono visibili nel log dello step "Security scan" nella tab **Actions** del repository.
+L'audit include anche le dipendenze di sviluppo: il report JSON viene conservato
+in `coverage/audit-report.json` e gli errori non vengono ignorati con `|| true`.
+La toolchain usa Jest `^30.5.2`, che elimina la dipendenza transitiva vulnerabile
+`braces`/`micromatch`; i cinque client Axios richiedono `^1.20.0`.
+I lockfile dei singoli moduli devono essere aggiornati e verificati insieme.
+Gli alert Dependabot si aggiornano dopo la pubblicazione sul default branch:
+un audit locale pulito non chiude gli alert di una versione ancora su GitHub.
 
 ---
 

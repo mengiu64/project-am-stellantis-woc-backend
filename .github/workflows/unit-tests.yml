@@ -76,8 +76,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -295,8 +299,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -514,8 +522,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -733,8 +745,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -952,8 +968,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1171,8 +1191,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1390,8 +1414,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1609,8 +1637,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1828,8 +1860,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2048,8 +2084,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2267,8 +2307,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2487,8 +2531,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2707,8 +2755,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2926,8 +2978,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3145,8 +3201,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3365,8 +3425,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3586,8 +3650,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3804,8 +3872,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -4022,8 +4094,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -4242,8 +4318,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --outputFile=coverage/jest-results.json --verbose
       - name: Generate artifact dashboard
@@ -4461,8 +4541,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --outputFile=coverage/jest-results.json --verbose
       - name: Generate artifact dashboard

@@ -1445,6 +1445,13 @@ npm audit --audit-level=high
 
 The job fails if **high** or **critical** severity vulnerabilities are detected in the dependencies.  
 Results are visible in the "Security scan" step log in the **Actions** tab of the repository.
+The audit includes development dependencies: its JSON report is retained in
+`coverage/audit-report.json`, and errors are not suppressed with `|| true`.
+The toolchain uses Jest `^30.5.2`, removing the vulnerable transitive
+`braces`/`micromatch` dependency; the five Axios clients require `^1.20.0`.
+The individual module lockfiles must be updated and verified together.
+Dependabot alerts update after publication to the default branch:
+a clean local audit does not close alerts for a version still on GitHub.
 
 ---
 
