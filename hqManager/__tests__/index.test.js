@@ -354,9 +354,10 @@ describe('hqManager/index.js', () => {
         initializeOicPkList: jest.fn().mockResolvedValue(packages),
       });
 
-      const res = await handler({ action: 'initializeOicPkList', body: { market: '1000', oic: '00006821' } });
+      const event = { action: 'initializeOicPkList', body: { market: '1000', oic: '00006821' } };
+      const res = await handler(event);
 
-      expect(instance.initializeOicPkList).toHaveBeenCalledWith('1000', '00006821');
+      expect(instance.initializeOicPkList).toHaveBeenCalledWith('1000', '00006821', event);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: '00006821', packages });
     });
@@ -366,9 +367,10 @@ describe('hqManager/index.js', () => {
         initializeOicPkList: jest.fn().mockResolvedValue([]),
       });
 
-      const res = await handler({ action: 'initializeOicPkList', body: { market: '1000' } });
+      const event = { action: 'initializeOicPkList', body: { market: '1000' } };
+      const res = await handler(event);
 
-      expect(instance.initializeOicPkList).toHaveBeenCalledWith('1000', undefined);
+      expect(instance.initializeOicPkList).toHaveBeenCalledWith('1000', undefined, event);
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '1000', oic: null, packages: [] });
     });

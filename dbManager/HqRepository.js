@@ -509,7 +509,7 @@ async function setOicEnable(pool, market, oic) {
 
   await pool.query(
     `INSERT INTO woc.hq_pk_oic (market, oic, deleted)
-     VALUES (NULLIF($1, ''), $2, 0)
+     VALUES ($1, $2, 0)
      ON CONFLICT (market, oic) DO UPDATE SET deleted = 0`,
     [market, oic],
   );
@@ -517,7 +517,7 @@ async function setOicEnable(pool, market, oic) {
 
 /**
  * Verifica se il mercato indicato e' abilitato, leggendo il flag "deleted"
- * di woc.hq_pk_oic per il mercato (0 = abilitato, 1 = disabilitato).
+ * di woc.hq_pk_market per il mercato (0 = abilitato, 1 = disabilitato).
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
@@ -525,7 +525,7 @@ async function setOicEnable(pool, market, oic) {
  */
 async function checkIsPkMarketEnabled(pool, market) {
   const { rows } = await pool.query(
-    `select deleted from woc.hq_pk_oic WHERE market = $1`,
+    `select deleted from woc.hq_pk_market WHERE market = $1`,
     [market],
   );
 
@@ -545,12 +545,20 @@ async function checkIsPkMarketEnabled(pool, market) {
  */
 async function checkIsPkOicConfigured(pool, market, oic) {
   const { rows } = await pool.query(
-    `SELECT oi.deleted
-       FROM woc.hq_pk_market mk
-       JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2
-      WHERE mk.market = $1`,
-    [market, oic],
-  );
+    `SELECT COALESCE(
+                (
+                  SELECT oi.deleted
+                  FROM woc.hq_pk_market mk
+                         JOIN woc.hq_pk_oic oi
+                              ON oi.market = mk.market
+                                AND oi.oic = $2
+                  WHERE mk.market = $1
+                LIMIT 1
+              ),
+              0
+          ) AS deleted`,
+              [market, oic],
+            );
 
   return rows[0]?.deleted ?? 1;
 }
@@ -594,7 +602,7 @@ async function copyDomainFromMarket(pool, market, oic) {
     SELECT $1, $2, descr
     FROM woc.hq_pk_domain
     WHERE market = $1
-
+        and oic is null
     UNION ALL
 
     SELECT $1, $2, descr
@@ -603,11 +611,64 @@ async function copyDomainFromMarket(pool, market, oic) {
       AND NOT EXISTS (
         SELECT 1
         FROM woc.hq_pk_domain
-        WHERE market = $1
+        WHERE market  is null
+          and oic is null
       )
     `,
     [market, oic],
   );
+}
+
+/**
+ * Cancella (fisicamente) l'intera gerarchia hq_pk_packages/hq_pk_domain
+ * configurata per la coppia (market, oic) indicata: prima i pacchetti
+ * (woc.hq_pk_packages) dei domini di quel market+oic, poi i domini stessi
+ * (woc.hq_pk_domain). Usata da initializeOicPkList (v. HqManager.js) per
+ * ripulire eventuali righe residue di una precedente configurazione
+ * dell'oic prima di ricopiare i domini dal mercato (copyDomainFromMarket),
+ * evitando duplicati.
+ *
+ * L'intera operazione viene eseguita in un'unica transazione
+ * (BEGIN/COMMIT su una connessione dedicata, ROLLBACK in caso di errore).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<void>}
+ */
+async function deleteOicPkHierarchy(pool, market, oic) {
+  if (!market) throw new Error('"market" is required');
+  if (!oic) throw new Error('"oic" is required');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `DELETE FROM woc.hq_pk_packages
+        WHERE iddomain IN (
+          SELECT iddomain
+          FROM woc.hq_pk_domain
+          WHERE market = $1
+            AND oic = $2
+        )`,
+      [market, oic],
+    );
+
+    await client.query(
+      `DELETE FROM woc.hq_pk_domain
+        WHERE market = $1
+          AND oic = $2`,
+      [market, oic],
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -1067,6 +1128,7 @@ module.exports = {
   checkIsPkOicConfigured,
   insertDomain,
   copyDomainFromMarket,
+  deleteOicPkHierarchy,
   setDomain,
   deleteDomain,
   setDomainVisible,

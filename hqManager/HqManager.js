@@ -464,21 +464,27 @@ class HqManager {
    *   ritorna direttamente getPackageList(market, oic);
    * - altrimenti (mercato gestito a livello di singolo oic) si verifica se
    *   l'oic e' gia' configurato (checkIsPkOicConfigured); se non lo e'
-   *   (ritorna 1, nessuna riga trovata) si copiano in hq_pk_domain i domini
-   *   del mercato (o quelli comuni, v. copyDomainFromMarket) prima di
-   *   ritornare getPackageList(market, oic).
+   *   (ritorna 1, nessuna riga trovata) si ripulisce prima (v.
+   *   deleteOicPkHierarchy: DELETE di eventuali hq_pk_packages/hq_pk_domain
+   *   residui di una precedente configurazione dell'oic, con una riga di
+   *   audit "pkList"/"reset") e si copiano poi in hq_pk_domain i domini del
+   *   mercato (o quelli comuni, v. copyDomainFromMarket) prima di ritornare
+   *   getPackageList(market, oic).
    *
    * @param {string} market
    * @param {string} oic
+   * @param {object} [event]
    * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
-  async initializeOicPkList(market, oic) {
+  async initializeOicPkList(market, oic, event = {}) {
     const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
     const {
       checkIsPkMarketEnabled,
       checkIsPkOicConfigured,
+      deleteOicPkHierarchy,
       copyDomainFromMarket,
       getPackageList,
+      insertAudit,
     } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
 
     const pool = await getPool();
@@ -490,6 +496,11 @@ class HqManager {
 
     const isPkOicConfigured = await checkIsPkOicConfigured(pool, market, oic);
     if (isPkOicConfigured === 1) {
+      await deleteOicPkHierarchy(pool, market, oic);
+
+      const username = await resolveUsername(event);
+      await insertAudit(pool, username, 'pkList', market, 'propagate', `initialized market: ${market} oic: ${oic}`);
+
       await copyDomainFromMarket(pool, market, oic);
     }
 

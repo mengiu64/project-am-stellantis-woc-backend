@@ -1,0 +1,14 @@
+[
+  {
+    "type": "create"
+  },
+  {
+    "type": "update"
+  },
+  {
+    "type": "delete"
+  },
+  {
+    "type": "propagate"
+  }
+]

@@ -29,6 +29,7 @@ jest.mock('../../dbManager/HqRepository', () => ({
   checkIsPkMarketEnabled: jest.fn(),
   checkIsPkOicConfigured: jest.fn(),
   copyDomainFromMarket: jest.fn(),
+  deleteOicPkHierarchy: jest.fn(),
   insertAudit: jest.fn(),
   searchAudit: jest.fn(),
   getAnagSection: jest.fn(),
@@ -65,6 +66,7 @@ const {
   checkIsPkMarketEnabled,
   checkIsPkOicConfigured,
   copyDomainFromMarket,
+  deleteOicPkHierarchy,
   clonePk,
   cloneVeicInspection,
   insertAudit,
@@ -438,28 +440,36 @@ describe('HqManager', () => {
       expect(getPool).toHaveBeenCalledTimes(1);
       expect(checkIsPkMarketEnabled).toHaveBeenCalledWith(fakePool, '1000');
       expect(checkIsPkOicConfigured).not.toHaveBeenCalled();
+      expect(deleteOicPkHierarchy).not.toHaveBeenCalled();
       expect(copyDomainFromMarket).not.toHaveBeenCalled();
+      expect(insertAudit).not.toHaveBeenCalled();
       expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
       expect(result).toBe(packages);
     });
 
-    it('when the market is not enabled and the oic is not configured (checkIsPkOicConfigured = 1), copies domains before returning getPackageList', async () => {
+    it('when the market is not enabled and the oic is not configured (checkIsPkOicConfigured = 1), resets the hierarchy, audits and copies domains before returning getPackageList', async () => {
       checkIsPkMarketEnabled.mockResolvedValue(0);
       checkIsPkOicConfigured.mockResolvedValue(1);
+      deleteOicPkHierarchy.mockResolvedValue(undefined);
       copyDomainFromMarket.mockResolvedValue(undefined);
+      insertAudit.mockResolvedValue(undefined);
+      getCachedSessionData.mockResolvedValue({ firstname: 'Mario', lastname: 'Rossi' });
       const packages = [{ market: '1000', oic: '00006821' }];
       getPackageList.mockResolvedValue(packages);
+      const event = { requestContext: { authorizer: { sub: 'user-sub' } } };
 
-      const result = await manager.initializeOicPkList('1000', '00006821');
+      const result = await manager.initializeOicPkList('1000', '00006821', event);
 
       expect(checkIsPkMarketEnabled).toHaveBeenCalledWith(fakePool, '1000');
       expect(checkIsPkOicConfigured).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(deleteOicPkHierarchy).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(insertAudit).toHaveBeenCalledWith(fakePool, 'Mario Rossi', 'pkList', '1000', 'reset', 'oic: 00006821');
       expect(copyDomainFromMarket).toHaveBeenCalledWith(fakePool, '1000', '00006821');
       expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
       expect(result).toBe(packages);
     });
 
-    it('when the market is not enabled but the oic is already configured (checkIsPkOicConfigured = 0), does not copy domains', async () => {
+    it('when the market is not enabled but the oic is already configured (checkIsPkOicConfigured = 0), does not reset/copy domains', async () => {
       checkIsPkMarketEnabled.mockResolvedValue(0);
       checkIsPkOicConfigured.mockResolvedValue(0);
       const packages = [{ market: '1000', oic: '00006821' }];
@@ -468,7 +478,9 @@ describe('HqManager', () => {
       const result = await manager.initializeOicPkList('1000', '00006821');
 
       expect(checkIsPkOicConfigured).toHaveBeenCalledWith(fakePool, '1000', '00006821');
+      expect(deleteOicPkHierarchy).not.toHaveBeenCalled();
       expect(copyDomainFromMarket).not.toHaveBeenCalled();
+      expect(insertAudit).not.toHaveBeenCalled();
       expect(getPackageList).toHaveBeenCalledWith(fakePool, '1000', '00006821');
       expect(result).toBe(packages);
     });

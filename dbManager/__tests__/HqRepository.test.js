@@ -27,6 +27,7 @@ const {
   checkIsPkOicConfigured,
   insertDomain,
   copyDomainFromMarket,
+  deleteOicPkHierarchy,
   setDomain,
   deleteDomain,
   setDomainVisible,
@@ -706,6 +707,64 @@ describe('HqRepository', () => {
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('UNION ALL'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE market IS NULL'));
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('NOT EXISTS'));
+    });
+  });
+
+  describe('deleteOicPkHierarchy', () => {
+    function makeClientPool(queryImpl) {
+      const client = { query: jest.fn(queryImpl), release: jest.fn() };
+      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      return { pool, client };
+    }
+
+    it('throws when market is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(deleteOicPkHierarchy(pool, undefined, '00006821'))
+        .rejects.toThrow('"market" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('throws when oic is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(deleteOicPkHierarchy(pool, '1000', undefined))
+        .rejects.toThrow('"oic" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('deletes hq_pk_packages (by iddomain subquery) then hq_pk_domain for market+oic, in a single transaction', async () => {
+      const { pool, client } = makeClientPool(async () => ({ rows: [] }));
+
+      await deleteOicPkHierarchy(pool, '1000', '00006821');
+
+      expect(pool.connect).toHaveBeenCalledTimes(1);
+      expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
+      expect(client.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('DELETE FROM woc.hq_pk_packages'),
+        ['1000', '00006821'],
+      );
+      expect(client.query.mock.calls[1][0]).toEqual(expect.stringContaining('SELECT iddomain'));
+      expect(client.query.mock.calls[1][0]).toEqual(expect.stringContaining('FROM woc.hq_pk_domain'));
+      expect(client.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('DELETE FROM woc.hq_pk_domain'),
+        ['1000', '00006821'],
+      );
+      expect(client.query).toHaveBeenNthCalledWith(4, 'COMMIT');
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('rolls back and releases the client when a query fails', async () => {
+      const error = new Error('boom');
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
+        throw error;
+      });
+
+      await expect(deleteOicPkHierarchy(pool, '1000', '00006821')).rejects.toThrow('boom');
+
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalledTimes(1);
     });
   });
 
