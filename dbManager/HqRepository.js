@@ -61,7 +61,13 @@
  * (sql/create_table_hq_packages.sql): gerarchia di configurazione mercato ->
  * OIC -> dominio -> pacchetto usata per l'amministrazione dei pacchetti HQ.
  * Gli upsert su hq_pk_market/hq_pk_oic usano ON CONFLICT DO UPDATE sulla PK
- * (market / market+oic). deleteDomain cancella logicamente
+ * (market / market+oic). woc.hq_pk_domain NON ha una colonna "oic" (v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): insertDomain(market, descr)
+ * crea domini condivisi da tutti gli OIC del mercato (o globali se market e'
+ * assente); la distinzione per singolo OIC resta solo a livello di
+ * pacchetto (woc.hq_pk_packages.oic). deleteOicPkHierarchy(market, oic)
+ * cancella fisicamente SOLO i pacchetti di quella coppia market+oic (mai i
+ * domini, condivisi). deleteDomain cancella logicamente
  * (hq_pk_domain.deleted = 1, v.
  * sql/alter_table_hq_pk_domain_add_deleted.sql) il dominio (market, iddomain)
  * indicato; deletePackage cancella invece fisicamente (DELETE) il pacchetto
@@ -73,17 +79,19 @@
  *
  * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
  * pacchetto configurata per il mercato (obbligatorio) ed eventualmente l'OIC
- * (facoltativo) richiesto: se oic e' valorizzato usa una query JOIN su
- * hq_pk_oic (deleted = 0) e restituisce solo domini/pacchetti con
- * dom.oic/pk.oic = oic; se oic e' omesso usa una query separata che
- * restituisce solo domini/pacchetti "a livello mercato" (dom.oic/pk.oic IS
- * NULL), senza toccare hq_pk_oic. I domini cancellati logicamente
- * (deleted = 1) sono esclusi (dom.deleted = 0). Include anche
+ * (facoltativo) richiesto: i domini si agganciano sempre solo per market
+ * (condivisi fra tutti gli OIC dello stesso mercato, o "globali" se market
+ * e' assente); se oic e' valorizzato usa una query JOIN su hq_pk_oic
+ * (deleted = 0) e restituisce SOLO i pacchetti con pk.oic = oic; se oic e'
+ * omesso usa una query separata che restituisce SOLO i pacchetti "a livello
+ * mercato" (pk.oic IS NULL), senza toccare hq_pk_oic. I domini cancellati
+ * logicamente (deleted = 1) sono esclusi (dom.deleted = 0). Include anche
  * domVisible/pkVisible (hq_pk_domain.visible/hq_pk_packages.visible).
  *
  * clonePk(marketTarget, marketOrig) clona, per il mercato marketOrig, tutte
  * le righe di woc.hq_pk_oic (oic incluso eventuale NULL) e le relative
- * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget,
+ * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget
+ * (i domini, condivisi per mercato, vengono clonati una sola volta),
  * rigenerando iddomain/idpackage dalle rispettive sequence e rimappando gli
  * iddomain nei pacchetti clonati per preservare la relazione dominio/
  * pacchetto originale. Esegue tutto in un'unica transazione (BEGIN/COMMIT,
@@ -533,103 +541,34 @@ async function checkIsPkMarketEnabled(pool, market) {
 }
 
 /**
- * Verifica se l'OIC indicato e' configurato (presente in woc.hq_pk_oic) per
- * il mercato indicato, leggendo il flag "deleted" tramite JOIN con
- * woc.hq_pk_market. Se non viene trovato nessun record (OIC non configurato
- * per quel mercato) viene ritornato 1 (= disabilitato/non configurato).
- *
- * @param {import('pg').Pool} pool
- * @param {string} market
- * @param {string} oic
- * @returns {Promise<number>} il valore di "deleted" della riga trovata, 1 se non trovata
- */
-async function checkIsPkOicConfigured(pool, market, oic) {
-  const { rows } = await pool.query(
-    `SELECT COALESCE(
-                (
-                  SELECT oi.deleted
-                  FROM woc.hq_pk_market mk
-                         JOIN woc.hq_pk_oic oi
-                              ON oi.market = mk.market
-                                AND oi.oic = $2
-                  WHERE mk.market = $1
-                LIMIT 1
-              ),
-              0
-          ) AS deleted`,
-              [market, oic],
-            );
-
-  return rows[0]?.deleted ?? 1;
-}
-
-/**
  * Inserisce un nuovo dominio (woc.hq_pk_domain.iddomain generato dalla
- * sequence woc.hq_pk_domain_iddomain_seq).
+ * sequence woc.hq_pk_domain_iddomain_seq). I domini sono condivisi da tutti
+ * gli OIC del mercato (woc.hq_pk_domain non ha piu' la colonna "oic", v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): la distinzione per singolo
+ * OIC resta solo a livello di pacchetto (woc.hq_pk_packages.oic).
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
- * @param {string} oic
  * @param {string} descr
  * @returns {Promise<number>} l'iddomain generato
  */
-async function insertDomain(pool, market, oic, descr) {
+async function insertDomain(pool, market, descr) {
   const { rows } = await pool.query(
-    `INSERT INTO woc.hq_pk_domain (market, oic, descr)
-     VALUES (NULLIF($1, ''), $2, $3)
+    `INSERT INTO woc.hq_pk_domain (market, descr)
+     VALUES (NULLIF($1, ''), $2)
      RETURNING iddomain`,
-    [market, oic, descr],
+    [market, descr],
   );
 
   return rows[0].iddomain;
 }
 
 /**
- * Copia in woc.hq_pk_domain, per il nuovo (market, oic), i domini gia'
- * esistenti del mercato (descr): se il mercato non ha ancora domini propri
- * (WHERE market = $1), copia invece i domini comuni (market IS NULL),
- * ma solo se per quel mercato non esiste gia' nessun dominio (NOT EXISTS).
- *
- * @param {import('pg').Pool} pool
- * @param {string} market
- * @param {string} oic
- * @returns {Promise<void>}
- */
-async function copyDomainFromMarket(pool, market, oic) {
-  await pool.query(
-    `
-    INSERT INTO woc.hq_pk_domain (market, oic, descr)
-    SELECT $1, $2, descr
-    FROM woc.hq_pk_domain
-    WHERE market = $1
-        and oic is null
-    UNION ALL
-
-    SELECT $1, $2, descr
-    FROM woc.hq_pk_domain
-    WHERE market IS NULL
-      AND NOT EXISTS (
-        SELECT 1
-        FROM woc.hq_pk_domain
-        WHERE market  is null
-          and oic is null
-      )
-    `,
-    [market, oic],
-  );
-}
-
-/**
- * Cancella (fisicamente) l'intera gerarchia hq_pk_packages/hq_pk_domain
- * configurata per la coppia (market, oic) indicata: prima i pacchetti
- * (woc.hq_pk_packages) dei domini di quel market+oic, poi i domini stessi
- * (woc.hq_pk_domain). Usata da initializeOicPkList (v. HqManager.js) per
- * ripulire eventuali righe residue di una precedente configurazione
- * dell'oic prima di ricopiare i domini dal mercato (copyDomainFromMarket),
- * evitando duplicati.
- *
- * L'intera operazione viene eseguita in un'unica transazione
- * (BEGIN/COMMIT su una connessione dedicata, ROLLBACK in caso di errore).
+ * Cancella (fisicamente) i pacchetti (woc.hq_pk_packages) configurati per
+ * la coppia (market, oic) indicata. I domini (woc.hq_pk_domain) NON vengono
+ * toccati: sono condivisi da tutti gli OIC del mercato (v. insertDomain),
+ * quindi cancellarli per un singolo oic toglierebbe anche gli altri OIC
+ * dello stesso mercato.
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
@@ -640,35 +579,12 @@ async function deleteOicPkHierarchy(pool, market, oic) {
   if (!market) throw new Error('"market" is required');
   if (!oic) throw new Error('"oic" is required');
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    await client.query(
-      `DELETE FROM woc.hq_pk_packages
-        WHERE iddomain IN (
-          SELECT iddomain
-          FROM woc.hq_pk_domain
-          WHERE market = $1
-            AND oic = $2
-        )`,
-      [market, oic],
-    );
-
-    await client.query(
-      `DELETE FROM woc.hq_pk_domain
-        WHERE market = $1
-          AND oic = $2`,
-      [market, oic],
-    );
-
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  await pool.query(
+    `DELETE FROM woc.hq_pk_packages
+      WHERE market = $1
+        AND oic = $2`,
+    [market, oic],
+  );
 }
 
 /**
@@ -833,30 +749,33 @@ async function setPackageVisible(pool, idpackage, value) {
  * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
  * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
  *
+ * woc.hq_pk_domain non ha piu' la colonna "oic" (v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): i domini sono condivisi da
+ * tutti gli OIC del mercato (o, se market e' assente, dai soli OIC "globali"
+ * senza mercato) e si agganciano quindi solo per market (mai per oic). La
+ * distinzione per singolo OIC resta invece a livello di pacchetto
+ * (woc.hq_pk_packages.oic), filtrato esplicitamente quando oic e' indicato.
+ *
  * "market" e "oic" sono entrambi facoltativi (null/undefined/stringa vuota
  * equivalgono a "non valorizzato") e la combinazione dei due determina QUALE
  * delle 4 query viene eseguita (nessuna piu' costruita dinamicamente con
  * OR/cast ::text in WHERE):
- *  1) market non valorizzato, oic non valorizzato: righe "globali" (non
- *     legate a nessun mercato ne' a nessun OIC); query diretta su
- *     woc.hq_pk_domain (dom.market IS NULL AND dom.oic IS NULL), senza
- *     passare per hq_pk_market;
+ *  1) market non valorizzato, oic non valorizzato: righe "globali" (domini
+ *     senza mercato); query diretta su woc.hq_pk_domain (dom.market IS
+ *     NULL), senza passare per hq_pk_market;
  *  2) market non valorizzato, oic valorizzato: query diretta su
  *     woc.hq_pk_oic (oi.market IS NULL AND oi.oic = oic AND oi.deleted = 0),
- *     senza passare per hq_pk_market, restituisce SOLO i domini/pacchetti
- *     legati a quell'oic;
+ *     senza passare per hq_pk_market, con i domini "globali" condivisi
+ *     (dom.market IS NULL);
  *  3) market valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
- *     cancellato (deleted = 0) per (market, oic), restituisce SOLO i
- *     domini/pacchetti legati a quello specifico oic;
- *  4) market valorizzato, oic non valorizzato: restituisce SOLO la
- *     configurazione "a livello mercato" (non legata a nessun OIC), cioe' le
- *     righe con dom.oic IS NULL / pk.oic IS NULL per quel mercato.
- * In tutti i casi dom/pk vengono agganciati per oic esplicito (oic = $n o
- * IS NULL), mai tramite un oi.oic unico risolto da una LEFT JOIN condivisa:
- * questo evita che, con oic omesso, i domini "a livello mercato" (oic IS
- * NULL) restino irraggiungibili quando il mercato ha gia' almeno un OIC
- * configurato. I domini cancellati logicamente (dom.deleted = 1) sono sempre
- * esclusi (dom.deleted = 0).
+ *     cancellato (deleted = 0) per (market, oic); i domini sono quelli del
+ *     mercato (condivisi con tutti gli altri OIC dello stesso mercato), i
+ *     pacchetti SOLO quelli di quello specifico oic (pk.oic = oic);
+ *  4) market valorizzato, oic non valorizzato: restituisce la stessa
+ *     gerarchia di domini del mercato, con SOLO i pacchetti "a livello
+ *     mercato" (non legati a nessun OIC, pk.oic IS NULL).
+ * I domini cancellati logicamente (dom.deleted = 1) sono sempre esclusi
+ * (dom.deleted = 0).
  *
  * @param {import('pg').Pool} pool
  * @param {string|null} [market]
@@ -880,37 +799,36 @@ async function getPackageList(pool, market, oic) {
   let params;
 
   if (!hasMarket && !hasOic) {
-    // 1) market = null, oic = null: configurazione globale (nessun mercato, nessun OIC).
+    // 1) market = null, oic = null: domini globali (nessun mercato).
     sql = `SELECT dom.market, NULL::varchar AS oic, ${selectColumns}
              FROM woc.hq_pk_domain dom  
              LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
-           WHERE dom.market IS NULL
-                 AND dom.oic IS NULL AND dom.deleted = 0`;
+           WHERE dom.market IS NULL AND dom.deleted = 0`;
     params = [];
   } else if (!hasMarket && hasOic) {
-    // 2) market = null, oic != null: OIC non legato a nessun mercato.
+    // 2) market = null, oic != null: OIC non legato a nessun mercato, domini globali condivisi.
     sql = `SELECT dom.market, oi.oic, ${selectColumns}
              FROM woc.hq_pk_oic oi 
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
            WHERE oi.market IS NULL
              AND oi.oic = $1 
              AND oi.deleted = 0`;
     params = [oic];
   } else if (hasMarket && hasOic) {
-    // 3) market != null, oic != null: OIC legato ad uno specifico mercato.
+    // 3) market != null, oic != null: domini del mercato (condivisi), pacchetti SOLO di quello specifico oic.
     sql = `SELECT mk.market, oi.oic, ${selectColumns}
              FROM woc.hq_pk_market mk
              JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
            WHERE mk.market = $1`;
     params = [market, oic];
   } else {
-    // 4) market != null, oic = null: configurazione "a livello mercato" (nessun OIC).
+    // 4) market != null, oic = null: domini del mercato, pacchetti "a livello mercato" (nessun OIC).
     sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
              FROM woc.hq_pk_market mk
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
            WHERE mk.market = $1`;
     params = [market];
@@ -936,6 +854,8 @@ async function getPackageList(pool, market, oic) {
  * Clona, per il mercato indicato (marketOrig), tutte le righe di
  * woc.hq_pk_oic (comprese le eventuali righe con oic IS NULL) e le relative
  * gerarchie hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget).
+ * I domini (condivisi da tutti gli OIC del mercato, v. insertDomain) vengono
+ * clonati una sola volta per mercato (non piu' una volta per oic).
  *
  * iddomain/idpackage sono generati dalle rispettive sequence
  * (hq_pk_domain_iddomain_seq/hq_pk_packages_idpackage_seq): i nuovi
@@ -972,16 +892,16 @@ async function clonePk(pool, marketTarget, marketOrig) {
     }
 
     const { rows: domainRows } = await client.query(
-      `SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain WHERE market = $1`,
+      `SELECT iddomain, descr, deleted FROM woc.hq_pk_domain WHERE market = $1`,
       [marketOrig],
     );
     const iddomainMap = new Map();
-    for (const { iddomain, oic, descr, deleted } of domainRows) {
+    for (const { iddomain, descr, deleted } of domainRows) {
       const { rows } = await client.query(
-        `INSERT INTO woc.hq_pk_domain (market, oic, descr, deleted)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO woc.hq_pk_domain (market, descr, deleted)
+         VALUES ($1, $2, $3)
          RETURNING iddomain`,
-        [marketTarget, oic, descr, deleted],
+        [marketTarget, descr, deleted],
       );
       iddomainMap.set(iddomain, rows[0].iddomain);
     }
@@ -1125,9 +1045,7 @@ module.exports = {
   setPkMarketDisable,
   setOicEnable,
   checkIsPkMarketEnabled,
-  checkIsPkOicConfigured,
   insertDomain,
-  copyDomainFromMarket,
   deleteOicPkHierarchy,
   setDomain,
   deleteDomain,

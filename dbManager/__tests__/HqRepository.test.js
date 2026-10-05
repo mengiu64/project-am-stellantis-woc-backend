@@ -24,9 +24,7 @@ const {
   setPkMarketDisable,
   setOicEnable,
   checkIsPkMarketEnabled,
-  checkIsPkOicConfigured,
   insertDomain,
-  copyDomainFromMarket,
   deleteOicPkHierarchy,
   setDomain,
   deleteDomain,
@@ -654,117 +652,56 @@ describe('HqRepository', () => {
     });
   });
 
-  describe('checkIsPkOicConfigured', () => {
-    it('returns the "deleted" flag of the oic row for the given market', async () => {
-      const pool = makePool(async () => ({ rows: [{ deleted: 0 }] }));
-
-      const result = await checkIsPkOicConfigured(pool, '1000', '00006821');
-
-      expect(result).toBe(0);
-      expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('FROM woc.hq_pk_market mk'),
-        ['1000', '00006821'],
-      );
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE mk.market = $1'));
-    });
-
-    it('returns 1 when no row is found (oic not configured for the market)', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
-
-      expect(await checkIsPkOicConfigured(pool, '1000', '09999999')).toBe(1);
-    });
-  });
-
   describe('insertDomain', () => {
-    it('inserts the domain and returns the generated iddomain', async () => {
+    it('inserts the domain (shared by all oics of the market) and returns the generated iddomain', async () => {
       const pool = makePool(async () => ({ rows: [{ iddomain: 42 }] }));
 
-      const result = await insertDomain(pool, '1000', '00006821', 'Meccanica');
+      const result = await insertDomain(pool, '1000', 'Meccanica');
 
       expect(result).toBe(42);
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO woc.hq_pk_domain'),
-        ['1000', '00006821', 'Meccanica'],
+        ['1000', 'Meccanica'],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING iddomain'));
-    });
-  });
-
-  describe('copyDomainFromMarket', () => {
-    it('runs the INSERT ... SELECT with market/oic copying domains from the market (or common ones as fallback)', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
-
-      await copyDomainFromMarket(pool, '1000', '00006821');
-
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO woc.hq_pk_domain'),
-        ['1000', '00006821'],
-      );
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE market = $1'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('UNION ALL'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE market IS NULL'));
-      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('NOT EXISTS'));
+      expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('oic'));
     });
   });
 
   describe('deleteOicPkHierarchy', () => {
-    function makeClientPool(queryImpl) {
-      const client = { query: jest.fn(queryImpl), release: jest.fn() };
-      const pool = { connect: jest.fn().mockResolvedValue(client) };
-      return { pool, client };
-    }
-
     it('throws when market is missing', async () => {
-      const { pool } = makeClientPool();
+      const pool = makePool();
       await expect(deleteOicPkHierarchy(pool, undefined, '00006821'))
         .rejects.toThrow('"market" is required');
-      expect(pool.connect).not.toHaveBeenCalled();
+      expect(pool.query).not.toHaveBeenCalled();
     });
 
     it('throws when oic is missing', async () => {
-      const { pool } = makeClientPool();
+      const pool = makePool();
       await expect(deleteOicPkHierarchy(pool, '1000', undefined))
         .rejects.toThrow('"oic" is required');
-      expect(pool.connect).not.toHaveBeenCalled();
+      expect(pool.query).not.toHaveBeenCalled();
     });
 
-    it('deletes hq_pk_packages (by iddomain subquery) then hq_pk_domain for market+oic, in a single transaction', async () => {
-      const { pool, client } = makeClientPool(async () => ({ rows: [] }));
+    it('deletes only hq_pk_packages for market+oic, leaving hq_pk_domain (shared across oics) untouched', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
 
       await deleteOicPkHierarchy(pool, '1000', '00006821');
 
-      expect(pool.connect).toHaveBeenCalledTimes(1);
-      expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
-      expect(client.query).toHaveBeenNthCalledWith(
-        2,
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('DELETE FROM woc.hq_pk_packages'),
         ['1000', '00006821'],
       );
-      expect(client.query.mock.calls[1][0]).toEqual(expect.stringContaining('SELECT iddomain'));
-      expect(client.query.mock.calls[1][0]).toEqual(expect.stringContaining('FROM woc.hq_pk_domain'));
-      expect(client.query).toHaveBeenNthCalledWith(
-        3,
-        expect.stringContaining('DELETE FROM woc.hq_pk_domain'),
-        ['1000', '00006821'],
-      );
-      expect(client.query).toHaveBeenNthCalledWith(4, 'COMMIT');
-      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('hq_pk_domain'));
     });
 
-    it('rolls back and releases the client when a query fails', async () => {
+    it('propagates query errors', async () => {
       const error = new Error('boom');
-      const { pool, client } = makeClientPool(async (sql) => {
-        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
-        throw error;
-      });
+      const pool = makePool(async () => { throw error; });
 
       await expect(deleteOicPkHierarchy(pool, '1000', '00006821')).rejects.toThrow('boom');
-
-      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
-      expect(client.release).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -938,9 +875,9 @@ describe('HqRepository', () => {
       expect(params).toEqual([]);
       expect(sql).toEqual(expect.stringContaining('SELECT dom.market, NULL::varchar AS oic'));
       expect(sql).toEqual(expect.stringContaining('FROM woc.hq_pk_domain dom'));
-      expect(sql).toEqual(expect.stringContaining('WHERE dom.market IS NULL'));
-      expect(sql).toEqual(expect.stringContaining('AND dom.oic IS NULL AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('WHERE dom.market IS NULL AND dom.deleted = 0'));
       expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain'));
+      expect(sql).not.toEqual(expect.stringContaining('dom.oic'));
       expect(sql).not.toEqual(expect.stringContaining('hq_pk_oic'));
       expect(sql).not.toEqual(expect.stringContaining('hq_pk_market'));
       expect(sql).not.toEqual(expect.stringContaining('::text'));
@@ -955,7 +892,7 @@ describe('HqRepository', () => {
       expect(params).toEqual([]);
     });
 
-    it('2) market = null, oic != null: queries hq_pk_oic with market IS NULL and filters dom/pk on oic = $1', async () => {
+    it('2) market = null, oic != null: queries hq_pk_oic with market IS NULL and the shared global domains (no oic filter on dom)', async () => {
       const pool = makePool(async () => ({
         rows: [
           {
@@ -997,12 +934,13 @@ describe('HqRepository', () => {
       expect(sql).toEqual(expect.stringContaining('WHERE oi.market IS NULL'));
       expect(sql).toEqual(expect.stringContaining('AND oi.oic = $1'));
       expect(sql).toEqual(expect.stringContaining('AND oi.deleted = 0'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.deleted = 0'));
       expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain'));
+      expect(sql).not.toEqual(expect.stringContaining('dom.oic'));
       expect(sql).not.toEqual(expect.stringContaining('hq_pk_market'));
     });
 
-    it('3) market != null, oic != null: joins hq_pk_oic on (market, oic) and filters dom/pk on oic = $2', async () => {
+    it('3) market != null, oic != null: joins hq_pk_oic on (market, oic), domains shared by market, packages filtered by oic = $2', async () => {
       const pool = makePool(async () => ({
         rows: [
           {
@@ -1041,11 +979,12 @@ describe('HqRepository', () => {
       expect(params).toEqual(['1000', '00006821']);
       expect(sql).toEqual(expect.stringContaining('JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0'));
       expect(sql).toEqual(expect.stringContaining('WHERE mk.market = $1'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0'));
       expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain'));
+      expect(sql).not.toEqual(expect.stringContaining('dom.oic'));
     });
 
-    it('4) market != null, oic = null: queries hq_pk_market with market = $1, no oic join, dom/pk oic IS NULL', async () => {
+    it('4) market != null, oic = null: queries hq_pk_market with market = $1, no oic join, domains shared by market, pk oic IS NULL', async () => {
       const pool = makePool(async () => ({
         rows: [
           {
@@ -1066,8 +1005,9 @@ describe('HqRepository', () => {
       expect(params).toEqual(['1000']);
       expect(sql).toEqual(expect.stringContaining('SELECT mk.market, NULL::varchar AS oic'));
       expect(sql).toEqual(expect.stringContaining('WHERE mk.market = $1'));
-      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0'));
       expect(sql).toEqual(expect.stringContaining('LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain'));
+      expect(sql).not.toEqual(expect.stringContaining('dom.oic'));
       expect(sql).not.toEqual(expect.stringContaining('hq_pk_oic'));
     });
 
@@ -1108,14 +1048,14 @@ describe('HqRepository', () => {
       expect(pool.connect).not.toHaveBeenCalled();
     });
 
-    it('clones hq_pk_oic/hq_pk_domain/hq_pk_packages from marketOrig to marketTarget in a single transaction, remapping iddomain', async () => {
+    it('clones hq_pk_oic/hq_pk_domain (once per market)/hq_pk_packages from marketOrig to marketTarget in a single transaction, remapping iddomain', async () => {
       const { pool, client } = makeClientPool(async (sql) => {
         if (sql === 'BEGIN' || sql === 'COMMIT') return {};
         if (sql.includes('SELECT oic, deleted FROM woc.hq_pk_oic')) {
           return { rows: [{ oic: '00006821', deleted: 0 }, { oic: null, deleted: 0 }] };
         }
-        if (sql.includes('SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain')) {
-          return { rows: [{ iddomain: 10, oic: '00006821', descr: 'Meccanica', deleted: 0 }] };
+        if (sql.includes('SELECT iddomain, descr, deleted FROM woc.hq_pk_domain')) {
+          return { rows: [{ iddomain: 10, descr: 'Meccanica', deleted: 0 }] };
         }
         if (sql.includes('INSERT INTO woc.hq_pk_domain')) {
           return { rows: [{ iddomain: 99 }] };
@@ -1145,12 +1085,12 @@ describe('HqRepository', () => {
       );
 
       expect(client.query).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain WHERE market = $1'),
+        expect.stringContaining('SELECT iddomain, descr, deleted FROM woc.hq_pk_domain WHERE market = $1'),
         ['1000'],
       );
       expect(client.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO woc.hq_pk_domain (market, oic, descr, deleted)'),
-        ['2000', '00006821', 'Meccanica', 0],
+        expect.stringContaining('INSERT INTO woc.hq_pk_domain (market, descr, deleted)'),
+        ['2000', 'Meccanica', 0],
       );
 
       expect(client.query).toHaveBeenCalledWith(
