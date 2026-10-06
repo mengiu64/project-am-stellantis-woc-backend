@@ -557,7 +557,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `jobCardService` | `getJobCardList(token, params)` | Lista JobCard con filtri e paginazione |
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Dettaglio di una singola JobCard, arricchito con i dati DML (v. sotto) |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`); lettura best-effort di `ack`/`techreason`/`businessreason`, restituiti come `ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`; lettura del `payload` registrato per l'azione `lastPayload` (solo `jobcard`, v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -620,6 +620,71 @@ quelli letti da `/tmp/<jobCardSrpId>.json` (stessa cache di
 eventuali errori verso agendaSoaNaga vengono loggati ma non fanno fallire la
 risposta di `saveJobcard` (già persistita con successo sulla DGT).
 
+#### Esito della sincronizzazione nelle risposte `details`/`saveJobcard`
+
+Le risposte delle azioni `details` e `saveJobcard` includono `ack`, `techReason`
+e `businessReason`, letti da `woc.jobcard_sync_activity` per `jobcardid` (colonne
+`ack`/`techreason`/`businessreason`, popolate da [synch-status](#synch-status)
+con l'esito della sincronizzazione DMS): in `details` (`jobcardid` = `jobCardId`
+richiesto) subito prima di `jobCardDetail`, in `saveJobcard` (`jobcardid`
+restituito dall'UPSERT) in coda alla risposta DGT.
+
+```json
+{
+  "dmsAvailable": true,
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card retrieved successfully",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": "",
+  "jobCardDetail": { "roInfo": { "jobCardSrpId": "JCID-84506" } }
+}
+```
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Job Card Transaction Successful",
+  "jobCardId": "JCID-84521",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": ""
+}
+```
+
+I campi sono aggiunti nell'handler (e nel CLI) dopo la chiamata DGT: la cache
+DynamoDB, l'azione `dml` e l'operazione interna `getJobCardDetails` usata da
+`synch-status` restano invariate. Lettura best-effort: riga assente, valori
+`NULL`, errore DB o attesa oltre 5 s → stringa vuota, senza far fallire la
+risposta. In `saveJobcard` i valori sono quelli registrati al momento della
+risposta (`synch-status` li aggiorna in modo asincrono): vuoti per una jobcard
+nuova, l'esito della sincronizzazione precedente per una già presente.
+
+#### `lastPayload` (GET) — ultimo payload inviato a DJC/DGT
+
+`GET /api/repairorder/lastPayload?jobCardId=<id>` (accettato anche `id`)
+restituisce l'ultimo payload `saveJobcard` registrato in
+`woc.jobcard_sync_activity` per `jobcardid` (colonna `payload`, UPSERT eseguito
+**prima** dell'invio a DGT): permette di recuperare le modifiche inviate in
+delta quando l'aggiornamento verso DJC/DGT fallisce. È il payload sanitizzato
+effettivamente inviato, sovrascritto ad ogni `saveJobcard`, quindi reinviabile
+così com'è. Legge solo dal DB (nessuna chiamata DGT né token) ed è bloccante:
+`jobCardId` mancante → `400`, nessun payload registrato → `404`, errore DB →
+`502` (body `{ "success": false, "message": "..." }`). Solo nella lambda
+`jobcard` (CLI: `node index.js lastPayload <jobCardId>`).
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card payload retrieved successfully",
+  "jobCardId": "JCID-84521",
+  "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
+}
+```
+
 #### `getCartPriceAndAvailability` (azione `dml`) — Sender dinamico
 
 `getCartPriceAndAvailability` (invocata dall'azione `dml` di `index.js`, tramite
@@ -666,9 +731,11 @@ senza codice o credenziali sibling nell'artifact.
 node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
 node index.js saveJobcard <payloadJsonFile>
+node index.js lastPayload <jobCardId>
 # es: node index.js list 0062219 vin=VIN123 page=2
 # es: node index.js details 79
 # es: node index.js saveJobcard ./payload.json
+# es: node index.js lastPayload JCID-84521
 ```
 
 ---
@@ -692,7 +759,7 @@ riferimento (`get.json`).
 | `DjcManager` | `Save*(...)` | Costruisce `json_orig`/`json_mod` per una sezione della Job Card (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`) |
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) — copia sincronizzata di `jobcard/authService.js` |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`) — copia sincronizzata di `jobcard/jobCardService.js` |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (v. sotto) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT, e lettura best-effort dell'esito restituito nella risposta (v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js — copia di `jobcard/httpClient.js` |
 
 > `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
@@ -717,9 +784,12 @@ ultimo payload inviato (sovrascritto ad ogni `saveJobcard`); `ack`/`techreason`/
 `businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`. Il
 salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
 in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
-(`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate) nelle due
+(`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate; solo quella
+di `jobcard` aggiunge la lettura `getLastPayload`, v. `lastPayload`) nelle due
 lambda, con env `JOBCARD_DB_*` in `jobcard` e `DJC_DB_*` in `djc`. Dettagli in
-`djc/README.md`.
+`djc/README.md`. Dopo l'invio, entrambe aggiungono in coda alla risposta `ack`/
+`techReason`/`businessReason` letti dalla stessa riga (best-effort, v.
+[jobcard](#jobcard) → "Esito della sincronizzazione nelle risposte").
 
 Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
 tabella degli identificativi per array, semantica `removalAction`/update
@@ -1589,7 +1659,7 @@ JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate (dedicato jobcard)
 JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate (dedicato jobcard)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT
-JOBCARD_DB_HOST=...                # RDS Proxy Aurora "wiadvisor" — woc.jobcard_sync_activity (solo saveJobcard)
+JOBCARD_DB_HOST=...                # RDS Proxy Aurora "wiadvisor" — woc.jobcard_sync_activity (saveJobcard, details e lastPayload)
 JOBCARD_DB_SECRET_ID=...           # Secret wiadvisor_app (in locale in alternativa JOBCARD_DB_USER/JOBCARD_DB_PASSWORD); opzionali JOBCARD_DB_PORT/NAME/SSL
 WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
 WOC_INTERNAL_TIMEOUT_MS=25000
@@ -1909,12 +1979,14 @@ cd agendaSoa && npm run test:coverage
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
 - **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP; `sanitizeJobCardPayload`
-- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`
+- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`payload`, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati)
+- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`payload` senza token né chiamate DGT, `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore DB; solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
 
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
-- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna solo `payload`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante)
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna solo `payload`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); lettura dell'esito (`ack`/`techreason`/`businessreason` → `ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
+- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
 - **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 

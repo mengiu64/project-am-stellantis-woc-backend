@@ -25,7 +25,7 @@ djc/
 ├── index.js             ← CLI entry-point + Lambda handler (dispatcher per metodo)
 ├── DjcManager.js         ← classe orchestratore (payload json_orig/json_mod)
 ├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
-├── JobcardSyncActivityRepository.js ← UPSERT woc.jobcard_sync_activity (saveJobcard)
+├── JobcardSyncActivityRepository.js ← woc.jobcard_sync_activity: UPSERT e lettura esito ack/techReason/businessReason (saveJobcard)
 ├── db.js                 ← Pool pg verso Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
 ├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
@@ -361,7 +361,7 @@ dagli arricchimenti di sola UI, cioè esattamente quello inviato — v.
 | `jobcardid` (PK) | `roInfo.jobCardSrpId`, fallback `roInfo.dmsRepairOrderId`, poi `roInfo.jobCardLegacyId` |
 | `creationdate` | `now()` al primo inserimento; non modificata dagli UPSERT successivi |
 | `payload` (JSONB) | payload inviato a DGT; sovrascritto ad ogni `saveJobcard` |
-| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento |
+| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento da `synch-status` (esito della sincronizzazione) |
 
 Il salvataggio è **bloccante**: se nessuno dei tre id è presente la lambda
 risponde `400` (`roInfo.jobCardSrpId/dmsRepairOrderId/jobCardLegacyId is required`),
@@ -370,6 +370,17 @@ viene inviato a DGT. Connessione: Aurora "wiadvisor" via RDS Proxy, utente
 `wiadvisor_app` dal secret Secrets Manager (layer Parameters and Secrets
 Extension), variabili `DJC_DB_HOST`/`DJC_DB_PORT`/`DJC_DB_NAME`/`DJC_DB_SECRET_ID`
 (in locale anche `DJC_DB_USER`/`DJC_DB_PASSWORD`/`DJC_DB_SSL`, v. `.env.example`).
+
+**Esito nella risposta**: dopo l'invio a DGT (e la sync NAGA), in coda alla
+risposta vengono aggiunti `ack`, `techReason` e `businessReason`, letti dalle
+colonne `ack`/`techreason`/`businessreason` della stessa riga (`jobcardid`
+restituito dall'UPSERT). Le colonne sono aggiornate da `synch-status` in modo
+asincrono, quindi i valori riflettono l'ultimo esito registrato al momento della
+risposta: vuoti per una jobcard nuova, l'esito della sincronizzazione precedente
+per una già presente. Lettura best-effort: riga assente, valori `NULL`, errore
+DB o attesa oltre 5 s → stringa vuota, senza far fallire la risposta (il payload
+è già stato inviato a DGT). Stesso comportamento della lambda `jobcard`, che
+aggiunge gli stessi campi anche alla risposta di `details`.
 
 #### Payload: struttura e regole di obbligatorietà
 
@@ -466,12 +477,13 @@ tratto dal documento di specifica): vedi l'esempio `full` nello swagger
 
 ```json
 {
-  "response": {
-    "statuscode": "200",
-    "success": true,
-    "jobCardId": "JCID-609",
-    "message": "Job card Transaction Successful"
-  }
+  "statusCode": 200,
+  "success": true,
+  "message": "Job Card Transaction Successful",
+  "jobCardId": "JCID-84521",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": ""
 }
 ```
 

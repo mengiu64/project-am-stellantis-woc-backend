@@ -1,7 +1,7 @@
 # JobCard Lambda
 
 Client Node.js per l'integrazione con le API Stellantis DGT (Digital Layer).  
-Ottiene un token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**, e per inviare (**JobCard Save**) i payload di Digital Job Card costruiti dalla lambda `djc`.
+Ottiene un token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**, e per inviare (**JobCard Save**) i payload di Digital Job Card costruiti dalla lambda `djc`. Rilegge inoltre dal DB l'ultimo payload inviato (**JobCard Last Payload**), per recuperarlo quando l'aggiornamento verso DJC/DGT fallisce.
 
 ---
 
@@ -13,13 +13,13 @@ jobcard/
 ├── httpClient.js      # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js     # Autenticazione PingFederate → Bearer token
 ├── jobCardService.js  # getJobCardList / getJobCardDetails / saveJobCard
-├── JobcardSyncActivityRepository.js # UPSERT woc.jobcard_sync_activity (saveJobcard)
+├── JobcardSyncActivityRepository.js # woc.jobcard_sync_activity: UPSERT (saveJobcard), lettura esito ack/techReason/businessReason (details/saveJobcard) e ultimo payload (lastPayload)
 ├── db.js              # Pool pg Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── index.js           # Entry point CLI
 └── package.json
 ```
 
-> Dipendenze npm: SDK AWS (DynamoDB/Secrets Manager) e `pg` (solo per `saveJobcard`).
+> Dipendenze npm: SDK AWS (DynamoDB/Secrets Manager) e `pg` (solo per `woc.jobcard_sync_activity`: `saveJobcard`, `details` e `lastPayload`).
 
 ---
 
@@ -128,6 +128,41 @@ node index.js details 79
 | `jobCardId` | parametro di input |
 | `Authorization` | `Bearer <token>` |
 
+**Esito della sincronizzazione (`woc.jobcard_sync_activity`)**: dopo la lettura
+del dettaglio, alla risposta vengono aggiunti `ack`, `techReason` e
+`businessReason`, letti dalle colonne `ack`/`techreason`/`businessreason` della
+riga con `jobcardid` = `jobCardId` richiesto (popolate da `synch-status` con
+l'esito della sincronizzazione DMS), subito prima di `jobCardDetail`.
+L'aggiunta riguarda solo la risposta dell'azione `details` (handler e CLI): la
+cache DynamoDB, l'azione `dml` e l'operazione interna `getJobCardDetails` usata
+da `synch-status` restano invariate. Best-effort: riga assente, valori `NULL`,
+errore DB o attesa oltre 5 s → stringa vuota (l'errore viene solo loggato e non
+fa fallire la risposta).
+
+**Risposta di successo (200, estratto):**
+
+```json
+{
+  "dmsAvailable": true,
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card retrieved successfully",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": "",
+  "jobCardDetail": {
+    "roInfo": {
+      "dmsRepairOrderId": "DMS-20260928-002",
+      "jobCardSrpId": "JCID-84506",
+      "status": "CREATED"
+    },
+    "customerInfo": [],
+    "vehicleInfo": {},
+    "jobs": []
+  }
+}
+```
+
 ---
 
 ### JobCard Save
@@ -171,6 +206,16 @@ tabella contiene il payload effettivamente inviato. Stessa implementazione di
 `djc` (v. [`djc/README.md`](../djc/README.md)); DDL in
 `sql/create_table_jobcard_sync_activity.sql`.
 
+**Esito nella risposta**: dopo l'invio a DGT (e la sync NAGA), in coda alla
+risposta vengono aggiunti `ack`, `techReason` e `businessReason`, letti dalla
+stessa riga di `woc.jobcard_sync_activity` (`jobcardid` restituito dall'UPSERT).
+Le colonne sono aggiornate da `synch-status` in modo asincrono, quindi i valori
+riflettono l'ultimo esito registrato al momento della risposta: vuoti per una
+jobcard nuova, l'esito della sincronizzazione precedente per una già presente.
+Best-effort come in `details`: riga assente, valori `NULL`, errore DB o attesa
+oltre 5 s → stringa vuota, senza far fallire la risposta (il payload è già stato
+inviato a DGT).
+
 **Payload e obbligatorietà**: il payload (`roInfo` obbligatorio, più le sezioni
 opzionali `customerInfo[]`, `vehicleInfo`, `jobs[]`, ecc.) segue le stesse
 regole di obbligatorietà (M/M(O)/M(C)) e le stesse regole di
@@ -198,14 +243,68 @@ e nello schema `JobCardSaveRequest` di `swagger-woc.yaml`
 
 ```json
 {
-  "response": {
-    "statuscode": "200",
-    "success": true,
-    "jobCardId": "JCID-609",
-    "message": "Job card Transaction Successful"
+  "statusCode": 200,
+  "success": true,
+  "message": "Job Card Transaction Successful",
+  "jobCardId": "JCID-84521",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": ""
+}
+```
+
+---
+
+### JobCard Last Payload
+
+Restituisce (GET) l'ultimo payload `saveJobcard` inviato a DGT per una job card,
+letto dalla colonna `payload` di `woc.jobcard_sync_activity` (`jobcardid` =
+`jobCardId` richiesto). Serve a recuperare le modifiche inviate in delta quando
+l'aggiornamento verso DJC/DGT fallisce: il payload viene registrato **prima**
+dell'invio (v. "Tracciamento su DB" sopra), quindi è disponibile anche se la
+POST `/jobCard` non è andata a buon fine. È il payload sanitizzato
+effettivamente inviato (senza gli arricchimenti di sola UI, v.
+`sanitizeJobCardPayload`), sovrascritto ad ogni `saveJobcard`: può essere
+reinviato così com'è con `saveJobcard`.
+
+```bash
+node index.js lastPayload <jobCardId>
+```
+
+**Esempio:**
+```bash
+node index.js lastPayload JCID-84521
+```
+
+**Endpoint:** `GET /api/repairorder/lastPayload?jobCardId=JCID-84521` (accettato
+anche `id`). Legge solo dal DB: nessuna chiamata DGT né token PingFederate.
+
+**Risposta di successo (200):**
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card payload retrieved successfully",
+  "jobCardId": "JCID-84521",
+  "payload": {
+    "roInfo": {
+      "jobCardSrpId": "JCID-84521",
+      "dealerId": "DE87630",
+      "updateDateTime": "2026-10-02T09:19:31Z"
+    },
+    "jobs": []
   }
 }
 ```
+
+**Errori** (body `{ "success": false, "message": "..." }`):
+
+| Status | Caso |
+|---|---|
+| `400` | `jobCardId` mancante (`[jobCard] jobCardId is required`) |
+| `404` | nessun payload registrato per la job card (`[jobCard] payload not found for jobCardId <id>`) |
+| `502` | errore DB |
 
 ---
 
@@ -268,7 +367,7 @@ JOBCARD_PING_CLIENT_ID=your_ping_client_id_here
 JOBCARD_PING_CLIENT_SECRET=your_ping_client_secret_here
 DGT_CLIENT_ID=your_dgt_client_id_here
 DGT_CLIENT_SECRET=your_dgt_client_secret_here
-# woc.jobcard_sync_activity (solo saveJobcard)
+# woc.jobcard_sync_activity (saveJobcard, details e lastPayload)
 JOBCARD_DB_HOST=your_rds_proxy_endpoint_here
 JOBCARD_DB_USER=wiadvisor_app
 JOBCARD_DB_PASSWORD=your_db_password_here
@@ -286,7 +385,7 @@ Configura le variabili d'ambiente direttamente sull'ambiente di esecuzione (es. 
 | `JOBCARD_PING_CLIENT_SECRET` | Client Secret PingFederate (dedicato jobcard) |
 | `DGT_CLIENT_ID` | Client ID Stellantis DGT API |
 | `DGT_CLIENT_SECRET` | Client Secret Stellantis DGT API |
-| `JOBCARD_DB_HOST` | Endpoint RDS Proxy Aurora "wiadvisor" (`woc.jobcard_sync_activity`, solo `saveJobcard`) |
+| `JOBCARD_DB_HOST` | Endpoint RDS Proxy Aurora "wiadvisor" (`woc.jobcard_sync_activity`, solo `saveJobcard`, `details` e `lastPayload`) |
 | `JOBCARD_DB_SECRET_ID` | Secret Aurora `wiadvisor_app` (default `sm-np-bsn0027990-dev-aurora-app`); in locale in alternativa `JOBCARD_DB_USER`/`JOBCARD_DB_PASSWORD` |
 | `JOBCARD_DB_PORT` / `JOBCARD_DB_NAME` / `JOBCARD_DB_SSL` | Opzionali (default dal secret / `5432` / `wiadvisor`; `JOBCARD_DB_SSL=false` solo per Postgres locale senza TLS) |
 
