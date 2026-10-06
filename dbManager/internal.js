@@ -16,6 +16,8 @@ const poolOperations = {
   getMarkets: snowflakes.getMarkets,
   getEnablingConfiguration: hq.getEnablingConfiguration,
   setEnablingConfiguration: hq.setEnablingConfiguration,
+  importAppConfiguration: hq.importAppConfiguration,
+  getAppConfigurationList: hq.getAppConfigurationList,
   getVehicleInspection: hq.getVehicleInspection,
   setVehicleInspectionVisible: hq.setVehicleInspectionVisible,
   deletetVehicleInspection: hq.deletetVehicleInspection,

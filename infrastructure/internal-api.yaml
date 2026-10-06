@@ -638,6 +638,8 @@ Resources:
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/session/getData
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getEnablingConfiguration
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/setEnablingConfiguration
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/importAppConfiguration
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getAppConfigurationList
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getVehicleInspection
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/setVehicleInspectionVisible
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/deletetVehicleInspection

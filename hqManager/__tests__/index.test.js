@@ -43,6 +43,8 @@ function makeManagerInstance(overrides = {}) {
     searchAudit: jest.fn(),
     getAnagSection: jest.fn(),
     getAnagAllocation: jest.fn(),
+    importAppConfiguration: jest.fn(),
+    exportAppConfiguration: jest.fn(),
     ...overrides,
   };
   HqManager.mockImplementation(() => instance);
@@ -462,6 +464,38 @@ describe('hqManager/index.js', () => {
       expect(instance.getAnagAllocation).toHaveBeenCalledWith();
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, allocations });
+    });
+
+    it('dispatches importAppConfiguration (direct invocation payload)', async () => {
+      const importResult = { success: true, rowsRead: 1, rowsInserted: 1, errors: [] };
+      const instance = makeManagerInstance({
+        importAppConfiguration: jest.fn().mockResolvedValue(importResult),
+      });
+
+      const res = await handler({
+        action: 'importAppConfiguration',
+        body: { market: '1000', fileContentBase64: 'QkFTRTY0' },
+      });
+
+      expect(instance.importAppConfiguration).toHaveBeenCalledWith('1000', 'QkFTRTY0');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ market: '1000', ...importResult });
+    });
+
+    it('dispatches exportAppConfiguration (direct invocation payload)', async () => {
+      const exportResult = { market: '1000', rowsExported: 2, fileContentBase64: 'QkFTRTY0' };
+      const instance = makeManagerInstance({
+        exportAppConfiguration: jest.fn().mockResolvedValue(exportResult),
+      });
+
+      const res = await handler({
+        action: 'exportAppConfiguration',
+        body: { market: '1000' },
+      });
+
+      expect(instance.exportAppConfiguration).toHaveBeenCalledWith('1000');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ success: true, ...exportResult });
     });
 
     it('ignores an unparseable JSON body (parseBody catch branch) and falls back to path-derived action', async () => {

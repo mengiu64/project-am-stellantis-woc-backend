@@ -91,6 +91,22 @@ async function resolveCodmarket(event = {}, body = {}) {
  * con username risolto da resolveUsername (v. sopra: firstname+lastname
  * della sessione dell'utente autenticato, event.requestContext.authorizer.sub).
  *
+ * importAppConfiguration(market, fileContentBase64) importa in blocco, da
+ * un file Excel ricevuto in Base64 nel body (XLSX.read, decodificato qui:
+ * la Lambda non ha accesso al filesystem del chiamante), le righe di
+ * configurazione di abilitazione WOC/firma digitale per il mercato
+ * indicato: l'array di righe estratto dal file viene inviato in un'unica
+ * chiamata REST a dbManager (HqRepository.js::importAppConfiguration), che
+ * esegue l'intera importazione in una sola transazione (rollback totale se
+ * anche una sola riga fallisce).
+ *
+ * exportAppConfiguration(market) e' l'operazione simmetrica: legge (in
+ * un'unica chiamata REST, HqRepository.js::getAppConfigurationList) le
+ * righe di configurazione di abilitazione WOC/firma digitale del mercato
+ * indicato, le serializza qui in un foglio XLSX (XLSX.utils.json_to_sheet)
+ * e restituisce il file come contenuto Base64 (nessuna scrittura su
+ * filesystem: la Lambda non ha accesso al filesystem del chiamante).
+ *
  * getVehicleInspection(market, type),
  * setVehicleInspectionVisible(payload, event) (payload contiene un array
  * { id, value } sotto una di queste chiavi: conditions, equipment,
@@ -180,6 +196,64 @@ class HqManager {
       await repository.setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature);
       await repository.insertAudit(username, 'enablingConfiguration', codmarket, 'update', `oic: ${oic} enabled: ${enableWOC} enableSignature:${enableSignature}`);
     }
+  }
+
+  /**
+   * Importa in blocco, da un file Excel, le righe di configurazione di
+   * abilitazione WOC/firma digitale (woc.hq_application_enabling) per il
+   * mercato indicato. Il file Excel arriva codificato in Base64 nel body
+   * della richiesta (stesso pattern di moparDoc::createJobCardAndUploadDocument,
+   * necessario perche' la Lambda non ha accesso al filesystem del chiamante):
+   * viene decodificato/parsato qui (XLSX.read) estraendo la prima sheet in
+   * un array di oggetti plain { oic, enablewoc, enablesignature, ... }
+   * (riga 1 = intestazione); il risultato, serializzabile, viene poi
+   * inviato in un'unica chiamata REST a dbManager
+   * (HqRepository.js::importAppConfiguration), che esegue l'intera
+   * importazione in una sola transazione (BEGIN/COMMIT, ROLLBACK se anche
+   * una sola riga fallisce la validazione/l'upsert).
+   *
+   * @param {string} market
+   * @param {string} fileContentBase64 - contenuto del file Excel (XLSX) codificato in Base64
+   * @returns {Promise<{ success: boolean, rowsRead: number, rowsInserted: number, errors: Array<{ row: number, oic: *, error: string }>, message?: string }>}
+   */
+  async importAppConfiguration(market, fileContentBase64) {
+    if (!market) throw new Error('"market" is required');
+    if (!fileContentBase64) throw new Error('"fileContentBase64" is required');
+
+    const XLSX = require('xlsx');
+    const workbook = XLSX.read(fileContentBase64, { type: 'base64' });
+    const sheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: null });
+
+    return repository.importAppConfiguration(market, rows);
+  }
+
+  /**
+   * Esporta, in un file Excel, le righe di configurazione di abilitazione
+   * WOC/firma digitale (woc.hq_application_enabling) del mercato indicato:
+   * i dati vengono letti da dbManager con un'unica chiamata REST
+   * (HqRepository.js::getAppConfigurationList, ordinati per oic), poi
+   * serializzati qui in un foglio XLSX (XLSX.utils.json_to_sheet) e
+   * restituiti come contenuto Base64 (stesso pattern, simmetrico, di
+   * importAppConfiguration: la Lambda non ha accesso al filesystem del
+   * chiamante, quindi il file non viene scritto su disco ma restituito nel
+   * body della risposta).
+   *
+   * @param {string} market
+   * @returns {Promise<{ market: string, rowsExported: number, fileContentBase64: string }>}
+   */
+  async exportAppConfiguration(market) {
+    if (!market) throw new Error('"market" is required');
+
+    const rows = await repository.getAppConfigurationList(market);
+
+    const XLSX = require('xlsx');
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const fileContentBase64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
+
+    return { market, rowsExported: rows.length, fileContentBase64 };
   }
 
   /**

@@ -2,6 +2,23 @@
 
 jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
 
+const mockRead = jest.fn();
+const mockSheetToJson = jest.fn();
+const mockJsonToSheet = jest.fn();
+const mockBookNew = jest.fn();
+const mockBookAppendSheet = jest.fn();
+const mockWrite = jest.fn();
+jest.mock('xlsx', () => ({
+  read: (...args) => mockRead(...args),
+  write: (...args) => mockWrite(...args),
+  utils: {
+    sheet_to_json: (...args) => mockSheetToJson(...args),
+    json_to_sheet: (...args) => mockJsonToSheet(...args),
+    book_new: (...args) => mockBookNew(...args),
+    book_append_sheet: (...args) => mockBookAppendSheet(...args),
+  },
+}), { virtual: true });
+
 const { callService } = require('../../serviceClient');
 const { HqManager } = require('../HqManager');
 const repository = require('../repository');
@@ -76,6 +93,82 @@ describe('HqManager — consumer REST', () => {
     expect(callService.mock.calls).toEqual([
       ['dbmanager', 'setEnablingConfiguration', { args: ['1000', 'a', 1, 0] }],
     ]);
+  });
+
+  describe('importAppConfiguration', () => {
+    beforeEach(() => {
+      mockRead.mockReset();
+      mockSheetToJson.mockReset();
+    });
+
+    test('throws when market is missing', async () => {
+      await expect(manager.importAppConfiguration(undefined, 'base64content'))
+        .rejects.toThrow('"market" is required');
+      expect(mockRead).not.toHaveBeenCalled();
+    });
+
+    test('throws when fileContentBase64 is missing', async () => {
+      await expect(manager.importAppConfiguration('1000', undefined))
+        .rejects.toThrow('"fileContentBase64" is required');
+      expect(mockRead).not.toHaveBeenCalled();
+    });
+
+    test('decodifica il file Excel Base64 e delega la riga a dbManager in un unica chiamata REST', async () => {
+      const sheet = { '!ref': 'A1:C2' };
+      mockRead.mockReturnValue({ SheetNames: ['Sheet1'], Sheets: { Sheet1: sheet } });
+      const rows = [{ oic: '00006821', enablewoc: 1, enablesignature: 0 }];
+      mockSheetToJson.mockReturnValue(rows);
+      const repositoryResult = { success: true, rowsRead: 1, rowsInserted: 1, errors: [] };
+      callService.mockResolvedValue(repositoryResult);
+
+      const result = await manager.importAppConfiguration('1000', 'QkFTRTY0');
+
+      expect(mockRead).toHaveBeenCalledWith('QkFTRTY0', { type: 'base64' });
+      expect(mockSheetToJson).toHaveBeenCalledWith(sheet, { defval: null });
+      expect(callService.mock.calls).toEqual([
+        ['dbmanager', 'importAppConfiguration', { args: ['1000', rows] }],
+      ]);
+      expect(result).toBe(repositoryResult);
+    });
+  });
+
+  describe('exportAppConfiguration', () => {
+    beforeEach(() => {
+      mockJsonToSheet.mockReset();
+      mockBookNew.mockReset();
+      mockBookAppendSheet.mockReset();
+      mockWrite.mockReset();
+    });
+
+    test('throws when market is missing', async () => {
+      await expect(manager.exportAppConfiguration(undefined))
+        .rejects.toThrow('"market" is required');
+      expect(callService).not.toHaveBeenCalled();
+    });
+
+    test('legge le righe da dbManager e restituisce il file XLSX in Base64', async () => {
+      const rows = [
+        { market: '1000', oic: '00006821', enablewoc: 1, enablesignature: 0 },
+        { market: '1000', oic: '00006822', enablewoc: 0, enablesignature: 1 },
+      ];
+      callService.mockResolvedValue(rows);
+      const sheet = { '!ref': 'A1:D3' };
+      const workbook = { SheetNames: [], Sheets: {} };
+      mockJsonToSheet.mockReturnValue(sheet);
+      mockBookNew.mockReturnValue(workbook);
+      mockWrite.mockReturnValue('QkFTRTY0');
+
+      const result = await manager.exportAppConfiguration('1000');
+
+      expect(callService.mock.calls).toEqual([
+        ['dbmanager', 'getAppConfigurationList', { args: ['1000'] }],
+      ]);
+      expect(mockJsonToSheet).toHaveBeenCalledWith(rows);
+      expect(mockBookNew).toHaveBeenCalledWith();
+      expect(mockBookAppendSheet).toHaveBeenCalledWith(workbook, sheet, 'Sheet1');
+      expect(mockWrite).toHaveBeenCalledWith(workbook, { type: 'base64', bookType: 'xlsx' });
+      expect(result).toEqual({ market: '1000', rowsExported: 2, fileContentBase64: 'QkFTRTY0' });
+    });
   });
 
   test.each(HqManager.VEHICLE_INSPECTION_ARRAY_KEYS)('gestisce il loop %s', async (key) => {

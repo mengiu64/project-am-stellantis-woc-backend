@@ -1,7 +1,8 @@
 'use strict';
 
 const OPERATIONS = [
-  'getEnablingConfiguration', 'setEnablingConfiguration',
+  'getEnablingConfiguration', 'setEnablingConfiguration', 'importAppConfiguration',
+  'getAppConfigurationList',
   'getVehicleInspection', 'setVehicleInspectionVisible', 'deletetVehicleInspection',
   'insertVehicleInspection', 'setPkMarketEnable', 'setPkMarketDisable',
   'insertDomain', 'setDomain', 'deleteDomain', 'setDomainVisible',

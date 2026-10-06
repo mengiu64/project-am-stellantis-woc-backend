@@ -12,6 +12,8 @@ jest.mock('../S3ConfigRepository', () => ({
 const {
   getEnablingConfiguration,
   setEnablingConfiguration,
+  importAppConfiguration,
+  getAppConfigurationList,
   getVehicleInspection,
   setVehicleInspectionVisible,
   deletetVehicleInspection,
@@ -155,6 +157,172 @@ describe('HqRepository', () => {
       await expect(setEnablingConfiguration(pool, '1000', '00006821', 1, 0))
         .rejects.toThrow('connection lost');
       expect(pool.query).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('importAppConfiguration', () => {
+    function makeClientPool(queryImpl) {
+      const client = { query: jest.fn(queryImpl), release: jest.fn() };
+      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      return { pool, client };
+    }
+
+    it('throws when market is missing', async () => {
+      const { pool } = makeClientPool();
+      await expect(importAppConfiguration(pool, undefined, []))
+        .rejects.toThrow('"market" is required');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('throws when rows is not an array', async () => {
+      const { pool } = makeClientPool();
+      await expect(importAppConfiguration(pool, '1000', undefined))
+        .rejects.toThrow('"rows" is required (array)');
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('imports every valid row within a single transaction and commits', async () => {
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT') return {};
+        if (typeof sql === 'string' && sql.includes('INSERT INTO woc.hq_application_enabling')) return {};
+        return {};
+      });
+
+      const rows = [
+        { oic: '00006821', enablewoc: 1, enablesignature: 0 },
+        { oic: '00006822', enablewoc: '0', enablesignature: '1' },
+      ];
+
+      const result = await importAppConfiguration(pool, '1000', rows);
+
+      expect(pool.connect).toHaveBeenCalledTimes(1);
+      expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
+      expect(client.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_application_enabling'),
+        ['1000', '00006821', 1, 0],
+      );
+      expect(client.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_application_enabling'),
+        ['1000', '00006822', 0, 1],
+      );
+      expect(client.query).toHaveBeenNthCalledWith(4, 'COMMIT');
+      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        success: true,
+        rowsRead: 2,
+        rowsInserted: 2,
+        errors: [],
+      });
+    });
+
+    it('defaults enablewoc/enablesignature to 0 when absent', async () => {
+      const { pool, client } = makeClientPool(async () => ({}));
+
+      await importAppConfiguration(pool, '1000', [{ oic: '00006821' }]);
+
+      expect(client.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_application_enabling'),
+        ['1000', '00006821', 0, 0],
+      );
+    });
+
+    it('rolls back the whole batch and collects errors when a row is missing oic', async () => {
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
+        if (typeof sql === 'string' && sql.includes('INSERT INTO woc.hq_application_enabling')) return {};
+        return {};
+      });
+
+      const rows = [
+        { oic: '00006821', enablewoc: 1, enablesignature: 0 },
+        { enablewoc: 1, enablesignature: 0 },
+      ];
+
+      const result = await importAppConfiguration(pool, '1000', rows);
+
+      expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
+      expect(client.query).toHaveBeenLastCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        success: false,
+        rowsRead: 2,
+        rowsInserted: 1,
+        errors: [{ row: 3, oic: undefined, error: 'Missing oic' }],
+        message: 'Import validation failed',
+      });
+    });
+
+    it('rolls back and reports the DB error when the INSERT fails for a row', async () => {
+      const dbErr = new Error('duplicate key value violates unique constraint');
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
+        if (typeof sql === 'string' && sql.includes('INSERT INTO woc.hq_application_enabling')) throw dbErr;
+        return {};
+      });
+
+      const result = await importAppConfiguration(pool, '1000', [{ oic: '00006821' }]);
+
+      expect(client.query).toHaveBeenLastCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({
+        success: false,
+        rowsRead: 1,
+        rowsInserted: 0,
+        errors: [{ row: 2, oic: '00006821', error: dbErr.message }],
+        message: 'Import validation failed',
+      });
+    });
+
+    it('always releases the client even if BEGIN itself fails', async () => {
+      const beginErr = new Error('connection lost');
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql === 'BEGIN') throw beginErr;
+        return {};
+      });
+
+      const result = await importAppConfiguration(pool, '1000', []);
+
+      expect(result).toEqual({
+        success: false,
+        rowsRead: 0,
+        rowsInserted: 0,
+        errors: [],
+        message: 'connection lost',
+      });
+      expect(client.release).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getAppConfigurationList', () => {
+    it('throws when market is missing', async () => {
+      const pool = makePool();
+      await expect(getAppConfigurationList(pool, undefined))
+        .rejects.toThrow('"market" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns the rows ordered by oic for the given market', async () => {
+      const dbRows = [
+        { market: '1000', oic: '00006821', enablewoc: 1, enablesignature: 0 },
+        { market: '1000', oic: '00006822', enablewoc: 0, enablesignature: 1 },
+      ];
+      const pool = makePool(async () => ({ rows: dbRows }));
+
+      const result = await getAppConfigurationList(pool, '1000');
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM woc.hq_application_enabling'),
+        ['1000'],
+      );
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY oic'),
+        ['1000'],
+      );
+      expect(result).toBe(dbRows);
     });
   });
 

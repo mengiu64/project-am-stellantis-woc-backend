@@ -28,6 +28,19 @@
  * mercato (market IS NULL OR market = ''). Nessun fallback/merge tra le due
  * casistiche: sono due insiemi di risultati mutuamente esclusivi.
  *
+ * importAppConfiguration(market, rows) importa in blocco, in un'unica
+ * transazione, le righe di configurazione di abilitazione WOC/firma
+ * digitale per il mercato indicato (ciascuna riga gia' estratta dal file
+ * Excel lato hqManager/HqManager.js, upsert ON CONFLICT (market, oic)): se
+ * anche una sola riga fallisce la validazione/l'upsert, l'intera
+ * importazione viene annullata (ROLLBACK), riportando l'elenco degli
+ * errori per riga.
+ *
+ * getAppConfigurationList(market) elenco, ordinato per oic, delle righe di
+ * configurazione di abilitazione WOC/firma digitale del mercato indicato:
+ * usata da hqManager/HqManager.js::exportAppConfiguration per generare il
+ * file Excel (XLSX) di export (operazione simmetrica a importAppConfiguration).
+ *
  * setVehicleInspectionVisible(id, value) e
  * deletetVehicleInspection(id, value) aggiornano rispettivamente i
  * flag "visible" e "deleted" della riga con il dato "id".
@@ -183,6 +196,107 @@ async function setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableS
       [codmarket, oic, enableWOC, enableSignature],
     );
   }
+}
+
+/**
+ * Importa in blocco, in un'unica transazione, le righe di configurazione di
+ * abilitazione WOC/firma digitale (woc.hq_application_enabling) per il
+ * mercato indicato: ciascuna riga di "rows" (gia' estratta dal file Excel
+ * lato chiamante, v. hqManager/HqManager.js::importAppConfiguration) viene
+ * validata (richiede "oic") e fa l'upsert (ON CONFLICT (market, oic)) di
+ * enablewoc/enablesignature (default 0 se assenti/non numerici).
+ *
+ * Se anche una sola riga fallisce la validazione/l'upsert, l'intera
+ * transazione viene annullata (ROLLBACK): non vengono importate righe
+ * parziali. L'errore di ciascuna riga viene comunque raccolto in
+ * result.errors (indice di riga 1-based + offset 2, come nel file Excel
+ * con intestazione in riga 1) prima di decidere il rollback.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {Array<{ oic?: string, enablewoc?: number|string, enablesignature?: number|string }>} rows
+ * @returns {Promise<{ success: boolean, rowsRead: number, rowsInserted: number, errors: Array<{ row: number, oic: *, error: string }>, message?: string }>}
+ */
+async function importAppConfiguration(pool, market, rows) {
+  if (!market) throw new Error('"market" is required');
+  if (!Array.isArray(rows)) throw new Error('"rows" is required (array)');
+
+  const result = {
+    rowsRead: 0,
+    rowsInserted: 0,
+    errors: [],
+  };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const [index, row] of rows.entries()) {
+      result.rowsRead++;
+
+      try {
+        if (!row.oic) {
+          throw new Error('Missing oic');
+        }
+
+        await client.query(
+          `INSERT INTO woc.hq_application_enabling (market, oic, enablewoc, enablesignature)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (market, oic)
+           DO UPDATE SET
+             enablewoc = EXCLUDED.enablewoc,
+             enablesignature = EXCLUDED.enablesignature`,
+          [market, row.oic, Number(row.enablewoc ?? 0), Number(row.enablesignature ?? 0)],
+        );
+
+        result.rowsInserted++;
+      } catch (err) {
+        result.errors.push({ row: index + 2, oic: row.oic, error: err.message });
+      }
+    }
+
+    if (result.errors.length > 0) {
+      throw new Error('Import validation failed');
+    }
+
+    await client.query('COMMIT');
+
+    return { success: true, ...result };
+  } catch (err) {
+    await client.query('ROLLBACK');
+
+    return { success: false, ...result, message: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Elenco, ordinato per oic, delle righe di configurazione di abilitazione
+ * WOC/firma digitale (woc.hq_application_enabling) del mercato indicato.
+ * Usata da hqManager/HqManager.js::exportAppConfiguration per generare il
+ * file Excel (XLSX) di export.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @returns {Promise<Array<{ market: string, oic: string, enablewoc: number, enablesignature: number }>>}
+ */
+async function getAppConfigurationList(pool, market) {
+  if (!market) throw new Error('"market" is required');
+
+  const { rows } = await pool.query(
+    `SELECT
+       market,
+       oic,
+       enablewoc,
+       enablesignature
+     FROM woc.hq_application_enabling
+     WHERE market = $1
+     ORDER BY oic`,
+    [market],
+  );
+
+  return rows;
 }
 
 /**
@@ -1010,6 +1124,8 @@ async function getAnagAllocation() {
 module.exports = {
   getEnablingConfiguration,
   setEnablingConfiguration,
+  importAppConfiguration,
+  getAppConfigurationList,
   getVehicleInspection,
   setVehicleInspectionVisible,
   deletetVehicleInspection,

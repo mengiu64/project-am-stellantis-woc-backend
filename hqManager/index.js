@@ -77,6 +77,15 @@
  *     S3, TranslationsBucket).
  *   - getAnagAllocation(): elenco dei tipi di azione di audit
  *     (config/hq_actiontype.json su S3, TranslationsBucket).
+ *   - importAppConfiguration(market, fileContentBase64): importa in blocco,
+ *     in un'unica transazione lato dbManager, le righe di configurazione di
+ *     abilitazione WOC/firma digitale (woc.hq_application_enabling) lette
+ *     da un file Excel (XLSX) ricevuto codificato in Base64 nel body
+ *     (la Lambda non ha accesso al filesystem del chiamante).
+ *   - exportAppConfiguration(market): operazione simmetrica a
+ *     importAppConfiguration, legge le righe di configurazione di
+ *     abilitazione WOC/firma digitale del mercato indicato e le restituisce
+ *     come file Excel (XLSX) codificato in Base64 nel body della risposta.
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -127,6 +136,8 @@ const VALID_ACTIONS = [
   'searchAudit',
   'getAnagSection',
   'getAnagAllocation',
+  'importAppConfiguration',
+  'exportAppConfiguration',
 ];
 
 function parseBody(event) {
@@ -176,7 +187,7 @@ exports.handler = async (event = {}) => {
   const {
     codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
     iddomain, timeop, pricewithvat, idpackage, section, actiontype, datefrom, dateto, username,
-    marketTarget, marketOrig,
+    marketTarget, marketOrig, fileContentBase64,
   } = body;
   const manager = new HqManager();
 
@@ -304,6 +315,16 @@ exports.handler = async (event = {}) => {
     if (action === 'getAnagSection') {
       const sections = await manager.getAnagSection();
       return response(200, { success: true, sections });
+    }
+
+    if (action === 'importAppConfiguration') {
+      const importResult = await manager.importAppConfiguration(market, fileContentBase64);
+      return response(200, { market, ...importResult });
+    }
+
+    if (action === 'exportAppConfiguration') {
+      const exportResult = await manager.exportAppConfiguration(market);
+      return response(200, { success: true, ...exportResult });
     }
 
     const allocations = await manager.getAnagAllocation();
