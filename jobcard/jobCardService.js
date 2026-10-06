@@ -1615,11 +1615,17 @@ function groupByKey(rows, key) {
  *   risultato viene esposto sotto la chiave "package", a sua volta
  *   raggruppato per "domainDescr".
  *
+ * market mancante -> Error "[jobCard] market is required" (mappato a 400 dal
+ * chiamante, v. index.js).
+ *
  * @param {string} market
  * @param {string} oic
  * @returns {Promise<object>} { [type]: [...righe vehicle inspection], package: { [domainDescr]: [...righe pacchetto] } }
  */
 async function getDealerConfiguration(market, oic) {
+  if (!market) {
+    throw new Error('[jobCard] market is required');
+  }
   const vehicleInspection = await callService('dbmanager', 'getVehicleInspection', { args: [market] });
   const isPkMarketEnabled = await callService('dbmanager', 'checkIsPkMarketEnabled', { args: [market] });
 

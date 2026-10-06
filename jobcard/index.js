@@ -10,6 +10,7 @@
  *   node index.js saveJobcard <payloadJsonFile>
  *   node index.js dml         <jobCardId>
  *   node index.js lastPayload <jobCardId>
+ *   node index.js getDealerConfiguration <market> [oic]
  *
  * Options for "list" (key=value):
  *   vin=<value>
@@ -38,6 +39,7 @@
  *   node index.js saveJobcard ./payload.json
  *   node index.js dml 79
  *   node index.js lastPayload JCID-84521
+ *   node index.js getDealerConfiguration 1000 00007584
  *
  * "dml" (getDataFromDMLFromTmp) legge /tmp/<jobCardId>.json, già salvato da
  * una precedente "details" (getJobCardDetails/saveJobCardDetailsToTmp), e
@@ -86,18 +88,24 @@
  * e payload; NULL -> stringa vuota), letti con la stessa SELECT.
  * Legge solo dal DB (nessuna chiamata DGT, nessun token): jobCardId mancante ->
  * 400, nessun payload registrato -> 404, errore DB -> 502.
+ *
+ * "getDealerConfiguration" (GET /api/repairorder/getDealerConfiguration?market=...&oic=...)
+ * restituisce la configurazione dealer (vehicle inspection + pacchetti) per un
+ * mercato/oic, chiamando dbManager via REST interno (v.
+ * jobCardService.getDealerConfiguration): nessuna chiamata DGT, quindi nessun
+ * token. market mancante -> 400, errore DB/rete -> 502.
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const { getBearerToken } = require('./authService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getDataFromDMLFromTmp } = require('./jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getDataFromDMLFromTmp, getDealerConfiguration } = require('./jobCardService');
 const { callService, isInternalRequest } = require('../serviceClient');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml', 'lastPayload'];
+const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml', 'lastPayload', 'getDealerConfiguration'];
 
 /**
  * Estrae lo username autenticato per il Sender dinamico dell'azione "dml"
@@ -578,6 +586,10 @@ exports.handler = async (event) => {
       // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId da query
       // string (GET) o body; mancante -> 400, payload non registrato -> 404.
       result = await getJobCardLastPayload(body.jobCardId ?? body.id);
+    } else if (action === 'getDealerConfiguration') {
+      // Solo dbManager via REST interno (nessuna chiamata DGT, quindi nessun
+      // token): market/oic da query string (GET) o body; market mancante -> 400.
+      result = await getDealerConfiguration(body.market, body.oic);
     } else {
       let syncActivity;
       if (action === 'saveJobcard') {
@@ -692,6 +704,13 @@ async function runLastPayload(jobCardId) {
   return result;
 }
 
+async function runGetDealerConfiguration(market, oic) {
+  console.log('\n=== Dealer Configuration ===');
+  const result = await getDealerConfiguration(market, oic);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 async function main() {
   const [, , command, param, ...rest] = process.argv;
 
@@ -721,6 +740,9 @@ async function main() {
       await runDml(jobCardId);
     } else if (command === 'lastPayload') {
       await runLastPayload(param);
+    } else if (command === 'getDealerConfiguration') {
+      const market = param || '1000';
+      await runGetDealerConfiguration(market, rest[0]);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js list        <dealerId> [key=value ...]');
@@ -729,6 +751,7 @@ async function main() {
       console.error('  node index.js saveJobcard <payloadJsonFile>');
       console.error('  node index.js dml         <jobCardId>');
       console.error('  node index.js lastPayload <jobCardId>');
+      console.error('  node index.js getDealerConfiguration <market> [oic]');
       process.exit(1);
     }
   } catch (err) {

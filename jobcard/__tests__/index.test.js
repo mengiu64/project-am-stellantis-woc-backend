@@ -10,6 +10,7 @@ jest.mock('../jobCardService', () => ({
   saveJobCard: jest.fn(),
   sanitizeJobCardPayload: jest.fn((payload) => payload),
   getDataFromDMLFromTmp: jest.fn(),
+  getDealerConfiguration: jest.fn(),
 }));
 jest.mock('../JobcardSyncActivityRepository', () => ({
   ...jest.requireActual('../JobcardSyncActivityRepository'),
@@ -22,7 +23,7 @@ const { callService, isInternalRequest } = require('../../serviceClient');
 const { handler: internalHandler } = require('../internal');
 const { getBearerToken } = require('../authService');
 const {
-  saveJobCard, getJobCardDetails, getJobCardList, getJobCardListCurrent, getDataFromDMLFromTmp,
+  saveJobCard, getJobCardDetails, getJobCardList, getJobCardListCurrent, getDataFromDMLFromTmp, getDealerConfiguration,
 } = require('../jobCardService');
 const { recordSyncActivity, getSyncStatus, getLastPayload } = require('../JobcardSyncActivityRepository');
 const { handler } = require('../index');
@@ -282,6 +283,45 @@ describe('jobcard REST consumers', () => {
     getLastPayload.mockRejectedValueOnce(new Error('connection refused'));
 
     const response = await handler({ action: 'lastPayload', body: { jobCardId: 'JCID-84521' } });
+
+    expect(response.statusCode).toBe(502);
+    expect(JSON.parse(response.body)).toEqual({ success: false, message: 'connection refused' });
+  });
+
+  test.each([
+    [{
+      httpMethod: 'GET',
+      path: '/api/repairorder/getDealerConfiguration',
+      queryStringParameters: { market: '1000', oic: '00007584' },
+      body: null,
+    }, '1000', '00007584'],
+    [{ action: 'getDealerConfiguration', body: { market: '1000', oic: '00007584' } }, '1000', '00007584'],
+  ])('getDealerConfiguration returns the dealer configuration, reading only dbManager via REST interno (case %#)', async (event, market, oic) => {
+    const configuration = { vehicleInspection: [{ type: 'TIRES' }], package: { Mechanical: [{}] } };
+    getDealerConfiguration.mockResolvedValueOnce(configuration);
+
+    const response = await handler(event);
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual(configuration);
+    expect(getDealerConfiguration).toHaveBeenCalledWith(market, oic);
+    [getBearerToken, getJobCardDetails, saveJobCard, recordSyncActivity, getSyncStatus, callService]
+      .forEach((fn) => expect(fn).not.toHaveBeenCalled());
+  });
+
+  test('getDealerConfiguration returns 400 when market is missing', async () => {
+    getDealerConfiguration.mockRejectedValueOnce(new Error('[jobCard] market is required'));
+
+    const response = await handler({ action: 'getDealerConfiguration', body: { oic: '00007584' } });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({ success: false, message: '[jobCard] market is required' });
+  });
+
+  test('getDealerConfiguration returns 502 on dbManager errors', async () => {
+    getDealerConfiguration.mockRejectedValueOnce(new Error('connection refused'));
+
+    const response = await handler({ action: 'getDealerConfiguration', body: { market: '1000', oic: '00007584' } });
 
     expect(response.statusCode).toBe(502);
     expect(JSON.parse(response.body)).toEqual({ success: false, message: 'connection refused' });

@@ -736,11 +736,13 @@ restano assenti dal `sender` — mai un'eccezione che blocchi
 sessione, brand e lookup DB sono risolti dai rispettivi servizi proprietari,
 senza codice o credenziali sibling nell'artifact.
 
-#### `getDealerConfiguration(market, oic)` — Vehicle inspection + pacchetti del dealer
+#### `getDealerConfiguration` (GET) — Vehicle inspection + pacchetti del dealer
 
-Legge, via `serviceClient.callService('dbmanager', ...)` (nessun require di
-`dbManager` lato jobcard, v. convenzioni di repo), la configurazione del
-dealer identificato da `market`/`oic`:
+`GET /api/repairorder/getDealerConfiguration?market=<market>&oic=<oic>`
+(azione `getDealerConfiguration`, solo nella lambda `jobcard`) legge, via
+`serviceClient.callService('dbmanager', ...)` (nessun require di `dbManager`
+lato jobcard, v. convenzioni di repo), la configurazione del dealer
+identificato da `market`/`oic`:
 
 - `getVehicleInspection(market)` — chiamata con il solo mercato (nessun filtro
   su `type`, v. `dbManager/HqRepository.js::getVehicleInspection` con `type`
@@ -752,7 +754,10 @@ dealer identificato da `market`/`oic`:
 
 La risposta è un unico JSON con, a primo livello, i gruppi di vehicle
 inspection per `type` e, sotto la chiave `package`, i pacchetti raggruppati
-per `domainDescr`:
+per `domainDescr`. Legge solo dal DB via REST interno (nessuna chiamata DGT,
+nessun token): `market` mancante → `400` (`{ "success": false, "message":
+"[jobCard] market is required" }`), errore DB/rete → `502`. CLI: `node
+index.js getDealerConfiguration <market> [oic]`.
 
 ```json
 {
@@ -772,10 +777,12 @@ node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
 node index.js saveJobcard <payloadJsonFile>
 node index.js lastPayload <jobCardId>
+node index.js getDealerConfiguration <market> [oic]
 # es: node index.js list 0062219 vin=VIN123 page=2
 # es: node index.js details 79
 # es: node index.js saveJobcard ./payload.json
 # es: node index.js lastPayload JCID-84521
+# es: node index.js getDealerConfiguration 1000 00007584
 ```
 
 ---

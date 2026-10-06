@@ -2382,5 +2382,10 @@ describe('jobCardService', () => {
         package: { Revisione: [{ idpackage: 20, domainDescr: 'Revisione' }] },
       });
     });
+
+    test('throws when market is missing, without calling dbManager', async () => {
+      await expect(getDealerConfiguration(undefined, '00006821')).rejects.toThrow('[jobCard] market is required');
+      expect(callService).not.toHaveBeenCalled();
+    });
   });
 });

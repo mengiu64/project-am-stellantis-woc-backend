@@ -694,11 +694,13 @@ absent from the `sender` — never an exception that blocks
 session, vehicle and DB lookups remain in their owning services, without
 sibling Lambda source or credentials in the jobcard artifact.
 
-#### `getDealerConfiguration(market, oic)` — dealer vehicle inspection + packages
+#### `getDealerConfiguration` (GET) — dealer vehicle inspection + packages
 
-Reads, via `serviceClient.callService('dbmanager', ...)` (no `dbManager`
-require on the jobcard side, see repo conventions), the dealer configuration
-for `market`/`oic`:
+`GET /api/repairorder/getDealerConfiguration?market=<market>&oic=<oic>`
+(action `getDealerConfiguration`, jobcard lambda only) reads, via
+`serviceClient.callService('dbmanager', ...)` (no `dbManager` require on the
+jobcard side, see repo conventions), the dealer configuration for
+`market`/`oic`:
 
 - `getVehicleInspection(market)` — called with the market only (no `type`
   filter, see `dbManager/HqRepository.js::getVehicleInspection` with
@@ -709,7 +711,10 @@ for `market`/`oic`:
 
 The response is a single JSON with the vehicle inspection groups by `type` at
 the top level and, under the `package` key, the packages grouped by
-`domainDescr`:
+`domainDescr`. Reads only from the DB via internal REST (no DGT call, no
+token): missing `market` → `400` (`{ "success": false, "message":
+"[jobCard] market is required" }`), DB/network error → `502`. CLI: `node
+index.js getDealerConfiguration <market> [oic]`.
 
 ```json
 {
@@ -728,9 +733,11 @@ the top level and, under the `package` key, the packages grouped by
 node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
 node index.js lastPayload <jobCardId>
+node index.js getDealerConfiguration <market> [oic]
 # e.g.: node index.js list 0062219 vin=VIN123 page=2
 # e.g.: node index.js details 79
 # e.g.: node index.js lastPayload JCID-84521
+# e.g.: node index.js getDealerConfiguration 1000 00007584
 ```
 
 ---
