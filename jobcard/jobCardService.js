@@ -1585,4 +1585,52 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender };
+/**
+ * Raggruppa un array di righe per il valore della chiave indicata.
+ * @param {Array<object>} rows
+ * @param {string} key
+ * @returns {object} mappa { [valore chiave]: [righe corrispondenti] }
+ */
+function groupByKey(rows, key) {
+  return (rows ?? []).reduce((acc, row) => {
+    const groupKey = row?.[key];
+    if (!acc[groupKey]) acc[groupKey] = [];
+    acc[groupKey].push(row);
+    return acc;
+  }, {});
+}
+
+/**
+ * Configurazione dealer (controlli veicolo + pacchetti) per un mercato/oic,
+ * usata lato front-end per popolare la Vehicle Inspection e i pacchetti
+ * disponibili in fase di jobcard.
+ *
+ * Chiama in dbManager (via serviceClient, v. istruzioni di repo):
+ * - getVehicleInspection(market) (solo mercato, nessun filtro su "type", v.
+ *   dbManager/HqRepository.js::getVehicleInspection con "type" opzionale):
+ *   il risultato viene raggruppato per "type".
+ * - checkIsPkMarketEnabled(market): se ritorna 0 i pacchetti vengono letti
+ *   con getPackageListHQ(market) (pacchetti a livello mercato), se ritorna 1
+ *   con getPackageListSM(market, oic) (pacchetti del singolo oic). Il
+ *   risultato viene esposto sotto la chiave "package", a sua volta
+ *   raggruppato per "domainDescr".
+ *
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<object>} { [type]: [...righe vehicle inspection], package: { [domainDescr]: [...righe pacchetto] } }
+ */
+async function getDealerConfiguration(market, oic) {
+  const vehicleInspection = await callService('dbmanager', 'getVehicleInspection', { args: [market] });
+  const isPkMarketEnabled = await callService('dbmanager', 'checkIsPkMarketEnabled', { args: [market] });
+
+  const packages = isPkMarketEnabled === 1
+    ? await callService('dbmanager', 'getPackageListSM', { args: [market, oic] })
+    : await callService('dbmanager', 'getPackageListHQ', { args: [market] });
+
+  return {
+    ...groupByKey(vehicleInspection, 'type'),
+    package: groupByKey(packages, 'domainDescr'),
+  };
+}
+
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender, getDealerConfiguration };

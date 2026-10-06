@@ -583,6 +583,11 @@ Resources:
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/session/getData
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/agendasoanaga/updatenaga
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/agendasoanaga/createnaga
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getVehicleInspection
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/checkIsPkMarketEnabled
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getPackageListHQ
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getPackageListSM
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getOicEnabled
   DjcRestPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -622,6 +627,8 @@ Resources:
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getEnableSignatureByOics
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getAddressByOics
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getMarkets
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getOicEnabled
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/checkIsPkMarketEnabled
   HqManagerRestPolicy:
     Type: AWS::IAM::Policy
     Properties:

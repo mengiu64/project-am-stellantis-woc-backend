@@ -85,6 +85,8 @@ function buildRepository(overrides = {}) {
     getDisabledOicsFn: jest.fn().mockResolvedValue(new Set()),
     getEnableSignatureByOicsFn: jest.fn().mockResolvedValue(new Map()),
     getAddressByOicsFn: jest.fn().mockResolvedValue(new Map()),
+    getOicEnabledFn: jest.fn().mockResolvedValue([]),
+    checkIsPkMarketEnabledFn: jest.fn().mockResolvedValue(0),
     ...overrides,
   });
 }
@@ -205,6 +207,8 @@ describe('MyPeopleDmsSessionRepository', () => {
       applications: [],
       companytypes: DML_CONFIGURATION_RESPONSE.companyTypes,
       customertitles: DML_CONFIGURATION_RESPONSE.customerTitles,
+      OicEnabled: [],
+      IsPkMarketEnabled: 1,
     });
   });
 
@@ -331,6 +335,8 @@ describe('MyPeopleDmsSessionRepository', () => {
       applications: [],
       companytypes: [],
       customertitles: [],
+      OicEnabled: [],
+      IsPkMarketEnabled: null,
     });
   });
 
@@ -1056,5 +1062,55 @@ describe('MyPeopleDmsSessionRepository', () => {
 
     const data = await repository.getSessionData('0073741.d235');
     expect(data.applications).toEqual([]);
+  });
+
+  test('IsPkMarketEnabled inverte il valore grezzo di checkIsPkMarketEnabled (1 -> 0)', async () => {
+    const checkIsPkMarketEnabledFn = jest.fn().mockResolvedValue(1);
+    const repository = buildRepository({ checkIsPkMarketEnabledFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(checkIsPkMarketEnabledFn).toHaveBeenCalledWith('1000');
+    expect(data.IsPkMarketEnabled).toBe(0);
+  });
+
+  test('IsPkMarketEnabled inverte il valore grezzo di checkIsPkMarketEnabled (0 -> 1)', async () => {
+    const checkIsPkMarketEnabledFn = jest.fn().mockResolvedValue(0);
+    const repository = buildRepository({ checkIsPkMarketEnabledFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.IsPkMarketEnabled).toBe(1);
+  });
+
+  test('IsPkMarketEnabled resta null (nessuna inversione) quando non esiste una riga per il mercato', async () => {
+    const checkIsPkMarketEnabledFn = jest.fn().mockResolvedValue(undefined);
+    const repository = buildRepository({ checkIsPkMarketEnabledFn });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(data.IsPkMarketEnabled).toBeNull();
+  });
+
+  test('checkIsPkMarketEnabled non viene interrogata quando manca il codmarket', async () => {
+    const checkIsPkMarketEnabledFn = jest.fn();
+    const repository = buildRepository({
+      checkIsPkMarketEnabledFn,
+      readUserProfilesFn: jest.fn().mockResolvedValue({
+        Response: {
+          RC: '0',
+          STATUS: 'SUCCESS',
+          User: {
+            Attributes: { MAINSINCOM: '0073741', NATIONiso2: 'IT', USERTYPE: 'DEALER' },
+            OICs: [],
+          },
+        },
+      }),
+    });
+
+    const data = await repository.getSessionData('0073741.d235');
+
+    expect(checkIsPkMarketEnabledFn).not.toHaveBeenCalled();
+    expect(data.IsPkMarketEnabled).toBeNull();
   });
 });

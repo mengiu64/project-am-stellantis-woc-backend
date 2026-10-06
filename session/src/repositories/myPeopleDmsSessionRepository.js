@@ -22,6 +22,8 @@ let _getBrandsByOics;
 let _getDisabledOics;
 let _getEnableSignatureByOics;
 let _getAddressByOics;
+let _getOicEnabled;
+let _checkIsPkMarketEnabled;
 
 function loadReadUserProfiles() {
   if (!_readUserProfiles) {
@@ -133,6 +135,31 @@ function loadGetAddressByOics() {
     _getAddressByOics = async (...args) => new Map(await fetchAddresses(...args));
   }
   return _getAddressByOics;
+}
+
+// Abilitazione WOC/firma per OIC del mercato dell'utente
+// (woc.hq_application_enabling, v. dbManager/HqRepository.js::getOicEnabled):
+// a differenza di getDisabledOics/getEnableSignatureByOics sopra (usate per
+// filtrare/arricchire gli oic della risposta myPeople), qui si legge
+// l'elenco COMPLETO (oic/enablewoc/enablesignature) delle righe configurate
+// per il mercato, esposto cosi' com'e' nel campo "OicEnabled" della risposta
+// di sessione.
+function loadGetOicEnabled() {
+  if (!_getOicEnabled) {
+    _getOicEnabled = remoteOperation('dbmanager', 'getOicEnabled');
+  }
+  return _getOicEnabled;
+}
+
+// Abilitazione mercato PK (woc.hq_pk_market.deleted, v.
+// dbManager/HqRepository.js::checkIsPkMarketEnabled): il valore grezzo
+// ritornato (0/1/undefined) viene invertito prima di esporlo come
+// "IsPkMarketEnabled" nella risposta di sessione (v. getSessionData).
+function loadCheckIsPkMarketEnabled() {
+  if (!_checkIsPkMarketEnabled) {
+    _checkIsPkMarketEnabled = remoteOperation('dbmanager', 'checkIsPkMarketEnabled');
+  }
+  return _checkIsPkMarketEnabled;
 }
 
 // Transcodifica del codice brand IURSMA/FCA "raw" (campo OICs[].BRANDS di myPeople,
@@ -254,6 +281,26 @@ const BRAND_CODE_TO_REFTECH = {
  *      mainSincom/market/brand/oic, se non esiste una riga corrispondente, o se
  *      la query fallisce per qualunque motivo.
  *
+ *      Espone inoltre `OicEnabled`: l'elenco completo (oic/enablewoc/
+ *      enablesignature) delle righe di woc.hq_application_enabling per il
+ *      `codmarket` dell'utente (v. dbManager/HqRepository.js::getOicEnabled),
+ *      a differenza dei filtri su `oics` sopra (che usano le stesse righe ma
+ *      solo per includere/escludere/arricchire gli oic della risposta
+ *      myPeople) qui i dati sono esposti cosi' come sono. Stesso principio
+ *      fault-tolerant delle altre letture DB di questa classe: `[]` se manca
+ *      `codmarket`, se non esiste ancora nessuna riga per il mercato, o se la
+ *      query fallisce per qualunque motivo.
+ *
+ *      Espone infine `IsPkMarketEnabled`: il flag "deleted" di
+ *      woc.hq_pk_market per il `codmarket` dell'utente (v.
+ *      dbManager/HqRepository.js::checkIsPkMarketEnabled), INVERTITO (0→1,
+ *      1→0) prima di essere esposto, cosi' che `1` indichi mercato PK
+ *      abilitato e `0` disabilitato (il valore grezzo della colonna segue la
+ *      semantica opposta, v. JSDoc di checkIsPkMarketEnabled). `null` se
+ *      manca `codmarket`, se non esiste ancora nessuna riga per il mercato
+ *      (valore grezzo `undefined`, non invertito), o se la query fallisce
+ *      per qualunque motivo.
+ *
  *      Utenti HQ (staff Stellantis, non rete dealer, es. "SF48816"): i `roles`
  *      dell'authorizer (v. index.js::resolveRoleFlags -> `roleFlags`
  *      hqCentral/hqMarket) vengono verificati PRIMA di interpellare myPeople,
@@ -281,6 +328,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     getDisabledOicsFn,
     getEnableSignatureByOicsFn,
     getAddressByOicsFn,
+    getOicEnabledFn,
+    checkIsPkMarketEnabledFn,
   } = {}) {
     super();
     this._readUserProfilesFn = readUserProfilesFn;
@@ -294,6 +343,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     this._getDisabledOicsFn = getDisabledOicsFn;
     this._getEnableSignatureByOicsFn = getEnableSignatureByOicsFn;
     this._getAddressByOicsFn = getAddressByOicsFn;
+    this._getOicEnabledFn = getOicEnabledFn;
+    this._checkIsPkMarketEnabledFn = checkIsPkMarketEnabledFn;
   }
 
   /**
@@ -381,6 +432,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     const getDisabledOics = this._getDisabledOicsFn || loadGetDisabledOics();
     const getEnableSignatureByOics = this._getEnableSignatureByOicsFn || loadGetEnableSignatureByOics();
     const getAddressByOics = this._getAddressByOicsFn || loadGetAddressByOics();
+    const getOicEnabled = this._getOicEnabledFn || loadGetOicEnabled();
+    const checkIsPkMarketEnabled = this._checkIsPkMarketEnabledFn || loadCheckIsPkMarketEnabled();
     const market = attributes.MARKETCODE || null;
     const oic = mainOic.CODE || null;
 
@@ -404,7 +457,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
     // un errore di lettura non deve mai far fallire la sessione: si ritornano i
     // valori di default ({success:false, data:[]} → isdml:false/null/null) e si
     // registra (best-effort) la combinazione per la prossima sync schedulata.
-    const [dmsSettings, dmlConfiguration, marketIso, physicalSiteAndSincom, brandsByOic, disabledOicKeys, enableSignatureByOicKey, addressByOic] = await Promise.all([
+    const [dmsSettings, dmlConfiguration, marketIso, physicalSiteAndSincom, brandsByOic, disabledOicKeys, enableSignatureByOicKey, addressByOic, oicEnabled, rawIsPkMarketEnabled] = await Promise.all([
       (countryDms && brandReftech && dealer)
         ? getDmsSettingsCache({ country: countryDms, brand: brandReftech, dealer })
           .then(async (cached) => {
@@ -467,7 +520,28 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
           return new Map();
         })
         : Promise.resolve(new Map()),
+      market
+        ? getOicEnabled(market).catch((err) => {
+          console.error(`[session] lettura abilitazione oic per mercato (woc.hq_application_enabling) fallita per market="${market}": ${err.message}`);
+          return [];
+        })
+        : Promise.resolve([]),
+      market
+        ? checkIsPkMarketEnabled(market).catch((err) => {
+          console.error(`[session] lettura abilitazione mercato PK (woc.hq_pk_market) fallita per market="${market}": ${err.message}`);
+          return null;
+        })
+        : Promise.resolve(null),
     ]);
+
+    // woc.hq_pk_market.deleted (0 = abilitato, 1 = disabilitato) viene
+    // invertito prima di esporlo come "IsPkMarketEnabled": un mercato con
+    // `deleted = 1` (disabilitato) espone quindi 0, uno con `deleted = 0`
+    // (abilitato) espone 1. `null`/`undefined` (nessuna riga configurata, o
+    // errore di lettura) restano invariati.
+    const isPkMarketEnabled = rawIsPkMarketEnabled === 1 || rawIsPkMarketEnabled === 0
+      ? 1 - rawIsPkMarketEnabled
+      : rawIsPkMarketEnabled;
 
     // Oic esplicitamente disabilitati (enablewoc = 0 in
     // woc.hq_application_enabling) vengono tolti dall'elenco `oics` di
@@ -578,6 +652,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       customertitles: Array.isArray(dmlConfiguration && dmlConfiguration.customerTitles)
         ? dmlConfiguration.customerTitles
         : [],
+      OicEnabled: Array.isArray(oicEnabled) ? oicEnabled : [],
+      IsPkMarketEnabled: isPkMarketEnabled ?? null,
     };
   }
 }
@@ -641,6 +717,8 @@ function buildHqSessionData(username, authProfile) {
     applications: [],
     companytypes: [],
     customertitles: [],
+    OicEnabled: [],
+    IsPkMarketEnabled: null,
   };
 }
 

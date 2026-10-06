@@ -30,6 +30,8 @@ describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
       getDisabledOics: [],
       getEnableSignatureByOics: [['1000|00007584', true]],
       getAddressByOics: [['00007584', { address: 'Via Roma', zipcode: '00100', city: 'Roma' }]],
+      getOicEnabled: [{ oic: '00007584', enablewoc: 1, enablesignature: 1 }],
+      checkIsPkMarketEnabled: 0,
       getBrandLogos: { '00': 'assets/FIAT.png', 83: 'assets/ALFAROMEO.png' },
     };
     callService.mockReset().mockImplementation(async (_, operation) => results[operation]);
@@ -51,6 +53,8 @@ describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
       ['dbmanager', 'getDisabledOics', { args: [[{ market: '1000', oic: '00007584' }]] }],
       ['dbmanager', 'getEnableSignatureByOics', { args: [[{ market: '1000', oic: '00007584' }]] }],
       ['dbmanager', 'getAddressByOics', { args: [{ oics: ['00007584'] }] }],
+      ['dbmanager', 'getOicEnabled', { args: ['1000'] }],
+      ['dbmanager', 'checkIsPkMarketEnabled', { args: ['1000'] }],
       ['dbmanager', 'getBrandLogos', { args: [{ codes: ['00', '77', '83'] }] }],
     ];
     expect(callService.mock.calls).toEqual(expected);
@@ -63,6 +67,8 @@ describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
         main: 'Y', djcListParameter: '1000_00007584', feaEnabled: true,
         address: 'Via Roma', zipcode: '00100', city: 'Roma',
       }],
+      OicEnabled: [{ oic: '00007584', enablewoc: 1, enablesignature: 1 }],
+      IsPkMarketEnabled: 1,
     });
   });
 
@@ -128,6 +134,8 @@ describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
     ['getEnableSignatureByOics', { oics: [expect.objectContaining({ feaEnabled: false })] }],
     ['getAddressByOics', { oics: [expect.objectContaining({ address: null, zipcode: null, city: null })] }],
     ['getBrandLogos', { oics: [expect.objectContaining({ brandLogos: [] })] }],
+    ['getOicEnabled', { OicEnabled: [] }],
+    ['checkIsPkMarketEnabled', { IsPkMarketEnabled: null }],
   ])('%s conserva degradazione intenzionale e log su rifiuto HTTP', async (failed, defaults) => {
     callService.mockImplementation(async (_, operation) => {
       if (operation === failed) throw new Error('HTTP 502');

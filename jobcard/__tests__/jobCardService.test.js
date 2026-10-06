@@ -31,7 +31,7 @@ const { getBearerToken: getDgtBearerToken } = require('../authService');
 const { callService } = require('../../serviceClient');
 const postDmsInquiry = jest.fn();
 const resolveDynamicSenderFields = jest.fn();
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender, getDealerConfiguration } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
@@ -2321,6 +2321,66 @@ describe('jobCardService', () => {
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-2', VehicleID: 'VIN2' }),
       }));
       expect(result).toEqual({ dmsAvailable: true, ...jobCardDetail });
+    });
+  });
+
+  describe('getDealerConfiguration', () => {
+    test('calls getVehicleInspection(market) and getPackageListHQ(market) when the market is not SM-enabled, grouping by type/domainDescr', async () => {
+      callService.mockImplementation((service, operation) => {
+        if (operation === 'getVehicleInspection') {
+          return Promise.resolve([
+            { id: 1, type: 'EXTERIOR', descr: 'Carrozzeria' },
+            { id: 2, type: 'EXTERIOR', descr: 'Vetri' },
+            { id: 3, type: 'INTERIOR', descr: 'Sedili' },
+          ]);
+        }
+        if (operation === 'checkIsPkMarketEnabled') return Promise.resolve(0);
+        if (operation === 'getPackageListHQ') {
+          return Promise.resolve([
+            { idpackage: 10, domainDescr: 'Tagliando' },
+            { idpackage: 11, domainDescr: 'Freni' },
+          ]);
+        }
+        throw new Error(`unexpected operation ${operation}`);
+      });
+
+      const result = await getDealerConfiguration('1000', '00006821');
+
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getVehicleInspection', { args: ['1000'] });
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'checkIsPkMarketEnabled', { args: ['1000'] });
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getPackageListHQ', { args: ['1000'] });
+      expect(callService).not.toHaveBeenCalledWith('dbmanager', 'getPackageListSM', expect.anything());
+
+      expect(result).toEqual({
+        EXTERIOR: [
+          { id: 1, type: 'EXTERIOR', descr: 'Carrozzeria' },
+          { id: 2, type: 'EXTERIOR', descr: 'Vetri' },
+        ],
+        INTERIOR: [{ id: 3, type: 'INTERIOR', descr: 'Sedili' }],
+        package: {
+          Tagliando: [{ idpackage: 10, domainDescr: 'Tagliando' }],
+          Freni: [{ idpackage: 11, domainDescr: 'Freni' }],
+        },
+      });
+    });
+
+    test('calls getPackageListSM(market, oic) when the market is SM-enabled', async () => {
+      callService.mockImplementation((service, operation) => {
+        if (operation === 'getVehicleInspection') return Promise.resolve([]);
+        if (operation === 'checkIsPkMarketEnabled') return Promise.resolve(1);
+        if (operation === 'getPackageListSM') {
+          return Promise.resolve([{ idpackage: 20, domainDescr: 'Revisione' }]);
+        }
+        throw new Error(`unexpected operation ${operation}`);
+      });
+
+      const result = await getDealerConfiguration('1000', '00006821');
+
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getPackageListSM', { args: ['1000', '00006821'] });
+      expect(callService).not.toHaveBeenCalledWith('dbmanager', 'getPackageListHQ', expect.anything());
+      expect(result).toEqual({
+        package: { Revisione: [{ idpackage: 20, domainDescr: 'Revisione' }] },
+      });
     });
   });
 });

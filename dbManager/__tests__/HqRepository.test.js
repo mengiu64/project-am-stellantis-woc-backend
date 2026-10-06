@@ -12,6 +12,7 @@ jest.mock('../S3ConfigRepository', () => ({
 const {
   getEnablingConfiguration,
   setEnablingConfiguration,
+  getOicEnabled,
   importAppConfiguration,
   getAppConfigurationList,
   getVehicleInspection,
@@ -96,6 +97,42 @@ describe('HqRepository', () => {
       const pool = makePool(async () => ({ rows: [] }));
 
       const result = await getEnablingConfiguration(pool, '9999');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('getOicEnabled', () => {
+    it('throws when codmarket is missing', async () => {
+      const pool = makePool();
+      await expect(getOicEnabled(pool, undefined))
+        .rejects.toThrow('"codmarket" is required');
+      expect(pool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns oic/enablewoc/enablesignature rows for the given market', async () => {
+      const rows = [
+        { oic: '00006821', enablewoc: 1, enablesignature: 0 },
+      ];
+      const pool = makePool(async () => ({ rows }));
+
+      const result = await getOicEnabled(pool, '1000');
+
+      expect(result).toBe(rows);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM woc.hq_application_enabling hae'),
+        ['1000'],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('WHERE hae.market = $1'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('COALESCE(hae.enablewoc, 0) AS enablewoc'));
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('COALESCE(hae.enablesignature, 0) AS enablesignature'));
+    });
+
+    it('returns an empty array when no rows are found', async () => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      const result = await getOicEnabled(pool, '9999');
 
       expect(result).toEqual([]);
     });
@@ -327,11 +364,24 @@ describe('HqRepository', () => {
   });
 
   describe('getVehicleInspection', () => {
-    it('throws when type is missing', async () => {
-      const pool = makePool();
-      await expect(getVehicleInspection(pool, '1000', undefined))
-        .rejects.toThrow('"type" is required');
-      expect(pool.query).not.toHaveBeenCalled();
+    it.each([
+      ['undefined', undefined],
+      ['null', null],
+      ['empty string', ''],
+    ])('does not filter on type when type is %s', async (_label, typeValue) => {
+      const pool = makePool(async () => ({ rows: [] }));
+
+      await getVehicleInspection(pool, '1000', typeValue);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledWith(
+        expect.stringContaining('FROM woc.hq_vehicle_inspection'),
+        ['1000'],
+      );
+      const [sql] = pool.query.mock.calls[0];
+      expect(sql).not.toEqual(expect.stringContaining('type = '));
+      expect(sql).toEqual(expect.stringContaining('WHERE deleted = 0'));
+      expect(sql).toEqual(expect.stringContaining('AND market = $1'));
     });
 
     it('filters on market = $2 (in AND with type/deleted=0) when market is provided', async () => {

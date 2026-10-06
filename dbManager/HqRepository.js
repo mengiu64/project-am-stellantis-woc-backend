@@ -21,12 +21,22 @@
  * (market, oic) gia' presente.
  *
  * getVehicleInspection(market, type) legge da woc.hq_vehicle_inspection le
- * voci di controllo veicolo non cancellate (deleted = 0) per il "type"
- * richiesto: se "market" e' valorizzato (non undefined/null/stringa vuota)
- * vengono selezionate SOLO le righe di quel mercato (market = market); se
- * "market" e' assente/vuoto vengono selezionate SOLO le righe comuni, senza
- * mercato (market IS NULL OR market = ''). Nessun fallback/merge tra le due
- * casistiche: sono due insiemi di risultati mutuamente esclusivi.
+ * voci di controllo veicolo non cancellate (deleted = 0): se "type" e'
+ * valorizzato (non undefined/null/stringa vuota) vengono selezionate SOLO
+ * le righe di quel "type" (type = type), altrimenti nessun filtro viene
+ * applicato su "type" (tutti i type). Analogamente, se "market" e'
+ * valorizzato vengono selezionate SOLO le righe di quel mercato
+ * (market = market); se "market" e' assente/vuoto vengono selezionate SOLO
+ * le righe comuni, senza mercato (market IS NULL OR market = ''). Nessun
+ * fallback/merge tra le due casistiche di "market": sono due insiemi di
+ * risultati mutuamente esclusivi.
+ *
+ * getOicEnabled(codmarket) legge da woc.hq_application_enabling, per il
+ * mercato indicato, oic/enablewoc/enablesignature (con COALESCE a 0 quando
+ * enablewoc/enablesignature sono NULL), senza alcun join con
+ * ang_snowflakes/addr_snowflakes (a differenza di getEnablingConfiguration):
+ * usata da jobcard/jobCardService.js::getDealerConfiguration per decidere la
+ * sorgente (HQ o SM) dei pacchetti di un mercato/oic.
  *
  * importAppConfiguration(market, rows) importa in blocco, in un'unica
  * transazione, le righe di configurazione di abilitazione WOC/firma
@@ -199,6 +209,31 @@ async function setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableS
 }
 
 /**
+ * Legge da woc.hq_application_enabling, per il mercato indicato, oic/
+ * enablewoc/enablesignature (con COALESCE a 0 quando enablewoc/
+ * enablesignature sono NULL), senza alcun join con ang_snowflakes/
+ * addr_snowflakes (a differenza di getEnablingConfiguration).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} codmarket
+ * @returns {Promise<Array<{ oic: string, enablewoc: number, enablesignature: number }>>}
+ */
+async function getOicEnabled(pool, codmarket) {
+  if (!codmarket) throw new Error('"codmarket" is required');
+
+  const { rows } = await pool.query(
+    `SELECT  hae.oic
+                    , COALESCE(hae.enablewoc, 0) AS enablewoc
+                    , COALESCE(hae.enablesignature, 0) AS enablesignature
+       FROM woc.hq_application_enabling hae 
+      WHERE hae.market = $1`,
+    [codmarket],
+  );
+
+  return rows;
+}
+
+/**
  * Importa in blocco, in un'unica transazione, le righe di configurazione di
  * abilitazione WOC/firma digitale (woc.hq_application_enabling) per il
  * mercato indicato: ciascuna riga di "rows" (gia' estratta dal file Excel
@@ -305,15 +340,31 @@ async function getAppConfigurationList(pool, market) {
  *                            mercato (market = market); se assente/vuoto,
  *                            filtra sulle sole righe comuni senza mercato
  *                            (market IS NULL OR market = '')
- * @param {string} type
+ * @param {string} [type] - se valorizzato, filtra sulle sole righe di questo
+ *                          "type" (type = type); se assente/vuoto, nessun
+ *                          filtro su "type" (tutti i type del mercato)
  * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
  */
 async function getVehicleInspection(pool, market, type) {
-  if (!type) throw new Error('"type" is required');
-
   const hasMarket = market !== undefined && market !== null && market !== '';
-  const marketCondition = hasMarket ? 'market = $2' : "(market IS NULL OR market = '')";
-  const params = hasMarket ? [type, market] : [type];
+  const hasType = type !== undefined && type !== null && type !== '';
+
+  const params = [];
+  const conditions = [];
+
+  if (hasType) {
+    params.push(type);
+    conditions.push(`type = $${params.length}`);
+  }
+
+  conditions.push('deleted = 0');
+
+  if (hasMarket) {
+    params.push(market);
+    conditions.push(`market = $${params.length}`);
+  } else {
+    conditions.push("(market IS NULL OR market = '')");
+  }
 
   const { rows } = await pool.query(
     `SELECT id,
@@ -323,9 +374,7 @@ async function getVehicleInspection(pool, market, type) {
             visible,
             deleted
        FROM woc.hq_vehicle_inspection
-      WHERE type = $1
-        AND deleted = 0
-        AND ${marketCondition}
+      WHERE ${conditions.join('\n        AND ')}
       ORDER BY id`,
     params,
   );
@@ -1124,6 +1173,7 @@ async function getAnagAllocation() {
 module.exports = {
   getEnablingConfiguration,
   setEnablingConfiguration,
+  getOicEnabled,
   importAppConfiguration,
   getAppConfigurationList,
   getVehicleInspection,
