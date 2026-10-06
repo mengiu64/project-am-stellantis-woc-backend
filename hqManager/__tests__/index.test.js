@@ -45,6 +45,7 @@ function makeManagerInstance(overrides = {}) {
     getAnagAllocation: jest.fn(),
     importAppConfiguration: jest.fn(),
     exportAppConfiguration: jest.fn(),
+    exportAudit: jest.fn(),
     ...overrides,
   };
   HqManager.mockImplementation(() => instance);
@@ -496,6 +497,26 @@ describe('hqManager/index.js', () => {
       expect(instance.exportAppConfiguration).toHaveBeenCalledWith('1000');
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, ...exportResult });
+    });
+
+    it('dispatches exportAudit (direct invocation payload)', async () => {
+      const exportResult = { rowsExported: 1, fileContentBase64: 'QkFTRTY0' };
+      const instance = makeManagerInstance({
+        exportAudit: jest.fn().mockResolvedValue(exportResult),
+      });
+
+      const res = await handler({
+        action: 'exportAudit',
+        body: {
+          market: '1000', section: 'domain', datefrom: '2026-01-01', dateto: '2026-01-31', actiontype: 'update', username: 'Mario',
+        },
+      });
+
+      expect(instance.exportAudit).toHaveBeenCalledWith('1000', 'domain', '2026-01-01', '2026-01-31', 'update', 'Mario');
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        success: true, market: '1000', section: 'domain', datefrom: '2026-01-01', dateto: '2026-01-31', actiontype: 'update', username: 'Mario', ...exportResult,
+      });
     });
 
     it('ignores an unparseable JSON body (parseBody catch branch) and falls back to path-derived action', async () => {

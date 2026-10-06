@@ -47,6 +47,14 @@ ordinate per `oic`, le serializza qui in un foglio XLSX
 (nessuna scrittura su filesystem: la Lambda non ha accesso al filesystem del
 chiamante).
 
+`exportAudit(market, section, datefrom, dateto, actiontype, username)` è
+l'operazione analoga ma per il log di audit: riusa direttamente
+`repository.searchAudit(...)` (stessi filtri opzionali, in AND, di
+`searchAudit`; se nessuno è valorizzato il risultato è limitato alle ultime
+100 righe per `creationdate`), serializza qui le righe trovate in un foglio
+XLSX e restituisce il file come stringa Base64 (nessuna scrittura su
+filesystem).
+
 La risoluzione del nome audit e del mercato usa
 `callService('session', 'getData', { args: [username] })`, senza importare
 session. È best-effort: errori REST vengono esplicitamente loggati e il nome
@@ -91,3 +99,11 @@ signature enabling rows for the given market, ordered by `oic`, serializes
 them locally into an XLSX sheet (`XLSX.utils.json_to_sheet`) and returns the
 file as a Base64 string (no filesystem writes: the Lambda has no access to
 the caller's filesystem).
+
+`exportAudit(market, section, datefrom, dateto, actiontype, username)` is the
+analogous operation for the audit log: it reuses
+`repository.searchAudit(...)` directly (same optional, AND-combined filters
+as `searchAudit`; if none are set, the result is limited to the last 100
+rows by `creationdate`), serializes the returned rows locally into an XLSX
+sheet and returns the file as a Base64 string (no filesystem writes).
+

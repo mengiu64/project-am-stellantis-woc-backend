@@ -171,6 +171,52 @@ describe('HqManager — consumer REST', () => {
     });
   });
 
+  describe('exportAudit', () => {
+    beforeEach(() => {
+      mockJsonToSheet.mockReset();
+      mockBookNew.mockReset();
+      mockBookAppendSheet.mockReset();
+      mockWrite.mockReset();
+    });
+
+    test('legge le righe di audit da dbManager (tutti i filtri opzionali) e restituisce il file XLSX in Base64', async () => {
+      const rows = [
+        { id: 1, username: 'Mario Rossi', creationdate: '2026-01-01', section: 'domain', market: '1000', actiontype: 'update', descr: 'x' },
+      ];
+      callService.mockResolvedValue(rows);
+      const sheet = { '!ref': 'A1:G2' };
+      const workbook = { SheetNames: [], Sheets: {} };
+      mockJsonToSheet.mockReturnValue(sheet);
+      mockBookNew.mockReturnValue(workbook);
+      mockWrite.mockReturnValue('QkFTRTY0');
+
+      const result = await manager.exportAudit('1000', 'domain', '2026-01-01', '2026-01-31', 'update', 'Mario');
+
+      expect(callService.mock.calls).toEqual([
+        ['dbmanager', 'searchAudit', { args: ['1000', 'domain', '2026-01-01', '2026-01-31', 'update', 'Mario'] }],
+      ]);
+      expect(mockJsonToSheet).toHaveBeenCalledWith(rows);
+      expect(mockBookNew).toHaveBeenCalledWith();
+      expect(mockBookAppendSheet).toHaveBeenCalledWith(workbook, sheet, 'Sheet1');
+      expect(mockWrite).toHaveBeenCalledWith(workbook, { type: 'base64', bookType: 'xlsx' });
+      expect(result).toEqual({ rowsExported: 1, fileContentBase64: 'QkFTRTY0' });
+    });
+
+    test('nessun filtro valorizzato: delega comunque a searchAudit con tutti gli argomenti undefined', async () => {
+      callService.mockResolvedValue([]);
+      mockJsonToSheet.mockReturnValue({});
+      mockBookNew.mockReturnValue({});
+      mockWrite.mockReturnValue('');
+
+      const result = await manager.exportAudit();
+
+      expect(callService.mock.calls).toEqual([
+        ['dbmanager', 'searchAudit', { args: [undefined, undefined, undefined, undefined, undefined, undefined] }],
+      ]);
+      expect(result).toEqual({ rowsExported: 0, fileContentBase64: '' });
+    });
+  });
+
   test.each(HqManager.VEHICLE_INSPECTION_ARRAY_KEYS)('gestisce il loop %s', async (key) => {
     await manager.setVehicleInspectionVisible({ [key]: [{ id: 7, value: 0 }, { id: 8, value: 1 }] });
     expect(callService.mock.calls).toEqual([

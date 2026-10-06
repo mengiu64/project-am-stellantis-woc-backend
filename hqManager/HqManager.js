@@ -153,6 +153,13 @@ async function resolveCodmarket(event = {}, body = {}) {
  * audit HQ (woc.hq_audit); insertAudit risolve anch'esso lo username da
  * registrare tramite resolveUsername.
  *
+ * exportAudit(market, section, datefrom, dateto, actiontype, username) e'
+ * l'operazione simmetrica a exportAppConfiguration ma per il log di audit:
+ * legge (stessi filtri opzionali di searchAudit, stesso limite alle ultime
+ * 100 righe se nessun filtro e' valorizzato) le righe di woc.hq_audit, le
+ * serializza in un foglio XLSX e restituisce il file come contenuto Base64
+ * (nessuna scrittura su filesystem).
+ *
  * getAnagSection()/getAnagAllocation() espongono le anagrafiche statiche
  * (sezioni HQ / tipi di azione di audit) lette da S3
  * (dbManager/S3ConfigRepository.js, bucket TranslationsBucket).
@@ -537,6 +544,38 @@ class HqManager {
    */
   async searchAudit(market, section, datefrom, dateto, actiontype, username) {
     return repository.searchAudit(market, section, datefrom, dateto, actiontype, username);
+  }
+
+  /**
+   * Esporta, in un file Excel, le righe di audit HQ (woc.hq_audit) filtrate
+   * secondo gli stessi criteri (tutti facoltativi) di searchAudit: i dati
+   * vengono letti da dbManager con un'unica chiamata REST
+   * (HqRepository.js::searchAudit — se nessun filtro e' valorizzato, il
+   * risultato e' limitato alle ultime 100 righe per creationdate), poi
+   * serializzati qui in un foglio XLSX (XLSX.utils.json_to_sheet) e
+   * restituiti come contenuto Base64 (stesso pattern, simmetrico, di
+   * exportAppConfiguration: la Lambda non ha accesso al filesystem del
+   * chiamante, quindi il file non viene scritto su disco ma restituito nel
+   * body della risposta).
+   *
+   * @param {string} [market]
+   * @param {string} [section]
+   * @param {string} [datefrom]
+   * @param {string} [dateto]
+   * @param {string} [actiontype]
+   * @param {string} [username]
+   * @returns {Promise<{ rowsExported: number, fileContentBase64: string }>}
+   */
+  async exportAudit(market, section, datefrom, dateto, actiontype, username) {
+    const rows = await repository.searchAudit(market, section, datefrom, dateto, actiontype, username);
+
+    const XLSX = require('xlsx');
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const fileContentBase64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
+
+    return { rowsExported: rows.length, fileContentBase64 };
   }
 
   /**

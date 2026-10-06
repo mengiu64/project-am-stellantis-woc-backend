@@ -86,6 +86,10 @@
  *     importAppConfiguration, legge le righe di configurazione di
  *     abilitazione WOC/firma digitale del mercato indicato e le restituisce
  *     come file Excel (XLSX) codificato in Base64 nel body della risposta.
+ *   - exportAudit(market, section, datefrom, dateto, actiontype, username):
+ *     operazione simmetrica a exportAppConfiguration ma per il log di audit,
+ *     stessi filtri opzionali di searchAudit; restituisce il file Excel
+ *     (XLSX) codificato in Base64 nel body della risposta.
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -138,6 +142,7 @@ const VALID_ACTIONS = [
   'getAnagAllocation',
   'importAppConfiguration',
   'exportAppConfiguration',
+  'exportAudit',
 ];
 
 function parseBody(event) {
@@ -309,6 +314,13 @@ exports.handler = async (event = {}) => {
       const audits = await manager.searchAudit(market, section, datefrom, dateto, actiontype, username);
       return response(200, {
         success: true, market, section, datefrom, dateto, actiontype, username, audits,
+      });
+    }
+
+    if (action === 'exportAudit') {
+      const exportResult = await manager.exportAudit(market, section, datefrom, dateto, actiontype, username);
+      return response(200, {
+        success: true, market, section, datefrom, dateto, actiontype, username, ...exportResult,
       });
     }
 
