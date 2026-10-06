@@ -82,6 +82,8 @@
  * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
  * woc.jobcard_sync_activity, registrata prima dell'invio): serve a recuperare
  * le modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
+ * Include anche ack/techReason/businessReason della stessa riga (tra jobCardId
+ * e payload; NULL -> stringa vuota), letti con la stessa SELECT.
  * Legge solo dal DB (nessuna chiamata DGT, nessun token): jobCardId mancante ->
  * 400, nessun payload registrato -> 404, errore DB -> 502.
  */
@@ -492,7 +494,8 @@ async function addJobCardSyncStatus(body, jobCardId) {
 /**
  * Azione "lastPayload": ultimo payload saveJobcard inviato a DGT per la
  * jobcard (v. JobcardSyncActivityRepository.getLastPayload), per recuperare le
- * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
+ * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce,
+ * con l'esito (ack/techReason/businessReason) registrato sulla stessa riga.
  * Jobcard senza payload registrato -> errore con isRecordNotFound (404
  * nell'handler, stessa convenzione di synch-status).
  */
@@ -509,6 +512,9 @@ async function getJobCardLastPayload(jobCardId) {
     success: true,
     message: 'Job card payload retrieved successfully',
     jobCardId: lastPayload.jobCardId,
+    ack: lastPayload.ack,
+    techReason: lastPayload.techReason,
+    businessReason: lastPayload.businessReason,
     payload: lastPayload.payload,
   };
 }

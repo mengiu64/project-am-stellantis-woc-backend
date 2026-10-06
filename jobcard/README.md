@@ -13,7 +13,7 @@ jobcard/
 ├── httpClient.js      # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js     # Autenticazione PingFederate → Bearer token
 ├── jobCardService.js  # getJobCardList / getJobCardDetails / saveJobCard
-├── JobcardSyncActivityRepository.js # woc.jobcard_sync_activity: UPSERT (saveJobcard), lettura esito ack/techReason/businessReason (details/saveJobcard) e ultimo payload (lastPayload)
+├── JobcardSyncActivityRepository.js # woc.jobcard_sync_activity: UPSERT (saveJobcard), lettura esito ack/techReason/businessReason (details/saveJobcard) e ultimo payload con esito (lastPayload)
 ├── db.js              # Pool pg Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── index.js           # Entry point CLI
 └── package.json
@@ -267,6 +267,13 @@ effettivamente inviato (senza gli arricchimenti di sola UI, v.
 `sanitizeJobCardPayload`), sovrascritto ad ogni `saveJobcard`: può essere
 reinviato così com'è con `saveJobcard`.
 
+La risposta include anche `ack`, `techReason` e `businessReason` della stessa
+riga (colonne `ack`/`techreason`/`businessreason`, lette con la stessa SELECT
+del payload), tra `jobCardId` e `payload`: è l'esito dell'ultima
+sincronizzazione registrata da `synch-status` (valori `NULL` → stringa vuota).
+Essendo popolati in modo asincrono, subito dopo un `saveJobcard` fallito
+possono essere ancora vuoti o riferirsi alla sincronizzazione precedente.
+
 ```bash
 node index.js lastPayload <jobCardId>
 ```
@@ -287,6 +294,9 @@ anche `id`). Legge solo dal DB: nessuna chiamata DGT né token PingFederate.
   "success": true,
   "message": "Job card payload retrieved successfully",
   "jobCardId": "JCID-84521",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": "",
   "payload": {
     "roInfo": {
       "jobCardSrpId": "JCID-84521",

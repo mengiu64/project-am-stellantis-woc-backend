@@ -540,7 +540,7 @@ Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, wi
 | `authService` | `getBearerToken()` | Gets/renews the PingFederate bearer token (file cache) |
 | `jobCardService` | `getJobCardList(token, params)` | JobCard list with filters and pagination |
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Details of a single JobCard, enriched with DML data (see below) |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`); best-effort read of `ack`/`techreason`/`businessreason`, returned as `ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload` for the `lastPayload` action (`jobcard` only, see below) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`); best-effort read of `ack`/`techreason`/`businessreason`, returned as `ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload`, with `ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action (`jobcard` only, see below) |
 | `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
 
 #### `getJobCardList` parameters
@@ -633,12 +633,22 @@ call, no token) and is blocking: missing `jobCardId` → `400`, no recorded
 payload → `404`, DB error → `502` (body `{ "success": false, "message": "..." }`).
 `jobcard` lambda only (CLI: `node index.js lastPayload <jobCardId>`).
 
+The response also includes `ack`, `techReason` and `businessReason` from the
+same row (read by the same SELECT as the payload), between `jobCardId` and
+`payload`: the outcome of the last synchronization recorded by `synch-status`
+(`NULL` → empty string). Since they are populated asynchronously, right after
+a failed `saveJobcard` they may still be empty or refer to the previous
+synchronization.
+
 ```json
 {
   "statusCode": 200,
   "success": true,
   "message": "Job card payload retrieved successfully",
   "jobCardId": "JCID-84521",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": "",
   "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
 }
 ```
@@ -1518,7 +1528,7 @@ cd agendaSoa && npm run test:coverage
 - **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID required; `DocumentID`/`CustomerIdDms` optional content but always present in the payload, sent as `''` and `null` respectively when omitted), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
 - **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors; for `jobCardService`: `jobs[].packageType`/`packageCharge` enrichment (all `jobType`/`packageCode`/`paymentType` combinations), placement before `partInfo`/`laborInfo`, `roInfo.roSource` added right after `sourceApplication` (including missing `roInfo`/`sourceApplication`)
 - **jobcard / djc: JobcardSyncActivityRepository / index** – sync-outcome read (`ack`/`techreason`/`businessreason` → `ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`) after the DGT call, never read when the DGT call fails
-- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`payload`, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`payload` without token or DGT calls, `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on DB errors; only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`)
+- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`ack`/`techReason`/`businessReason`/`payload` (in this order) without token or DGT calls, `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on DB errors; only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods

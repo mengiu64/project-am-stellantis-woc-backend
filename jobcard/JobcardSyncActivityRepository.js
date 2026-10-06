@@ -12,8 +12,9 @@
  * (esito della sincronizzazione, da synch-status), non da questa lambda, che
  * li legge soltanto (getSyncStatus) per restituirli nelle risposte di
  * jobCardDetails e saveJobcard come ack/techReason/businessReason.
- * getLastPayload rilegge il payload registrato (azione GET "lastPayload") per
- * recuperare le modifiche inviate quando l'aggiornamento verso DJC/DGT fallisce.
+ * getLastPayload rilegge il payload registrato, insieme ad ack/techreason/
+ * businessreason della stessa riga (azione GET "lastPayload"), per recuperare
+ * le modifiche inviate quando l'aggiornamento verso DJC/DGT fallisce.
  *
  * Copia di djc/JobcardSyncActivityRepository.js, mantenuta in sync, salvo
  * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload (solo jobcard).
@@ -31,7 +32,7 @@ const SELECT_SYNC_STATUS_SQL = `
   WHERE jobcardid = $1`;
 
 const SELECT_LAST_PAYLOAD_SQL = `
-  SELECT jobcardid, payload
+  SELECT jobcardid, ack, techreason, businessreason, payload
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
 
@@ -173,10 +174,12 @@ function withSyncStatus(body, syncStatus) {
 }
 
 /**
- * SELECT del payload registrato per jobcardid.
+ * SELECT del payload registrato e dell'esito (ack/techreason/businessreason)
+ * per jobcardid.
  * @param {import('pg').Pool} pool
  * @param {string} jobCardId
- * @returns {Promise<{jobcardid: string, payload: object}|null>} la riga, o null
+ * @returns {Promise<{jobcardid: string, ack: string|null, techreason: string|null,
+ *          businessreason: string|null, payload: object}|null>} la riga, o null
  *          se la jobcard non è presente
  */
 async function selectLastPayload(pool, jobCardId) {
@@ -189,13 +192,17 @@ async function selectLastPayload(pool, jobCardId) {
  * payload di woc.jobcard_sync_activity, sovrascritta ad ogni saveJobcard PRIMA
  * dell'invio a DGT, quindi presente anche se l'invio è poi fallito): consente
  * di recuperare le modifiche inviate in delta (azione GET "lastPayload").
+ * Con la stessa SELECT restituisce anche ack/techReason/businessReason della
+ * riga (esito dell'ultima sincronizzazione registrata da synch-status; NULL ->
+ * stringa vuota, come getSyncStatus).
  * Bloccante, a differenza di getSyncStatus: id assente -> errore "is
  * required" senza accesso al DB; errori DB/pool propagati al chiamante.
  * @param {string|number|null|undefined} jobCardId
  * @param {object} [deps]
  * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
- * @returns {Promise<{jobCardId: string, payload: object}|null>} null se la
- *          jobcard non ha un payload registrato
+ * @returns {Promise<{jobCardId: string, ack: string, techReason: string,
+ *          businessReason: string, payload: object}|null>} null se la jobcard
+ *          non ha un payload registrato
  */
 async function getLastPayload(jobCardId, { getPool } = {}) {
   const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
@@ -203,7 +210,7 @@ async function getLastPayload(jobCardId, { getPool } = {}) {
 
   const resolveGetPool = getPool ?? require('./db').getPool;
   const row = await selectLastPayload(await resolveGetPool(), id);
-  return row ? { jobCardId: row.jobcardid, payload: row.payload } : null;
+  return row ? { jobCardId: row.jobcardid, ...toSyncStatus(row), payload: row.payload } : null;
 }
 
 module.exports = {

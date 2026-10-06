@@ -234,15 +234,24 @@ describe('jobcard REST consumers', () => {
       requestContext: { authorizer: { sub: 'trusted' } },
     }, 'JCID-84521'],
     [{ action: 'lastPayload', body: { id: 'JCID-84522' } }, 'JCID-84522'],
-  ])('lastPayload returns the last payload sent to DGT, reading only the DB (case %#)', async (event, jobCardId) => {
+  ])('lastPayload returns the last payload sent to DGT and its sync outcome, reading only the DB (case %#)', async (event, jobCardId) => {
     const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
-    getLastPayload.mockResolvedValueOnce({ jobCardId, payload });
+    const outcome = { ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' };
+    getLastPayload.mockResolvedValueOnce({ jobCardId, ...outcome, payload });
 
     const response = await handler(event);
 
     expect(response.statusCode).toBe(200);
+    // toBe sulla stringa JSON: verifica anche l'ordine (ack/techReason/businessReason tra jobCardId e payload)
     expect(response.body).toBe(JSON.stringify({
-      statusCode: 200, success: true, message: 'Job card payload retrieved successfully', jobCardId, payload,
+      statusCode: 200,
+      success: true,
+      message: 'Job card payload retrieved successfully',
+      jobCardId,
+      ack: 'KO',
+      techReason: 'FAILED',
+      businessReason: 'FAILED - DMS unavailable',
+      payload,
     }));
     expect(getLastPayload).toHaveBeenCalledWith(jobCardId);
     [getBearerToken, getJobCardDetails, saveJobCard, recordSyncActivity, getSyncStatus, callService]

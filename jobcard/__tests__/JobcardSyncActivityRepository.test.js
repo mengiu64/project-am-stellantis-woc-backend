@@ -235,14 +235,16 @@ describe('JobcardSyncActivityRepository', () => {
   });
 
   describe('selectLastPayload', () => {
-    test('selects jobcardid/payload by jobcardid, returning the row', async () => {
-      const row = { jobcardid: 'SRP-1', payload: { roInfo: { jobCardSrpId: 'SRP-1' } } };
+    test('selects jobcardid/sync outcome/payload by jobcardid, returning the row', async () => {
+      const row = {
+        jobcardid: 'SRP-1', ack: 'OK', techreason: 'SYNCED', businessreason: 'SYNCED - ok', payload: { roInfo: { jobCardSrpId: 'SRP-1' } },
+      };
       const pool = { query: jest.fn().mockResolvedValue({ rows: [row] }) };
 
       await expect(selectLastPayload(pool, 'SRP-1')).resolves.toBe(row);
       expect(pool.query).toHaveBeenCalledWith(SELECT_LAST_PAYLOAD_SQL, ['SRP-1']);
       expect(SELECT_LAST_PAYLOAD_SQL).toMatch(
-        /SELECT jobcardid, payload\s+FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1/,
+        /SELECT jobcardid, ack, techreason, businessreason, payload\s+FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1/,
       );
     });
 
@@ -256,15 +258,30 @@ describe('JobcardSyncActivityRepository', () => {
     const payload = { roInfo: { jobCardSrpId: 'SRP-1' }, jobs: [{ jobDescription: 'Service' }] };
     const poolReturning = (rows) => ({ query: jest.fn().mockResolvedValue({ rows }) });
 
-    test('returns jobCardId and the stored payload using the injected getPool', async () => {
-      const pool = poolReturning([{ jobcardid: 'SRP-1', payload }]);
+    test('returns jobCardId, the sync outcome and the stored payload using the injected getPool', async () => {
+      const pool = poolReturning([{
+        jobcardid: 'SRP-1', ack: 'KO', techreason: 'FAILED', businessreason: 'FAILED - DMS down', payload,
+      }]);
       const getPool = jest.fn().mockResolvedValue(pool);
 
       const result = await getLastPayload('SRP-1', { getPool });
-      expect(result).toEqual({ jobCardId: 'SRP-1', payload });
+      expect(result).toEqual({
+        jobCardId: 'SRP-1', ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down', payload,
+      });
+      expect(Object.keys(result)).toEqual(['jobCardId', 'ack', 'techReason', 'businessReason', 'payload']);
       expect(result.payload).toBe(payload);
       expect(pool.query).toHaveBeenCalledWith(SELECT_LAST_PAYLOAD_SQL, ['SRP-1']);
       expect(db.getPool).not.toHaveBeenCalled();
+    });
+
+    test('maps NULL sync outcome columns (not yet populated by synch-status) to empty strings', async () => {
+      const getPool = jest.fn().mockResolvedValue(poolReturning([{
+        jobcardid: 'SRP-1', ack: null, techreason: null, businessreason: null, payload,
+      }]));
+
+      await expect(getLastPayload('SRP-1', { getPool })).resolves.toEqual({
+        jobCardId: 'SRP-1', ack: '', techReason: '', businessReason: '', payload,
+      });
     });
 
     test('defaults to db.getPool and trims/stringifies the id', async () => {
