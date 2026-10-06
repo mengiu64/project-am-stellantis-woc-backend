@@ -9,6 +9,7 @@
  *   node index.js details     <jobCardId>
  *   node index.js saveJobcard <payloadJsonFile>
  *   node index.js dml         <jobCardId>
+ *   node index.js lastPayload <jobCardId>
  *
  * Options for "list" (key=value):
  *   vin=<value>
@@ -36,6 +37,7 @@
  *   node index.js details 79
  *   node index.js saveJobcard ./payload.json
  *   node index.js dml 79
+ *   node index.js lastPayload JCID-84521
  *
  * "dml" (getDataFromDMLFromTmp) legge /tmp/<jobCardId>.json, già salvato da
  * una precedente "details" (getJobCardDetails/saveJobCardDetailsToTmp), e
@@ -70,6 +72,18 @@
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
  * API Gateway instrada le richieste POST verso la lambda djc, ma il metodo è
  * disponibile anche qui (chiamata diretta/CLI, coerenza tra le due lambda).
+ *
+ * Le risposte di "details" e "saveJobcard" includono ack/techReason/
+ * businessReason, letti da woc.jobcard_sync_activity per jobcardid (esito della
+ * sincronizzazione popolato da synch-status; stringa vuota se assente): in
+ * "details" prima di jobCardDetail, in "saveJobcard" in coda alla risposta DGT.
+ *
+ * "lastPayload" (GET /api/repairorder/lastPayload?jobCardId=...) restituisce
+ * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
+ * woc.jobcard_sync_activity, registrata prima dell'invio): serve a recuperare
+ * le modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
+ * Legge solo dal DB (nessuna chiamata DGT, nessun token): jobCardId mancante ->
+ * 400, nessun payload registrato -> 404, errore DB -> 502.
  */
 
 const fs = require('fs');
@@ -81,7 +95,7 @@ const { callService, isInternalRequest } = require('../serviceClient');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml'];
+const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml', 'lastPayload'];
 
 /**
  * Estrae lo username autenticato per il Sender dinamico dell'azione "dml"
@@ -456,10 +470,47 @@ async function syncAppointmentsToNaga(payload, username) {
  * Bloccante: se il payload non ha un id jobcard (roInfo.jobCardSrpId/
  * dmsRepairOrderId/jobCardLegacyId) o il DB fallisce, l'errore viene
  * propagato e il payload NON viene inviato a DGT.
+ * @returns {Promise<{jobcardid: string, creationdate: Date}>} la riga registrata
  */
 async function recordJobCardSyncActivity(jobCardPayload) {
   const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
-  await recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+}
+
+/**
+ * Aggiunge alla risposta ack/techReason/businessReason, letti da
+ * woc.jobcard_sync_activity per jobcardid (esito della sincronizzazione
+ * popolato da synch-status): prima di jobCardDetail per "details", in coda per
+ * "saveJobcard". Best-effort: un errore DB lascia i campi vuoti senza far
+ * fallire la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ */
+async function addJobCardSyncStatus(body, jobCardId) {
+  const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
+  return withSyncStatus(body, await getSyncStatus(jobCardId));
+}
+
+/**
+ * Azione "lastPayload": ultimo payload saveJobcard inviato a DGT per la
+ * jobcard (v. JobcardSyncActivityRepository.getLastPayload), per recuperare le
+ * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
+ * Jobcard senza payload registrato -> errore con isRecordNotFound (404
+ * nell'handler, stessa convenzione di synch-status).
+ */
+async function getJobCardLastPayload(jobCardId) {
+  const { getLastPayload } = require('./JobcardSyncActivityRepository');
+  const lastPayload = await getLastPayload(jobCardId);
+  if (!lastPayload) {
+    const err = new Error(`[jobCard] payload not found for jobCardId ${String(jobCardId).trim()}`);
+    err.isRecordNotFound = true;
+    throw err;
+  }
+  return {
+    statusCode: 200,
+    success: true,
+    message: 'Job card payload retrieved successfully',
+    jobCardId: lastPayload.jobCardId,
+    payload: lastPayload.payload,
+  };
 }
 
 /**
@@ -517,11 +568,16 @@ exports.handler = async (event) => {
       // proprietario del token upstream. Se manca il dettaglio, richiama DGT
       // (getJobCardDetails) per rigenerarlo con un bearerToken locale.
       result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id, undefined, resolveSessionContext(event, body));
+    } else if (action === 'lastPayload') {
+      // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId da query
+      // string (GET) o body; mancante -> 400, payload non registrato -> 404.
+      result = await getJobCardLastPayload(body.jobCardId ?? body.id);
     } else {
+      let syncActivity;
       if (action === 'saveJobcard') {
         // Prima dell'invio a DGT (e prima del token): errore DB -> 502,
         // id jobcard mancante -> 400 ("is required").
-        await recordJobCardSyncActivity(body.payload ?? body);
+        syncActivity = await recordJobCardSyncActivity(body.payload ?? body);
       }
       const token = await getBearerToken();
       if (action === 'list') {
@@ -529,11 +585,14 @@ exports.handler = async (event) => {
       } else if (action === 'listCurrent') {
         result = await getJobCardListCurrent(token, body.dealerId, body.currentDate);
       } else if (action === 'details') {
-        result = await getJobCardDetails(token, body.jobCardId ?? body.id, resolveSessionContext(event, body));
+        const jobCardId = body.jobCardId ?? body.id;
+        const details = await getJobCardDetails(token, jobCardId, resolveSessionContext(event, body));
+        result = await addJobCardSyncStatus(details, jobCardId);
       } else {
         const jobCardPayload = body.payload ?? body;
-        result = await saveJobCard(token, jobCardPayload);
+        const saved = await saveJobCard(token, jobCardPayload);
         await syncAppointmentsToNaga(jobCardPayload, resolveUsername(event, body));
+        result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
       }
     }
 
@@ -543,7 +602,8 @@ exports.handler = async (event) => {
       body: JSON.stringify(result),
     };
   } catch (err) {
-    const statusCode = err.message.includes('is required') ? 400 : 502;
+    // isRecordNotFound: jobcard senza payload registrato (azione lastPayload).
+    const statusCode = err.isRecordNotFound ? 404 : (err.message.includes('is required') ? 400 : 502);
     return {
       statusCode,
       headers: { 'Content-Type': 'application/json' },
@@ -590,7 +650,8 @@ async function runListCurrent(dealerId, currentDate) {
 async function runDetails(jobCardId) {
   console.log('\n=== JobCard Details ===');
   const token = await getBearerToken();
-  const result = await getJobCardDetails(token, jobCardId);
+  const details = await getJobCardDetails(token, jobCardId);
+  const result = await addJobCardSyncStatus(details, jobCardId);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -604,8 +665,9 @@ async function runSaveJobcard(payloadJsonFile) {
   // payload.appointments[].appointmentInternalId con l'apptId restituito,
   // cosi' saveJobCard riceve il payload già aggiornato.
   await syncAppointmentsToNaga(payload);
-  await recordJobCardSyncActivity(payload);
-  const result = await saveJobCard(token, payload);
+  const syncActivity = await recordJobCardSyncActivity(payload);
+  const saved = await saveJobCard(token, payload);
+  const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -613,6 +675,13 @@ async function runSaveJobcard(payloadJsonFile) {
 async function runDml(jobCardId) {
   console.log('\n=== JobCard DML (da /tmp) ===');
   const result = await getDataFromDMLFromTmp(jobCardId);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function runLastPayload(jobCardId) {
+  console.log('\n=== JobCard Last Payload ===');
+  const result = await getJobCardLastPayload(jobCardId);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -644,6 +713,8 @@ async function main() {
     } else if (command === 'dml') {
       const jobCardId = param || '79';
       await runDml(jobCardId);
+    } else if (command === 'lastPayload') {
+      await runLastPayload(param);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js list        <dealerId> [key=value ...]');
@@ -651,6 +722,7 @@ async function main() {
       console.error('  node index.js details     <jobCardId>');
       console.error('  node index.js saveJobcard <payloadJsonFile>');
       console.error('  node index.js dml         <jobCardId>');
+      console.error('  node index.js lastPayload <jobCardId>');
       process.exit(1);
     }
   } catch (err) {

@@ -11,16 +11,26 @@ jest.mock('../jobCardService', () => ({
   sanitizeJobCardPayload: jest.fn((payload) => payload),
   getDataFromDMLFromTmp: jest.fn(),
 }));
-jest.mock('../JobcardSyncActivityRepository', () => ({ recordSyncActivity: jest.fn() }));
+jest.mock('../JobcardSyncActivityRepository', () => ({
+  ...jest.requireActual('../JobcardSyncActivityRepository'),
+  recordSyncActivity: jest.fn(),
+  getSyncStatus: jest.fn(),
+  getLastPayload: jest.fn(),
+}));
 
 const { callService, isInternalRequest } = require('../../serviceClient');
 const { handler: internalHandler } = require('../internal');
 const { getBearerToken } = require('../authService');
-const { saveJobCard, getJobCardDetails, getDataFromDMLFromTmp } = require('../jobCardService');
+const {
+  saveJobCard, getJobCardDetails, getJobCardList, getJobCardListCurrent, getDataFromDMLFromTmp,
+} = require('../jobCardService');
+const { recordSyncActivity, getSyncStatus, getLastPayload } = require('../JobcardSyncActivityRepository');
 const { handler } = require('../index');
 
 describe('jobcard REST consumers', () => {
   const saved = { success: true, message: 'saved' };
+  const syncStatus = { ack: 'OK', techReason: '', businessReason: '' };
+  const savedWithSyncStatus = { ...saved, ...syncStatus };
   const session = { pdvId: 'PDV', locale: 'it', username: 'trusted', brandvehic_reftech: 'FT' };
   const appointment = {
     appointmentInternalId: 'AP-1',
@@ -40,6 +50,8 @@ describe('jobcard REST consumers', () => {
     getBearerToken.mockResolvedValue('local-dgt-token');
     isInternalRequest.mockReturnValue(false);
     saveJobCard.mockResolvedValue(saved);
+    recordSyncActivity.mockResolvedValue({ jobcardid: 'SRP-1', creationdate: new Date('2026-09-30T10:00:00Z') });
+    getSyncStatus.mockResolvedValue(syncStatus);
     callService.mockImplementation(async (service, operation) => {
       if (service === 'session') return session;
       if (operation === 'createnaga') return { success: true, data: { rdvId: 'NEW-AP' } };
@@ -67,7 +79,7 @@ describe('jobcard REST consumers', () => {
       requestContext: { authorizer: { sub: 'trusted' } },
     });
     expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.body)).toEqual(saved);
+    expect(JSON.parse(response.body)).toEqual(savedWithSyncStatus);
     expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload);
     expect(callService).toHaveBeenCalledWith('session', 'getData', { args: ['trusted'] });
     expect(callService).toHaveBeenCalledWith('agendasoanaga', 'updatenaga', expect.objectContaining({
@@ -116,7 +128,7 @@ describe('jobcard REST consumers', () => {
       return { success: true };
     });
     const result = await handler({ action: 'saveJobcard', body: { payload: makePayload(), username: 'local' } });
-    expect(JSON.parse(result.body)).toEqual(saved);
+    expect(JSON.parse(result.body)).toEqual(savedWithSyncStatus);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('session getData'), message);
     expect(callService).toHaveBeenCalledWith('agendasoanaga', 'updatenaga', expect.objectContaining({ pdvid: null }));
   });
@@ -124,7 +136,7 @@ describe('jobcard REST consumers', () => {
   test.each(['Private REST timeout', 'Private REST HTTP 502'])('appointment %s does not fail saving or stop following appointments', async (message) => {
     callService.mockRejectedValueOnce(new Error(message)).mockResolvedValue({ success: true });
     const result = await handler({ action: 'saveJobcard', body: makePayload([appointment, { appointmentInternalId: 'AP-2' }]) });
-    expect(JSON.parse(result.body)).toEqual(saved);
+    expect(JSON.parse(result.body)).toEqual(savedWithSyncStatus);
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('sync error'), message);
     expect(callService).toHaveBeenCalledTimes(2);
   });
@@ -141,5 +153,136 @@ describe('jobcard REST consumers', () => {
     });
     const service = action === 'details' ? getJobCardDetails : getDataFromDMLFromTmp;
     expect(service.mock.calls[0][2]).toEqual(expect.objectContaining({ username: null }));
+  });
+
+  test('saveJobcard appends ack/techReason/businessReason read by the tracked jobcardid after saving', async () => {
+    const dgtSaved = { statusCode: 200, success: true, message: 'Job Card Transaction Successful', jobCardId: 'JCID-84521' };
+    const outcome = { ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' };
+    saveJobCard.mockResolvedValueOnce(dgtSaved);
+    getSyncStatus.mockResolvedValueOnce(outcome);
+
+    const response = await handler({ action: 'saveJobcard', body: { payload: makePayload([]), username: 'local' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(JSON.stringify({ ...dgtSaved, ...outcome }));
+    expect(getSyncStatus).toHaveBeenCalledTimes(1);
+    expect(getSyncStatus).toHaveBeenCalledWith('SRP-1');
+    expect(getSyncStatus.mock.invocationCallOrder[0]).toBeGreaterThan(saveJobCard.mock.invocationCallOrder[0]);
+  });
+
+  test('saveJobcard does not read the sync outcome when the DGT save fails', async () => {
+    saveJobCard.mockRejectedValueOnce(new Error('[jobCard] saveJobCard failed: HTTP 500'));
+
+    const response = await handler({ action: 'saveJobcard', body: { payload: makePayload([]), username: 'local' } });
+
+    expect(response.statusCode).toBe(502);
+    expect(JSON.parse(response.body)).toEqual({ success: false, message: '[jobCard] saveJobCard failed: HTTP 500' });
+    expect(getSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [{ jobCardId: 'JCID-84506' }, 'JCID-84506'],
+    [{ id: 'JCID-84507' }, 'JCID-84507'],
+  ])('details puts ack/techReason/businessReason right before jobCardDetail (%p)', async (body, jobCardId) => {
+    const jobCardDetail = { roInfo: { jobCardSrpId: jobCardId } };
+    const details = {
+      dmsAvailable: true, statusCode: 200, success: true, message: 'Job card retrieved successfully', jobCardDetail,
+    };
+    getJobCardDetails.mockResolvedValueOnce(details);
+
+    const response = await handler({ action: 'details', body });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(JSON.stringify({
+      dmsAvailable: true, statusCode: 200, success: true, message: 'Job card retrieved successfully',
+      ...syncStatus, jobCardDetail,
+    }));
+    expect(getJobCardDetails).toHaveBeenCalledWith('local-dgt-token', jobCardId, expect.objectContaining({ username: null }));
+    expect(getSyncStatus).toHaveBeenCalledWith(jobCardId);
+    expect(details).not.toHaveProperty('ack');
+  });
+
+  test('details does not read the sync outcome when the DGT call fails', async () => {
+    getJobCardDetails.mockRejectedValueOnce(new Error('[jobCard] getJobCardDetails failed: HTTP 404'));
+
+    const response = await handler({ action: 'details', body: { jobCardId: 'JCID-84506' } });
+
+    expect(response.statusCode).toBe(502);
+    expect(getSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['list', getJobCardList],
+    ['listCurrent', getJobCardListCurrent],
+    ['dml', getDataFromDMLFromTmp],
+  ])('%s response is returned without the sync outcome', async (action, service) => {
+    const serviceResult = { success: true, data: [] };
+    service.mockResolvedValueOnce(serviceResult);
+
+    const response = await handler({ action, body: { jobCardId: 'JCID-84506', dealerId: 'DE87630' } });
+
+    expect(JSON.parse(response.body)).toEqual(serviceResult);
+    expect(getSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [{
+      httpMethod: 'GET',
+      path: '/api/repairorder/lastPayload',
+      queryStringParameters: { jobCardId: 'JCID-84521' },
+      body: null,
+      requestContext: { authorizer: { sub: 'trusted' } },
+    }, 'JCID-84521'],
+    [{ action: 'lastPayload', body: { id: 'JCID-84522' } }, 'JCID-84522'],
+  ])('lastPayload returns the last payload sent to DGT, reading only the DB (case %#)', async (event, jobCardId) => {
+    const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
+    getLastPayload.mockResolvedValueOnce({ jobCardId, payload });
+
+    const response = await handler(event);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(JSON.stringify({
+      statusCode: 200, success: true, message: 'Job card payload retrieved successfully', jobCardId, payload,
+    }));
+    expect(getLastPayload).toHaveBeenCalledWith(jobCardId);
+    [getBearerToken, getJobCardDetails, saveJobCard, recordSyncActivity, getSyncStatus, callService]
+      .forEach((fn) => expect(fn).not.toHaveBeenCalled());
+  });
+
+  test('lastPayload returns 404 when the jobcard has no recorded payload', async () => {
+    getLastPayload.mockResolvedValueOnce(null);
+
+    const response = await handler({ action: 'lastPayload', body: { jobCardId: ' JCID-404 ' } });
+
+    expect(response.statusCode).toBe(404);
+    expect(JSON.parse(response.body)).toEqual({
+      success: false, message: '[jobCard] payload not found for jobCardId JCID-404',
+    });
+  });
+
+  test('lastPayload returns 400 when jobCardId is missing from the query string', async () => {
+    getLastPayload.mockImplementationOnce(jest.requireActual('../JobcardSyncActivityRepository').getLastPayload);
+
+    const response = await handler({ httpMethod: 'GET', path: '/api/repairorder/lastPayload', queryStringParameters: null });
+
+    expect(response.statusCode).toBe(400);
+    expect(JSON.parse(response.body)).toEqual({ success: false, message: '[jobCard] jobCardId is required' });
+  });
+
+  test('lastPayload returns 502 on DB errors', async () => {
+    getLastPayload.mockRejectedValueOnce(new Error('connection refused'));
+
+    const response = await handler({ action: 'lastPayload', body: { jobCardId: 'JCID-84521' } });
+
+    expect(response.statusCode).toBe(502);
+    expect(JSON.parse(response.body)).toEqual({ success: false, message: 'connection refused' });
+  });
+
+  test('only isRecordNotFound maps to 404: upstream errors with statusCode 404 stay 502', async () => {
+    getJobCardDetails.mockRejectedValueOnce(Object.assign(new Error('[jobCard] getJobCardDetails failed: HTTP 404'), { statusCode: 404 }));
+
+    const response = await handler({ action: 'details', body: { jobCardId: 'JCID-84506' } });
+
+    expect(response.statusCode).toBe(502);
   });
 });
