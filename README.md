@@ -2066,6 +2066,14 @@ L'audit include anche le dipendenze di sviluppo: il report JSON viene conservato
 in `coverage/audit-report.json` e gli errori non vengono ignorati con `|| true`.
 La toolchain usa Jest `^30.5.2`, che elimina la dipendenza transitiva vulnerabile
 `braces`/`micromatch`; i cinque client Axios richiedono `^1.20.0`.
+Ogni modulo dichiara inoltre in `package.json` l'override
+`{"@istanbuljs/load-nyc-config": {"js-yaml": "^4.3.2"}}`: la catena
+`babel-plugin-istanbul` → `@istanbuljs/load-nyc-config` → `js-yaml@3` → `argparse@1`
+includeva `sprintf-js` (GHSA-hp3w-g68c-fv3c), per cui non esiste una versione
+corretta. Con `js-yaml` 4 (`argparse@2`, senza dipendenze) il pacchetto esce
+dall'albero; `load-nyc-config` usa solo `load()` per eventuali `.nycrc.yml`.
+Replicare l'override nei nuovi moduli con Jest e rimuoverlo quando
+`load-nyc-config` adotterà `js-yaml` 4.
 I lockfile dei singoli moduli devono essere aggiornati e verificati insieme.
 Gli alert Dependabot si aggiornano dopo la pubblicazione sul default branch:
 un audit locale pulito non chiude gli alert di una versione ancora su GitHub.

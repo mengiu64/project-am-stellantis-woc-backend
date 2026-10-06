@@ -1577,6 +1577,14 @@ The audit includes development dependencies: its JSON report is retained in
 `coverage/audit-report.json`, and errors are not suppressed with `|| true`.
 The toolchain uses Jest `^30.5.2`, removing the vulnerable transitive
 `braces`/`micromatch` dependency; the five Axios clients require `^1.20.0`.
+Every module also declares the `package.json` override
+`{"@istanbuljs/load-nyc-config": {"js-yaml": "^4.3.2"}}`: the
+`babel-plugin-istanbul` → `@istanbuljs/load-nyc-config` → `js-yaml@3` → `argparse@1`
+chain pulled in `sprintf-js` (GHSA-hp3w-g68c-fv3c), which has no patched
+version. With `js-yaml` 4 (`argparse@2`, no dependencies) the package leaves
+the tree; `load-nyc-config` only uses `load()` for optional `.nycrc.yml` files.
+Copy the override into new Jest modules and remove it once
+`load-nyc-config` adopts `js-yaml` 4.
 The individual module lockfiles must be updated and verified together.
 Dependabot alerts update after publication to the default branch:
 a clean local audit does not close alerts for a version still on GitHub.
