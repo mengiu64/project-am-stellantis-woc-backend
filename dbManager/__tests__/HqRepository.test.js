@@ -976,8 +976,9 @@ describe('HqRepository', () => {
     it('clones hq_pk_domain (once per market)/hq_pk_packages from marketOrig to marketTarget in a single transaction, remapping iddomain (no hq_pk_oic involved)', async () => {
       const { pool, client } = makeClientPool(async (sql) => {
         if (sql === 'BEGIN' || sql === 'COMMIT') return {};
-        if (sql.includes('SELECT iddomain, descr, deleted FROM woc.hq_pk_domain')) {
-          return { rows: [{ iddomain: 10, descr: 'Meccanica', deleted: 0 }] };
+        if (sql.includes('UPDATE woc.hq_pk_domain SET deleted = 1')) return {};
+        if (sql.includes('SELECT iddomain, descr FROM woc.hq_pk_domain')) {
+          return { rows: [{ iddomain: 10, descr: 'Meccanica' }] };
         }
         if (sql.includes('INSERT INTO woc.hq_pk_domain')) {
           return { rows: [{ iddomain: 99 }] };
@@ -999,7 +1000,12 @@ describe('HqRepository', () => {
       );
 
       expect(client.query).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT iddomain, descr, deleted FROM woc.hq_pk_domain WHERE market = $1'),
+        expect.stringContaining('UPDATE woc.hq_pk_domain SET deleted = 1 WHERE market = $1'),
+        ['2000'],
+      );
+
+      expect(client.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT iddomain, descr FROM woc.hq_pk_domain WHERE market = $1'),
         ['1000'],
       );
       expect(client.query).toHaveBeenCalledWith(
@@ -1025,7 +1031,8 @@ describe('HqRepository', () => {
       const error = new Error('boom');
       const { pool, client } = makeClientPool(async (sql) => {
         if (sql === 'BEGIN' || sql === 'ROLLBACK') return {};
-        if (sql.includes('SELECT iddomain, descr, deleted FROM woc.hq_pk_domain')) throw error;
+        if (sql.includes('UPDATE woc.hq_pk_domain SET deleted = 1')) return {};
+        if (sql.includes('SELECT iddomain, descr FROM woc.hq_pk_domain')) throw error;
         return { rows: [] };
       });
 

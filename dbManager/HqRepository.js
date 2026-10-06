@@ -92,11 +92,13 @@
  *
  * clonePk(marketTarget, marketOrig) clona, per il mercato marketOrig, le
  * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget (i domini,
- * condivisi per mercato, vengono clonati una sola volta), rigenerando
- * iddomain/idpackage dalle rispettive sequence e rimappando gli iddomain
- * nei pacchetti clonati per preservare la relazione dominio/pacchetto
- * originale. Esegue tutto in un'unica transazione (BEGIN/COMMIT, ROLLBACK
- * in caso di errore).
+ * condivisi per mercato, vengono clonati una sola volta): cancella
+ * logicamente (deleted = 1) i domini gia' presenti su marketTarget, poi
+ * copia i domini (deleted = 0) e i pacchetti di marketOrig su
+ * marketTarget, rigenerando iddomain/idpackage dalle rispettive sequence e
+ * rimappando gli iddomain nei pacchetti clonati per preservare la
+ * relazione dominio/pacchetto originale. Esegue tutto in un'unica
+ * transazione (BEGIN/COMMIT, ROLLBACK in caso di errore).
  *
  * insertAudit(username, section, market, actiontype, descr) inserisce una
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
@@ -820,16 +822,23 @@ async function getPackageListSM(pool, market, oic) {
 
 /**
  * Clona, per il mercato indicato (marketOrig), le gerarchie
- * hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget) (la
- * tabella woc.hq_pk_oic non e' piu' usata, nessuna riga da clonare).
+ * hq_pk_domain/hq_pk_packages in un mercato gia' esistente (marketTarget)
+ * (la tabella woc.hq_pk_oic non e' piu' usata, nessuna riga da clonare).
  * I domini (condivisi da tutti gli OIC del mercato, v. insertDomain) vengono
  * clonati una sola volta per mercato (non piu' una volta per oic).
+ *
+ * L'operazione:
+ * 1) cancella logicamente (deleted = 1) tutti i domini gia' presenti su
+ *    marketTarget;
+ * 2) copia i domini di marketOrig su marketTarget (deleted = 0);
+ * 3) copia i pacchetti di marketOrig su marketTarget.
  *
  * iddomain/idpackage sono generati dalle rispettive sequence
  * (hq_pk_domain_iddomain_seq/hq_pk_packages_idpackage_seq): i nuovi
  * iddomain vengono quindi rimappati (vecchio -> nuovo) prima di clonare i
  * pacchetti, in modo da mantenere la relazione dominio/pacchetto del
- * mercato originale anche nel mercato clonato.
+ * mercato originale anche nel mercato clonato (woc.hq_pk_packages non ha
+ * una colonna "deleted").
  *
  * L'intera operazione viene eseguita in un'unica transazione
  * (BEGIN/COMMIT su una connessione dedicata, ROLLBACK in caso di errore),
@@ -848,21 +857,32 @@ async function clonePk(pool, marketTarget, marketOrig) {
   try {
     await client.query('BEGIN');
 
+    // 1) Cancella logicamente i domini gia' presenti sul mercato target.
+    await client.query(
+      `UPDATE woc.hq_pk_domain SET deleted = 1 WHERE market = $1`,
+      [marketTarget],
+    );
+
+    // 2) Copia i domini del mercato originale sul mercato target (deleted = 0),
+    //    rimappando iddomain vecchio -> nuovo per preservare la relazione
+    //    dominio/pacchetto nel clone dei pacchetti.
     const { rows: domainRows } = await client.query(
-      `SELECT iddomain, descr, deleted FROM woc.hq_pk_domain WHERE market = $1`,
+      `SELECT iddomain, descr FROM woc.hq_pk_domain WHERE market = $1`,
       [marketOrig],
     );
     const iddomainMap = new Map();
-    for (const { iddomain, descr, deleted } of domainRows) {
+    for (const { iddomain, descr } of domainRows) {
       const { rows } = await client.query(
         `INSERT INTO woc.hq_pk_domain (market, descr, deleted)
          VALUES ($1, $2, $3)
          RETURNING iddomain`,
-        [marketTarget, descr, deleted],
+        [marketTarget, descr, 0],
       );
       iddomainMap.set(iddomain, rows[0].iddomain);
     }
 
+    // 3) Copia i pacchetti del mercato originale sul mercato target,
+    //    rimappando l'iddomain sui nuovi domini appena clonati.
     const { rows: packageRows } = await client.query(
       `SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE market = $1`,
       [marketOrig],
