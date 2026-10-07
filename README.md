@@ -1811,6 +1811,7 @@ DOCSOA_IBM_CLIENT_ID=...               # X-IBM-Client-Id per il gateway API Conn
 DOCSOA_IBM_CLIENT_SECRET=...           # X-IBM-Client-Secret per il gateway API Connect
 DOCSOA_CERT_SECRET_ID=sm-np-bsn0027990-dev-apic-cert # (opzionale) id secret Secrets Manager col certificato client mTLS (STESSO usato da myPeople)
 DOCSOA_KEY_SECRET_ID=sm-np-bsn0027990-dev-apic-key  # (opzionale) id secret Secrets Manager con la chiave privata mTLS (STESSO usato da myPeople)
+DOCSOA_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app # secret Aurora applicativo (credenziali + proxyhost/proxyport/proxydbname) per functionServiceDb; in Lambda impostato da template.yaml (DocsoaDbSecretId), in locale in alternativa DOCSOA_DB_HOST
 PROXY_HOST=...                         # (opzionale) proxy corporate Stellantis/PSA
 PROXY_PORT=8080                        # (opzionale) porta proxy
 ```
@@ -1950,11 +1951,11 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
 AWS_REGION=eu-west-1                                                  # (opzionale in Lambda: già impostata automaticamente da AWS)
 ```
 
-> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (di default il cluster migrato di stage; se vuoto usa il nome storico). La policy IAM usa lo stesso identificativo. Nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
+> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (default `rds-np-bsn0027990-stage-aurora`; se vuoto usa il nome standard `rds-np-bsn0027990-${Environment}-aurora`). La policy IAM usa lo stesso identificativo. Su uno stack già esistente `sam deploy` riusa il valore salvato del parametro (`UsePreviousValue`) e ignora il `Default`: per questo il job `deploy-stage` di `.github/workflows/unit-tests.yml` passa sempre `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` in `--parameter-overrides` (usare lo stesso override per un deploy manuale). Nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
 
 ---
 

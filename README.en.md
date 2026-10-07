@@ -1383,6 +1383,7 @@ DOCSOA_IBM_CLIENT_ID=...               # X-IBM-Client-Id for the API Connect gat
 DOCSOA_IBM_CLIENT_SECRET=...           # X-IBM-Client-Secret for the API Connect gateway
 DOCSOA_CERT_SECRET_ID=sm-np-bsn0027990-dev-apic-cert # (optional) Secrets Manager secret id with the mTLS client certificate (SAME one used by myPeople)
 DOCSOA_KEY_SECRET_ID=sm-np-bsn0027990-dev-apic-key  # (optional) Secrets Manager secret id with the mTLS client private key (SAME one used by myPeople)
+DOCSOA_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app # Aurora application secret (credentials + proxyhost/proxyport/proxydbname) for functionServiceDb; in Lambda set by template.yaml (DocsoaDbSecretId), locally DOCSOA_DB_HOST can be used instead
 PROXY_HOST=...                         # (optional) Stellantis/PSA corporate proxy
 PROXY_PORT=8080                        # (optional) proxy port
 ```
@@ -1489,11 +1490,11 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
 AWS_REGION=eu-west-1                                                  # (optional in Lambda: already set automatically by AWS)
 ```
 
-> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is set by the `AuroraAutoStartClusterIdentifier` template parameter (by default the migrated stage cluster; when empty it falls back to the historical name). The IAM policy targets the same cluster. No DB secret/credential is required (only the RDS management API is used).
+> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is set by the `AuroraAutoStartClusterIdentifier` template parameter (default `rds-np-bsn0027990-stage-aurora`; when empty it falls back to the standard name `rds-np-bsn0027990-${Environment}-aurora`). The IAM policy targets the same cluster. On an existing stack `sam deploy` reuses the parameter's stored value (`UsePreviousValue`) and ignores the `Default`: this is why the `deploy-stage` job in `.github/workflows/unit-tests.yml` always passes `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` in `--parameter-overrides` (use the same override for manual deploys). No DB secret/credential is required (only the RDS management API is used).
 
 ---
 
