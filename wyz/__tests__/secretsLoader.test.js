@@ -13,7 +13,7 @@ jest.mock('@aws-sdk/client-secrets-manager', () => ({
 }));
 
 const SECRET_ARN = 'arn:aws:secretsmanager:eu-west-1:123456789012:secret:sm-np-bsn0027990-dev-wyz-AbCdEf';
-const VALID_SECRET = { WYZ_CLIENT_ID: 'wi-advisor', WYZ_CLIENT_SECRET: 'shh' };
+const VALID_SECRET = { WYZ_IBM_CLIENT_ID: 'wi-advisor', WYZ_IBM_CLIENT_SECRET: 'shh' };
 
 describe('secretsLoader.loadSecrets (wyz)', () => {
   const originalEnv = process.env;
@@ -66,8 +66,8 @@ describe('secretsLoader.loadSecrets (wyz)', () => {
 
   it('lancia errore elencando le chiavi mancanti', async () => {
     mockSsmSend.mockResolvedValue({ Parameter: { Value: SECRET_ARN } });
-    mockSmSend.mockResolvedValue({ SecretString: JSON.stringify({ WYZ_CLIENT_ID: 'x' }) });
-    await expect(loadSecrets()).rejects.toThrow('Chiavi mancanti nel secret: WYZ_CLIENT_SECRET');
+    mockSmSend.mockResolvedValue({ SecretString: JSON.stringify({ WYZ_IBM_CLIENT_ID: 'x' }) });
+    await expect(loadSecrets()).rejects.toThrow('Chiavi mancanti nel secret: WYZ_IBM_CLIENT_SECRET');
   });
 
   it('propaga gli errori di SSM', async () => {

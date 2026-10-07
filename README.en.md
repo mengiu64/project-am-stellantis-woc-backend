@@ -62,6 +62,13 @@ project-am-stellantis-woc-backend/
 
 ## Modules
 
+### wyz
+
+The required credentials are `WYZ_IBM_CLIENT_ID` and `WYZ_IBM_CLIENT_SECRET`,
+both in the AWS secret JSON and in local environment variables. In Lambda,
+`WYZ_PARAM_NAME` identifies the SSM parameter containing the secret ARN/ID.
+See [wyz/README.md](wyz/README.md) for the complete configuration.
+
 ### REST communication between Lambdas
 
 Lambdas are independent services: no module imports another Lambda's classes,

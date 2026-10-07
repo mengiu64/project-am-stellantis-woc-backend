@@ -51,8 +51,8 @@ function buildConfig(secrets) {
       // Endpoint Keycloak: {IAM_BASE_URL}/realms/{TENANT}/protocol/openid-connect/token
       url: `${iamBaseUrl}/realms/${tenant}/protocol/openid-connect/token`,
       grantType: 'client_credentials',
-      clientId: secrets.WYZ_CLIENT_ID,
-      clientSecret: secrets.WYZ_CLIENT_SECRET,
+      clientId: secrets.WYZ_IBM_CLIENT_ID,
+      clientSecret: secrets.WYZ_IBM_CLIENT_SECRET,
     },
     api: {
       baseUrl: secrets.WYZ_BASE_URL || DEFAULT_BASE_URL,
@@ -83,14 +83,14 @@ async function getConfig() {
   } else {
     // Ambiente locale
     console.log("[config] Caricamento credenziali da variabili d'ambiente locali");
-    const REQUIRED_ENV = ['WYZ_CLIENT_ID', 'WYZ_CLIENT_SECRET'];
+    const REQUIRED_ENV = ['WYZ_IBM_CLIENT_ID', 'WYZ_IBM_CLIENT_SECRET'];
     const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
     if (missing.length > 0) {
       throw new Error(`[config] Variabili d'ambiente obbligatorie mancanti: ${missing.join(', ')}`);
     }
     secrets = {
-      WYZ_CLIENT_ID: process.env.WYZ_CLIENT_ID,
-      WYZ_CLIENT_SECRET: process.env.WYZ_CLIENT_SECRET,
+      WYZ_IBM_CLIENT_ID: process.env.WYZ_IBM_CLIENT_ID,
+      WYZ_IBM_CLIENT_SECRET: process.env.WYZ_IBM_CLIENT_SECRET,
       WYZ_BASE_URL: process.env.WYZ_BASE_URL,
       WYZ_IAM_BASE_URL: process.env.WYZ_IAM_BASE_URL,
       WYZ_TENANT: process.env.WYZ_TENANT,
