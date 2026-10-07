@@ -861,9 +861,15 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # dbManager/S3ConfigRepository.js — anagrafiche statiche HQ
+        # (hq_sections.json, hq_actiontype.json) in config/ su TranslationsBucket,
+        # stesso pattern di V360Function.
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
       Environment:
         Variables:
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          CONFIG_BUCKET_NAME: !Ref TranslationsBucket
 
   DbManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
