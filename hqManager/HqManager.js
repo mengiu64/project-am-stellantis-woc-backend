@@ -491,6 +491,8 @@ class HqManager {
    */
   async clonePk(marketTarget, marketOrig) {
     await repository.clonePk(marketTarget, marketOrig);
+
+    await repository.insertAudit(username, 'domain', codmarket, 'update', `clone domain from: ${marketOrig} to: ${marketTarget} `);
   }
 
   /**
