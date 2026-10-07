@@ -75,17 +75,22 @@
  * API Gateway instrada le richieste POST verso la lambda djc, ma il metodo è
  * disponibile anche qui (chiamata diretta/CLI, coerenza tra le due lambda).
  *
- * Le risposte di "details" e "saveJobcard" includono ack/techReason/
- * businessReason, letti da woc.jobcard_sync_activity per jobcardid (esito della
- * sincronizzazione popolato da synch-status; stringa vuota se assente): in
- * "details" prima di jobCardDetail, in "saveJobcard" in coda alla risposta DGT.
+ * Le risposte di "details" e "saveJobcard" includono djcsynch/ack/techReason/
+ * businessReason, letti da woc.jobcard_sync_activity per jobcardid: djcsynch è
+ * l'esito dell'ultima chiamata saveJobcard verso DGT (true se DGT ha risposto
+ * success: true, false se ha risposto altrimenti o la chiamata è fallita, null
+ * se non ancora noto), ack/techReason/businessReason l'esito della
+ * sincronizzazione popolato da synch-status (stringa vuota se assente): in
+ * "details" prima di jobCardDetail, in "saveJobcard" in coda alla risposta DGT
+ * (con djcsynch della chiamata appena eseguita).
  *
  * "lastPayload" (GET /api/repairorder/lastPayload?jobCardId=...) restituisce
  * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
  * woc.jobcard_sync_activity, registrata prima dell'invio): serve a recuperare
  * le modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
- * Include anche ack/techReason/businessReason della stessa riga (tra jobCardId
- * e payload; NULL -> stringa vuota), letti con la stessa SELECT.
+ * Include anche djcsynch/ack/techReason/businessReason della stessa riga (tra
+ * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri),
+ * letti con la stessa SELECT.
  * Legge solo dal DB (nessuna chiamata DGT, nessun token): jobCardId mancante ->
  * 400, nessun payload registrato -> 404, errore DB -> 502.
  *
@@ -488,22 +493,53 @@ async function recordJobCardSyncActivity(jobCardPayload) {
 }
 
 /**
- * Aggiunge alla risposta ack/techReason/businessReason, letti da
- * woc.jobcard_sync_activity per jobcardid (esito della sincronizzazione
- * popolato da synch-status): prima di jobCardDetail per "details", in coda per
- * "saveJobcard". Best-effort: un errore DB lascia i campi vuoti senza far
- * fallire la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ * Invia il payload a DGT (saveJobCard) e registra in djcsynch di
+ * woc.jobcard_sync_activity l'esito della chiamata: true se DGT risponde
+ * success: true, false se risponde altrimenti o se token/HTTP/rete falliscono
+ * (in quel caso l'errore viene poi propagato invariato). Scrittura
+ * best-effort (v. JobcardSyncActivityRepository.recordDjcSynch); stessa
+ * logica di djc/index.js::saveJobCardWithDjcSynch.
+ * @param {object} jobCardPayload - payload saveJobcard
+ * @param {string} jobCardId - jobcardid registrato da recordJobCardSyncActivity
+ * @param {string} [token] - bearer token già ottenuto (altrimenti richiesto qui)
+ * @returns {Promise<{saved: object, djcsynch: boolean}>} risposta DGT ed esito
  */
-async function addJobCardSyncStatus(body, jobCardId) {
+async function saveJobCardWithDjcSynch(jobCardPayload, jobCardId, token) {
+  const { recordDjcSynch } = require('./JobcardSyncActivityRepository');
+  let saved;
+  try {
+    saved = await saveJobCard(token ?? await getBearerToken(), jobCardPayload);
+  } catch (err) {
+    await recordDjcSynch(jobCardId, false);
+    throw err;
+  }
+  const djcsynch = saved?.success === true;
+  await recordDjcSynch(jobCardId, djcsynch);
+  return { saved, djcsynch };
+}
+
+/**
+ * Aggiunge alla risposta djcsynch/ack/techReason/businessReason, letti da
+ * woc.jobcard_sync_activity per jobcardid (djcsynch: esito dell'ultima
+ * chiamata saveJobcard verso DGT; ack/techReason/businessReason: esito della
+ * sincronizzazione popolato da synch-status): prima di jobCardDetail per
+ * "details", in coda per "saveJobcard". djcsynch, se passato (saveJobcard),
+ * sostituisce il valore letto dal DB con l'esito della chiamata appena
+ * eseguita. Best-effort: un errore DB lascia i campi vuoti (djcsynch null)
+ * senza far fallire la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ */
+async function addJobCardSyncStatus(body, jobCardId, djcsynch) {
   const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
-  return withSyncStatus(body, await getSyncStatus(jobCardId));
+  const syncStatus = await getSyncStatus(jobCardId);
+  return withSyncStatus(body, djcsynch === undefined ? syncStatus : { ...syncStatus, djcsynch });
 }
 
 /**
  * Azione "lastPayload": ultimo payload saveJobcard inviato a DGT per la
  * jobcard (v. JobcardSyncActivityRepository.getLastPayload), per recuperare le
  * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce,
- * con l'esito (ack/techReason/businessReason) registrato sulla stessa riga.
+ * con l'esito (djcsynch/ack/techReason/businessReason) registrato sulla stessa
+ * riga.
  * Jobcard senza payload registrato -> errore con isRecordNotFound (404
  * nell'handler, stessa convenzione di synch-status).
  */
@@ -520,6 +556,7 @@ async function getJobCardLastPayload(jobCardId) {
     success: true,
     message: 'Job card payload retrieved successfully',
     jobCardId: lastPayload.jobCardId,
+    djcsynch: lastPayload.djcsynch,
     ack: lastPayload.ack,
     techReason: lastPayload.techReason,
     businessReason: lastPayload.businessReason,
@@ -590,13 +627,17 @@ exports.handler = async (event) => {
       // Solo dbManager via REST interno (nessuna chiamata DGT, quindi nessun
       // token): market/oic da query string (GET) o body; market mancante -> 400.
       result = await getDealerConfiguration(body.market, body.oic);
+    } else if (action === 'saveJobcard') {
+      const jobCardPayload = body.payload ?? body;
+      // Prima dell'invio a DGT (e prima del token): errore DB -> 502,
+      // id jobcard mancante -> 400 ("is required").
+      const syncActivity = await recordJobCardSyncActivity(jobCardPayload);
+      // Token + invio a DGT: esito registrato in djcsynch, false anche quando
+      // token/DGT falliscono (errore poi propagato invariato -> 502).
+      const { saved, djcsynch } = await saveJobCardWithDjcSynch(jobCardPayload, syncActivity?.jobcardid);
+      await syncAppointmentsToNaga(jobCardPayload, resolveUsername(event, body));
+      result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid, djcsynch);
     } else {
-      let syncActivity;
-      if (action === 'saveJobcard') {
-        // Prima dell'invio a DGT (e prima del token): errore DB -> 502,
-        // id jobcard mancante -> 400 ("is required").
-        syncActivity = await recordJobCardSyncActivity(body.payload ?? body);
-      }
       const token = await getBearerToken();
       if (action === 'list') {
         result = await getJobCardList(token, body);
@@ -606,11 +647,6 @@ exports.handler = async (event) => {
         const jobCardId = body.jobCardId ?? body.id;
         const details = await getJobCardDetails(token, jobCardId, resolveSessionContext(event, body));
         result = await addJobCardSyncStatus(details, jobCardId);
-      } else {
-        const jobCardPayload = body.payload ?? body;
-        const saved = await saveJobCard(token, jobCardPayload);
-        await syncAppointmentsToNaga(jobCardPayload, resolveUsername(event, body));
-        result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
       }
     }
 
@@ -684,8 +720,8 @@ async function runSaveJobcard(payloadJsonFile) {
   // cosi' saveJobCard riceve il payload già aggiornato.
   await syncAppointmentsToNaga(payload);
   const syncActivity = await recordJobCardSyncActivity(payload);
-  const saved = await saveJobCard(token, payload);
-  const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
+  const { saved, djcsynch } = await saveJobCardWithDjcSynch(payload, syncActivity?.jobcardid, token);
+  const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid, djcsynch);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }

@@ -548,7 +548,7 @@ Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, wi
 | `jobCardService` | `getJobCardList(token, params)` | JobCard list with filters and pagination |
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Details of a single JobCard, enriched with DML data (see below) |
 | `jobCardService` | `getDealerConfiguration(market, oic)` | Dealer configuration (vehicle inspection + packages) for a market/oic, see below |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`); best-effort read of `ack`/`techreason`/`businessreason`, returned as `ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload`, with `ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action (`jobcard` only, see below) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`), and best-effort recording of the DGT call outcome in `djcsynch`; best-effort read of `djcsynch`/`ack`/`techreason`/`businessreason`, returned as `djcsynch`/`ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload`, with `djcsynch`/`ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action (`jobcard` only, see below) |
 | `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
 
 #### `getJobCardList` parameters
@@ -589,12 +589,20 @@ See `jobcard/README.md` for the full rule table.
 #### Sync outcome in the `details`/`saveJobcard` responses
 
 The responses of the `details` and `saveJobcard` actions (the latter shared with
-the `djc` lambda) include `ack`, `techReason` and `businessReason`, read from
-`woc.jobcard_sync_activity` by `jobcardid` (`ack`/`techreason`/`businessreason`
-columns, populated by [synch-status](#synch-status) with the DMS
-synchronization outcome): in `details` (`jobcardid` = requested `jobCardId`)
-right before `jobCardDetail`, in `saveJobcard` (`jobcardid` returned by the
-UPSERT done before sending to DGT) appended to the DGT response.
+the `djc` lambda) include `djcsynch`, `ack`, `techReason` and `businessReason`,
+read from `woc.jobcard_sync_activity` by `jobcardid` (`djcsynch`/`ack`/
+`techreason`/`businessreason` columns): in `details` (`jobcardid` = requested
+`jobCardId`) right before `jobCardDetail`, in `saveJobcard` (`jobcardid`
+returned by the UPSERT done before sending to DGT) appended to the DGT response.
+
+- `djcsynch` (boolean): outcome of the last `saveJobcard` call to DGT, recorded
+  by `jobcard`/`djc` right after the call: `true` when DGT answers
+  `success: true`, `false` when it answers otherwise or the call fails
+  (token/HTTP/network), `null` when not known yet (missing row or row older
+  than the column, or a new payload not sent yet: the UPSERT resets it to
+  `NULL`).
+- `ack`/`techReason`/`businessReason`: DMS synchronization outcome, populated
+  by [synch-status](#synch-status).
 
 ```json
 {
@@ -602,6 +610,7 @@ UPSERT done before sending to DGT) appended to the DGT response.
   "statusCode": 200,
   "success": true,
   "message": "Job card retrieved successfully",
+  "djcsynch": true,
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
@@ -615,7 +624,8 @@ UPSERT done before sending to DGT) appended to the DGT response.
   "success": true,
   "message": "Job Card Transaction Successful",
   "jobCardId": "JCID-84521",
-  "ack": "OK",
+  "djcsynch": true,
+  "ack": "",
   "techReason": "",
   "businessReason": ""
 }
@@ -624,10 +634,20 @@ UPSERT done before sending to DGT) appended to the DGT response.
 The fields are added by the handler (and the CLI) after the DGT call: the
 DynamoDB cache, the `dml` action and the internal `getJobCardDetails` operation
 used by `synch-status` are unchanged. Best-effort read: missing row, `NULL`
-values, DB error or a wait longer than 5 s → empty string, never failing the
-response. In `saveJobcard` the values are those recorded when the response is
-built (`synch-status` updates them asynchronously): empty for a new job card,
-the previous synchronization outcome for an existing one.
+values, DB error or a wait longer than 5 s → empty string (`null` for
+`djcsynch`), never failing the response. In `saveJobcard`, `djcsynch` is the
+outcome of the call just made (even when writing it to the DB, best-effort
+with the same 5 s limit, fails), while `ack`/`techReason`/`businessReason` are
+those recorded when the response is built (`synch-status` updates them
+asynchronously): empty for a new job card, the previous synchronization
+outcome for an existing one. When the DGT call fails, `saveJobcard` records
+`djcsynch` = `false` and answers with the unchanged error
+(`{ "success": false, "message": "..." }`, without `djcsynch`).
+
+The `djcsynch` column is added to existing environments by
+`sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, to be run **before**
+deploying `jobcard`/`djc` (without the column, `saveJobcard` and `lastPayload`
+answer `502`).
 
 #### `lastPayload` (GET) — last payload sent to DJC/DGT
 
@@ -641,12 +661,14 @@ call, no token) and is blocking: missing `jobCardId` → `400`, no recorded
 payload → `404`, DB error → `502` (body `{ "success": false, "message": "..." }`).
 `jobcard` lambda only (CLI: `node index.js lastPayload <jobCardId>`).
 
-The response also includes `ack`, `techReason` and `businessReason` from the
-same row (read by the same SELECT as the payload), between `jobCardId` and
-`payload`: the outcome of the last synchronization recorded by `synch-status`
-(`NULL` → empty string). Since they are populated asynchronously, right after
-a failed `saveJobcard` they may still be empty or refer to the previous
-synchronization.
+The response also includes `djcsynch`, `ack`, `techReason` and `businessReason`
+from the same row (read by the same SELECT as the payload), between `jobCardId`
+and `payload`: `djcsynch` is the outcome of sending the last payload to DGT
+(`true`/`false`, `null` when not known yet, see above), `ack`/`techReason`/
+`businessReason` the outcome of the last synchronization recorded by
+`synch-status` (`NULL` → empty string). Since the latter are populated
+asynchronously, right after a failed `saveJobcard` they may still be empty or
+refer to the previous synchronization, while `djcsynch` is already `false`.
 
 ```json
 {
@@ -654,6 +676,7 @@ synchronization.
   "success": true,
   "message": "Job card payload retrieved successfully",
   "jobCardId": "JCID-84521",
+  "djcsynch": true,
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
@@ -1570,8 +1593,8 @@ cd agendaSoa && npm run test:coverage
 - **authService** – valid cache, expired/missing cache (renewal), cache writing, HTTP error, missing `access_token`, default `expires_in`
 - **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID required; `DocumentID`/`CustomerIdDms` optional content but always present in the payload, sent as `''` and `null` respectively when omitted), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
 - **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors; for `jobCardService`: `jobs[].packageType`/`packageCharge` enrichment (all `jobType`/`packageCode`/`paymentType` combinations), placement before `partInfo`/`laborInfo`, `roInfo.roSource` added right after `sourceApplication` (including missing `roInfo`/`sourceApplication`)
-- **jobcard / djc: JobcardSyncActivityRepository / index** – sync-outcome read (`ack`/`techreason`/`businessreason` → `ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`) after the DGT call, never read when the DGT call fails
-- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`ack`/`techReason`/`businessReason`/`payload` (in this order) without token or DGT calls, `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on DB errors; only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`)
+- **jobcard / djc: JobcardSyncActivityRepository / index** – `djcsynch` recording (`recordDjcSynch`: only `true` → `true`, empty id without DB access, missing row/DB or pool errors/timeout → `false` with a warning, never propagated; the UPSERT resets it to `NULL` on conflict); sync-outcome read (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string, `null` for `djcsynch`), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: `djcsynch` recorded after the DGT call (`true` only on `success: true`; `false` on any other `success`, DGT or token error, the error being returned unchanged; neither DGT call nor recording when the UPSERT fails) and returned with the call value even when recording fails; outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`, with `djcsynch` read from the DB in `details`) after the DGT call, never read when the DGT call fails
+- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string and `djcsynch` `NULL` → `null`, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`payload` (in this order) without token or DGT calls, `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on DB errors; only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`)
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods
