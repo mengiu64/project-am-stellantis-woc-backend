@@ -58,6 +58,7 @@ project-am-stellantis-woc-backend/
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
+├── wyz/                # Lambda – wrapper REST verso Wyz Tyre search (getSearchFilters, searchQuote)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 ├── synch-status/       # Lambda – Aggiornamento stato sincronizzazione DJC (4 eventi Kafka) su Aurora PostgreSQL via RDS Proxy; security demandata al gateway IBM APIC
 ├── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
@@ -68,6 +69,13 @@ project-am-stellantis-woc-backend/
 ---
 
 ## Moduli
+
+### wyz
+
+Le credenziali obbligatorie sono `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET`,
+sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
+`WYZ_PARAM_NAME` indica il parametro SSM contenente l'ARN/ID del secret.
+Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
 ### Comunicazione REST tra Lambda
 
