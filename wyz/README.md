@@ -67,6 +67,26 @@ In locale, usare gli stessi nomi `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET` n
 In **stage/prod** impostare gli URL/tenant di produzione nel secret. Parametro SSM e secret vanno creati fuori banda.
 Il parametro `partner=WIADVISOR` è aggiunto dalla lambda; `X-Correlation-Id` = `requestContext.requestId`.
 
+## Eventi di test nella console AWS Lambda
+
+Creare eventi di test nella console Lambda usando il contenuto dei JSON in `events/`.
+Sono invocazioni dirette, senza simulare API Gateway e senza credenziali nel payload.
+
+| Evento | Esito atteso |
+|---|---|
+| [getSearchFilters.json](events/getSearchFilters.json) | `statusCode: 200`, `success: true`, `filters` |
+| [searchQuote.json](events/searchQuote.json) | `statusCode: 200`, `success: true`, `data` |
+| [getSearchFilters-missingHubCode.json](events/getSearchFilters-missingHubCode.json) | `statusCode: 400`, campo `hubCode` mancante |
+| [searchQuote-invalidQuantity.json](events/searchQuote-invalidQuantity.json) | `statusCode: 400`, `quantity` non valida |
+
+Per i test positivi sostituire `REPLACE_WITH_CUSTOMER_RRDI_CODE` e `REPLACE_WITH_HUB_CODE`
+con valori validi dell'ambiente Wyz. Eseguire prima `getSearchFilters`, poi usare gli ID
+di `filters.vehicleTypes` e `filters.vehicleBrands` al posto di `REPLACE_WITH_VEHICLE_TYPE_ID`
+e `REPLACE_WITH_VEHICLE_BRAND_ID` in `searchQuote`. Gli esiti positivi richiedono secret,
+permessi AWS e connettivita verso Wyz correttamente configurati.
+I due eventi negativi vengono rifiutati prima di chiamare Wyz e non richiedono la sostituzione dei segnaposto.
+Controllare `statusCode` e il JSON nella stringa `body`: l'esecuzione Lambda puo risultare riuscita anche per risposte HTTP 400.
+
 ## Sviluppo
 
 ```bash
