@@ -25,7 +25,7 @@ djc/
 ├── index.js             ← CLI entry-point + Lambda handler (dispatcher per metodo)
 ├── DjcManager.js         ← classe orchestratore (payload json_orig/json_mod)
 ├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
-├── JobcardSyncActivityRepository.js ← UPSERT woc.jobcard_sync_activity (saveJobcard)
+├── JobcardSyncActivityRepository.js ← woc.jobcard_sync_activity: UPSERT e lettura esito ack/techReason/businessReason (saveJobcard)
 ├── db.js                 ← Pool pg verso Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
 ├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
@@ -56,6 +56,21 @@ cd djc
 npm install
 cp .env.example .env   # solo se si usa saveJobcard — non serve per i metodi Save*
 ```
+
+### Sincronizzazione NAGA via REST privato
+
+Dopo `saveJobcard`, gli appuntamenti con `appointmentInternalId` usano
+`callService('agendasoanaga', 'updatenaga', nagaPayload)` da `../serviceClient`,
+autenticato **AWS_IAM / SigV4**. Non viene importato il codice della Lambda
+agendaSoaNaga e non sono necessarie le sue credenziali upstream nel consumer.
+Configurare `WOC_INTERNAL_API_URL` e `WOC_INTERNAL_TIMEOUT_MS=25000` come in
+`.env.example`; restano solo credenziali DGT/PingFederate e DB proprie di DJC.
+Il payload resta il corpo di dominio originale (incluso `apptId`), non un evento
+Lambda né un wrapper HTTP. Il ricevente ricostruisce i parametri del suo handler
+locale; il risultato è già separato dal wrapper HTTP.
+Errori di trasporto/non-2xx vengono loggati, senza modificare la risposta pubblica
+di salvataggio o interrompere gli appuntamenti successivi. I dati/cache DJC e
+l'autenticazione PingFederate/DGT del salvataggio restano invariati.
 
 ## Classe `DjcManager`
 
@@ -346,7 +361,7 @@ dagli arricchimenti di sola UI, cioè esattamente quello inviato — v.
 | `jobcardid` (PK) | `roInfo.jobCardSrpId`, fallback `roInfo.dmsRepairOrderId`, poi `roInfo.jobCardLegacyId` |
 | `creationdate` | `now()` al primo inserimento; non modificata dagli UPSERT successivi |
 | `payload` (JSONB) | payload inviato a DGT; sovrascritto ad ogni `saveJobcard` |
-| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento |
+| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento da `synch-status` (esito della sincronizzazione) |
 
 Il salvataggio è **bloccante**: se nessuno dei tre id è presente la lambda
 risponde `400` (`roInfo.jobCardSrpId/dmsRepairOrderId/jobCardLegacyId is required`),
@@ -355,6 +370,17 @@ viene inviato a DGT. Connessione: Aurora "wiadvisor" via RDS Proxy, utente
 `wiadvisor_app` dal secret Secrets Manager (layer Parameters and Secrets
 Extension), variabili `DJC_DB_HOST`/`DJC_DB_PORT`/`DJC_DB_NAME`/`DJC_DB_SECRET_ID`
 (in locale anche `DJC_DB_USER`/`DJC_DB_PASSWORD`/`DJC_DB_SSL`, v. `.env.example`).
+
+**Esito nella risposta**: dopo l'invio a DGT (e la sync NAGA), in coda alla
+risposta vengono aggiunti `ack`, `techReason` e `businessReason`, letti dalle
+colonne `ack`/`techreason`/`businessreason` della stessa riga (`jobcardid`
+restituito dall'UPSERT). Le colonne sono aggiornate da `synch-status` in modo
+asincrono, quindi i valori riflettono l'ultimo esito registrato al momento della
+risposta: vuoti per una jobcard nuova, l'esito della sincronizzazione precedente
+per una già presente. Lettura best-effort: riga assente, valori `NULL`, errore
+DB o attesa oltre 5 s → stringa vuota, senza far fallire la risposta (il payload
+è già stato inviato a DGT). Stesso comportamento della lambda `jobcard`, che
+aggiunge gli stessi campi anche alla risposta di `details`.
 
 #### Payload: struttura e regole di obbligatorietà
 
@@ -451,12 +477,13 @@ tratto dal documento di specifica): vedi l'esempio `full` nello swagger
 
 ```json
 {
-  "response": {
-    "statuscode": "200",
-    "success": true,
-    "jobCardId": "JCID-609",
-    "message": "Job card Transaction Successful"
-  }
+  "statusCode": 200,
+  "success": true,
+  "message": "Job Card Transaction Successful",
+  "jobCardId": "JCID-84521",
+  "ack": "OK",
+  "techReason": "",
+  "businessReason": ""
 }
 ```
 

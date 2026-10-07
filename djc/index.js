@@ -15,7 +15,9 @@
  * (authService.js/httpClient.js/config.js, copie sincronizzate con quelle di
  * jobcard): API Gateway instrada le richieste POST verso questa lambda, mentre
  * jobcard resta responsabile delle GET (jobCardList/jobCardDetails) ed espone la
- * stessa azione "saveJobcard" per chiamata diretta/CLI.
+ * stessa azione "saveJobcard" per chiamata diretta/CLI. La risposta di
+ * "saveJobcard" include in coda ack/techReason/businessReason, letti da
+ * woc.jobcard_sync_activity per jobcardid (stringa vuota se assenti).
  *
  * Esempio:
  *   node index.js SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N
@@ -27,6 +29,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { DjcManager } = require('./DjcManager');
+const { callService } = require('../serviceClient');
 // authService/jobCardService (client PingFederate/DGT condiviso con jobcard)
 // vengono richiesti solo dai rami "saveJobcard" (require lazy più sotto): le
 // altre azioni (SaveRoInfo, ecc.) non chiamano la DGT e non devono richiedere
@@ -157,9 +160,8 @@ function buildUpdateNagaPayload(payload, appointment) {
 
 /**
  * Se payload.appointments[] contiene un elemento con appointmentInternalId
- * valorizzato, richiama in-process l'azione "updatenaga" della lambda
- * agendaSoaNaga (stesso pattern di require cross-cartella già usato da
- * pkManager/PkManager.js) per sincronizzare l'appuntamento NAGA dopo un
+ * valorizzato, richiama via REST privato l'azione "updatenaga" del servizio
+ * agendaSoaNaga per sincronizzare l'appuntamento NAGA dopo un
  * saveJobcard riuscito. Best-effort: eventuali errori vengono loggati ma non
  * fanno fallire la risposta di saveJobcard (già persistita con successo sulla DGT).
  */
@@ -170,14 +172,9 @@ async function syncAppointmentsToNaga(payload) {
     if (!appointment?.appointmentInternalId) continue;
 
     try {
-      const agendaSoaNaga = require('../agendaSoaNaga/index');
       const nagaPayload = buildUpdateNagaPayload(payload, appointment);
-      const result = await agendaSoaNaga.handler({
-        action: 'updatenaga',
-        pathParameters: { apptId: String(appointment.appointmentInternalId) },
-        body: JSON.stringify(nagaPayload),
-      });
-      console.log('[djc] agendaSoaNaga updatenaga result:', result?.statusCode);
+      const result = await callService('agendasoanaga', 'updatenaga', nagaPayload);
+      console.log('[djc] agendaSoaNaga updatenaga result:', result);
     } catch (err) {
       console.error('[djc] agendaSoaNaga updatenaga error:', err.message ?? err);
     }
@@ -191,11 +188,25 @@ async function syncAppointmentsToNaga(payload) {
  * sta per essere inviato a DGT, PRIMA dell'invio. Bloccante: se il payload non
  * ha un id jobcard (roInfo.jobCardSrpId/dmsRepairOrderId/jobCardLegacyId) o il
  * DB fallisce, l'errore viene propagato e il payload NON viene inviato a DGT.
+ * @returns {Promise<{jobcardid: string, creationdate: Date}>} la riga registrata
  */
 async function recordJobCardSyncActivity(jobCardPayload) {
   const { sanitizeJobCardPayload } = require('./jobCardService');
   const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
-  await recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+}
+
+/**
+ * Aggiunge in coda alla risposta di saveJobcard ack/techReason/businessReason,
+ * letti da woc.jobcard_sync_activity per jobcardid (esito della
+ * sincronizzazione popolato da synch-status). Best-effort: un errore DB lascia
+ * i campi vuoti senza far fallire la risposta (v.
+ * JobcardSyncActivityRepository.getSyncStatus). Copia sincronizzata di
+ * jobcard/index.js::addJobCardSyncStatus.
+ */
+async function addJobCardSyncStatus(body, jobCardId) {
+  const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
+  return withSyncStatus(body, await getSyncStatus(jobCardId));
 }
 
 const VALID_ACTIONS = [
@@ -261,15 +272,18 @@ exports.handler = async (event) => {
   // resto del dispatcher (che invece legge /tmp/<jobCardId>.json).
   // Prima dell'invio il payload viene registrato in woc.jobcard_sync_activity
   // (v. recordJobCardSyncActivity): errore DB -> 502, id jobcard mancante -> 400.
+  // Dopo l'invio, la risposta viene completata con ack/techReason/businessReason
+  // letti dalla stessa riga (v. addJobCardSyncStatus, best-effort).
   if (action === 'saveJobcard') {
     try {
       const { getBearerToken } = require('./authService');
       const { saveJobCard } = require('./jobCardService');
       const jobCardPayload = body.payload ?? body;
-      await recordJobCardSyncActivity(jobCardPayload);
+      const syncActivity = await recordJobCardSyncActivity(jobCardPayload);
       const token = await getBearerToken();
-      const result = await saveJobCard(token, jobCardPayload);
+      const saved = await saveJobCard(token, jobCardPayload);
       await syncAppointmentsToNaga(jobCardPayload);
+      const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -453,10 +467,11 @@ async function main() {
       const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
       const { getBearerToken } = require('./authService');
       const { saveJobCard } = require('./jobCardService');
-      await recordJobCardSyncActivity(payload);
+      const syncActivity = await recordJobCardSyncActivity(payload);
       const token = await getBearerToken();
-      const result = await saveJobCard(token, payload);
+      const saved = await saveJobCard(token, payload);
       await syncAppointmentsToNaga(payload);
+      const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
       printResult('saveJobcard', result);
 
       console.log('\n✅ Completato.');

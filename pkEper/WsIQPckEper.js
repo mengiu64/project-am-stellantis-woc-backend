@@ -6,9 +6,6 @@ const xml2js = require('xml2js');
 const https = require('https');
 
 // ─── Configurazione ────────────────────────────────────────────────────────────
-const EPER_HOST    = process.env.EPER_HOST;
-const IQPCK_WS     = `https://${EPER_HOST}/wsdl/DMSConnectorService.wsdl`; // usato nell'envelope
-const SERVICE_URL  = `https://${EPER_HOST}/DMSConnectorService`;            // endpoint reale (da WSDL soap:address)
 const SERVICE_NS   = 'http://service.dms.keytech.it/';                      // targetNamespace dal WSDL
 const TIMEOUT_MS   = 20_000;
 const CONCURRENCY  = 3;   // max richieste SOAP simultanee verso ePer
@@ -92,6 +89,9 @@ function buildSoapRequest(xmlMessage) {
 
 // ─── Helper: esegue la chiamata SOAP ──────────────────────────────────────────
 async function callSoap(xmlMessage) {
+  const { loadSettings, requireSettings } = require('../runtimeConfig');
+  const settings = requireSettings(await loadSettings(), ['EPER_HOST']);
+  const SERVICE_URL = `https://${settings.EPER_HOST}/DMSConnectorService`;
   const soapBody = buildSoapRequest(xmlMessage);
   const startedAt = Date.now();
 

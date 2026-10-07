@@ -1,21 +1,12 @@
 'use strict';
 
-const path = require('path');
-
-// Cross-lambda-folder require, stesso pattern lazy gia' usato da
-// repositories/myPeopleDmsSessionRepository.js (dbManager/ e' una cartella
-// sorella impacchettata dal Makefile per SessionFunction, v. Metadata:
-// BuildMethod: makefile in template.yaml): caricato on-demand cosi' i test
-// unitari (che iniettano `fetchMarketsFn`, v. sotto) non toccano mai
-// dbManager/db.js (niente Pool/Secrets Manager reali).
+// Trasporto REST condiviso caricato on-demand; fetchMarketsFn resta iniettabile.
 let _fetchMarkets;
 function loadFetchMarkets() {
   if (!_fetchMarkets) {
-    const { getPool } = require(path.resolve(__dirname, '../../dbManager/db'));
-    const { getMarkets } = require(path.resolve(__dirname, '../../dbManager/AnagSnowflakesRepository'));
-    _fetchMarkets = async (params) => {
-      const pool = await getPool();
-      return getMarkets(pool, params);
+    _fetchMarkets = async (...args) => {
+      const { callService } = require('../../serviceClient');
+      return callService('dbmanager', 'getMarkets', { args });
     };
   }
   return _fetchMarkets;

@@ -45,6 +45,7 @@ function resolveActionAndBody(event) {
 }
 
 exports.handler = async (event) => {
+  if (require('../serviceClient').isInternalRequest(event)) return require('./internal').handler(event);
   const { action, body } = resolveActionAndBody(event);
 
   if (!action || !VALID_ACTIONS.includes(action)) {

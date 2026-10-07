@@ -9,6 +9,8 @@
  *   node index.js details     <jobCardId>
  *   node index.js saveJobcard <payloadJsonFile>
  *   node index.js dml         <jobCardId>
+ *   node index.js lastPayload <jobCardId>
+ *   node index.js getDealerConfiguration <market> [oic]
  *
  * Options for "list" (key=value):
  *   vin=<value>
@@ -36,6 +38,8 @@
  *   node index.js details 79
  *   node index.js saveJobcard ./payload.json
  *   node index.js dml 79
+ *   node index.js lastPayload JCID-84521
+ *   node index.js getDealerConfiguration 1000 00007584
  *
  * "dml" (getDataFromDMLFromTmp) legge /tmp/<jobCardId>.json, già salvato da
  * una precedente "details" (getJobCardDetails/saveJobCardDetailsToTmp), e
@@ -70,18 +74,38 @@
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
  * API Gateway instrada le richieste POST verso la lambda djc, ma il metodo è
  * disponibile anche qui (chiamata diretta/CLI, coerenza tra le due lambda).
+ *
+ * Le risposte di "details" e "saveJobcard" includono ack/techReason/
+ * businessReason, letti da woc.jobcard_sync_activity per jobcardid (esito della
+ * sincronizzazione popolato da synch-status; stringa vuota se assente): in
+ * "details" prima di jobCardDetail, in "saveJobcard" in coda alla risposta DGT.
+ *
+ * "lastPayload" (GET /api/repairorder/lastPayload?jobCardId=...) restituisce
+ * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
+ * woc.jobcard_sync_activity, registrata prima dell'invio): serve a recuperare
+ * le modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
+ * Include anche ack/techReason/businessReason della stessa riga (tra jobCardId
+ * e payload; NULL -> stringa vuota), letti con la stessa SELECT.
+ * Legge solo dal DB (nessuna chiamata DGT, nessun token): jobCardId mancante ->
+ * 400, nessun payload registrato -> 404, errore DB -> 502.
+ *
+ * "getDealerConfiguration" (GET /api/repairorder/getDealerConfiguration?market=...&oic=...)
+ * restituisce la configurazione dealer (vehicle inspection + pacchetti) per un
+ * mercato/oic, chiamando dbManager via REST interno (v.
+ * jobCardService.getDealerConfiguration): nessuna chiamata DGT, quindi nessun
+ * token. market mancante -> 400, errore DB/rete -> 502.
  */
 
 const fs = require('fs');
 const path = require('path');
 
 const { getBearerToken } = require('./authService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getDataFromDMLFromTmp } = require('./jobCardService');
-const { getCachedSessionData } = require('../session/src/sessionContextCache');
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getDataFromDMLFromTmp, getDealerConfiguration } = require('./jobCardService');
+const { callService, isInternalRequest } = require('../serviceClient');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml'];
+const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml', 'lastPayload', 'getDealerConfiguration'];
 
 /**
  * Estrae lo username autenticato per il Sender dinamico dell'azione "dml"
@@ -95,9 +119,8 @@ const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml'];
  * identità risolta (v. buildDmsSender).
  */
 function resolveUsername(event, body) {
-  const authz = (event && event.requestContext && event.requestContext.authorizer) || null;
-  if (authz) {
-    return authz.sub || null;
+  if (event?.requestContext && Object.prototype.hasOwnProperty.call(event.requestContext, 'authorizer')) {
+    return event.requestContext.authorizer?.sub || null;
   }
   return body.username || null;
 }
@@ -255,33 +278,24 @@ function resolveReceptionDelivery(payload, appointment) {
 }
 
 /**
- * Risolve in un'unica chiamata i dati usati sia da buildCreateNagaPayload sia
- * da buildUpdateNagaPayload: i dati di sessione (myPeople, via
- * session/src/sessionContextCache.js::getCachedSessionData, cache condivisa
- * DynamoDB TmpCacheTable, chiave `session:context:<username>` — STESSO
- * meccanismo già usato da jobCardService.js::buildDmsSender per il Sender
- * dinamico dell'inquiry DMS) e il VIN (da
- * payload.vehicleInfo.identification.vin, stesso payload di saveJobcard).
- * Calcolato una sola volta per saveJobcard (non per singolo appuntamento),
- * cosi' una eventuale sequenza createnaga+updatenaga sullo stesso
- * appuntamento non richiama due volte myPeople.
- *
- * NON viene più letto un file /tmp/session.json o /tmp/VIN.json: quei file
- * non sono mai stati scritti da nessun modulo del progetto e, anche se lo
- * fossero stati, /tmp è locale all'istanza del singolo container Lambda e
- * non è mai condiviso tra funzioni diverse (v. commento in
- * session/src/dynamoCache.js).
- *
- * Interamente best-effort: se `username` è assente o myPeople non è
- * raggiungibile, getCachedSessionData ritorna null e session vale {} — i soli
- * campi da essa derivati restano null nei payload create/updatenaga.
+ * Risolve una sola volta per saveJobcard la sessione tramite REST privato
+ * (session/getData) e il VIN dal payload. La cache resta responsabilità del
+ * servizio session. Se manca username o il trasporto fallisce, usa {} e
+ * registra esplicitamente l'errore senza bloccare la sincronizzazione NAGA.
  *
  * @param {object} payload - payload di saveJobcard (jobCardPayload)
  * @param {string|null} [username] - username autenticato (authorizer.sub)
  * @returns {Promise<{ session: object, vin: string|null }>}
  */
 async function resolveNagaContext(payload, username) {
-  const session = (await getCachedSessionData(username)) ?? {};
+  let session = {};
+  if (username) {
+    try {
+      session = (await callService('session', 'getData', { args: [username] })) ?? {};
+    } catch (err) {
+      console.warn('[jobCard] session getData non disponibile:', err.message ?? err);
+    }
+  }
   const vin = payload?.vehicleInfo?.identification?.vin ?? null;
   return { session, vin };
 }
@@ -391,31 +405,17 @@ function buildUpdateNagaPayload(payload, appointment, { session, vin }) {
 }
 
 /**
- * Estrae l'appointmentInternalId dalla risposta Lambda (già in formato HTTP
- * response, v. agendaSoaNaga/src/handlers/createnaga.js::response) dell'azione
- * "createnaga": il body è una stringa JSON `{ success, data }`, dove `data` è
- * la risposta grezza del servizio NAGA — es.
- * `{ isValid, rdvId, smsConsent, panierURL, errorMessage, dossierId, ... }` —
- * e il campo da usare come appointmentInternalId è `rdvId`. Cerca il campo sia
- * annidato in `data` sia (fallback) alla radice, per tollerare piccole
- * differenze di forma della risposta upstream. Ritorna null (invece di
- * sollevare un'eccezione) se il body manca/non è parsabile o il campo non è
- * presente — coerente con l'approccio best-effort del resto di questa
- * sincronizzazione.
+ * Estrae rdvId dal risultato di dominio createnaga, già separato dal wrapper
+ * HTTP dal client REST. Mantiene il fallback alla radice e ritorna null se
+ * il campo manca, coerentemente con la sincronizzazione best-effort.
  */
-function extractAppointmentInternalId(lambdaResult) {
-  try {
-    const parsedBody = JSON.parse(lambdaResult?.body ?? '{}');
-    return parsedBody?.data?.rdvId ?? parsedBody?.rdvId ?? null;
-  } catch (_) {
-    return null;
-  }
+function extractAppointmentInternalId(result) {
+  return result?.data?.rdvId ?? result?.rdvId ?? null;
 }
 
 /**
- * Per ciascun elemento di payload.appointments[], richiama in-process le
- * azioni "createnaga"/"updatenaga" della lambda agendaSoaNaga (stesso pattern
- * di require cross-cartella già usato da pkManager/PkManager.js) per
+ * Per ciascun elemento di payload.appointments[], richiama via REST privato le
+ * azioni "createnaga"/"updatenaga" del servizio agendaSoaNaga per
  * sincronizzare l'appuntamento NAGA dopo un saveJobcard riuscito:
  *  - se appointmentInternalId è assente/vuoto (null o ""), crea prima un nuovo
  *    appuntamento NAGA (azione "createnaga", v. buildCreateNagaPayload): solo
@@ -443,16 +443,12 @@ async function syncAppointmentsToNaga(payload, username) {
 
   for (const appointment of appointments) {
     try {
-      const agendaSoaNaga = require('../agendaSoaNaga/index');
       let apptId = appointment?.appointmentInternalId || null;
 
       if (!apptId) {
         const createPayload = buildCreateNagaPayload(payload, appointment, context);
-        const createResult = await agendaSoaNaga.handler({
-          action: 'createnaga',
-          body: JSON.stringify(createPayload),
-        });
-        console.log('[jobCard] agendaSoaNaga createnaga result:', createResult?.statusCode);
+        const createResult = await callService('agendasoanaga', 'createnaga', createPayload);
+        console.log('[jobCard] agendaSoaNaga createnaga result:', createResult);
 
         apptId = extractAppointmentInternalId(createResult);
         if (!apptId) {
@@ -468,12 +464,8 @@ async function syncAppointmentsToNaga(payload, username) {
       }
 
       const nagaPayload = buildUpdateNagaPayload(payload, { ...appointment, appointmentInternalId: apptId }, context);
-      const result = await agendaSoaNaga.handler({
-        action: 'updatenaga',
-        pathParameters: { apptId: String(apptId) },
-        body: JSON.stringify(nagaPayload),
-      });
-      console.log('[jobCard] agendaSoaNaga updatenaga result:', result?.statusCode);
+      const result = await callService('agendasoanaga', 'updatenaga', nagaPayload);
+      console.log('[jobCard] agendaSoaNaga updatenaga result:', result);
     } catch (err) {
       console.error('[jobCard] agendaSoaNaga sync error:', err.message ?? err);
     }
@@ -488,10 +480,51 @@ async function syncAppointmentsToNaga(payload, username) {
  * Bloccante: se il payload non ha un id jobcard (roInfo.jobCardSrpId/
  * dmsRepairOrderId/jobCardLegacyId) o il DB fallisce, l'errore viene
  * propagato e il payload NON viene inviato a DGT.
+ * @returns {Promise<{jobcardid: string, creationdate: Date}>} la riga registrata
  */
 async function recordJobCardSyncActivity(jobCardPayload) {
   const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
-  await recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+}
+
+/**
+ * Aggiunge alla risposta ack/techReason/businessReason, letti da
+ * woc.jobcard_sync_activity per jobcardid (esito della sincronizzazione
+ * popolato da synch-status): prima di jobCardDetail per "details", in coda per
+ * "saveJobcard". Best-effort: un errore DB lascia i campi vuoti senza far
+ * fallire la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ */
+async function addJobCardSyncStatus(body, jobCardId) {
+  const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
+  return withSyncStatus(body, await getSyncStatus(jobCardId));
+}
+
+/**
+ * Azione "lastPayload": ultimo payload saveJobcard inviato a DGT per la
+ * jobcard (v. JobcardSyncActivityRepository.getLastPayload), per recuperare le
+ * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce,
+ * con l'esito (ack/techReason/businessReason) registrato sulla stessa riga.
+ * Jobcard senza payload registrato -> errore con isRecordNotFound (404
+ * nell'handler, stessa convenzione di synch-status).
+ */
+async function getJobCardLastPayload(jobCardId) {
+  const { getLastPayload } = require('./JobcardSyncActivityRepository');
+  const lastPayload = await getLastPayload(jobCardId);
+  if (!lastPayload) {
+    const err = new Error(`[jobCard] payload not found for jobCardId ${String(jobCardId).trim()}`);
+    err.isRecordNotFound = true;
+    throw err;
+  }
+  return {
+    statusCode: 200,
+    success: true,
+    message: 'Job card payload retrieved successfully',
+    jobCardId: lastPayload.jobCardId,
+    ack: lastPayload.ack,
+    techReason: lastPayload.techReason,
+    businessReason: lastPayload.businessReason,
+    payload: lastPayload.payload,
+  };
 }
 
 /**
@@ -528,6 +561,7 @@ function resolveActionAndBody(event) {
 }
 
 exports.handler = async (event) => {
+  if (isInternalRequest(event)) return require('./internal').handler(event);
   const { action, body } = resolveActionAndBody(event);
 
   if (!action || !VALID_ACTIONS.includes(action)) {
@@ -544,17 +578,24 @@ exports.handler = async (event) => {
   try {
     let result;
     if (action === 'dml') {
-      // Legge /tmp/<jobCardId>.json salvato da una precedente "details" e
-      // chiama il gateway DML (jobCardService.getDataFromDMLFromTmp gestisce
-      // internamente il proprio token verso dms/authService). Se il file
-      // manca, getDataFromDMLFromTmp richiama DGT (getJobCardDetails) per
-      // rigenerarlo, recuperando un bearerToken PingFederate solo in quel caso.
+      // Legge il dettaglio dalla cache DynamoDB e chiama il servizio REST dms,
+      // proprietario del token upstream. Se manca il dettaglio, richiama DGT
+      // (getJobCardDetails) per rigenerarlo con un bearerToken locale.
       result = await getDataFromDMLFromTmp(body.jobCardId ?? body.id, undefined, resolveSessionContext(event, body));
+    } else if (action === 'lastPayload') {
+      // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId da query
+      // string (GET) o body; mancante -> 400, payload non registrato -> 404.
+      result = await getJobCardLastPayload(body.jobCardId ?? body.id);
+    } else if (action === 'getDealerConfiguration') {
+      // Solo dbManager via REST interno (nessuna chiamata DGT, quindi nessun
+      // token): market/oic da query string (GET) o body; market mancante -> 400.
+      result = await getDealerConfiguration(body.market, body.oic);
     } else {
+      let syncActivity;
       if (action === 'saveJobcard') {
         // Prima dell'invio a DGT (e prima del token): errore DB -> 502,
         // id jobcard mancante -> 400 ("is required").
-        await recordJobCardSyncActivity(body.payload ?? body);
+        syncActivity = await recordJobCardSyncActivity(body.payload ?? body);
       }
       const token = await getBearerToken();
       if (action === 'list') {
@@ -562,11 +603,14 @@ exports.handler = async (event) => {
       } else if (action === 'listCurrent') {
         result = await getJobCardListCurrent(token, body.dealerId, body.currentDate);
       } else if (action === 'details') {
-        result = await getJobCardDetails(token, body.jobCardId ?? body.id, resolveSessionContext(event, body));
+        const jobCardId = body.jobCardId ?? body.id;
+        const details = await getJobCardDetails(token, jobCardId, resolveSessionContext(event, body));
+        result = await addJobCardSyncStatus(details, jobCardId);
       } else {
         const jobCardPayload = body.payload ?? body;
-        result = await saveJobCard(token, jobCardPayload);
+        const saved = await saveJobCard(token, jobCardPayload);
         await syncAppointmentsToNaga(jobCardPayload, resolveUsername(event, body));
+        result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
       }
     }
 
@@ -576,7 +620,8 @@ exports.handler = async (event) => {
       body: JSON.stringify(result),
     };
   } catch (err) {
-    const statusCode = err.message.includes('is required') ? 400 : 502;
+    // isRecordNotFound: jobcard senza payload registrato (azione lastPayload).
+    const statusCode = err.isRecordNotFound ? 404 : (err.message.includes('is required') ? 400 : 502);
     return {
       statusCode,
       headers: { 'Content-Type': 'application/json' },
@@ -623,7 +668,8 @@ async function runListCurrent(dealerId, currentDate) {
 async function runDetails(jobCardId) {
   console.log('\n=== JobCard Details ===');
   const token = await getBearerToken();
-  const result = await getJobCardDetails(token, jobCardId);
+  const details = await getJobCardDetails(token, jobCardId);
+  const result = await addJobCardSyncStatus(details, jobCardId);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -637,8 +683,9 @@ async function runSaveJobcard(payloadJsonFile) {
   // payload.appointments[].appointmentInternalId con l'apptId restituito,
   // cosi' saveJobCard riceve il payload già aggiornato.
   await syncAppointmentsToNaga(payload);
-  await recordJobCardSyncActivity(payload);
-  const result = await saveJobCard(token, payload);
+  const syncActivity = await recordJobCardSyncActivity(payload);
+  const saved = await saveJobCard(token, payload);
+  const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -646,6 +693,20 @@ async function runSaveJobcard(payloadJsonFile) {
 async function runDml(jobCardId) {
   console.log('\n=== JobCard DML (da /tmp) ===');
   const result = await getDataFromDMLFromTmp(jobCardId);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function runLastPayload(jobCardId) {
+  console.log('\n=== JobCard Last Payload ===');
+  const result = await getJobCardLastPayload(jobCardId);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function runGetDealerConfiguration(market, oic) {
+  console.log('\n=== Dealer Configuration ===');
+  const result = await getDealerConfiguration(market, oic);
   console.log(JSON.stringify(result, null, 2));
   return result;
 }
@@ -677,6 +738,11 @@ async function main() {
     } else if (command === 'dml') {
       const jobCardId = param || '79';
       await runDml(jobCardId);
+    } else if (command === 'lastPayload') {
+      await runLastPayload(param);
+    } else if (command === 'getDealerConfiguration') {
+      const market = param || '1000';
+      await runGetDealerConfiguration(market, rest[0]);
     } else {
       console.error('[ERROR] Comando non valido. Usa:');
       console.error('  node index.js list        <dealerId> [key=value ...]');
@@ -684,6 +750,8 @@ async function main() {
       console.error('  node index.js details     <jobCardId>');
       console.error('  node index.js saveJobcard <payloadJsonFile>');
       console.error('  node index.js dml         <jobCardId>');
+      console.error('  node index.js lastPayload <jobCardId>');
+      console.error('  node index.js getDealerConfiguration <market> [oic]');
       process.exit(1);
     }
   } catch (err) {

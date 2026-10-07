@@ -1,6 +1,21 @@
 'use strict';
 
-const path = require('path');
+const repository = require('./repository');
+
+function resolveIdentity(event, body) {
+  const authz = event.requestContext && event.requestContext.authorizer;
+  return authz ? (authz.sub || null) : (body.username || null);
+}
+
+async function getSessionData(username) {
+  try {
+    const { callService } = require('../serviceClient');
+    return (await callService('session', 'getData', { args: [username] })) || {};
+  } catch (err) {
+    console.error(`[hqManager] lettura sessione REST fallita: ${err.message}`);
+    return {};
+  }
+}
 
 /**
  * Risolve lo `username` "leggibile" da registrare nell'audit HQ
@@ -8,16 +23,13 @@ const path = require('path');
  * autenticato (event.requestContext.authorizer.sub — MAI un valore fornito
  * nel body, salvo invocazione diretta/CLI senza requestContext.authorizer,
  * stesso pattern di session/pkFavorite) viene usato per recuperare
- * firstname/lastname dalla sessione utente (session/src/sessionContextCache.js
- * ::getCachedSessionData, stessa cache condivisa DynamoDB di
- * session/jobcard/pkFavorite/pkManager — richiede session/myPeople/
- * dmlConfigSync imbarcati come sibling da Makefile::build-HqManagerFunction,
- * v. template.yaml), concatenati come "firstname lastname".
+ * firstname/lastname dalla sessione utente tramite session/getData REST,
+ * concatenati come "firstname lastname".
  *
  * Se firstname/lastname non sono risolvibili (sessione non trovata,
  * myPeople irraggiungibile, utente HQ senza profilo, ecc. — resa
- * interamente best-effort da getCachedSessionData, che non solleva mai
- * un'eccezione) si ricade sul solo identificativo tecnico, cosi' l'audit
+ * best-effort, con log esplicito degli errori REST) si ricade sul solo
+ * identificativo tecnico, cosi' l'audit
  * registra comunque un `username` non nullo quando l'identita' e' nota.
  *
  * @param {object} [event]
@@ -25,12 +37,10 @@ const path = require('path');
  * @returns {Promise<string|null>}
  */
 async function resolveUsername(event = {}, body = {}) {
-  const authz = (event.requestContext && event.requestContext.authorizer) || {};
-  const usernameKey = authz.sub || body.username || null;
+  const usernameKey = resolveIdentity(event, body);
   if (!usernameKey) return null;
 
-  const { getCachedSessionData } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
-  const session = (await getCachedSessionData(usernameKey)) || {};
+  const session = await getSessionData(usernameKey);
   const firstname = session.firstname || '';
   const lastname = session.lastname || '';
   const fullName = `${firstname} ${lastname}`.trim();
@@ -42,8 +52,7 @@ async function resolveUsername(event = {}, body = {}) {
  * Risolve il `codmarket` (mercato) dell'utente autenticato da registrare
  * come `market` nell'audit HQ (woc.hq_audit, v.
  * HqRepository.js::insertAudit), con lo stesso meccanismo/identificativo
- * tecnico e la stessa sessione (session/src/sessionContextCache.js
- * ::getCachedSessionData) usati da resolveUsername (v. sopra) per
+ * tecnico e la stessa sessione REST usati da resolveUsername (v. sopra) per
  * firstname/lastname.
  *
  * Best-effort come resolveUsername: se l'identita' non e' risolvibile o la
@@ -58,26 +67,18 @@ async function resolveUsername(event = {}, body = {}) {
  * @returns {Promise<string>}
  */
 async function resolveCodmarket(event = {}, body = {}) {
-  const authz = (event.requestContext && event.requestContext.authorizer) || {};
-  const usernameKey = authz.sub || body.username || null;
+  const usernameKey = resolveIdentity(event, body);
   if (!usernameKey) return '';
 
-  const { getCachedSessionData } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
-  const session = (await getCachedSessionData(usernameKey)) || {};
+  const session = await getSessionData(usernameKey);
 
   return session.codmarket || '';
 }
 
 /**
- * HqManager.js — wrapper applicativo su dbManager/HqRepository.js (Aurora
- * PostgreSQL, db "wiadvisor", schema "woc"), stesso pattern di
- * PkManager.js/getConfigPackages: il pool ("pg") e la repository vengono
- * richiesti a runtime, con path relativo risolto tramite
- * path.resolve(__dirname, '../dbManager/...'), non staticamente in cima al
- * file, cosi' che il require funzioni sia in locale (sibling folder nel
- * repository) sia una volta impacchettato in Lambda (dove dbManager/ viene
- * copiato come sibling da Makefile::build-HqManagerFunction, vedi
- * template.yaml — HqManagerFunction usa BuildMethod: makefile).
+ * HqManager.js — orchestrazione applicativa sulle operazioni REST dbmanager.
+ * Il receiver possiede pool, SQL e accesso S3; questo modulo conserva ordine
+ * delle scritture e dell'audit, senza importare altre Lambda.
  *
  * getEnablingConfiguration(codmarket) espone la configurazione di
  * abilitazione WOC/firma digitale per ciascun sito del mercato richiesto
@@ -89,6 +90,22 @@ async function resolveCodmarket(event = {}, body = {}) {
  * registrando anche una riga di audit (woc.hq_audit) per ciascun elemento,
  * con username risolto da resolveUsername (v. sopra: firstname+lastname
  * della sessione dell'utente autenticato, event.requestContext.authorizer.sub).
+ *
+ * importAppConfiguration(market, fileContentBase64) importa in blocco, da
+ * un file Excel ricevuto in Base64 nel body (XLSX.read, decodificato qui:
+ * la Lambda non ha accesso al filesystem del chiamante), le righe di
+ * configurazione di abilitazione WOC/firma digitale per il mercato
+ * indicato: l'array di righe estratto dal file viene inviato in un'unica
+ * chiamata REST a dbManager (HqRepository.js::importAppConfiguration), che
+ * esegue l'intera importazione in una sola transazione (rollback totale se
+ * anche una sola riga fallisce).
+ *
+ * exportAppConfiguration(market) e' l'operazione simmetrica: legge (in
+ * un'unica chiamata REST, HqRepository.js::getAppConfigurationList) le
+ * righe di configurazione di abilitazione WOC/firma digitale del mercato
+ * indicato, le serializza qui in un foglio XLSX (XLSX.utils.json_to_sheet)
+ * e restituisce il file come contenuto Base64 (nessuna scrittura su
+ * filesystem: la Lambda non ha accesso al filesystem del chiamante).
  *
  * getVehicleInspection(market, type),
  * setVehicleInspectionVisible(payload, event) (payload contiene un array
@@ -102,28 +119,32 @@ async function resolveCodmarket(event = {}, body = {}) {
  * dell'audit, il codmarket risolto da resolveCodmarket (v. sotto: stessa
  * sessione dell'utente autenticato, "" se non risolvibile).
  *
- * setMarketEnable(market)/setMarketDisable(market), setOicEnable(market, oic)
- * (che a cascata disabilita anche il mercato, v. sotto),
- * insertDomain(market, oic, descr)/setDomain(market, iddomain, descr)/
+ * setMarketEnable(market)/setMarketDisable(market)/
+ * checkIsPkMarketEnabled(market) (legge il flag "deleted" di
+ * woc.hq_pk_market: 0 = abilitato, 1 = disabilitato, undefined se il
+ * mercato non ha una riga configurata),
+ * insertDomain(market, descr) (domini condivisi da tutti gli OIC del
+ * mercato, woc.hq_pk_domain non ha una colonna "oic")/
+ * setDomain(market, iddomain, descr)/
  * deleteDomain(market, iddomain) (cancellazione logica, deleted = 1)/
  * setDomainVisible(payload) (payload.domain, array di { iddomain, value },
  * loop) e insertPackage(market, oic, iddomain, descr, timeop, pricewithvat)/
  * setPackage(idpackage, iddomain, descr, timeop, pricewithvat)/
  * deletePackage(idpackage)/setPackageVisible(payload) (payload.package,
  * array di { idpackage, value }, loop) espongono la
- * gerarchia di configurazione mercato -> OIC -> dominio -> pacchetto
- * (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
+ * gerarchia di configurazione mercato -> dominio -> pacchetto
+ * (woc.hq_pk_market/hq_pk_domain/hq_pk_packages; la tabella woc.hq_pk_oic
+ * non e' piu' usata).
  *
- * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
- * pacchetto configurata per il mercato (ed eventualmente l'OIC) richiesto
- * (i domini cancellati logicamente sono esclusi, include anche
- * domVisible/pkVisible).
+ * getPackageListHQ(market) legge la gerarchia mercato -> dominio ->
+ * pacchetto "a livello mercato" (nessun OIC, pk.oic IS NULL) configurata
+ * per il mercato richiesto (i domini cancellati logicamente sono esclusi,
+ * include anche domVisible/pkVisible).
  *
- * initializeOicPkList(market, oic) inizializza, se necessario, la
- * configurazione PK dell'oic (copiandone i domini dal mercato/comuni via
- * copyDomainFromMarket quando l'oic non e' ancora configurato, v.
- * checkIsPkMarketEnabled/checkIsPkOicConfigured in HqRepository.js) e ne
- * ritorna la lista pacchetti (getPackageList).
+ * getPackageListSM(market, oic) legge la stessa gerarchia ma per i soli
+ * pacchetti del singolo OIC richiesto (pk.oic = oic); i domini sono
+ * condivisi da tutti gli OIC del mercato, quindi non serve alcuna
+ * inizializzazione/copia per il singolo OIC.
  *
  * insertAudit(event, section, market, actiontype, descr) e
  * searchAudit(market, section, datefrom, dateto, actiontype, username)
@@ -131,6 +152,13 @@ async function resolveCodmarket(event = {}, body = {}) {
  * limitato alle ultime 100 righe per creationdate) espongono il log di
  * audit HQ (woc.hq_audit); insertAudit risolve anch'esso lo username da
  * registrare tramite resolveUsername.
+ *
+ * exportAudit(market, section, datefrom, dateto, actiontype, username) e'
+ * l'operazione simmetrica a exportAppConfiguration ma per il log di audit:
+ * legge (stessi filtri opzionali di searchAudit, stesso limite alle ultime
+ * 100 righe se nessun filtro e' valorizzato) le righe di woc.hq_audit, le
+ * serializza in un foglio XLSX e restituisce il file come contenuto Base64
+ * (nessuna scrittura su filesystem).
  *
  * getAnagSection()/getAnagAllocation() espongono le anagrafiche statiche
  * (sezioni HQ / tipi di azione di audit) lette da S3
@@ -148,16 +176,12 @@ class HqManager {
    * @returns {Promise<Array<{ siteName: string|null, oic: string|null, address: string|null, legalEntity: string|null, enableWOC: number, enableSignature: number }>>}
    */
   async getEnablingConfiguration(codmarket) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getEnablingConfiguration } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return getEnablingConfiguration(pool, codmarket);
+    return repository.getEnablingConfiguration(codmarket);
   }
 
   /**
    * Crea/aggiorna (upsert), in un loop, la riga di configurazione per
-   * ciascun elemento dell'array configurations, riusando lo stesso pool.
+   * ciascun elemento dell'array configurations, tramite chiamate REST sequenziali.
    * Per ciascun elemento registra anche una riga di audit (woc.hq_audit,
    * sezione "enablingConfiguration", actiontype "update"), con lo username
    * risolto da resolveUsername (v. sopra: firstname+lastname della sessione
@@ -175,14 +199,68 @@ class HqManager {
 
     const username = await resolveUsername(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setEnablingConfiguration, insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { codmarket, oic, enableWOC, enableSignature } of configurations) {
-      await setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableSignature);
-      await insertAudit(pool, username, 'enablingConfiguration', codmarket, 'update', `oic: ${oic} enabled: ${enableWOC} enableSignature:${enableSignature}`);
+      await repository.setEnablingConfiguration(codmarket, oic, enableWOC, enableSignature);
+      await repository.insertAudit(username, 'enablingConfiguration', codmarket, 'update', `oic: ${oic} enabled: ${enableWOC} enableSignature:${enableSignature}`);
     }
+  }
+
+  /**
+   * Importa in blocco, da un file Excel, le righe di configurazione di
+   * abilitazione WOC/firma digitale (woc.hq_application_enabling) per il
+   * mercato indicato. Il file Excel arriva codificato in Base64 nel body
+   * della richiesta (stesso pattern di moparDoc::createJobCardAndUploadDocument,
+   * necessario perche' la Lambda non ha accesso al filesystem del chiamante):
+   * viene decodificato/parsato qui (XLSX.read) estraendo la prima sheet in
+   * un array di oggetti plain { oic, enablewoc, enablesignature, ... }
+   * (riga 1 = intestazione); il risultato, serializzabile, viene poi
+   * inviato in un'unica chiamata REST a dbManager
+   * (HqRepository.js::importAppConfiguration), che esegue l'intera
+   * importazione in una sola transazione (BEGIN/COMMIT, ROLLBACK se anche
+   * una sola riga fallisce la validazione/l'upsert).
+   *
+   * @param {string} market
+   * @param {string} fileContentBase64 - contenuto del file Excel (XLSX) codificato in Base64
+   * @returns {Promise<{ success: boolean, rowsRead: number, rowsInserted: number, errors: Array<{ row: number, oic: *, error: string }>, message?: string }>}
+   */
+  async importAppConfiguration(market, fileContentBase64) {
+    if (!market) throw new Error('"market" is required');
+    if (!fileContentBase64) throw new Error('"fileContentBase64" is required');
+
+    const XLSX = require('xlsx');
+    const workbook = XLSX.read(fileContentBase64, { type: 'base64' });
+    const sheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: null });
+
+    return repository.importAppConfiguration(market, rows);
+  }
+
+  /**
+   * Esporta, in un file Excel, le righe di configurazione di abilitazione
+   * WOC/firma digitale (woc.hq_application_enabling) del mercato indicato:
+   * i dati vengono letti da dbManager con un'unica chiamata REST
+   * (HqRepository.js::getAppConfigurationList, ordinati per oic), poi
+   * serializzati qui in un foglio XLSX (XLSX.utils.json_to_sheet) e
+   * restituiti come contenuto Base64 (stesso pattern, simmetrico, di
+   * importAppConfiguration: la Lambda non ha accesso al filesystem del
+   * chiamante, quindi il file non viene scritto su disco ma restituito nel
+   * body della risposta).
+   *
+   * @param {string} market
+   * @returns {Promise<{ market: string, rowsExported: number, fileContentBase64: string }>}
+   */
+  async exportAppConfiguration(market) {
+    if (!market) throw new Error('"market" is required');
+
+    const rows = await repository.getAppConfigurationList(market);
+
+    const XLSX = require('xlsx');
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const fileContentBase64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
+
+    return { market, rowsExported: rows.length, fileContentBase64 };
   }
 
   /**
@@ -191,18 +269,14 @@ class HqManager {
    * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
    */
   async getVehicleInspection(market, type) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return getVehicleInspection(pool, market, type);
+    return repository.getVehicleInspection(market, type);
   }
 
   /**
    * Aggiorna il flag "visible" per ciascun elemento { id, value } contenuto
    * in una delle chiavi array note del payload (conditions, equipment,
    * damagearea, receptions, vehicleconfiguration — solo una e' presente per
-   * chiamata), riusando lo stesso pool.
+   * chiamata), tramite chiamate REST sequenziali.
    *
    * @param {{ conditions?: Array<{id:number, value:number}>, equipment?: Array<{id:number, value:number}>, damagearea?: Array<{id:number, value:number}>, receptions?: Array<{id:number, value:number}>, vehicleconfiguration?: Array<{id:number, value:number}> }} payload
    * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
@@ -219,12 +293,8 @@ class HqManager {
     const username = await resolveUsername(event, payload);
     const codmarket = await resolveCodmarket(event, payload);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setVehicleInspectionVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { id, value } of payload[key]) {
-      await setVehicleInspectionVisible(pool, id, value, username, codmarket);
+      await repository.setVehicleInspectionVisible(id, value, username, codmarket);
     }
   }
 
@@ -240,11 +310,7 @@ class HqManager {
     const username = await resolveUsername(event);
     const codmarket = await resolveCodmarket(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deletetVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return deletetVehicleInspection(pool, id, value, username, codmarket);
+    return repository.deletetVehicleInspection(id, value, username, codmarket);
   }
 
   /**
@@ -260,11 +326,7 @@ class HqManager {
     const username = await resolveUsername(event);
     const codmarket = await resolveCodmarket(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertVehicleInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return insertVehicleInspection(pool, market, type, descr, username, codmarket);
+    return repository.insertVehicleInspection(market, type, descr, username, codmarket);
   }
 
   /**
@@ -272,11 +334,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setMarketEnable(market) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPkMarketEnable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setPkMarketEnable(pool, market);
+    return repository.setPkMarketEnable(market);
   }
 
   /**
@@ -284,44 +342,30 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setMarketDisable(market) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPkMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setPkMarketDisable(pool, market);
+    return repository.setPkMarketDisable(market);
   }
 
   /**
-   * Abilita l'OIC e, a cascata, disabilita il mercato (woc.hq_pk_market),
-   * dato che una volta configurato manualmente almeno un OIC del mercato la
-   * configurazione "a livello mercato" (setMarketEnable, che abilita tutti
-   * gli OIC in blocco) non deve piu' applicarsi.
+   * Verifica se il mercato indicato e' abilitato (woc.hq_pk_market.deleted:
+   * 0 = abilitato, 1 = disabilitato).
    *
    * @param {string} market
-   * @param {string} oic
-   * @returns {Promise<void>}
+   * @returns {Promise<number|undefined>} il valore di "deleted" della riga trovata
    */
-  async setOicEnable(market, oic) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setOicEnable, setPkMarketDisable } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await setOicEnable(pool, market, oic);
-    return setPkMarketDisable(pool, market);
+  async checkIsPkMarketEnabled(market) {
+    return repository.checkIsPkMarketEnabled(market);
   }
 
   /**
+   * I domini sono condivisi da tutti gli OIC del mercato (woc.hq_pk_domain
+   * non ha la colonna "oic", v. dbManager/HqRepository.js::insertDomain).
+   *
    * @param {string} market
-   * @param {string} oic
    * @param {string} descr
    * @returns {Promise<number>} l'iddomain generato
    */
-  async insertDomain(market, oic, descr) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return insertDomain(pool, market, oic, descr);
+  async insertDomain(market, descr) {
+    return repository.insertDomain(market, descr);
   }
 
   /**
@@ -331,11 +375,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setDomain(market, iddomain, descr) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setDomain(pool, market, iddomain, descr);
+    return repository.setDomain(market, iddomain, descr);
   }
 
   /**
@@ -344,17 +384,12 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async deleteDomain(market, iddomain) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deleteDomain } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return deleteDomain(pool, market, iddomain);
+    return repository.deleteDomain(market, iddomain);
   }
 
   /**
    * Aggiorna il flag "visible", in un loop, per ciascun elemento
-   * { iddomain, value } dell'array presente in payload.domain, riusando lo
-   * stesso pool.
+   * { iddomain, value } dell'array presente in payload.domain, in sequenza.
    *
    * @param {{ domain: Array<{ iddomain: number, value: number }> }} payload
    * @returns {Promise<void>}
@@ -365,12 +400,8 @@ class HqManager {
       throw new Error('"domain" is required');
     }
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setDomainVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { iddomain, value } of domain) {
-      await setDomainVisible(pool, iddomain, value);
+      await repository.setDomainVisible(iddomain, value);
     }
   }
 
@@ -384,11 +415,7 @@ class HqManager {
    * @returns {Promise<number>} l'idpackage generato
    */
   async insertPackage(market, oic, iddomain, descr, timeop, pricewithvat) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertPackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat);
+    return repository.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
   }
 
   /**
@@ -400,11 +427,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async setPackage(idpackage, iddomain, descr, timeop, pricewithvat) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat);
+    return repository.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
   }
 
   /**
@@ -412,17 +435,12 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async deletePackage(idpackage) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { deletePackage } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return deletePackage(pool, idpackage);
+    return repository.deletePackage(idpackage);
   }
 
   /**
    * Aggiorna il flag "visible", in un loop, per ciascun elemento
-   * { idpackage, value } dell'array presente in payload.package, riusando lo
-   * stesso pool.
+   * { idpackage, value } dell'array presente in payload.package, in sequenza.
    *
    * @param {{ package: Array<{ idpackage: number, value: number }> }} payload
    * @returns {Promise<void>}
@@ -433,84 +451,46 @@ class HqManager {
       throw new Error('"package" is required');
     }
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { setPackageVisible } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
     for (const { idpackage, value } of pkg) {
-      await setPackageVisible(pool, idpackage, value);
+      await repository.setPackageVisible(idpackage, value);
     }
   }
 
   /**
+   * Ritorna la lista pacchetti "a livello mercato" (nessun OIC) del
+   * mercato indicato.
+   *
    * @param {string} market
-   * @param {string|null} [oic]
-   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+   * @returns {Promise<Array<{ market: string, oic: null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
-  async getPackageList(market, oic) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getPackageList } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    return getPackageList(pool, market, oic);
+  async getPackageListHQ(market) {
+    return repository.getPackageListHQ(market);
   }
 
   /**
-   * Inizializza, se necessario, la configurazione PK dell'oic indicato e ne
-   * ritorna la lista pacchetti:
-   * - se il mercato e' abilitato a livello market (checkIsPkMarketEnabled
-   *   ritorna 1, cascata di setMarketEnable: tutti gli oic sono deleted =
-   *   1), la configurazione e' gia' condivisa a livello mercato e si
-   *   ritorna direttamente getPackageList(market, oic);
-   * - altrimenti (mercato gestito a livello di singolo oic) si verifica se
-   *   l'oic e' gia' configurato (checkIsPkOicConfigured); se non lo e'
-   *   (ritorna 1, nessuna riga trovata) si copiano in hq_pk_domain i domini
-   *   del mercato (o quelli comuni, v. copyDomainFromMarket) prima di
-   *   ritornare getPackageList(market, oic).
+   * Ritorna la lista pacchetti del singolo OIC (del mercato indicato).
+   * I domini sono condivisi da tutti gli OIC del mercato (v. insertDomain):
+   * non serve piu' alcuna inizializzazione/copia per il singolo OIC.
    *
    * @param {string} market
    * @param {string} oic
-   * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+   * @returns {Promise<Array<{ market: string, oic: string, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
    */
-  async initializeOicPkList(market, oic) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const {
-      checkIsPkMarketEnabled,
-      checkIsPkOicConfigured,
-      copyDomainFromMarket,
-      getPackageList,
-    } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    const isPkMarketEnabled = await checkIsPkMarketEnabled(pool, market);
-
-    if (isPkMarketEnabled === 1) {
-      return getPackageList(pool, market, oic);
-    }
-
-    const isPkOicConfigured = await checkIsPkOicConfigured(pool, market, oic);
-    if (isPkOicConfigured === 1) {
-      await copyDomainFromMarket(pool, market, oic);
-    }
-
-    return getPackageList(pool, market, oic);
+  async getPackageListSM(market, oic) {
+    return repository.getPackageListSM(market, oic);
   }
 
   /**
-   * Clona, per il mercato indicato (marketOrig), tutte le righe di
-   * woc.hq_pk_oic/hq_pk_domain/hq_pk_packages in un nuovo mercato
-   * (marketTarget). Vedi dbManager/HqRepository.clonePk per i dettagli.
+   * Clona, per il mercato indicato (marketOrig), le gerarchie
+   * hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget). Vedi
+   * dbManager/HqRepository.clonePk per i dettagli.
    *
    * @param {string} marketTarget
    * @param {string} marketOrig
    * @returns {Promise<void>}
    */
   async clonePk(marketTarget, marketOrig) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { clonePk } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await clonePk(pool, marketTarget, marketOrig);
+    await repository.clonePk(marketTarget, marketOrig);
   }
 
   /**
@@ -526,11 +506,7 @@ class HqManager {
    * @returns {Promise<void>}
    */
   async cloneVeicInspection(marketTarget, marketOrig, type) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { cloneVeicInspection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await cloneVeicInspection(pool, marketTarget, marketOrig, type);
+    await repository.cloneVeicInspection(marketTarget, marketOrig, type);
   }
 
   /**
@@ -551,11 +527,7 @@ class HqManager {
   async insertAudit(event, section, market, actiontype, descr) {
     const username = await resolveUsername(event);
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { insertAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    const pool = await getPool();
-    await insertAudit(pool, username, section, market, actiontype, descr);
+    await repository.insertAudit(username, section, market, actiontype, descr);
     return username;
   }
 
@@ -571,29 +543,53 @@ class HqManager {
    *   100 righe (per creationdate).
    */
   async searchAudit(market, section, datefrom, dateto, actiontype, username) {
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { searchAudit } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
+    return repository.searchAudit(market, section, datefrom, dateto, actiontype, username);
+  }
 
-    const pool = await getPool();
-    return searchAudit(pool, market, section, datefrom, dateto, actiontype, username);
+  /**
+   * Esporta, in un file Excel, le righe di audit HQ (woc.hq_audit) filtrate
+   * secondo gli stessi criteri (tutti facoltativi) di searchAudit: i dati
+   * vengono letti da dbManager con un'unica chiamata REST
+   * (HqRepository.js::searchAudit — se nessun filtro e' valorizzato, il
+   * risultato e' limitato alle ultime 100 righe per creationdate), poi
+   * serializzati qui in un foglio XLSX (XLSX.utils.json_to_sheet) e
+   * restituiti come contenuto Base64 (stesso pattern, simmetrico, di
+   * exportAppConfiguration: la Lambda non ha accesso al filesystem del
+   * chiamante, quindi il file non viene scritto su disco ma restituito nel
+   * body della risposta).
+   *
+   * @param {string} [market]
+   * @param {string} [section]
+   * @param {string} [datefrom]
+   * @param {string} [dateto]
+   * @param {string} [actiontype]
+   * @param {string} [username]
+   * @returns {Promise<{ rowsExported: number, fileContentBase64: string }>}
+   */
+  async exportAudit(market, section, datefrom, dateto, actiontype, username) {
+    const rows = await repository.searchAudit(market, section, datefrom, dateto, actiontype, username);
+
+    const XLSX = require('xlsx');
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Sheet1');
+    const fileContentBase64 = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
+
+    return { rowsExported: rows.length, fileContentBase64 };
   }
 
   /**
    * @returns {Promise<Array<{ section: string }>>}
    */
   async getAnagSection() {
-    const { getAnagSection } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    return getAnagSection();
+    return repository.getAnagSection();
   }
 
   /**
    * @returns {Promise<Array<{ type: string }>>}
    */
   async getAnagAllocation() {
-    const { getAnagAllocation } = require(path.resolve(__dirname, '../dbManager/HqRepository'));
-
-    return getAnagAllocation();
+    return repository.getAnagAllocation();
   }
 }
 

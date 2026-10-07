@@ -11,9 +11,12 @@
  * (RDS Proxy)/porta/nome db da env var JOBCARD_DB_* (template.yaml) oppure, se
  * assenti, dal secret stesso.
  *
- * La configurazione è letta al primo utilizzo (non al require): le altre
- * azioni di jobcard (list, details, ecc.) non usano il DB e non devono
- * richiedere JOBCARD_DB_HOST.
+ * La configurazione è letta al primo utilizzo (non al require): le azioni di
+ * jobcard che non usano il DB (list, listCurrent, dml) non devono richiedere
+ * JOBCARD_DB_HOST; details lo usa solo per la lettura best-effort dell'esito
+ * (ack/techReason/businessReason, v. JobcardSyncActivityRepository.getSyncStatus),
+ * che in sua assenza resta vuoto senza far fallire la risposta; lastPayload
+ * (lettura del payload, v. getLastPayload) invece lo richiede (errore -> 502).
  *
  * Copia di djc/db.js (con env JOBCARD_DB_*), mantenuta in sync: la POST
  * saveJobcard è instradata da API Gateway a questa lambda.
@@ -77,21 +80,23 @@ function fetchSecretJson(secretId, extensionPort) {
 
 async function buildPool() {
   const cfg = getDbConfig();
-  if (!cfg.host) {
+  if (!cfg.host && !process.env.JOBCARD_DB_SECRET_ID) {
     throw new Error('[jobcard/db] Missing required environment variable: JOBCARD_DB_HOST');
   }
 
   let { user, password, port } = cfg;
   let database = cfg.name;
 
-  if (!user || !password) {
+  if (!cfg.host || !user || !password) {
     const secret = await fetchSecretJson(cfg.secretId, cfg.extensionPort);
     user = user || secret.username;
     password = password || secret.password;
-    database = database || secret.dbname;
-    port = port || secret.port;
+    database = database || secret.proxydbname || secret.dbname;
+    port = port || secret.proxyport || secret.port;
+    cfg.host = cfg.host || secret.proxyhost;
   }
 
+  if (!cfg.host) throw new Error('[jobcard/db] proxyhost is required in the database secret');
   return new Pool({
     host: cfg.host,
     port: port || 5432,

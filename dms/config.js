@@ -48,7 +48,7 @@ function buildConfig(secrets) {
       customerTitlesPath: secrets.DML_CUSTOMER_TITLES_PATH,
       ibmClientId: secrets.DML_IBM_CLIENT_ID,
       ibmClientSecret: secrets.DML_IBM_CLIENT_SECRET,
-      xTargetEnv: process.env.DML_X_TARGET_ENV || 'stage',
+      xTargetEnv: secrets.DML_X_TARGET_ENV || 'stage',
     },
     // ApplicationArea.Sender defaults (optional, used in CLI inquiry command)
     sender: {
@@ -79,6 +79,9 @@ async function getConfig() {
   if (cachedConfig) {
     return cachedConfig;
   }
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.SERVICE_URLS_SECRET_ID) {
+    throw new Error('[config] SERVICE_URLS_SECRET_ID is required');
+  }
 
   let secretUrls = {};
   if (process.env.SERVICE_URLS_SECRET_ID) {
@@ -86,6 +89,7 @@ async function getConfig() {
       const { loadServiceUrls } = require('./secretsLoader');
       secretUrls = await loadServiceUrls();
     } catch (err) {
+      if (process.env.AWS_LAMBDA_FUNCTION_NAME) throw err;
       // Fallback su env var/default hardcoded se il secret non e' (ancora)
       // configurato/raggiungibile (es. non ancora creato in un nuovo
       // ambiente): nessun impatto sul comportamento storico.
@@ -93,7 +97,21 @@ async function getConfig() {
     }
   }
 
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    const required = [
+      'DMS_PING_URL', 'DMS_PING_CLIENT_ID', 'DMS_PING_CLIENT_SECRET',
+      'DML_BASE_URL', 'DML_SETTINGS_PATH', 'DML_INQUIRY_PATH',
+      'DML_COMPANY_TYPES_PATH', 'DML_CUSTOMER_TITLES_PATH',
+      'DML_IBM_CLIENT_ID', 'DML_IBM_CLIENT_SECRET', 'DML_X_TARGET_ENV',
+    ];
+    const missing = required.filter((key) => !secretUrls[key]);
+    if (missing.length) throw new Error(`[config] Missing configuration keys: ${missing.join(', ')}`);
+    cachedConfig = buildConfig(secretUrls);
+    return cachedConfig;
+  }
+
   const secrets = {
+    DML_X_TARGET_ENV: secretUrls.DML_X_TARGET_ENV || process.env.DML_X_TARGET_ENV,
     DMS_PING_URL: secretUrls.DMS_PING_URL || process.env.DMS_PING_URL || 'https://idfed-preprod.mpsa.com:443/as/token.oauth2',
     DML_BASE_URL: secretUrls.DML_BASE_URL || process.env.DML_BASE_URL || 'https://emea-aws.dev.np-api.stellantis.com',
     DML_SETTINGS_PATH: secretUrls.DML_SETTINGS_PATH || process.env.DML_SETTINGS_PATH || '/ps-dev/extra/dml/dms-settings/v1/settings',

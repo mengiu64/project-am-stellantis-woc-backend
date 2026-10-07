@@ -18,6 +18,46 @@ permissions:
   contents: read
 
 jobs:
+  test-runtimeConfig:
+    name: runtimeConfig
+    runs-on: linux-m-x86
+    defaults:
+      run:
+        working-directory: runtimeConfig
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: runtimeConfig/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (>=90%)
+        run: npm run test:coverage
+
+  test-serviceClient:
+    name: serviceClient
+    runs-on: linux-m-x86
+    defaults:
+      run:
+        working-directory: serviceClient
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: serviceClient/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Security scan
+        run: npm audit --audit-level=high
+      - name: Run tests with coverage (>=90%)
+        run: npm run test:coverage
+
   test-agendaSoa:
     name: agendaSoa
     runs-on: linux-m-x86
@@ -36,8 +76,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -255,8 +299,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -474,8 +522,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -693,8 +745,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -912,8 +968,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1131,8 +1191,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1350,8 +1414,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1569,8 +1637,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -1788,8 +1860,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2008,8 +2084,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2227,8 +2307,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2447,8 +2531,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2667,8 +2755,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -2886,8 +2978,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3105,8 +3201,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3325,8 +3425,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3546,8 +3650,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3764,8 +3872,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -3982,8 +4094,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (≥90%)
         run: npm run test:coverage -- --verbose
       - name: Generate artifact dashboard
@@ -4202,8 +4318,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --outputFile=coverage/jest-results.json --verbose
       - name: Generate artifact dashboard
@@ -4421,8 +4541,12 @@ jobs:
       - name: Security scan
         run: |
           mkdir -p coverage
-          npm audit --json > coverage/audit-report.json 2>&1 || true
-          npm audit --audit-level=high && touch .scan-ok || true
+          if npm audit --audit-level=high --json > coverage/audit-report.json; then
+            touch .scan-ok
+          else
+            cat coverage/audit-report.json
+            exit 1
+          fi
       - name: Run tests with coverage (>=85%)
         run: npm run test:coverage -- --outputFile=coverage/jest-results.json --verbose
       - name: Generate artifact dashboard
@@ -4642,10 +4766,13 @@ jobs:
 
   deploy-dev:
     name: Deploy to AWS (SAM) — dev
+    environment: dev
     concurrency:
       group: deploy-stla-woc-backend-dev
       cancel-in-progress: false
     needs:
+      - test-runtimeConfig
+      - test-serviceClient
       - test-agendaSoa
       - test-agendaSoaNaga
       - test-dms
@@ -4708,7 +4835,12 @@ jobs:
           fi
 
       - name: SAM Build
-        run: sam build --parallel
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_READY: ${{ vars.WOC_INTERNAL_API_READY }}
+        run: |
+          test -n "$WOC_INTERNAL_API_ID" && test "$WOC_INTERNAL_API_READY" = true || { echo "Configurare WOC_INTERNAL_API_ID e WOC_INTERNAL_API_READY=true dopo rotte/policy IAM e deployment dello stage"; exit 1; }
+          sam build --parallel
 
       - name: Free disk space (pre-deploy)
         run: |
@@ -4727,50 +4859,29 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=dev \
+              InternalApiId="${{ vars.WOC_INTERNAL_API_ID }}" \
+              InternalApiStage="${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}" \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
               ServiceUrlsSecretId="sm-np-bsn0027990-dev-service-urls" \
-              EperHost="${{ secrets.EPER_HOST }}" \
-              EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
-              EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
-              EperLingua="${{ vars.EPER_LINGUA }}" \
-              DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
-              DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
-              DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
-              DocsoaIbmClientId="${{ secrets.DOCSOA_IBM_CLIENT_ID }}" \
-              DocsoaIbmClientSecret="${{ secrets.DOCSOA_IBM_CLIENT_SECRET }}" \
-              DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
-              DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
-              DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
-              DocsoaCodepdv="${{ secrets.DOCSOA_CODEPDV }}" \
-              MenupricingWsdl="${{ secrets.MENUPRICING_WSDL }}" \
-              MenupricingUsr="${{ secrets.MENUPRICING_USR }}" \
-              MenupricingPws="${{ secrets.MENUPRICING_PWS }}" \
-              MenupricingUsrReq="${{ secrets.MENUPRICING_USR_REQ }}" \
-              MenupricingPwsReq="${{ secrets.MENUPRICING_PWS_REQ }}" \
-              MpLanguageCode="${{ secrets.MP_LANGUAGE_CODE }}" \
-              MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
-              MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
-              MpManufacturer="${{ secrets.MP_MANUFACTURER }}" \
-              MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
-              MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
-              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
-              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
-              PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
-              DocsoaDbHost="${{ vars.DOCSOA_DB_HOST }}" \
-              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}" \
-              MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
-              MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
-              MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
-              MoparDocIbmClientSecret="${{ secrets.MOPARDOC_IBM_CLIENT_SECRET }}"
+              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}"
+
+      - name: Align internal REST routes and IAM policies
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
+        run: node infrastructure/deploy-internal-api.js dev s3-np-bsn0027990-dev-ops
 
   deploy-stage:
     name: Deploy to AWS (SAM) — stage
+    environment: stage
     concurrency:
       group: deploy-stla-woc-backend-stage
       cancel-in-progress: false
     needs:
+      - test-runtimeConfig
+      - test-serviceClient
       - test-agendaSoa
       - test-agendaSoaNaga
       - test-dms
@@ -4833,7 +4944,12 @@ jobs:
           fi
 
       - name: SAM Build
-        run: sam build --parallel
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_READY: ${{ vars.WOC_INTERNAL_API_READY }}
+        run: |
+          test -n "$WOC_INTERNAL_API_ID" && test "$WOC_INTERNAL_API_READY" = true || { echo "Configurare WOC_INTERNAL_API_ID e WOC_INTERNAL_API_READY=true dopo rotte/policy IAM e deployment dello stage"; exit 1; }
+          sam build --parallel
 
       - name: Free disk space (pre-deploy)
         run: |
@@ -4852,44 +4968,20 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=stage \
+              InternalApiId="${{ vars.WOC_INTERNAL_API_ID }}" \
+              InternalApiStage="${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}" \
               VpcSubnetIds="${{ secrets.STAGE_VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.STAGE_VPC_SECURITY_GROUP_IDS }}" \
               ServiceUrlsSecretId="sm-np-bsn0027990-stage-service-urls" \
-              EperHost="${{ secrets.EPER_HOST }}" \
-              EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
-              EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
-              EperLingua="${{ vars.EPER_LINGUA }}" \
-              DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
-              DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
-              DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
-              DocsoaIbmClientId="${{ secrets.DOCSOA_IBM_CLIENT_ID }}" \
-              DocsoaIbmClientSecret="${{ secrets.DOCSOA_IBM_CLIENT_SECRET }}" \
-              DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
-              DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
-              DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
-              DocsoaCodepdv="${{ secrets.DOCSOA_CODEPDV }}" \
-              MenupricingWsdl="${{ secrets.MENUPRICING_WSDL }}" \
-              MenupricingUsr="${{ secrets.MENUPRICING_USR }}" \
-              MenupricingPws="${{ secrets.MENUPRICING_PWS }}" \
-              MenupricingUsrReq="${{ secrets.MENUPRICING_USR_REQ }}" \
-              MenupricingPwsReq="${{ secrets.MENUPRICING_PWS_REQ }}" \
-              MpLanguageCode="${{ secrets.MP_LANGUAGE_CODE }}" \
-              MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
-              MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
-              MpManufacturer="${{ secrets.MP_MANUFACTURER }}" \
-              MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
-              MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
-              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
-              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
-              PkFavoriteDbHost="${{ vars.STAGE_PKFAVORITE_DB_HOST }}" \
               PkFavoriteDbSecretId="${{ vars.STAGE_PKFAVORITE_DB_SECRET_ID }}" \
-              DocsoaDbHost="${{ vars.STAGE_DOCSOA_DB_HOST }}" \
               DocsoaDbSecretId="${{ vars.STAGE_DOCSOA_DB_SECRET_ID }}" \
-              MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
-              MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
-              MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
-              MoparDocIbmClientSecret="${{ secrets.MOPARDOC_IBM_CLIENT_SECRET }}" \
               TranslationsBucketNameOverride='""'
+
+      - name: Align internal REST routes and IAM policies
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
+        run: node infrastructure/deploy-internal-api.js stage s3-np-bsn0027990-stage-ops
 
   deploy-prod:
     name: Deploy to AWS (SAM) — prod
@@ -4897,6 +4989,8 @@ jobs:
       group: deploy-stla-woc-backend-prod
       cancel-in-progress: false
     needs:
+      - test-runtimeConfig
+      - test-serviceClient
       - test-agendaSoa
       - test-agendaSoaNaga
       - test-dms
@@ -4960,7 +5054,12 @@ jobs:
           fi
 
       - name: SAM Build
-        run: sam build --parallel
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_READY: ${{ vars.WOC_INTERNAL_API_READY }}
+        run: |
+          test -n "$WOC_INTERNAL_API_ID" && test "$WOC_INTERNAL_API_READY" = true || { echo "Configurare WOC_INTERNAL_API_ID e WOC_INTERNAL_API_READY=true dopo rotte/policy IAM e deployment dello stage"; exit 1; }
+          sam build --parallel
 
       - name: Free disk space (pre-deploy)
         run: |
@@ -4979,40 +5078,16 @@ jobs:
             --no-fail-on-empty-changeset \
             --parameter-overrides \
               Environment=prod \
+              InternalApiId="${{ vars.WOC_INTERNAL_API_ID }}" \
+              InternalApiStage="${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}" \
               VpcSubnetIds="${{ secrets.VPC_SUBNET_IDS }}" \
               VpcSecurityGroupIds="${{ secrets.VPC_SECURITY_GROUP_IDS }}" \
               ServiceUrlsSecretId="sm-np-bsn0027990-prod-service-urls" \
-              EperHost="${{ secrets.EPER_HOST }}" \
-              EperCoddealer="${{ secrets.EPER_CODDEALER }}" \
-              EperCodmarket="${{ secrets.EPER_CODMARKET }}" \
-              EperLingua="${{ vars.EPER_LINGUA }}" \
-              DocsoaHost="${{ secrets.DOCSOA_HOST }}" \
-              DocsoaUsername="${{ secrets.DOCSOA_USERNAME }}" \
-              DocsoaPassword="${{ secrets.DOCSOA_PASSWORD }}" \
-              DocsoaIbmClientId="${{ secrets.DOCSOA_IBM_CLIENT_ID }}" \
-              DocsoaIbmClientSecret="${{ secrets.DOCSOA_IBM_CLIENT_SECRET }}" \
-              DocsoaCodbrand="${{ secrets.DOCSOA_CODBRAND }}" \
-              DocsoaLangue="${{ secrets.DOCSOA_LANGUE }}" \
-              DocsoaPays="${{ secrets.DOCSOA_PAYS }}" \
-              DocsoaCodepdv="${{ secrets.DOCSOA_CODEPDV }}" \
-              MenupricingWsdl="${{ secrets.MENUPRICING_WSDL }}" \
-              MenupricingUsr="${{ secrets.MENUPRICING_USR }}" \
-              MenupricingPws="${{ secrets.MENUPRICING_PWS }}" \
-              MenupricingUsrReq="${{ secrets.MENUPRICING_USR_REQ }}" \
-              MenupricingPwsReq="${{ secrets.MENUPRICING_PWS_REQ }}" \
-              MpLanguageCode="${{ secrets.MP_LANGUAGE_CODE }}" \
-              MpCountryCode="${{ secrets.MP_COUNTRY_CODE }}" \
-              MpDealerIdentificationCode="${{ secrets.MP_DEALER_IDENTIFICATION_CODE }}" \
-              MpManufacturer="${{ secrets.MP_MANUFACTURER }}" \
-              MyPeopleIbmClientId="${{ secrets.MYPEOPLE_IBM_CLIENT_ID }}" \
-              MyPeopleUsername="${{ secrets.MYPEOPLE_USERNAME }}" \
-              MyPeoplePassword="${{ secrets.MYPEOPLE_PASSWORD }}" \
-              MyPeopleIdentifier="${{ secrets.MYPEOPLE_IDENTIFIER }}" \
-              PkFavoriteDbHost="${{ vars.PKFAVORITE_DB_HOST }}" \
               PkFavoriteDbSecretId="${{ vars.PKFAVORITE_DB_SECRET_ID }}" \
-              DocsoaDbHost="${{ vars.DOCSOA_DB_HOST }}" \
-              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}" \
-              MoparDocPingClientId="${{ secrets.MOPARDOC_PING_CLIENT_ID }}" \
-              MoparDocPingClientSecret="${{ secrets.MOPARDOC_PING_CLIENT_SECRET }}" \
-              MoparDocIbmClientId="${{ secrets.MOPARDOC_IBM_CLIENT_ID }}" \
-              MoparDocIbmClientSecret="${{ secrets.MOPARDOC_IBM_CLIENT_SECRET }}"
+              DocsoaDbSecretId="${{ vars.DOCSOA_DB_SECRET_ID }}"
+
+      - name: Align internal REST routes and IAM policies
+        env:
+          WOC_INTERNAL_API_ID: ${{ vars.WOC_INTERNAL_API_ID }}
+          WOC_INTERNAL_API_STAGE: ${{ vars.WOC_INTERNAL_API_STAGE || 'wia' }}
+        run: node infrastructure/deploy-internal-api.js prod "${{ vars.S3_BUCKET }}"

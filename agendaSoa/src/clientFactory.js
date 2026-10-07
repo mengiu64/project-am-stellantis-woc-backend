@@ -13,6 +13,11 @@ const { getHttpsAgent } = require('./certService');
  * Loads (and caches) the mTLS httpsAgent from Secrets Manager unless one is passed via `overrides`.
  */
 async function buildClient(overrides = {}) {
+  const { loadSettings, requireSettings } = require('../../runtimeConfig');
+  const settings = await loadSettings();
+  if (process.env.WOC_CONFIG_SECRET_ID) {
+    requireSettings(settings, ['AGENDA_SOA_HOST', 'AGENDA_SOA_USERNAME', 'AGENDA_SOA_PASSWORD', 'AGENDA_SOA_API_KEY']);
+  }
   // Separa l'eventuale httpsAgent iniettato (usato dai test) dagli altri override di configurazione.
   const { httpsAgent: httpsAgentOverride, ...restOverrides } = overrides;
   // Se un agent è fornito esplicitamente lo si usa (override di test); altrimenti lo si
@@ -24,15 +29,15 @@ async function buildClient(overrides = {}) {
   // Costruisce il client leggendo la configurazione dall'ambiente e iniettando l'https.Agent mTLS.
   return new AgendaSOAClient({
     // Host del servizio downstream AgendaSOA.
-    host:     process.env.AGENDA_SOA_HOST,
+    host:     settings.AGENDA_SOA_HOST,
     // Username per l'autenticazione applicativa verso il downstream.
-    username: process.env.AGENDA_SOA_USERNAME,
+    username: settings.AGENDA_SOA_USERNAME,
     // Password per l'autenticazione applicativa verso il downstream.
-    password: process.env.AGENDA_SOA_PASSWORD,
+    password: settings.AGENDA_SOA_PASSWORD,
     // API key applicativa richiesta dal servizio downstream.
-    apiKey:   process.env.AGENDA_SOA_API_KEY,
+    apiKey:   settings.AGENDA_SOA_API_KEY,
     // Proxy HTTP opzionale per l'ambiente in cui gira la Lambda.
-    proxy:    process.env.AGENDA_SOA_PROXY,
+    proxy:    settings.AGENDA_SOA_PROXY,
     // Agent mTLS (cert+key) usato per la connessione TLS mutua verso il downstream.
     httpsAgent,
     // Eventuali ulteriori override di configurazione passati dal chiamante/test.

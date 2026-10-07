@@ -18,6 +18,12 @@
 -- sincronizzazione): ack = OK/KO, techreason = djc_sync_status,
 -- businessreason = dmsSynchroStatus e dmsReturnMessage da jobCardDetails,
 -- concatenati con " - " quando entrambi sono presenti.
+-- jobcard e djc li rileggono per jobcardid (SELECT best-effort, NULL -> "") e
+-- li restituiscono come ack/techReason/businessReason nella risposta di
+-- saveJobcard e (solo jobcard) di jobCardDetails.
+-- jobcard rilegge anche payload, insieme ad ack/techreason/businessreason
+-- (azione GET lastPayload), per recuperare le modifiche inviate quando
+-- l'aggiornamento verso DJC/DGT fallisce.
 -- ============================================================================
 
 BEGIN;

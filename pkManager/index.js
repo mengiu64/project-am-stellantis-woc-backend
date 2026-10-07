@@ -17,7 +17,6 @@
  *   node index.js pkwstouse menupricing 1000
  */
 
-require('dotenv').config();
 const { PkManager } = require('./PkManager');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
@@ -70,9 +69,9 @@ function resolveActionAndBody(event) {
  * pkFavorite/index.js.
  */
 function resolveUsername(event, body) {
-  const authz = (event && event.requestContext && event.requestContext.authorizer) || null;
-  if (authz) {
-    return authz.sub || body.username || null;
+  const context = event && event.requestContext;
+  if (context && Object.prototype.hasOwnProperty.call(context, 'authorizer')) {
+    return context.authorizer?.sub || null;
   }
   return body.username || null;
 }

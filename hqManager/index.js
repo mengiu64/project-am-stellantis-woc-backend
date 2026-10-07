@@ -29,14 +29,14 @@
  *   - insertVehicleInspection(market, type, descr): crea una nuova voce di
  *     controllo veicolo; registra anche una riga di audit con username
  *     risolto da HqManager.js::resolveUsername.
- *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market) e
- *     disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic).
- *   - setMarketDisable(market): disabilita il mercato e riabilita a cascata
- *     tutti i suoi OIC.
- *   - setOicEnable(market, oic): abilita l'OIC (woc.hq_pk_oic) e, a cascata,
- *     disabilita il mercato (woc.hq_pk_market).
- *   - insertDomain(market, oic, descr): crea un nuovo dominio
- *     (woc.hq_pk_domain).
+ *   - setMarketEnable(market): abilita il mercato (woc.hq_pk_market).
+ *   - setMarketDisable(market): disabilita il mercato (woc.hq_pk_market).
+ *   - checkIsPkMarketEnabled(market): legge il flag "deleted" di
+ *     woc.hq_pk_market per il mercato indicato (0 = abilitato,
+ *     1 = disabilitato, undefined se il mercato non ha una riga configurata).
+ *   - insertDomain(market, descr): crea un nuovo dominio (woc.hq_pk_domain,
+ *     condiviso da tutti gli OIC del mercato: la tabella non ha una colonna
+ *     "oic").
  *   - setDomain(market, iddomain, descr): aggiorna la descr del dominio.
  *   - deleteDomain(market, iddomain): cancella logicamente il dominio
  *     (woc.hq_pk_domain.deleted = 1).
@@ -50,17 +50,15 @@
  *     woc.hq_pk_packages.
  *   - setPackageVisible(payload): aggiorna il flag "visible", in un loop,
  *     per ciascun elemento { idpackage, value } dell'array payload.package.
- *   - getPackageList(market, oic): elenco della gerarchia mercato -> OIC ->
- *     dominio -> pacchetto configurata (oic facoltativo: se assente, elenca
- *     la configurazione "a livello mercato"), incluso il flag "visible" di
- *     dominio/pacchetto (domVisible/pkVisible).
- *   - initializeOicPkList(market, oic): inizializza, se necessario, la
- *     configurazione PK dell'oic (copiandone i domini dal mercato/comuni se
- *     l'oic non e' ancora configurato e il mercato non e' gestito a livello
- *     market, v. HqManager.js::initializeOicPkList) e ne ritorna la lista
- *     pacchetti (stesso formato di getPackageList).
+ *   - getPackageListHQ(market): elenco della gerarchia mercato -> dominio ->
+ *     pacchetto "a livello mercato" (nessun OIC, pk.oic IS NULL), incluso il
+ *     flag "visible" di dominio/pacchetto (domVisible/pkVisible).
+ *   - getPackageListSM(market, oic): elenco della stessa gerarchia ma per i
+ *     soli pacchetti del singolo OIC indicato (pk.oic = oic) (i domini sono
+ *     condivisi da tutti gli OIC del mercato: non serve piu' alcuna
+ *     inizializzazione/copia per il singolo OIC).
  *   - clonePk(marketTarget, marketOrig): clona, per il mercato marketOrig,
- *     tutta la gerarchia hq_pk_oic/hq_pk_domain/hq_pk_packages nel nuovo
+ *     tutta la gerarchia hq_pk_domain/hq_pk_packages nel nuovo
  *     mercato marketTarget (v. dbManager/HqRepository.clonePk).
  *   - cloneVeicInspection(marketTarget, marketOrig, type): cancella
  *     logicamente le voci di controllo veicolo gia' presenti in
@@ -79,6 +77,19 @@
  *     S3, TranslationsBucket).
  *   - getAnagAllocation(): elenco dei tipi di azione di audit
  *     (config/hq_actiontype.json su S3, TranslationsBucket).
+ *   - importAppConfiguration(market, fileContentBase64): importa in blocco,
+ *     in un'unica transazione lato dbManager, le righe di configurazione di
+ *     abilitazione WOC/firma digitale (woc.hq_application_enabling) lette
+ *     da un file Excel (XLSX) ricevuto codificato in Base64 nel body
+ *     (la Lambda non ha accesso al filesystem del chiamante).
+ *   - exportAppConfiguration(market): operazione simmetrica a
+ *     importAppConfiguration, legge le righe di configurazione di
+ *     abilitazione WOC/firma digitale del mercato indicato e le restituisce
+ *     come file Excel (XLSX) codificato in Base64 nel body della risposta.
+ *   - exportAudit(market, section, datefrom, dateto, actiontype, username):
+ *     operazione simmetrica a exportAppConfiguration ma per il log di audit,
+ *     stessi filtri opzionali di searchAudit; restituisce il file Excel
+ *     (XLSX) codificato in Base64 nel body della risposta.
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -89,8 +100,8 @@
  *   node index.js insertVehicleInspection <market> <type> <descr>
  *   node index.js setMarketEnable <market>
  *   node index.js setMarketDisable <market>
- *   node index.js setOicEnable <market> <oic>
- *   node index.js insertDomain <market> <oic> <descr>
+ *   node index.js checkIsPkMarketEnabled <market>
+ *   node index.js insertDomain <market> <descr>
  *   node index.js setDomain <market> <iddomain> <descr>
  *   node index.js insertPackage <market> <oic> <iddomain> <descr> <timeop> <pricewithvat>
  *   node index.js setPackage <idpackage> <iddomain> <descr> <timeop> <pricewithvat>
@@ -112,7 +123,7 @@ const VALID_ACTIONS = [
   'insertVehicleInspection',
   'setMarketEnable',
   'setMarketDisable',
-  'setOicEnable',
+  'checkIsPkMarketEnabled',
   'insertDomain',
   'setDomain',
   'deleteDomain',
@@ -121,14 +132,17 @@ const VALID_ACTIONS = [
   'setPackage',
   'deletePackage',
   'setPackageVisible',
-  'getPackageList',
-  'initializeOicPkList',
+  'getPackageListHQ',
+  'getPackageListSM',
   'clonePk',
   'cloneVeicInspection',
   'insertAudit',
   'searchAudit',
   'getAnagSection',
   'getAnagAllocation',
+  'importAppConfiguration',
+  'exportAppConfiguration',
+  'exportAudit',
 ];
 
 function parseBody(event) {
@@ -178,7 +192,7 @@ exports.handler = async (event = {}) => {
   const {
     codmarket, oic, enableWOC, enableSignature, configurations, market, type, id, value, descr,
     iddomain, timeop, pricewithvat, idpackage, section, actiontype, datefrom, dateto, username,
-    marketTarget, marketOrig,
+    marketTarget, marketOrig, fileContentBase64,
   } = body;
   const manager = new HqManager();
 
@@ -224,14 +238,14 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, market });
     }
 
-    if (action === 'setOicEnable') {
-      await manager.setOicEnable(market, oic);
-      return response(200, { success: true, market, oic });
+    if (action === 'checkIsPkMarketEnabled') {
+      const deleted = await manager.checkIsPkMarketEnabled(market);
+      return response(200, { success: true, market, deleted });
     }
 
     if (action === 'insertDomain') {
-      const newIddomain = await manager.insertDomain(market, oic, descr);
-      return response(200, { success: true, market, oic, descr, iddomain: newIddomain });
+      const newIddomain = await manager.insertDomain(market, descr);
+      return response(200, { success: true, market, descr, iddomain: newIddomain });
     }
 
     if (action === 'setDomain') {
@@ -269,14 +283,14 @@ exports.handler = async (event = {}) => {
       return response(200, { success: true, package: body.package });
     }
 
-    if (action === 'getPackageList') {
-      const packages = await manager.getPackageList(market, oic);
-      return response(200, { success: true, market, oic: oic ?? null, packages });
+    if (action === 'getPackageListHQ') {
+      const packages = await manager.getPackageListHQ(market);
+      return response(200, { success: true, market, packages });
     }
 
-    if (action === 'initializeOicPkList') {
-      const packages = await manager.initializeOicPkList(market, oic);
-      return response(200, { success: true, market, oic: oic ?? null, packages });
+    if (action === 'getPackageListSM') {
+      const packages = await manager.getPackageListSM(market, oic);
+      return response(200, { success: true, market, oic, packages });
     }
 
     if (action === 'clonePk') {
@@ -303,9 +317,26 @@ exports.handler = async (event = {}) => {
       });
     }
 
+    if (action === 'exportAudit') {
+      const exportResult = await manager.exportAudit(market, section, datefrom, dateto, actiontype, username);
+      return response(200, {
+        success: true, market, section, datefrom, dateto, actiontype, username, ...exportResult,
+      });
+    }
+
     if (action === 'getAnagSection') {
       const sections = await manager.getAnagSection();
       return response(200, { success: true, sections });
+    }
+
+    if (action === 'importAppConfiguration') {
+      const importResult = await manager.importAppConfiguration(market, fileContentBase64);
+      return response(200, { market, ...importResult });
+    }
+
+    if (action === 'exportAppConfiguration') {
+      const exportResult = await manager.exportAppConfiguration(market);
+      return response(200, { success: true, ...exportResult });
     }
 
     const allocations = await manager.getAnagAllocation();

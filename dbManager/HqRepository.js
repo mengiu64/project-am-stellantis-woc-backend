@@ -21,12 +21,35 @@
  * (market, oic) gia' presente.
  *
  * getVehicleInspection(market, type) legge da woc.hq_vehicle_inspection le
- * voci di controllo veicolo non cancellate (deleted = 0) per il "type"
- * richiesto: se "market" e' valorizzato (non undefined/null/stringa vuota)
- * vengono selezionate SOLO le righe di quel mercato (market = market); se
- * "market" e' assente/vuoto vengono selezionate SOLO le righe comuni, senza
- * mercato (market IS NULL OR market = ''). Nessun fallback/merge tra le due
- * casistiche: sono due insiemi di risultati mutuamente esclusivi.
+ * voci di controllo veicolo non cancellate (deleted = 0): se "type" e'
+ * valorizzato (non undefined/null/stringa vuota) vengono selezionate SOLO
+ * le righe di quel "type" (type = type), altrimenti nessun filtro viene
+ * applicato su "type" (tutti i type). Analogamente, se "market" e'
+ * valorizzato vengono selezionate SOLO le righe di quel mercato
+ * (market = market); se "market" e' assente/vuoto vengono selezionate SOLO
+ * le righe comuni, senza mercato (market IS NULL OR market = ''). Nessun
+ * fallback/merge tra le due casistiche di "market": sono due insiemi di
+ * risultati mutuamente esclusivi.
+ *
+ * getOicEnabled(codmarket) legge da woc.hq_application_enabling, per il
+ * mercato indicato, oic/enablewoc/enablesignature (con COALESCE a 0 quando
+ * enablewoc/enablesignature sono NULL), senza alcun join con
+ * ang_snowflakes/addr_snowflakes (a differenza di getEnablingConfiguration):
+ * usata da jobcard/jobCardService.js::getDealerConfiguration per decidere la
+ * sorgente (HQ o SM) dei pacchetti di un mercato/oic.
+ *
+ * importAppConfiguration(market, rows) importa in blocco, in un'unica
+ * transazione, le righe di configurazione di abilitazione WOC/firma
+ * digitale per il mercato indicato (ciascuna riga gia' estratta dal file
+ * Excel lato hqManager/HqManager.js, upsert ON CONFLICT (market, oic)): se
+ * anche una sola riga fallisce la validazione/l'upsert, l'intera
+ * importazione viene annullata (ROLLBACK), riportando l'elenco degli
+ * errori per riga.
+ *
+ * getAppConfigurationList(market) elenco, ordinato per oic, delle righe di
+ * configurazione di abilitazione WOC/firma digitale del mercato indicato:
+ * usata da hqManager/HqManager.js::exportAppConfiguration per generare il
+ * file Excel (XLSX) di export (operazione simmetrica a importAppConfiguration).
  *
  * setVehicleInspectionVisible(id, value) e
  * deletetVehicleInspection(id, value) aggiornano rispettivamente i
@@ -55,13 +78,21 @@
  * escludendo le righe cancellate logicamente dalla sorgente Snowflake
  * (fl_is_deleted_flag = 1).
  *
- * setPkMarketEnable/setPkMarketDisable/setOicEnable/insertDomain/setDomain/
+ * setPkMarketEnable/setPkMarketDisable/insertDomain/setDomain/
  * deleteDomain/insertPackage/setPackage/deletePackage operano sulle tabelle
- * woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages
+ * woc.hq_pk_market/hq_pk_domain/hq_pk_packages
  * (sql/create_table_hq_packages.sql): gerarchia di configurazione mercato ->
- * OIC -> dominio -> pacchetto usata per l'amministrazione dei pacchetti HQ.
- * Gli upsert su hq_pk_market/hq_pk_oic usano ON CONFLICT DO UPDATE sulla PK
- * (market / market+oic). deleteDomain cancella logicamente
+ * dominio -> pacchetto usata per l'amministrazione dei pacchetti HQ (la
+ * tabella woc.hq_pk_oic non e' piu' usata: nessuna configurazione di
+ * abilitazione a livello di singolo OIC). setPkMarketEnable/Disable fanno
+ * un upsert (ON CONFLICT DO UPDATE sulla PK "market") su woc.hq_pk_market.
+ * woc.hq_pk_domain NON ha una colonna "oic" (v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): insertDomain(market, descr)
+ * crea domini condivisi da tutti gli OIC del mercato (o globali se market e'
+ * assente); la distinzione per singolo OIC resta solo a livello di
+ * pacchetto (woc.hq_pk_packages.oic). deleteOicPkHierarchy(market, oic)
+ * cancella fisicamente SOLO i pacchetti di quella coppia market+oic (mai i
+ * domini, condivisi). deleteDomain cancella logicamente
  * (hq_pk_domain.deleted = 1, v.
  * sql/alter_table_hq_pk_domain_add_deleted.sql) il dominio (market, iddomain)
  * indicato; deletePackage cancella invece fisicamente (DELETE) il pacchetto
@@ -71,23 +102,26 @@
  * aggiornano il flag "visible" (colonna aggiunta a hq_pk_domain/hq_pk_packages,
  * default 1) rispettivamente del dominio e del pacchetto indicato.
  *
- * getPackageList(market, oic) legge la gerarchia mercato -> OIC -> dominio ->
- * pacchetto configurata per il mercato (obbligatorio) ed eventualmente l'OIC
- * (facoltativo) richiesto: se oic e' valorizzato usa una query JOIN su
- * hq_pk_oic (deleted = 0) e restituisce solo domini/pacchetti con
- * dom.oic/pk.oic = oic; se oic e' omesso usa una query separata che
- * restituisce solo domini/pacchetti "a livello mercato" (dom.oic/pk.oic IS
- * NULL), senza toccare hq_pk_oic. I domini cancellati logicamente
+ * getPackageListHQ(market)/getPackageListSM(market, oic) leggono la
+ * gerarchia mercato -> dominio -> pacchetto configurata per il mercato
+ * (obbligatorio in entrambe) e, per getPackageListSM, anche per l'OIC
+ * (obbligatorio, filtro diretto su pk.oic, nessuna tabella hq_pk_oic
+ * coinvolta): i domini si agganciano sempre solo per market (condivisi fra
+ * tutti gli OIC dello stesso mercato); getPackageListSM restituisce SOLO i
+ * pacchetti con pk.oic = oic, getPackageListHQ restituisce SOLO i pacchetti
+ * "a livello mercato" (pk.oic IS NULL). I domini cancellati logicamente
  * (deleted = 1) sono esclusi (dom.deleted = 0). Include anche
  * domVisible/pkVisible (hq_pk_domain.visible/hq_pk_packages.visible).
  *
- * clonePk(marketTarget, marketOrig) clona, per il mercato marketOrig, tutte
- * le righe di woc.hq_pk_oic (oic incluso eventuale NULL) e le relative
- * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget,
- * rigenerando iddomain/idpackage dalle rispettive sequence e rimappando gli
- * iddomain nei pacchetti clonati per preservare la relazione dominio/
- * pacchetto originale. Esegue tutto in un'unica transazione (BEGIN/COMMIT,
- * ROLLBACK in caso di errore).
+ * clonePk(marketTarget, marketOrig) clona, per il mercato marketOrig, le
+ * gerarchie hq_pk_domain/hq_pk_packages nel mercato marketTarget (i domini,
+ * condivisi per mercato, vengono clonati una sola volta): cancella
+ * logicamente (deleted = 1) i domini gia' presenti su marketTarget, poi
+ * copia i domini (deleted = 0) e i pacchetti di marketOrig su
+ * marketTarget, rigenerando iddomain/idpackage dalle rispettive sequence e
+ * rimappando gli iddomain nei pacchetti clonati per preservare la
+ * relazione dominio/pacchetto originale. Esegue tutto in un'unica
+ * transazione (BEGIN/COMMIT, ROLLBACK in caso di errore).
  *
  * insertAudit(username, section, market, actiontype, descr) inserisce una
  * riga di log nella tabella di audit woc.hq_audit (creationdate valorizzata
@@ -175,20 +209,162 @@ async function setEnablingConfiguration(pool, codmarket, oic, enableWOC, enableS
 }
 
 /**
+ * Legge da woc.hq_application_enabling, per il mercato indicato, oic/
+ * enablewoc/enablesignature (con COALESCE a 0 quando enablewoc/
+ * enablesignature sono NULL), senza alcun join con ang_snowflakes/
+ * addr_snowflakes (a differenza di getEnablingConfiguration).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} codmarket
+ * @returns {Promise<Array<{ oic: string, enablewoc: number, enablesignature: number }>>}
+ */
+async function getOicEnabled(pool, codmarket) {
+  if (!codmarket) throw new Error('"codmarket" is required');
+
+  const { rows } = await pool.query(
+    `SELECT  hae.oic
+                    , COALESCE(hae.enablewoc, 0) AS enablewoc
+                    , COALESCE(hae.enablesignature, 0) AS enablesignature
+       FROM woc.hq_application_enabling hae 
+      WHERE hae.market = $1`,
+    [codmarket],
+  );
+
+  return rows;
+}
+
+/**
+ * Importa in blocco, in un'unica transazione, le righe di configurazione di
+ * abilitazione WOC/firma digitale (woc.hq_application_enabling) per il
+ * mercato indicato: ciascuna riga di "rows" (gia' estratta dal file Excel
+ * lato chiamante, v. hqManager/HqManager.js::importAppConfiguration) viene
+ * validata (richiede "oic") e fa l'upsert (ON CONFLICT (market, oic)) di
+ * enablewoc/enablesignature (default 0 se assenti/non numerici).
+ *
+ * Se anche una sola riga fallisce la validazione/l'upsert, l'intera
+ * transazione viene annullata (ROLLBACK): non vengono importate righe
+ * parziali. L'errore di ciascuna riga viene comunque raccolto in
+ * result.errors (indice di riga 1-based + offset 2, come nel file Excel
+ * con intestazione in riga 1) prima di decidere il rollback.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {Array<{ oic?: string, enablewoc?: number|string, enablesignature?: number|string }>} rows
+ * @returns {Promise<{ success: boolean, rowsRead: number, rowsInserted: number, errors: Array<{ row: number, oic: *, error: string }>, message?: string }>}
+ */
+async function importAppConfiguration(pool, market, rows) {
+  if (!market) throw new Error('"market" is required');
+  if (!Array.isArray(rows)) throw new Error('"rows" is required (array)');
+
+  const result = {
+    rowsRead: 0,
+    rowsInserted: 0,
+    errors: [],
+  };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    for (const [index, row] of rows.entries()) {
+      result.rowsRead++;
+
+      try {
+        if (!row.oic) {
+          throw new Error('Missing oic');
+        }
+
+        await client.query(
+          `INSERT INTO woc.hq_application_enabling (market, oic, enablewoc, enablesignature)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (market, oic)
+           DO UPDATE SET
+             enablewoc = EXCLUDED.enablewoc,
+             enablesignature = EXCLUDED.enablesignature`,
+          [market, row.oic, Number(row.enablewoc ?? 0), Number(row.enablesignature ?? 0)],
+        );
+
+        result.rowsInserted++;
+      } catch (err) {
+        result.errors.push({ row: index + 2, oic: row.oic, error: err.message });
+      }
+    }
+
+    if (result.errors.length > 0) {
+      throw new Error('Import validation failed');
+    }
+
+    await client.query('COMMIT');
+
+    return { success: true, ...result };
+  } catch (err) {
+    await client.query('ROLLBACK');
+
+    return { success: false, ...result, message: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Elenco, ordinato per oic, delle righe di configurazione di abilitazione
+ * WOC/firma digitale (woc.hq_application_enabling) del mercato indicato.
+ * Usata da hqManager/HqManager.js::exportAppConfiguration per generare il
+ * file Excel (XLSX) di export.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @returns {Promise<Array<{ market: string, oic: string, enablewoc: number, enablesignature: number }>>}
+ */
+async function getAppConfigurationList(pool, market) {
+  if (!market) throw new Error('"market" is required');
+
+  const { rows } = await pool.query(
+    `SELECT
+       market,
+       oic,
+       enablewoc,
+       enablesignature
+     FROM woc.hq_application_enabling
+     WHERE market = $1
+     ORDER BY oic`,
+    [market],
+  );
+
+  return rows;
+}
+
+/**
  * @param {import('pg').Pool} pool
  * @param {string} [market] - se valorizzato, filtra sulle sole righe di questo
  *                            mercato (market = market); se assente/vuoto,
  *                            filtra sulle sole righe comuni senza mercato
  *                            (market IS NULL OR market = '')
- * @param {string} type
+ * @param {string} [type] - se valorizzato, filtra sulle sole righe di questo
+ *                          "type" (type = type); se assente/vuoto, nessun
+ *                          filtro su "type" (tutti i type del mercato)
  * @returns {Promise<Array<{ id: number, market: string|null, type: string, descr: string, visible: number, deleted: number }>>}
  */
 async function getVehicleInspection(pool, market, type) {
-  if (!type) throw new Error('"type" is required');
-
   const hasMarket = market !== undefined && market !== null && market !== '';
-  const marketCondition = hasMarket ? 'market = $2' : "(market IS NULL OR market = '')";
-  const params = hasMarket ? [type, market] : [type];
+  const hasType = type !== undefined && type !== null && type !== '';
+
+  const params = [];
+  const conditions = [];
+
+  if (hasType) {
+    params.push(type);
+    conditions.push(`type = $${params.length}`);
+  }
+
+  conditions.push('deleted = 0');
+
+  if (hasMarket) {
+    params.push(market);
+    conditions.push(`market = $${params.length}`);
+  } else {
+    conditions.push("(market IS NULL OR market = '')");
+  }
 
   const { rows } = await pool.query(
     `SELECT id,
@@ -198,9 +374,7 @@ async function getVehicleInspection(pool, market, type) {
             visible,
             deleted
        FROM woc.hq_vehicle_inspection
-      WHERE type = $1
-        AND deleted = 0
-        AND ${marketCondition}
+      WHERE ${conditions.join('\n        AND ')}
       ORDER BY id`,
     params,
   );
@@ -451,8 +625,7 @@ async function getAddressByOics(pool, { oics } = {}) {
 
 /**
  * Abilita un mercato (woc.hq_pk_market.deleted = 0, upsert sulla PK
- * "market") e disabilita a cascata tutti i suoi OIC (woc.hq_pk_oic.deleted
- * = 1) per il mercato indicato.
+ * "market") per il mercato indicato.
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
@@ -465,17 +638,11 @@ async function setPkMarketEnable(pool, market) {
      ON CONFLICT (market) DO UPDATE SET deleted = 0`,
     [market],
   );
-
-  await pool.query(
-    `UPDATE woc.hq_pk_oic SET deleted = 1 WHERE market = $1`,
-    [market],
-  );
 }
 
 /**
  * Disabilita un mercato (woc.hq_pk_market.deleted = 1, upsert sulla PK
- * "market") e riabilita tutti i suoi OIC (woc.hq_pk_oic.deleted = 0) per il
- * mercato indicato.
+ * "market") per il mercato indicato.
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
@@ -488,36 +655,10 @@ async function setPkMarketDisable(pool, market) {
      ON CONFLICT (market) DO UPDATE SET deleted = 1`,
     [market],
   );
-
-  await pool.query(
-    `UPDATE woc.hq_pk_oic SET deleted = 0 WHERE market = $1`,
-    [market],
-  );
 }
-
-/**
- * Abilita un OIC (woc.hq_pk_oic.deleted = 0), upsert sulla PK
- * "market, oic".
- *
- * @param {import('pg').Pool} pool
- * @param {string} market
- * @param {string} oic
- * @returns {Promise<void>}
- */
-async function setOicEnable(pool, market, oic) {
-  if (!oic) throw new Error('"oic" is required');
-
-  await pool.query(
-    `INSERT INTO woc.hq_pk_oic (market, oic, deleted)
-     VALUES (NULLIF($1, ''), $2, 0)
-     ON CONFLICT (market, oic) DO UPDATE SET deleted = 0`,
-    [market, oic],
-  );
-}
-
 /**
  * Verifica se il mercato indicato e' abilitato, leggendo il flag "deleted"
- * di woc.hq_pk_oic per il mercato (0 = abilitato, 1 = disabilitato).
+ * di woc.hq_pk_market per il mercato (0 = abilitato, 1 = disabilitato).
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
@@ -525,7 +666,7 @@ async function setOicEnable(pool, market, oic) {
  */
 async function checkIsPkMarketEnabled(pool, market) {
   const { rows } = await pool.query(
-    `select deleted from woc.hq_pk_oic WHERE market = $1`,
+    `select deleted from woc.hq_pk_market WHERE market = $1`,
     [market],
   );
 
@@ -533,79 +674,48 @@ async function checkIsPkMarketEnabled(pool, market) {
 }
 
 /**
- * Verifica se l'OIC indicato e' configurato (presente in woc.hq_pk_oic) per
- * il mercato indicato, leggendo il flag "deleted" tramite JOIN con
- * woc.hq_pk_market. Se non viene trovato nessun record (OIC non configurato
- * per quel mercato) viene ritornato 1 (= disabilitato/non configurato).
- *
- * @param {import('pg').Pool} pool
- * @param {string} market
- * @param {string} oic
- * @returns {Promise<number>} il valore di "deleted" della riga trovata, 1 se non trovata
- */
-async function checkIsPkOicConfigured(pool, market, oic) {
-  const { rows } = await pool.query(
-    `SELECT oi.deleted
-       FROM woc.hq_pk_market mk
-       JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2
-      WHERE mk.market = $1`,
-    [market, oic],
-  );
-
-  return rows[0]?.deleted ?? 1;
-}
-
-/**
  * Inserisce un nuovo dominio (woc.hq_pk_domain.iddomain generato dalla
- * sequence woc.hq_pk_domain_iddomain_seq).
+ * sequence woc.hq_pk_domain_iddomain_seq). I domini sono condivisi da tutti
+ * gli OIC del mercato (woc.hq_pk_domain non ha piu' la colonna "oic", v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): la distinzione per singolo
+ * OIC resta solo a livello di pacchetto (woc.hq_pk_packages.oic).
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
- * @param {string} oic
  * @param {string} descr
  * @returns {Promise<number>} l'iddomain generato
  */
-async function insertDomain(pool, market, oic, descr) {
+async function insertDomain(pool, market, descr) {
   const { rows } = await pool.query(
-    `INSERT INTO woc.hq_pk_domain (market, oic, descr)
-     VALUES (NULLIF($1, ''), $2, $3)
+    `INSERT INTO woc.hq_pk_domain (market, descr)
+     VALUES (NULLIF($1, ''), $2)
      RETURNING iddomain`,
-    [market, oic, descr],
+    [market, descr],
   );
 
   return rows[0].iddomain;
 }
 
 /**
- * Copia in woc.hq_pk_domain, per il nuovo (market, oic), i domini gia'
- * esistenti del mercato (descr): se il mercato non ha ancora domini propri
- * (WHERE market = $1), copia invece i domini comuni (market IS NULL),
- * ma solo se per quel mercato non esiste gia' nessun dominio (NOT EXISTS).
+ * Cancella (fisicamente) i pacchetti (woc.hq_pk_packages) configurati per
+ * la coppia (market, oic) indicata. I domini (woc.hq_pk_domain) NON vengono
+ * toccati: sono condivisi da tutti gli OIC del mercato (v. insertDomain),
+ * quindi cancellarli per un singolo oic toglierebbe anche gli altri OIC
+ * dello stesso mercato.
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
  * @param {string} oic
  * @returns {Promise<void>}
  */
-async function copyDomainFromMarket(pool, market, oic) {
+async function deleteOicPkHierarchy(pool, market, oic) {
+  if (!market) throw new Error('"market" is required');
+  if (!oic) throw new Error('"oic" is required');
+
   await pool.query(
-    `
-    INSERT INTO woc.hq_pk_domain (market, oic, descr)
-    SELECT $1, $2, descr
-    FROM woc.hq_pk_domain
-    WHERE market = $1
-
-    UNION ALL
-
-    SELECT $1, $2, descr
-    FROM woc.hq_pk_domain
-    WHERE market IS NULL
-      AND NOT EXISTS (
-        SELECT 1
-        FROM woc.hq_pk_domain
-        WHERE market = $1
-      )
-    `,
+    `DELETE FROM woc.hq_pk_packages
+      WHERE market = $1
+        AND oic = $2`,
     [market, oic],
   );
 }
@@ -768,41 +878,25 @@ async function setPackageVisible(pool, idpackage, value) {
 
 
 /**
- * Elenca la gerarchia mercato -> OIC -> dominio -> pacchetto configurata per
- * un mercato (ed eventualmente un singolo OIC), usata dall'amministrazione
- * pacchetti HQ (woc.hq_pk_market/hq_pk_oic/hq_pk_domain/hq_pk_packages).
+ * Elenca la gerarchia mercato -> dominio -> pacchetto "a livello mercato"
+ * (nessun OIC) configurata per un mercato, usata dall'amministrazione
+ * pacchetti HQ (woc.hq_pk_market/hq_pk_domain/hq_pk_packages; la tabella
+ * woc.hq_pk_oic non e' piu' usata).
  *
- * "market" e "oic" sono entrambi facoltativi (null/undefined/stringa vuota
- * equivalgono a "non valorizzato") e la combinazione dei due determina QUALE
- * delle 4 query viene eseguita (nessuna piu' costruita dinamicamente con
- * OR/cast ::text in WHERE):
- *  1) market non valorizzato, oic non valorizzato: righe "globali" (non
- *     legate a nessun mercato ne' a nessun OIC); query diretta su
- *     woc.hq_pk_domain (dom.market IS NULL AND dom.oic IS NULL), senza
- *     passare per hq_pk_market;
- *  2) market non valorizzato, oic valorizzato: query diretta su
- *     woc.hq_pk_oic (oi.market IS NULL AND oi.oic = oic AND oi.deleted = 0),
- *     senza passare per hq_pk_market, restituisce SOLO i domini/pacchetti
- *     legati a quell'oic;
- *  3) market valorizzato, oic valorizzato: richiede un woc.hq_pk_oic non
- *     cancellato (deleted = 0) per (market, oic), restituisce SOLO i
- *     domini/pacchetti legati a quello specifico oic;
- *  4) market valorizzato, oic non valorizzato: restituisce SOLO la
- *     configurazione "a livello mercato" (non legata a nessun OIC), cioe' le
- *     righe con dom.oic IS NULL / pk.oic IS NULL per quel mercato.
- * In tutti i casi dom/pk vengono agganciati per oic esplicito (oic = $n o
- * IS NULL), mai tramite un oi.oic unico risolto da una LEFT JOIN condivisa:
- * questo evita che, con oic omesso, i domini "a livello mercato" (oic IS
- * NULL) restino irraggiungibili quando il mercato ha gia' almeno un OIC
- * configurato. I domini cancellati logicamente (dom.deleted = 1) sono sempre
- * esclusi (dom.deleted = 0).
+ * woc.hq_pk_domain non ha piu' la colonna "oic" (v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): i domini sono condivisi da
+ * tutti gli OIC del mercato e si agganciano quindi solo per market. Vengono
+ * restituiti SOLO i pacchetti non legati a nessun OIC (pk.oic IS NULL); per
+ * i pacchetti di un singolo OIC v. getPackageListSM. I domini cancellati
+ * logicamente (dom.deleted = 1) sono sempre esclusi (dom.deleted = 0).
  *
  * @param {import('pg').Pool} pool
- * @param {string|null} [market]
- * @param {string|null} [oic]
- * @returns {Promise<Array<{ market: string|null, oic: string|null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+ * @param {string} market
+ * @returns {Promise<Array<{ market: string, oic: null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
-async function getPackageList(pool, market, oic) {
+async function getPackageListHQ(pool, market) {
+  if (!market) throw new Error('"market" is required');
+
   const selectColumns = `dom.iddomain
                           , dom.descr AS domaindescr
                           , dom.visible AS domvisible
@@ -812,50 +906,13 @@ async function getPackageList(pool, market, oic) {
                           , pk.pricewithvat
                           , pk.visible AS pkvisible`;
 
-  const hasMarket = market !== null && market !== undefined && market !== '';
-  const hasOic = oic !== null && oic !== undefined && oic !== '';
-
-  let sql;
-  let params;
-
-  if (!hasMarket && !hasOic) {
-    // 1) market = null, oic = null: configurazione globale (nessun mercato, nessun OIC).
-    sql = `SELECT dom.market, NULL::varchar AS oic, ${selectColumns}
-             FROM woc.hq_pk_domain dom  
-             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
-           WHERE dom.market IS NULL
-                 AND dom.oic IS NULL AND dom.deleted = 0`;
-    params = [];
-  } else if (!hasMarket && hasOic) {
-    // 2) market = null, oic != null: OIC non legato a nessun mercato.
-    sql = `SELECT dom.market, oi.oic, ${selectColumns}
-             FROM woc.hq_pk_oic oi 
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market IS NULL AND dom.oic = oi.oic AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON  pk.iddomain = dom.iddomain
-           WHERE oi.market IS NULL
-             AND oi.oic = $1 
-             AND oi.deleted = 0`;
-    params = [oic];
-  } else if (hasMarket && hasOic) {
-    // 3) market != null, oic != null: OIC legato ad uno specifico mercato.
-    sql = `SELECT mk.market, oi.oic, ${selectColumns}
+  const sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
              FROM woc.hq_pk_market mk
-             JOIN woc.hq_pk_oic oi ON oi.market = mk.market AND oi.oic = $2 AND oi.deleted = 0
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic = oi.oic AND dom.deleted = 0
-             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = oi.oic AND pk.iddomain = dom.iddomain
-           WHERE mk.market = $1`;
-    params = [market, oic];
-  } else {
-    // 4) market != null, oic = null: configurazione "a livello mercato" (nessun OIC).
-    sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
-             FROM woc.hq_pk_market mk
-             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.oic IS NULL AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
            WHERE mk.market = $1`;
-    params = [market];
-  }
 
-  const { rows } = await pool.query(sql, params);
+  const { rows } = await pool.query(sql, [market]);
 
   return rows.map((row) => ({
     market: row.market,
@@ -872,15 +929,79 @@ async function getPackageList(pool, market, oic) {
 }
 
 /**
- * Clona, per il mercato indicato (marketOrig), tutte le righe di
- * woc.hq_pk_oic (comprese le eventuali righe con oic IS NULL) e le relative
- * gerarchie hq_pk_domain/hq_pk_packages in un nuovo mercato (marketTarget).
+ * Elenca la gerarchia mercato -> dominio -> pacchetto configurata per un
+ * singolo OIC di un mercato, usata dall'amministrazione pacchetti HQ
+ * (woc.hq_pk_market/hq_pk_domain/hq_pk_packages; la tabella woc.hq_pk_oic
+ * non e' piu' usata).
+ *
+ * woc.hq_pk_domain non ha piu' la colonna "oic" (v.
+ * sql/alter_table_hq_pk_domain_drop_oic.sql): i domini sono condivisi da
+ * tutti gli OIC del mercato e si agganciano quindi solo per market. I
+ * pacchetti restituiti sono invece SOLO quelli dello specifico oic
+ * richiesto (pk.oic = oic, senza alcun controllo su hq_pk_oic); per i
+ * pacchetti "a livello mercato" (nessun OIC) v. getPackageListHQ. I domini
+ * cancellati logicamente (dom.deleted = 1) sono sempre esclusi
+ * (dom.deleted = 0).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<Array<{ market: string, oic: string, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
+ */
+async function getPackageListSM(pool, market, oic) {
+  if (!market) throw new Error('"market" is required');
+  if (!oic) throw new Error('"oic" is required');
+
+  const selectColumns = `dom.iddomain
+                          , dom.descr AS domaindescr
+                          , dom.visible AS domvisible
+                          , pk.idpackage
+                          , pk.descr AS packagedescr
+                          , pk.timeop
+                          , pk.pricewithvat
+                          , pk.visible AS pkvisible`;
+
+  const sql = `SELECT mk.market, $2::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_market mk
+             LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0
+             LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic = $2 AND pk.iddomain = dom.iddomain
+           WHERE mk.market = $1`;
+
+  const { rows } = await pool.query(sql, [market, oic]);
+
+  return rows.map((row) => ({
+    market: row.market,
+    oic: row.oic,
+    iddomain: row.iddomain,
+    domainDescr: row.domaindescr,
+    domVisible: row.domvisible,
+    idpackage: row.idpackage,
+    packageDescr: row.packagedescr,
+    timeop: row.timeop,
+    pricewithvat: row.pricewithvat,
+    pkVisible: row.pkvisible,
+  }));
+}
+
+/**
+ * Clona, per il mercato indicato (marketOrig), le gerarchie
+ * hq_pk_domain/hq_pk_packages in un mercato gia' esistente (marketTarget)
+ * (la tabella woc.hq_pk_oic non e' piu' usata, nessuna riga da clonare).
+ * I domini (condivisi da tutti gli OIC del mercato, v. insertDomain) vengono
+ * clonati una sola volta per mercato (non piu' una volta per oic).
+ *
+ * L'operazione:
+ * 1) cancella logicamente (deleted = 1) tutti i domini gia' presenti su
+ *    marketTarget;
+ * 2) copia i domini di marketOrig su marketTarget (deleted = 0);
+ * 3) copia i pacchetti di marketOrig su marketTarget.
  *
  * iddomain/idpackage sono generati dalle rispettive sequence
  * (hq_pk_domain_iddomain_seq/hq_pk_packages_idpackage_seq): i nuovi
  * iddomain vengono quindi rimappati (vecchio -> nuovo) prima di clonare i
  * pacchetti, in modo da mantenere la relazione dominio/pacchetto del
- * mercato originale anche nel mercato clonato.
+ * mercato originale anche nel mercato clonato (woc.hq_pk_packages non ha
+ * una colonna "deleted").
  *
  * L'intera operazione viene eseguita in un'unica transazione
  * (BEGIN/COMMIT su una connessione dedicata, ROLLBACK in caso di errore),
@@ -899,32 +1020,32 @@ async function clonePk(pool, marketTarget, marketOrig) {
   try {
     await client.query('BEGIN');
 
-    const { rows: oicRows } = await client.query(
-      `SELECT oic, deleted FROM woc.hq_pk_oic WHERE market = $1`,
-      [marketOrig],
+    // 1) Cancella logicamente i domini gia' presenti sul mercato target.
+    await client.query(
+      `UPDATE woc.hq_pk_domain SET deleted = 1 WHERE market = $1`,
+      [marketTarget],
     );
-    for (const { oic, deleted } of oicRows) {
-      await client.query(
-        `INSERT INTO woc.hq_pk_oic (market, oic, deleted) VALUES ($1, $2, $3)`,
-        [marketTarget, oic, deleted],
-      );
-    }
 
+    // 2) Copia i domini del mercato originale sul mercato target (deleted = 0),
+    //    rimappando iddomain vecchio -> nuovo per preservare la relazione
+    //    dominio/pacchetto nel clone dei pacchetti.
     const { rows: domainRows } = await client.query(
-      `SELECT iddomain, oic, descr, deleted FROM woc.hq_pk_domain WHERE market = $1`,
+      `SELECT iddomain, descr FROM woc.hq_pk_domain WHERE market = $1`,
       [marketOrig],
     );
     const iddomainMap = new Map();
-    for (const { iddomain, oic, descr, deleted } of domainRows) {
+    for (const { iddomain, descr } of domainRows) {
       const { rows } = await client.query(
-        `INSERT INTO woc.hq_pk_domain (market, oic, descr, deleted)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO woc.hq_pk_domain (market, descr, deleted)
+         VALUES ($1, $2, $3)
          RETURNING iddomain`,
-        [marketTarget, oic, descr, deleted],
+        [marketTarget, descr, 0],
       );
       iddomainMap.set(iddomain, rows[0].iddomain);
     }
 
+    // 3) Copia i pacchetti del mercato originale sul mercato target,
+    //    rimappando l'iddomain sui nuovi domini appena clonati.
     const { rows: packageRows } = await client.query(
       `SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE market = $1`,
       [marketOrig],
@@ -1052,6 +1173,9 @@ async function getAnagAllocation() {
 module.exports = {
   getEnablingConfiguration,
   setEnablingConfiguration,
+  getOicEnabled,
+  importAppConfiguration,
+  getAppConfigurationList,
   getVehicleInspection,
   setVehicleInspectionVisible,
   deletetVehicleInspection,
@@ -1062,11 +1186,9 @@ module.exports = {
   getAddressByOics,
   setPkMarketEnable,
   setPkMarketDisable,
-  setOicEnable,
   checkIsPkMarketEnabled,
-  checkIsPkOicConfigured,
   insertDomain,
-  copyDomainFromMarket,
+  deleteOicPkHierarchy,
   setDomain,
   deleteDomain,
   setDomainVisible,
@@ -1074,7 +1196,8 @@ module.exports = {
   setPackage,
   deletePackage,
   setPackageVisible,
-  getPackageList,
+  getPackageListHQ,
+  getPackageListSM,
   clonePk,
   insertAudit,
   searchAudit,

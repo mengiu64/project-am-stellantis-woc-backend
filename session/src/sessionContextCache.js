@@ -22,8 +22,7 @@
  *     session:context:<username>, v. dynamoCache.js; TTL configurabile via
  *     env SESSION_CONTEXT_CACHE_TTL_MS, default 5 min): evita di richiamare
  *     myPeople ad ogni singola richiesta quando la stessa istanza Lambda
- *     (warm) — o un'altra funzione che bundla questo modulo come sibling
- *     (jobcard/pkFavorite/pkManager) — gestisce più richieste dello stesso
+ *     (warm) — o una chiamata REST interna a session — gestisce più richieste dello stesso
  *     utente in rapida successione (es. una chiamata DML per ciascun
  *     pacchetto preferito in pkFavorite, o più azioni "dml" sulla stessa
  *     jobcard);
@@ -44,14 +43,9 @@
  * con i soli campi risolti (se nessuno, il Sender ricade sui default statici
  * di dms/config.js).
  *
- * Cross-lambda-folder require (path.resolve(__dirname, './repositoryFactory')):
- * questo modulo vive in session/src/ ma viene richiesto da dms/dmsService.js
- * come cartella sorella (require(path.resolve(__dirname, '../session/src/sessionContextCache'))),
- * stesso pattern già usato da pkManager per dms/dbManager — il build di
- * JobCardFunction/PkFavoriteFunction/PkManagerFunction (Metadata: BuildMethod:
- * makefile, v. Makefile) impacchetta quindi anche session/, myPeople/ e
- * dmlConfigSync/ come cartelle sorelle, oltre a dms/dbManager/v360 già
- * presenti/aggiunti.
+ * La factory caricata sotto e' locale a session. La repository usa REST per
+ * myPeople/dbmanager/dmlconfigsync; i consumer esterni accedono alla cache
+ * tramite le operazioni interne getData/getContext, non importando questa Lambda.
  */
 
 const path = require('path');
@@ -142,4 +136,3 @@ async function getCachedSessionContext(username, overrides = {}) {
 }
 
 module.exports = { getCachedSessionContext, getCachedSessionData };
-

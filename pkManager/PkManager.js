@@ -1,15 +1,8 @@
 'use strict';
 
 const path   = require('path');
-const dotenv = require('dotenv');
-
-// Carica il .env di pkManager, poi i .env dei moduli fratello (senza sovrascrivere
-// variabili già definite). Questo garantisce che EPER_HOST, MENUPRICING_WSDL,
-// DOCSOA_HOST, ecc. siano disponibili quando i client vengono richiesti.
-dotenv.config();
-for (const sibling of ['pkEper', 'pkDocsoa', 'pkMenupricing']) {
-  dotenv.config({ path: path.resolve(__dirname, `../${sibling}/.env`) });
-}
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+const { callService } = require('../serviceClient');
 
 // ─── Concorrenza chiamate di dettaglio ─────────────────────────────────────────
 // Alcuni WS legacy (in particolare MenuPricing, che mantiene stato lato server
@@ -58,6 +51,7 @@ class PkManager {
    * @param {object} [wsConfig.menupricing]  { languageCode, countryCode, dealerIdentificationCode, manufacturer }
    */
   constructor(wsConfig = {}) {
+    this.wsOverrides = wsConfig;
     // Array dei dettagli pacchetto valorizzato da getValidPackagesDetail()
     this.pkDetailList = [];
 
@@ -88,6 +82,33 @@ class PkManager {
     };
   }
 
+  async _loadConfig() {
+    if (this.configLoaded || (!process.env.WOC_CONFIG_SECRET_ID && !process.env.AWS_LAMBDA_FUNCTION_NAME)) return;
+    const { loadSettings } = require('../runtimeConfig');
+    const settings = await loadSettings();
+    const mapping = {
+      eper: {
+        coddealer: 'EPER_CODDEALER', codmarket: 'EPER_CODMARKET',
+        lingua: 'EPER_LINGUA', ticket: 'EPER_TICKET',
+      },
+      docsoa: {
+        codbrand: 'DOCSOA_CODBRAND', ldp: 'DOCSOA_LDP', langue: 'DOCSOA_LANGUE',
+        pays: 'DOCSOA_PAYS', codePdv: 'DOCSOA_CODEPDV', typeInternet: 'DOCSOA_TYPE_INTERNET',
+      },
+      menupricing: {
+        languageCode: 'MP_LANGUAGE_CODE', countryCode: 'MP_COUNTRY_CODE',
+        dealerIdentificationCode: 'MP_DEALER_IDENTIFICATION_CODE', manufacturer: 'MP_MANUFACTURER',
+      },
+    };
+    for (const [service, fields] of Object.entries(mapping)) {
+      for (const [field, key] of Object.entries(fields)) {
+        this.wsConfig[service][field] = settings[key];
+      }
+      Object.assign(this.wsConfig[service], this.wsOverrides[service]);
+    }
+    this.configLoaded = true;
+  }
+
   // ── getConfigPackages ────────────────────────────────────────────────────────
   // Restituisce la mappa department → [codici] per il ws specificato, letta da
   // woc.config_packages (Aurora PostgreSQL) tramite dbManager/ConfigPackagesRepository.
@@ -101,10 +122,9 @@ class PkManager {
   async getConfigPackages(pkwstouse) {
     const key = (pkwstouse ?? '').toLowerCase();
 
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getConfigPackages: getConfigPackagesFromDb } = require(path.resolve(__dirname, '../dbManager/ConfigPackagesRepository'));
-    const pool   = await getPool();
-    const config = key ? await getConfigPackagesFromDb(pool, { pkwstouse: key }) : {};
+    const config = key ? await callService('dbmanager', 'getConfigPackages', {
+      args: [{ pkwstouse: key }],
+    }) : {};
 
     if (!config || Object.keys(config).length === 0) {
       throw new Error(`pkwstouse non riconosciuto: "${pkwstouse}"`);
@@ -195,7 +215,7 @@ class PkManager {
     this.pkDetailList = Object.values(detailMap);
 
     return detailMap;
-  } 
+  }
 
   // ── _buildDmsSender ───────────────────────────────────────────────────────────
   // Deriva ApplicationArea.Sender per la inquiry DML tramite lo STESSO
@@ -227,8 +247,9 @@ class PkManager {
   //                                come serviceId sia per risolvere automaticamente
   //                                mainSincom/market/language/dealerCountryCode via
   //                                session quando wsConfig non li fornisce
-  // @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
+  // @returns {Promise<object>} sender override da passare a dms/inquiry
   async _buildDmsSender(market, vehicleId, username) {
+    await this._loadConfig();
     const { eper, docsoa, menupricing } = this.wsConfig;
     const overrides = {
       mainSincom: menupricing?.dealerIdentificationCode ?? eper?.coddealer ?? docsoa?.codePdv,
@@ -238,8 +259,10 @@ class PkManager {
       dealerCountryCode: menupricing?.countryCode ?? docsoa?.pays,
     };
 
-    const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
-    const resolved = await resolveDynamicSenderFields({ username, vin: vehicleId }, overrides);
+    const resolved = await callService('dms', 'resolveSender', {
+      context: { username, vin: vehicleId },
+      overrides,
+    });
     const dealerNumberId = resolved.mainSincom;
 
     const sender = {
@@ -296,9 +319,6 @@ class PkManager {
   //                              via session/v360 quando wsConfig non basta
   // @returns {Promise<object>} - Risposta di postDmsInquiry (InquiryResponse)
   async getPriceAndAvailability(documentId, customerId, vehicleId, market, username) {
-    const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
-    const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
-
     // Costruisco le workLines semplificate a partire da pkDetailList (equivalente
     // ai due foreach di getPartsAvailabilityXP che popolano $LaborItem/$PartsItem):
     // la lambda dms si occupa di trasformarle in WorkLines nel formato DML.
@@ -325,10 +345,8 @@ class PkManager {
       sender: await this._buildDmsSender(market, vehicleId, username),
     };
 
-    // Chiamo il gateway DML (token da cache/PingFederate + POST /inquiry): la
-    // lambda dms si occupa di completare il payload con ApplicationArea e WorkLines.
-    const token = await getBearerToken();
-    return postDmsInquiry(token, body);
+    // Token upstream e costruzione del payload DML restano nel servizio dms.
+    return callService('dms', 'inquiry', body);
   }
 
   // ── getPkList ─────────────────────────────────────────────────────────────────
@@ -370,15 +388,15 @@ class PkManager {
   //                              non è stato recuperabile restano invece
   //                              { error, category } (non normalizzate).
   async getPkList(codbrand, documentId, customerId, vehicleId, market = '1000', dealerIdentificationCode, username) {
+    await this._loadConfig();
     console.log('[PkManager.getPkList] parametri chiamata:', { codbrand, documentId, customerId, vehicleId, market, dealerIdentificationCode });
 
     // 0) risolvo pkwstouse (eper/docsoa/menupricing) leggendo HQ_PKCONFIG tramite
     //    dbManager, per la coppia (codmarket=market, codbrand) — vedi
     //    dbManager/PkConfigRepository.js per la logica di fallback su CODMARKET NULL.
-    const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-    const { getPkwstouse } = require(path.resolve(__dirname, '../dbManager/PkConfigRepository'));
-    const pool = await getPool();
-    const pkwstouse = await getPkwstouse(pool, { codmarket: market, codbrand });
+    const pkwstouse = await callService('dbmanager', 'getPkwstouse', {
+      args: [{ codmarket: market, codbrand }],
+    });
 
     // Se fornito, sovrascrive il dealerIdentificationCode di menupricing (letto di
     // default da MP_DEALER_IDENTIFICATION_CODE / wsConfig del costruttore), così
@@ -508,39 +526,36 @@ class PkManager {
   // ── _fetchDetail ─────────────────────────────────────────────────────────────
   // Chiama il metodo di dettaglio specifico per ws e codice pacchetto.
   async _fetchDetail(pkwstouse, VIN, code, rowData) {
+    await this._loadConfig();
     const key = (pkwstouse ?? '').toLowerCase();
 
     if (key === 'eper') {
-      const { WsIQPckEper } = require(path.resolve(__dirname, '../pkEper/WsIQPckEper'));
       const cfg    = this.wsConfig.eper;
-      const client = new WsIQPckEper({ coddealer: cfg.coddealer, codmarket: cfg.codmarket });
       console.log(`\n[DEBUG eper _fetchDetail] rowData:`, JSON.stringify(rowData, null, 2));
       const codicePosizione      = rowData.$?.codicePosizione ?? rowData.codicePosizione ?? '';
       const codicePosizioneGuida = rowData.$?.posizioneGuida  ?? rowData.posizioneGuida  ?? '';
       console.log(`[DEBUG] posizione="${codicePosizione}"  posizioneGuida="${codicePosizioneGuida}"`);
-      const pkRes = await client.getPackageDetailsPR({
+      const pkRes = await callService('pkeper', 'getPackageDetailsPR', { params: {
         ticket:              cfg.ticket,
         lingua:              cfg.lingua,
         VIN,
         codicePacchetto:     code,
         codicePosizione,
         codicePosizioneGuida,
-      });
+      }, config: { coddealer: cfg.coddealer, codmarket: cfg.codmarket } });
       return this.parseEperRes(pkRes);
     }
 
     if (key === 'menupricing') {
-      const { MenuPricingSoapClient } = require(path.resolve(__dirname, '../pkMenupricing/MenuPricingSoapClient'));
       const cfg    = this.wsConfig.menupricing;
-      const client = new MenuPricingSoapClient();
-      const pkRes  = await client.getJobDetails({ ...cfg, vin: VIN, id: code });
+      const pkRes  = await callService('pkmenupricing', 'getJobDetails', {
+        params: { ...cfg, vin: VIN, id: code }, config: {},
+      });
       return this.parseMenupricingRes(pkRes);
     }
 
     if (key === 'docsoa') {
-      const { DocSOARestClient } = require(path.resolve(__dirname, '../pkDocsoa/DocSOARestClient'));
       const cfg    = this.wsConfig.docsoa;
-      const client = new DocSOARestClient();
       const commonParams = {
         wmi:      VIN.substring(0, 3),
         vds:      VIN.substring(3, 9),
@@ -554,7 +569,9 @@ class PkManager {
       };
 
       // 1) prova come forfait (pacchetto a prezzo fisso): se trovato, isFixedPrice = '1'
-      const forfaitRes = await client.ibxDetailForfaitService({ ...commonParams, codeFF: code });
+      const forfaitRes = await callService('pkdocsoa', 'ibxDetailForfaitService', {
+        params: { ...commonParams, codeFF: code }, config: {},
+      });
       if (forfaitRes?.data?.forfait) {
         return this.parseDocSoaRes(forfaitRes, true);
       }
@@ -566,7 +583,9 @@ class PkManager {
       //    richiesto da ibxDetailtpService): va usato quest'ultimo quando presente,
       //    altrimenti si ricade sul code (compatibilità con altri CODE_FIELDS).
       const refTp = rowData?.ref ?? code;
-      const tpRes = await client.ibxDetailtpService({ ...commonParams, refTp });
+      const tpRes = await callService('pkdocsoa', 'ibxDetailtpService', {
+        params: { ...commonParams, refTp }, config: {},
+      });
       return this.parseDocSoaRes(tpRes, false);
     }
 
@@ -943,31 +962,33 @@ class PkManager {
   // ── _fetchLiveMap ────────────────────────────────────────────────────────────
   // Chiama il WS appropriato e normalizza il risultato in { [codice]: obj }
   async _fetchLiveMap(pkwstouse, VIN) {
+    await this._loadConfig();
     const key = (pkwstouse ?? '').toLowerCase();
 
     if (key === 'eper') {
-      const { WsIQPckEper } = require(path.resolve(__dirname, '../pkEper/WsIQPckEper'));
       const cfg    = this.wsConfig.eper;
-      const client = new WsIQPckEper({ coddealer: cfg.coddealer, codmarket: cfg.codmarket });
-      const result = await client.getCompletePkEperList({ ticket: cfg.ticket, lingua: cfg.lingua, vin: VIN });
+      const result = await callService('pkeper', 'getCompletePkEperList', {
+        params: { ticket: cfg.ticket, lingua: cfg.lingua, vin: VIN },
+        config: { coddealer: cfg.coddealer, codmarket: cfg.codmarket },
+      });
       if (result?.error) throw new Error(`eper: ${result.error.errorMessage}`);
       return result; // già { [codice]: obj }
     }
 
     if (key === 'menupricing') {
-      const { MenuPricingSoapClient } = require(path.resolve(__dirname, '../pkMenupricing/MenuPricingSoapClient'));
       const cfg    = this.wsConfig.menupricing;
-      const client = new MenuPricingSoapClient();
-      const result = await client.getCompletePkMpList({ vin: VIN, ...cfg });
+      const result = await callService('pkmenupricing', 'getCompletePkMpList', {
+        params: { vin: VIN, ...cfg }, config: {},
+      });
       if (!result.success) throw new Error(`menupricing: ${result.message}`);
       return result.data ?? {}; // già { [codice]: obj }
     }
 
     if (key === 'docsoa') {
-      const { DocSOARestClient } = require(path.resolve(__dirname, '../pkDocsoa/DocSOARestClient'));
       const cfg    = this.wsConfig.docsoa;
-      const client = new DocSOARestClient();
-      const result = await client.getCompletePkSOAList({ vin: VIN, ...cfg });
+      const result = await callService('pkdocsoa', 'getCompletePkSOAList', {
+        params: { vin: VIN, ...cfg }, config: {},
+      });
       if (!result.success) throw new Error(`docsoa: ${result.message}`);
       // data è un array di oggetti XML decodificati → prova a indicizzare per campi codice comuni
       const liveMap = buildDocsoaMap(result.data ?? []);

@@ -1,6 +1,6 @@
 'use strict';
 
-const path = require('path');
+const { callService } = require('../serviceClient');
 const { URL } = require('url');
 const crypto = require('crypto');
 const { httpsRequest } = require('./httpClient');
@@ -399,10 +399,19 @@ function enrichJobsWithPackageInfo(body) {
 
 /**
  * Normalizza appDiscountPercentage/dmsDiscountPercentage su ogni elemento di
- * jobs[].partInfo[]/laborInfo[], in place:
+ * jobs[].partInfo[]/laborInfo[], in place.
+ *
+ * Regola (concordata con l'analista): dmsDiscountPercentage arriva dal DMS
+ * e NON va MAI modificato; lo sconto effettivo di un figlio e'
+ * dmsDiscountPercentage + appDiscountPercentage, quindi per "bilanciare" si
+ * agisce solo su appDiscountPercentage (che puo' essere negativo).
+ *
  *  - se job.discountInPercentage e' valorizzato (diverso da null/undefined/0),
- *    entrambi i campi vengono forzati a 0 (anche se gia' presenti con un
- *    altro valore);
+ *    cioe' c'e' uno sconto sulla workline (padre), i figli devono risultare
+ *    a prezzo pieno: dmsDiscountPercentage resta invariato (0 se assente) e
+ *    appDiscountPercentage = -dmsDiscountPercentage, cosi' che lo sconto
+ *    effettivo del figlio sia 0 (stessa logica di
+ *    reconcileDiscountPercentages con wlDiscount=true);
  *  - altrimenti, i campi mancanti vengono aggiunti con valore 0, senza
  *    toccare eventuali valori gia' presenti.
  * @param {object} body - jobCardDetails response body
@@ -414,15 +423,18 @@ function checkDiscount(body) {
 
   for (const job of jobs) {
     if (!job || typeof job !== 'object') continue;
-    const forceZero = Boolean(job.discountInPercentage);
+    const hasWorklineDiscount = Boolean(job.discountInPercentage);
 
     for (const list of [job.partInfo, job.laborInfo]) {
       if (!Array.isArray(list)) continue;
       for (const item of list) {
         if (!item || typeof item !== 'object') continue;
-        if (forceZero) {
-          item.appDiscountPercentage = 0;
-          item.dmsDiscountPercentage = 0;
+        if (hasWorklineDiscount) {
+          // dms invariato (mai azzerato); app compensa dms per annullare lo
+          // sconto del figlio. Il "|| 0" evita di restituire -0 quando dms=0.
+          const dmsDiscount = Number(item.dmsDiscountPercentage) || 0;
+          item.dmsDiscountPercentage = dmsDiscount;
+          item.appDiscountPercentage = -dmsDiscount || 0;
         } else {
           if (!('appDiscountPercentage' in item)) item.appDiscountPercentage = 0;
           if (!('dmsDiscountPercentage' in item)) item.dmsDiscountPercentage = 0;
@@ -547,8 +559,8 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * disposizione il jobCardDetail appena recuperato/sanificato (da cui si
  * legge il VIN). Il **frontend non passa (e non deve passare) mainSincom/
  * market/brand/lingua/country**: se `sessionContext` non li contiene già,
- * vengono risolti automaticamente da `dms/dmsService.js
- * ::resolveDynamicSenderFields({ username, vin })` — STESSO meccanismo
+ * vengono risolti automaticamente da `callService('dms', 'resolveSender',
+ * { context: { username, vin }, overrides })` — STESSO meccanismo
  * centralizzato usato anche da pkFavorite/index.js::buildDmsSender e
  * pkManager/PkManager.js::_buildDmsSender, cosicché tutti i chiamanti
  * dell'inquiry DMS risolvano il Sender dinamico con gli identici criteri:
@@ -599,7 +611,7 @@ async function saveJobCardDetailsToTmp(jobCardId, body) {
  * @param {string} [sessionContext.brand]            - override esplicito (opzionale); se assente, risolto da jobCardDetail.roInfo.stellantisBrand, o (ultimo fallback) da v360 getdetails.data.brandCode per il VIN
  * @param {string} [sessionContext.language]         - override esplicito (opzionale); se assente, risolto da session.language
  * @param {string} [sessionContext.dealerCountryCode] - override esplicito (opzionale); se assente, risolto da session.marketIso
- * @returns {Promise<object>} sender override da passare a postDmsInquiry(token, { sender, ... })
+ * @returns {Promise<object>} sender override per l'inquiry REST dms
  */
 async function buildDmsSender(jobCardDetail, sessionContext = {}) {
   const { username } = sessionContext;
@@ -619,11 +631,13 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
     overrides.brand = stellantisBrand;
   }
 
-  const { resolveDynamicSenderFields } = require(path.resolve(__dirname, '../dms/dmsService'));
-  const { mainSincom, market, brand, language, dealerCountryCode } = await resolveDynamicSenderFields(
-    { username, vin },
-    overrides,
-  );
+  let resolved = overrides;
+  try {
+    resolved = await callService('dms', 'resolveSender', { context: { username, vin }, overrides });
+  } catch (err) {
+    console.warn('[jobCard] DMS resolveSender non disponibile, uso gli override:', err.message ?? err);
+  }
+  const { mainSincom, market, brand, language, dealerCountryCode } = resolved;
 
   const sender = {};
   if (mainSincom) sender.dealerNumberId = mainSincom;
@@ -644,7 +658,7 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
 }
 
 /**
- * Interroga il gateway DML (dms/dmsService.js::postDmsInquiry, MessageType=WL)
+ * Interroga il servizio REST privato dms (inquiry, MessageType=WL)
  * per prezzo/disponibilita di ricambi e manodopera del jobCardDetail appena
  * recuperato/sanificato, sullo stesso modello di
  * pkManager/PkManager.js::getPriceAndAvailability(). A differenza di
@@ -660,12 +674,9 @@ async function buildDmsSender(jobCardDetail, sessionContext = {}) {
  *                                 jobs[].partInfo[]/laborInfo[]
  * @param {object} [sessionContext] - dati di sessione gia' disponibili al chiamante,
  *                                 usati per costruire un Sender dinamico — v. buildDmsSender()
- * @returns {Promise<object>} risposta di postDmsInquiry (InquiryResponse)
+ * @returns {Promise<object>} risultato di dominio InquiryResponse
  */
 async function getCartPriceAndAvailability(jobCardDetail, sessionContext = {}) {
-  const { getBearerToken } = require(path.resolve(__dirname, '../dms/authService'));
-  const { postDmsInquiry } = require(path.resolve(__dirname, '../dms/dmsService'));
-
   const documentId = jobCardDetail?.roInfo?.jobCardSrpId ?? null;
   const vehicleId = jobCardDetail?.vehicleInfo?.identification?.vin ?? null;
 
@@ -708,8 +719,7 @@ async function getCartPriceAndAvailability(jobCardDetail, sessionContext = {}) {
     sender: await buildDmsSender(jobCardDetail, sessionContext),
   };
 
-  const token = await getBearerToken();
-  return postDmsInquiry(token, body);
+  return callService('dms', 'inquiry', body);
 }
 
 /**
@@ -781,7 +791,8 @@ function resolveDmlPartSource(partsItem) {
  * Per ogni job con dmsOverride===true, i totali a livello di job vengono
  * ricalcolati sommando i partInfo[]/laborInfo[] correnti (v.
  * recalculateJobTotals); se almeno un job ha dmsOverride===true, anche
- * roInfo.totalPrice viene ricalcolato sommando i totali di tutti i jobs[]
+ * roInfo.totalPrice viene ricalcolato sommando i totali dei soli job
+ * CUSTOMER e applicando alla fine lo sconto generale
  * (v. recalculateRoInfoTotals). Se nessun job ha subito un vero override
  * (prezzo diverso o sconto DMS applicato), ne' i job ne' roInfo.totalPrice
  * vengono toccati (restano i totali originali, tipicamente da DGT).
@@ -1015,12 +1026,38 @@ function isPriceChanged(newPrice, previousPrice) {
 }
 
 /**
+ * Restituisce lo sconto di workline del job (job.discountInPercentage), normalizzato
+ * nell'intervallo [0, 100]; 0 se assente o non numerico.
+ * @param {object} job - elemento di jobCardDetail.jobs[]
+ * @returns {number}
+ */
+function getWorklineDiscountPercentage(job) {
+  const discount = Number(job?.discountInPercentage) || 0;
+  return Math.min(100, Math.max(0, discount));
+}
+
+/**
+ * true se il job e' un pacchetto a prezzo fisso (FP/LFP): il prezzo sta solo a
+ * livello di workline e NON e' la somma dei figli (regola confermata dall'analista).
+ * Usa job.packageType (v. enrichJobsWithPackageInfo) o, se assente, lo ricalcola
+ * da jobType con computePackageInfo.
+ * @param {object} job - elemento di jobCardDetail.jobs[]
+ * @returns {boolean}
+ */
+function isFixedPriceJob(job) {
+  const packageType = job?.packageType ?? computePackageInfo(job ?? {}).packageType;
+  return packageType === 'FP' || packageType === 'LFP';
+}
+
+/**
  * Ricalcola, in place, i totali a livello di job (jobs[]) sommando i valori
  * correnti di partInfo[]/laborInfo[] (gia' eventualmente sovrascritti con i
- * dati DML da applyDataFromDml): originalPriceExclVat/originalPriceWithVat/
- * priceExclVatAfterDiscount/priceWithVatAfterDiscount sono la somma dei
- * rispettivi campi di TUTTI i partInfo[]+laborInfo[] del job (matchati o
- * meno nel DML, usando il valore correntemente presente su ciascuno);
+ * dati DML da applyDataFromDml): originalPriceExclVat/originalPriceWithVat
+ * sono la somma dei rispettivi campi di TUTTI i partInfo[]+laborInfo[] del job
+ * (matchati o meno nel DML, usando il valore correntemente presente su ciascuno);
+ * priceExclVatAfterDiscount/priceWithVatAfterDiscount sono la somma dei prezzi
+ * scontati dei figli oppure, con sconto di workline (job.discountInPercentage),
+ * l'originale x (1 - sconto workline);
  * discountInAmountOnPriceWithVat = originalPriceWithVat -
  * priceWithVatAfterDiscount (coerente con computePartPriceFields/
  * computeLaborPriceFields). totalPartsAmountRequested/
@@ -1028,7 +1065,8 @@ function isPriceChanged(newPrice, previousPrice) {
  * (l'importo "richiesto", cioe' prima dello sconto) rispettivamente di
  * partInfo[]/laborInfo[]; totalLaborDurationRequested e' la somma di
  * laborInfo[].laborDuration. Invocata da applyDataFromDml SOLO per i job con
- * un vero override DML (job.dmsOverride === true, v. isPriceChanged): se
+ * un vero override DML (job.dmsOverride === true, v. isPriceChanged) e NON a
+ * prezzo fisso (FP/LFP, v. isFixedPriceJob): se
  * nessun part/labor del job ha un prezzo diverso o uno sconto DMS applicato,
  * i totali restano quelli originali (in genere quelli restituiti da DGT).
  * @param {object} job - elemento di jobCardDetail.jobs[], modificato in place
@@ -1039,8 +1077,20 @@ function recalculateJobTotals(job) {
 
   const originalPriceExclVat = sumField(parts, 'originalPriceExclVat') + sumField(labors, 'originalPriceExclVat');
   const originalPriceWithVat = sumField(parts, 'originalPriceWithVat') + sumField(labors, 'originalPriceWithVat');
-  const priceExclVatAfterDiscount = sumField(parts, 'priceExclVatAfterDiscount') + sumField(labors, 'priceExclVatAfterDiscount');
-  const priceWithVatAfterDiscount = sumField(parts, 'priceWithVatAfterDiscount') + sumField(labors, 'priceWithVatAfterDiscount');
+  // Sconto di workline (job.discountInPercentage, regola confermata dall'analista,
+  // stessa del FE job-card-autosave.service.ts): i figli sono riportati a prezzo
+  // pieno (appDiscountPercentage = -dmsDiscountPercentage, v. reconcileDiscountPercentages),
+  // quindi il prezzo scontato del job e' la somma dei prezzi ORIGINALI dei figli
+  // x (1 - sconto workline). Senza sconto di workline: somma dei prezzi scontati
+  // dei figli (che includono gli eventuali sconti DMS/applicativi di riga).
+  const worklineDiscount = getWorklineDiscountPercentage(job);
+  const worklineFactor = 1 - worklineDiscount / 100;
+  const priceExclVatAfterDiscount = worklineDiscount > 0
+    ? originalPriceExclVat * worklineFactor
+    : sumField(parts, 'priceExclVatAfterDiscount') + sumField(labors, 'priceExclVatAfterDiscount');
+  const priceWithVatAfterDiscount = worklineDiscount > 0
+    ? originalPriceWithVat * worklineFactor
+    : sumField(parts, 'priceWithVatAfterDiscount') + sumField(labors, 'priceWithVatAfterDiscount');
 
   job.originalPriceExclVat = roundMoney(originalPriceExclVat);
   job.originalPriceWithVat = roundMoney(originalPriceWithVat);
@@ -1054,29 +1104,66 @@ function recalculateJobTotals(job) {
 }
 
 /**
+ * Risolve la modalita' di pagamento di un job: job.paymentType, o
+ * job.packageCharge quando paymentType non e' valorizzato (stessa
+ * risoluzione di enrichJobsWithPackageInfo).
+ * @param {object} job - elemento di jobCardDetail.jobs[]
+ * @returns {string|undefined}
+ */
+function resolveJobPaymentType(job) {
+  return job?.paymentType || job?.packageCharge;
+}
+
+/**
  * Somma job.priceWithVatAfterDiscount dei jobs[] la cui modalita' di
- * pagamento (job.paymentType, o job.packageCharge quando paymentType non e'
- * valorizzato — stessa risoluzione di enrichJobsWithPackageInfo) corrisponde
- * a `paymentType`.
+ * pagamento (v. resolveJobPaymentType) corrisponde a `paymentType`.
  * @param {Array<object>} jobs - jobCardDetail.jobs[]
  * @param {'CUSTOMER'|'INSURANCE'|'MANUFACTURER'|'INTERNAL'} paymentType
  * @returns {number}
  */
 function sumPriceWithVatByPaymentType(jobs, paymentType) {
   return jobs
-    .filter(job => (job?.paymentType || job?.packageCharge) === paymentType)
+    .filter(job => resolveJobPaymentType(job) === paymentType)
     .reduce((acc, job) => acc + (Number(job?.priceWithVatAfterDiscount) || 0), 0);
 }
 
 /**
- * Ricalcola, in place, roInfo.totalPrice sommando i totali di TUTTI i
- * jobs[] (gia' ricalcolati da recalculateJobTotals dove applicabile):
- * originalPriceExclVat/originalPriceWithVat/priceExclVatAfterDiscount/
- * priceWithVatAfterDiscount, piu' il breakdown per modalita' di pagamento
- * (totalCustomerWithVat/totalInsuranceWithVat/totalManufacturerWithVat/
- * totalInternalWithVat, v. sumPriceWithVatByPaymentType). Invocata da
- * applyDataFromDml SOLO se almeno un job ha dmsOverride === true. Non
- * tocca roInfo.discounts (concetto distinto, non derivato dai part/labor).
+ * Restituisce lo sconto generale del carrello (roInfo.discounts.discountInPercentage),
+ * normalizzato nell'intervallo [0, 100]; 0 se assente o non numerico.
+ * @param {object} roInfo - jobCardDetail.roInfo
+ * @returns {number}
+ */
+function getGlobalDiscountPercentage(roInfo) {
+  const discount = Number(roInfo?.discounts?.discountInPercentage) || 0;
+  return Math.min(100, Math.max(0, discount));
+}
+
+/**
+ * Ricalcola, in place, roInfo.totalPrice (e roInfo.discounts.discountInAmountOnPriceWithVat)
+ * a partire dai totali dei jobs[] (gia' ricalcolati da recalculateJobTotals dove applicabile).
+ * Invocata da applyDataFromDml SOLO se almeno un job ha dmsOverride === true.
+ *
+ * Regole concordate con l'analista (stesse del FE, job-card-autosave.service.ts):
+ *  1. Nella somma dei prezzi contano SOLO i job CUSTOMER (v. resolveJobPaymentType):
+ *     i job MANUFACTURER/INTERNAL/INSURANCE non entrano nei totali complessivi.
+ *  2. Lo sconto generale (roInfo.discounts.discountInPercentage) NON e' mai dentro
+ *     i singoli job: si applica SOLO alla fine, sul totale netto dei job CUSTOMER
+ *     (gia' comprensivo degli sconti di workline/figli).
+ *
+ * Campi calcolati (g = sconto generale in %, v. getGlobalDiscountPercentage):
+ *  - originalPriceExclVat/originalPriceWithVat: somma dei prezzi originali (prima di
+ *    qualunque sconto) dei job CUSTOMER; se un job non ha il prezzo originale si usa
+ *    quello scontato (nessuno sconto noto sul job);
+ *  - priceExclVatAfterDiscount/priceWithVatAfterDiscount: somma dei prezzi scontati
+ *    dei job CUSTOMER × (1 - g/100);
+ *  - totalCustomerWithVat: = priceWithVatAfterDiscount (cio' che paga il cliente);
+ *  - totalInsuranceWithVat/totalManufacturerWithVat/totalInternalWithVat: somma dei
+ *    job del rispettivo pagatore, SENZA sconto generale (solo informativi);
+ *  - roInfo.discounts.discountInAmountOnPriceWithVat (solo se roInfo.discounts e'
+ *    gia' presente: non viene creato, es. sorgente WIADVISOR che non gestisce sconti):
+ *    (originale CUSTOMER - netto CUSTOMER), cioe' gli sconti di workline/figli,
+ *    + netto CUSTOMER × g/100, cioe' l'importo dello sconto generale.
+ *    roInfo.discounts.discountInPercentage resta invariato.
  * No-op se jobCardDetail.roInfo non e' un oggetto.
  * @param {object} jobCardDetail - modificato in place
  */
@@ -1085,18 +1172,42 @@ function recalculateRoInfoTotals(jobCardDetail) {
   if (!roInfo || typeof roInfo !== 'object') return;
 
   const jobs = jobCardDetail.jobs ?? [];
+  const customerJobs = jobs.filter(job => resolveJobPaymentType(job) === 'CUSTOMER');
+  const globalFactor = 1 - getGlobalDiscountPercentage(roInfo) / 100;
+
+  // Totali dei soli job CUSTOMER, con sconti di workline/figli ma senza sconto generale.
+  const originalPriceExclVat = customerJobs.reduce(
+    (acc, job) => acc + (Number(job?.originalPriceExclVat ?? job?.priceExclVatAfterDiscount) || 0), 0);
+  const originalPriceWithVat = customerJobs.reduce(
+    (acc, job) => acc + (Number(job?.originalPriceWithVat ?? job?.priceWithVatAfterDiscount) || 0), 0);
+  const netPriceExclVat = sumField(customerJobs, 'priceExclVatAfterDiscount');
+  const netPriceWithVat = sumField(customerJobs, 'priceWithVatAfterDiscount');
+
+  // Sconto generale applicato una sola volta, sul totale finale.
+  const priceWithVatAfterDiscount = roundMoney(netPriceWithVat * globalFactor);
 
   roInfo.totalPrice = {
     ...roInfo.totalPrice,
-    originalPriceExclVat: roundMoney(sumField(jobs, 'originalPriceExclVat')),
-    originalPriceWithVat: roundMoney(sumField(jobs, 'originalPriceWithVat')),
-    priceExclVatAfterDiscount: roundMoney(sumField(jobs, 'priceExclVatAfterDiscount')),
-    priceWithVatAfterDiscount: roundMoney(sumField(jobs, 'priceWithVatAfterDiscount')),
-    totalCustomerWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'CUSTOMER')),
+    originalPriceExclVat: roundMoney(originalPriceExclVat),
+    originalPriceWithVat: roundMoney(originalPriceWithVat),
+    priceExclVatAfterDiscount: roundMoney(netPriceExclVat * globalFactor),
+    priceWithVatAfterDiscount,
+    totalCustomerWithVat: priceWithVatAfterDiscount,
     totalInsuranceWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'INSURANCE')),
     totalManufacturerWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'MANUFACTURER')),
     totalInternalWithVat: roundMoney(sumPriceWithVatByPaymentType(jobs, 'INTERNAL')),
   };
+
+  if (roInfo.discounts && typeof roInfo.discounts === 'object') {
+    // Sconti di workline/figli (originale - netto) + importo dello sconto generale
+    // calcolato a parte sul netto (equivale a originale - totale finale).
+    roInfo.discounts = {
+      ...roInfo.discounts,
+      discountInAmountOnPriceWithVat: roundMoney(
+        (originalPriceWithVat - netPriceWithVat) + netPriceWithVat * (1 - globalFactor),
+      ),
+    };
+  }
 }
 
 function applyDataFromDml(jobCardDetail, dmlResponse) {
@@ -1213,8 +1324,12 @@ function applyDataFromDml(jobCardDetail, dmlResponse) {
     }
 
     job.dmsOverride = jobHasDmsOverride;
-    if (jobHasDmsOverride) {
+    // FP/LFP (prezzo fisso a livello di workline): i figli vengono comunque
+    // aggiornati con i dati DML, ma il prezzo del job NON va ricalcolato dai figli.
+    if (jobHasDmsOverride && !isFixedPriceJob(job)) {
       recalculateJobTotals(job);
+    }
+    if (jobHasDmsOverride) {
       anyJobOverride = true;
     }
   }
@@ -1470,4 +1585,58 @@ async function saveJobCard(bearerToken, payload) {
   return response.body;
 }
 
-module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender };
+/**
+ * Raggruppa un array di righe per il valore della chiave indicata.
+ * @param {Array<object>} rows
+ * @param {string} key
+ * @returns {object} mappa { [valore chiave]: [righe corrispondenti] }
+ */
+function groupByKey(rows, key) {
+  return (rows ?? []).reduce((acc, row) => {
+    const groupKey = row?.[key];
+    if (!acc[groupKey]) acc[groupKey] = [];
+    acc[groupKey].push(row);
+    return acc;
+  }, {});
+}
+
+/**
+ * Configurazione dealer (controlli veicolo + pacchetti) per un mercato/oic,
+ * usata lato front-end per popolare la Vehicle Inspection e i pacchetti
+ * disponibili in fase di jobcard.
+ *
+ * Chiama in dbManager (via serviceClient, v. istruzioni di repo):
+ * - getVehicleInspection(market) (solo mercato, nessun filtro su "type", v.
+ *   dbManager/HqRepository.js::getVehicleInspection con "type" opzionale):
+ *   il risultato viene raggruppato per "type".
+ * - checkIsPkMarketEnabled(market): se ritorna 0 i pacchetti vengono letti
+ *   con getPackageListHQ(market) (pacchetti a livello mercato), se ritorna 1
+ *   con getPackageListSM(market, oic) (pacchetti del singolo oic). Il
+ *   risultato viene esposto sotto la chiave "package", a sua volta
+ *   raggruppato per "domainDescr".
+ *
+ * market mancante -> Error "[jobCard] market is required" (mappato a 400 dal
+ * chiamante, v. index.js).
+ *
+ * @param {string} market
+ * @param {string} oic
+ * @returns {Promise<object>} { [type]: [...righe vehicle inspection], package: { [domainDescr]: [...righe pacchetto] } }
+ */
+async function getDealerConfiguration(market, oic) {
+  if (!market) {
+    throw new Error('[jobCard] market is required');
+  }
+  const vehicleInspection = await callService('dbmanager', 'getVehicleInspection', { args: [market] });
+  const isPkMarketEnabled = await callService('dbmanager', 'checkIsPkMarketEnabled', { args: [market] });
+
+  const packages = isPkMarketEnabled === 1
+    ? await callService('dbmanager', 'getPackageListSM', { args: [market, oic] })
+    : await callService('dbmanager', 'getPackageListHQ', { args: [market] });
+
+  return {
+    ...groupByKey(vehicleInspection, 'type'),
+    package: groupByKey(packages, 'domainDescr'),
+  };
+}
+
+module.exports = { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender, getDealerConfiguration };

@@ -23,22 +23,27 @@ jest.mock('../dynamoCache', () => ({
   setCacheItem: jest.fn((key, value) => Promise.resolve(value)),
 }));
 jest.mock('../authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/authService', () => ({ getBearerToken: jest.fn() }));
-jest.mock('../../dms/dmsService', () => ({ postDmsInquiry: jest.fn(), resolveDynamicSenderFields: jest.fn() }));
+jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
 
 const { httpsRequest } = require('../httpClient');
 const { getCacheItem, setCacheItem } = require('../dynamoCache');
 const { getBearerToken: getDgtBearerToken } = require('../authService');
-const { getBearerToken } = require('../../dms/authService');
-const { postDmsInquiry, resolveDynamicSenderFields } = require('../../dms/dmsService');
-const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender } = require('../jobCardService');
+const { callService } = require('../../serviceClient');
+const postDmsInquiry = jest.fn();
+const resolveDynamicSenderFields = jest.fn();
+const { getJobCardList, getJobCardListCurrent, getJobCardDetails, saveJobCard, sanitizeJobCardPayload, getCartPriceAndAvailability, applyDataFromDml, getDataFromDML, getDataFromDMLFromTmp, buildDmsSender, getDealerConfiguration } = require('../jobCardService');
 
 describe('jobCardService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    getBearerToken.mockResolvedValue('DML-TOKEN');
+    callService.mockImplementation((service, operation, payload) => {
+      if (service !== 'dms') throw new Error(`Unexpected service: ${service}`);
+      if (operation === 'resolveSender') return resolveDynamicSenderFields(payload.context, payload.overrides);
+      if (operation === 'inquiry') return postDmsInquiry(payload);
+      throw new Error(`Unexpected operation: ${operation}`);
+    });
     getDgtBearerToken.mockResolvedValue('DGT-TOKEN');
     postDmsInquiry.mockResolvedValue({ success: true });
     // Di default si comporta come il vero dms/dmsService.js
@@ -290,7 +295,7 @@ describe('jobCardService', () => {
     const sessionContext = { username: 'mario.rossi', mainSincom: '0062219' };
     const result = await getJobCardDetails('token', '79', sessionContext);
 
-    expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+    expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
       PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-79', VehicleID: 'VIN79' }),
     }));
     expect(setCacheItem).toHaveBeenCalledTimes(1);
@@ -634,7 +639,7 @@ describe('jobCardService', () => {
       return result.jobCardDetail.jobs;
     }
 
-    test('discountInPercentage != 0 forces both fields to 0 even if already valorized', async () => {
+    test('discountInPercentage != 0 keeps dmsDiscountPercentage and sets appDiscountPercentage = -dms', async () => {
       const [job] = await detailsFor([
         {
           discountInPercentage: 10,
@@ -642,20 +647,22 @@ describe('jobCardService', () => {
           laborInfo: [{ laborOperationId: '1', appDiscountPercentage: 7, dmsDiscountPercentage: 2 }],
         },
       ]);
-      expect(job.partInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
-      expect(job.laborInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+      expect(job.partInfo[0]).toMatchObject({ appDiscountPercentage: -3, dmsDiscountPercentage: 3 });
+      expect(job.laborInfo[0]).toMatchObject({ appDiscountPercentage: -2, dmsDiscountPercentage: 2 });
     });
 
-    test('discountInPercentage != 0 adds missing fields with 0', async () => {
+    test('discountInPercentage != 0 adds missing fields with 0 (never -0)', async () => {
       const [job] = await detailsFor([
         {
           discountInPercentage: -15,
           partInfo: [{ partId: '1' }],
-          laborInfo: [{ laborOperationId: '1' }],
+          laborInfo: [{ laborOperationId: '1', appDiscountPercentage: 4, dmsDiscountPercentage: 0 }],
         },
       ]);
       expect(job.partInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+      expect(Object.is(job.partInfo[0].appDiscountPercentage, -0)).toBe(false);
       expect(job.laborInfo[0]).toMatchObject({ appDiscountPercentage: 0, dmsDiscountPercentage: 0 });
+      expect(Object.is(job.laborInfo[0].appDiscountPercentage, -0)).toBe(false);
     });
 
     test('discountInPercentage == 0 or missing only adds missing fields, leaving existing values untouched', async () => {
@@ -1024,9 +1031,9 @@ describe('jobCardService', () => {
 
       const result = await getCartPriceAndAvailability(jobCardDetail);
 
-      expect(getBearerToken).toHaveBeenCalled();
+      expect(callService).toHaveBeenCalledWith('dms', 'resolveSender', expect.any(Object));
       expect(result).toEqual({ success: true });
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', {
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', {
         PartsInquiryHeader: {
           DocumentID: 'JCID-84226',
           CustomerIdDms: null,
@@ -1055,7 +1062,7 @@ describe('jobCardService', () => {
     test('handles missing roInfo/vehicleInfo/jobs by sending null/empty values', async () => {
       await getCartPriceAndAvailability({});
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', {
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', {
         PartsInquiryHeader: {
           DocumentID: null,
           CustomerIdDms: null,
@@ -1084,7 +1091,7 @@ describe('jobCardService', () => {
 
       await getDataFromDML(jobCardDetail);
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
     });
@@ -1102,6 +1109,32 @@ describe('jobCardService', () => {
   // lookup lato dms, non un campo Sender).
 
   describe('buildDmsSender', () => {
+    test('calls private REST with context and overrides, without a consumer DMS token', async () => {
+      await buildDmsSender(
+        { vehicleInfo: { identification: { vin: 'VIN' } }, roInfo: { stellantisBrand: 'OV' } },
+        { username: 'trusted', mainSincom: '123' },
+      );
+      expect(callService).toHaveBeenCalledWith('dms', 'resolveSender', {
+        context: { username: 'trusted', vin: 'VIN' },
+        overrides: { username: 'trusted', mainSincom: '123', brand: 'OV' },
+      });
+      expect(getDgtBearerToken).not.toHaveBeenCalled();
+    });
+
+    test.each(['Private REST timeout', 'Private REST HTTP 503'])('keeps explicit sender overrides and logs %s', async (message) => {
+      resolveDynamicSenderFields.mockRejectedValueOnce(new Error(message));
+      await expect(buildDmsSender({}, { username: 'trusted', mainSincom: '123' })).resolves.toEqual({
+        serviceId: 'trusted', dealerNumberId: '123',
+      });
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('resolveSender'), message);
+    });
+
+    test.each(['Private REST timeout', 'Private REST HTTP 502'])('propagates inquiry %s to the existing enrichment boundary', async (message) => {
+      postDmsInquiry.mockRejectedValueOnce(new Error(message));
+      await expect(getCartPriceAndAvailability({})).rejects.toThrow(message);
+      expect(getDgtBearerToken).not.toHaveBeenCalled();
+    });
+
     test('returns {} when resolveDynamicSenderFields resolves nothing', async () => {
       const result = await buildDmsSender({});
 
@@ -1240,6 +1273,71 @@ describe('jobCardService', () => {
   // ── applyDataFromDml ─────────────────────────────────────────────────────
 
   describe('applyDataFromDml', () => {
+    const dmlPriceResponse = {
+      WorkLines: [
+        {
+          PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }],
+          LaborItems: [],
+        },
+      ],
+    };
+    const pricedJob = (extra) => ({
+      ...extra,
+      originalPriceExclVat: 125,
+      originalPriceWithVat: 150,
+      priceExclVatAfterDiscount: 125,
+      priceWithVatAfterDiscount: 150,
+      partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 50, vatPercentage: 20 }],
+      laborInfo: [],
+    });
+
+    test.each([
+      ['packageType FP', { packageType: 'FP' }],
+      ['packageType LFP', { packageType: 'LFP' }],
+      ['jobType MFP without packageType', { jobType: 'MFP' }],
+    ])('keeps the fixed job price of FP/LFP jobs on a DML price change (%s)', (_label, extra) => {
+      const jobCardDetail = { jobs: [pricedJob(extra)] };
+
+      applyDataFromDml(jobCardDetail, dmlPriceResponse);
+
+      const job = jobCardDetail.jobs[0];
+      // il figlio viene aggiornato con il prezzo DML...
+      expect(job.partInfo[0].originalPriceExclVat).toBe(100);
+      // ...ma il prezzo del job (fisso, a livello di workline) resta invariato
+      expect(job).toEqual(expect.objectContaining({
+        dmsOverride: true,
+        originalPriceWithVat: 150,
+        priceWithVatAfterDiscount: 150,
+        priceExclVatAfterDiscount: 125,
+      }));
+    });
+
+    test('recalculates a QE job as the sum of its children with the workline discount on top', () => {
+      const jobCardDetail = { jobs: [pricedJob({ packageType: 'QE', discountInPercentage: 10 })] };
+
+      applyDataFromDml(jobCardDetail, dmlPriceResponse);
+
+      // figli: 100 IVA esclusa / 120 IVA inclusa; sconto workline 10%
+      expect(jobCardDetail.jobs[0]).toEqual(expect.objectContaining({
+        originalPriceExclVat: 100,
+        originalPriceWithVat: 120,
+        priceExclVatAfterDiscount: 90,
+        priceWithVatAfterDiscount: 108,
+        discountInAmountOnPriceWithVat: 12,
+      }));
+    });
+
+    test('recalculates a GC job without workline discount as the sum of the discounted children', () => {
+      const jobCardDetail = { jobs: [pricedJob({ packageType: 'GC', discountInPercentage: 'n/a' })] };
+
+      applyDataFromDml(jobCardDetail, dmlPriceResponse);
+
+      expect(jobCardDetail.jobs[0]).toEqual(expect.objectContaining({
+        originalPriceWithVat: 120,
+        priceWithVatAfterDiscount: 120,
+      }));
+    });
+
     test('overwrites unitaryPriceExclVat/originalPriceExclVat/dmsDiscountPercentage/QuantityAvailable/availability on matching partInfo by PartNumber', () => {
       const jobCardDetail = {
         jobs: [
@@ -1876,7 +1974,7 @@ describe('jobCardService', () => {
       expect(jobCardDetail.jobs[0].totalPartsAmountRequested).toBeUndefined();
     });
 
-    test('recalculates roInfo.totalPrice summing all jobs when at least one job has dmsOverride=true', () => {
+    test('recalculates roInfo.totalPrice summing only CUSTOMER jobs when at least one job has dmsOverride=true', () => {
       const jobCardDetail = {
         roInfo: { jobCardSrpId: 'JCID-1' },
         jobs: [
@@ -1887,6 +1985,10 @@ describe('jobCardService', () => {
           },
           {
             paymentType: 'INTERNAL',
+            originalPriceExclVat: 50,
+            originalPriceWithVat: 61,
+            priceExclVatAfterDiscount: 50,
+            priceWithVatAfterDiscount: 61,
             partInfo: [{ partNumber: 'UNMATCHED', itemQuantity: 1, unitaryPriceExclVat: 50, vatPercentage: 22 }],
             laborInfo: [],
           },
@@ -1901,15 +2003,102 @@ describe('jobCardService', () => {
       expect(job1.dmsOverride).toBe(true);
       expect(job2.dmsOverride).toBe(false);
 
-      // roInfo.totalPrice viene comunque ricalcolato (almeno un job ha dmsOverride=true),
-      // sommando i totali CORRENTI di entrambi i job (job2 non ricalcolato, resta com'era).
+      // roInfo.totalPrice viene ricalcolato (almeno un job ha dmsOverride=true) sommando
+      // SOLO il job CUSTOMER: il job INTERNAL resta fuori dai totali complessivi e
+      // compare solo nel proprio breakdown (totalInternalWithVat).
       const { totalPrice } = jobCardDetail.roInfo;
-      expect(totalPrice.originalPriceExclVat).toBeCloseTo(job1.originalPriceExclVat + (job2.originalPriceExclVat || 0), 5);
-      expect(totalPrice.priceWithVatAfterDiscount).toBeCloseTo(job1.priceWithVatAfterDiscount + (job2.priceWithVatAfterDiscount || 0), 5);
+      expect(totalPrice.originalPriceExclVat).toBeCloseTo(job1.originalPriceExclVat, 5);
+      expect(totalPrice.originalPriceWithVat).toBeCloseTo(job1.originalPriceWithVat, 5);
+      expect(totalPrice.priceExclVatAfterDiscount).toBeCloseTo(job1.priceExclVatAfterDiscount, 5);
+      expect(totalPrice.priceWithVatAfterDiscount).toBeCloseTo(job1.priceWithVatAfterDiscount, 5);
       expect(totalPrice.totalCustomerWithVat).toBeCloseTo(job1.priceWithVatAfterDiscount, 5);
-      expect(totalPrice.totalInternalWithVat).toBeCloseTo(job2.priceWithVatAfterDiscount || 0, 5);
+      expect(totalPrice.totalInternalWithVat).toBe(61);
       expect(totalPrice.totalInsuranceWithVat).toBe(0);
       expect(totalPrice.totalManufacturerWithVat).toBe(0);
+      // roInfo.discounts assente: non viene creato.
+      expect(jobCardDetail.roInfo.discounts).toBeUndefined();
+    });
+
+    test('applies the global discount (roInfo.discounts.discountInPercentage) only on the final CUSTOMER total', () => {
+      const jobCardDetail = {
+        roInfo: { discounts: { discountInPercentage: 10, discountInAmountOnPriceWithVat: 999 } },
+        jobs: [
+          {
+            // CUSTOMER con sconto di workline gia' applicato (100 -> 90): ricalcolato dal DML
+            // solo nei figli, il totale del job resta la somma dei figli.
+            paymentType: 'CUSTOMER',
+            partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, vatPercentage: 0 }],
+            laborInfo: [],
+          },
+          {
+            // CUSTOMER non toccato dal DML, con prezzo originale assente (fallback sul prezzo scontato).
+            packageCharge: 'CUSTOMER',
+            priceExclVatAfterDiscount: 50,
+            priceWithVatAfterDiscount: 50,
+            partInfo: [],
+            laborInfo: [],
+          },
+          {
+            // MANUFACTURER: fuori dai totali complessivi e senza sconto generale.
+            paymentType: 'MANUFACTURER',
+            originalPriceWithVat: 200,
+            priceWithVatAfterDiscount: 200,
+            partInfo: [],
+            laborInfo: [],
+          },
+        ],
+      };
+
+      applyDataFromDml(jobCardDetail, {
+        WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 10 }], LaborItems: [] }],
+      });
+
+      const [job1] = jobCardDetail.jobs;
+      expect(job1.dmsOverride).toBe(true);
+      expect(job1.originalPriceWithVat).toBeCloseTo(100, 5);
+      expect(job1.priceWithVatAfterDiscount).toBeCloseTo(90, 5);
+
+      // Netto CUSTOMER = 90 + 50 = 140; originale CUSTOMER = 100 + 50 = 150;
+      // totale finale = 140 × 0,9 = 126; sconto = (150 - 140) + 140 × 0,1 = 24.
+      expect(jobCardDetail.roInfo.totalPrice).toMatchObject({
+        originalPriceExclVat: 150,
+        originalPriceWithVat: 150,
+        priceExclVatAfterDiscount: 126,
+        priceWithVatAfterDiscount: 126,
+        totalCustomerWithVat: 126,
+        totalManufacturerWithVat: 200,
+        totalInternalWithVat: 0,
+        totalInsuranceWithVat: 0,
+      });
+      expect(jobCardDetail.roInfo.discounts).toEqual({
+        discountInPercentage: 10,
+        discountInAmountOnPriceWithVat: 24,
+      });
+      // Lo sconto generale non entra mai nei singoli job.
+      expect(job1.discountInPercentage).toBeUndefined();
+      expect(job1.priceWithVatAfterDiscount).toBeCloseTo(90, 5);
+    });
+
+    test('treats a non-numeric or out-of-range global discount as 0..100', () => {
+      const build = (discountInPercentage) => ({
+        roInfo: { discounts: { discountInPercentage } },
+        jobs: [{
+          paymentType: 'CUSTOMER',
+          partInfo: [{ partNumber: 'P1', itemQuantity: 1, unitaryPriceExclVat: 100, vatPercentage: 0 }],
+          laborInfo: [],
+        }],
+      });
+      const dml = { WorkLines: [{ PartsItem: [{ PartNumber: 'P1', OriginalPriceExclVAT: 100, DiscountPercentage: 0 }], LaborItems: [] }] };
+
+      const invalid = build('abc');
+      applyDataFromDml(invalid, dml);
+      expect(invalid.roInfo.totalPrice.priceWithVatAfterDiscount).toBe(100);
+      expect(invalid.roInfo.discounts.discountInAmountOnPriceWithVat).toBe(0);
+
+      const tooHigh = build(150);
+      applyDataFromDml(tooHigh, dml);
+      expect(tooHigh.roInfo.totalPrice.priceWithVatAfterDiscount).toBe(0);
+      expect(tooHigh.roInfo.discounts.discountInAmountOnPriceWithVat).toBe(100);
     });
 
     test('uses job.packageCharge as payment type fallback when job.paymentType is not set', () => {
@@ -2106,7 +2295,7 @@ describe('jobCardService', () => {
       const result = await getDataFromDMLFromTmp('79');
 
       expect(getCacheItem).toHaveBeenCalledWith('jobcard:jobcarddetails:79');
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-1', VehicleID: 'VIN1' }),
       }));
       expect(result.jobCardDetail.jobs[0].partInfo[0]).toEqual(expect.objectContaining({
@@ -2128,10 +2317,75 @@ describe('jobCardService', () => {
 
       const result = await getDataFromDMLFromTmp('80');
 
-      expect(postDmsInquiry).toHaveBeenCalledWith('DML-TOKEN', expect.objectContaining({
+      expect(callService).toHaveBeenCalledWith('dms', 'inquiry', expect.objectContaining({
         PartsInquiryHeader: expect.objectContaining({ DocumentID: 'JCID-2', VehicleID: 'VIN2' }),
       }));
       expect(result).toEqual({ dmsAvailable: true, ...jobCardDetail });
+    });
+  });
+
+  describe('getDealerConfiguration', () => {
+    test('calls getVehicleInspection(market) and getPackageListHQ(market) when the market is not SM-enabled, grouping by type/domainDescr', async () => {
+      callService.mockImplementation((service, operation) => {
+        if (operation === 'getVehicleInspection') {
+          return Promise.resolve([
+            { id: 1, type: 'EXTERIOR', descr: 'Carrozzeria' },
+            { id: 2, type: 'EXTERIOR', descr: 'Vetri' },
+            { id: 3, type: 'INTERIOR', descr: 'Sedili' },
+          ]);
+        }
+        if (operation === 'checkIsPkMarketEnabled') return Promise.resolve(0);
+        if (operation === 'getPackageListHQ') {
+          return Promise.resolve([
+            { idpackage: 10, domainDescr: 'Tagliando' },
+            { idpackage: 11, domainDescr: 'Freni' },
+          ]);
+        }
+        throw new Error(`unexpected operation ${operation}`);
+      });
+
+      const result = await getDealerConfiguration('1000', '00006821');
+
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getVehicleInspection', { args: ['1000'] });
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'checkIsPkMarketEnabled', { args: ['1000'] });
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getPackageListHQ', { args: ['1000'] });
+      expect(callService).not.toHaveBeenCalledWith('dbmanager', 'getPackageListSM', expect.anything());
+
+      expect(result).toEqual({
+        EXTERIOR: [
+          { id: 1, type: 'EXTERIOR', descr: 'Carrozzeria' },
+          { id: 2, type: 'EXTERIOR', descr: 'Vetri' },
+        ],
+        INTERIOR: [{ id: 3, type: 'INTERIOR', descr: 'Sedili' }],
+        package: {
+          Tagliando: [{ idpackage: 10, domainDescr: 'Tagliando' }],
+          Freni: [{ idpackage: 11, domainDescr: 'Freni' }],
+        },
+      });
+    });
+
+    test('calls getPackageListSM(market, oic) when the market is SM-enabled', async () => {
+      callService.mockImplementation((service, operation) => {
+        if (operation === 'getVehicleInspection') return Promise.resolve([]);
+        if (operation === 'checkIsPkMarketEnabled') return Promise.resolve(1);
+        if (operation === 'getPackageListSM') {
+          return Promise.resolve([{ idpackage: 20, domainDescr: 'Revisione' }]);
+        }
+        throw new Error(`unexpected operation ${operation}`);
+      });
+
+      const result = await getDealerConfiguration('1000', '00006821');
+
+      expect(callService).toHaveBeenCalledWith('dbmanager', 'getPackageListSM', { args: ['1000', '00006821'] });
+      expect(callService).not.toHaveBeenCalledWith('dbmanager', 'getPackageListHQ', expect.anything());
+      expect(result).toEqual({
+        package: { Revisione: [{ idpackage: 20, domainDescr: 'Revisione' }] },
+      });
+    });
+
+    test('throws when market is missing, without calling dbManager', async () => {
+      await expect(getDealerConfiguration(undefined, '00006821')).rejects.toThrow('[jobCard] market is required');
+      expect(callService).not.toHaveBeenCalled();
     });
   });
 });

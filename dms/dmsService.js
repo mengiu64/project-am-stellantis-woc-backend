@@ -1,6 +1,6 @@
 'use strict';
 
-const path = require('path');
+const { callService } = require('../serviceClient');
 const { URL } = require('url');
 const { randomUUID } = require('crypto');
 const { httpsRequest } = require('./httpClient');
@@ -17,24 +17,6 @@ const DML_CONFIG_RETRY_DELAY_MS = 300;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-// Cache in memoria (per l'intero ciclo di vita del container Lambda "caldo") del
-// repository usato per leggere config/brandowner.json da S3 — vedi buildApplicationArea().
-// Creato al primo utilizzo (nessun costo se il lookup non scatta mai).
-let cachedBrandOwnerRepository;
-
-function getBrandOwnerRepository() {
-  if (!cachedBrandOwnerRepository) {
-    const { S3ConfigRepository } = require(path.resolve(__dirname, '../v360/s3ConfigRepository'));
-    cachedBrandOwnerRepository = new S3ConfigRepository();
-  }
-  return cachedBrandOwnerRepository;
-}
-
-/** Resetta la cache del repository brand owner (solo per i test). */
-function _resetBrandOwnerRepository() {
-  cachedBrandOwnerRepository = undefined;
 }
 
 /**
@@ -262,13 +244,8 @@ function validateTypeSection(body, messageType) {
  * blocchi la costruzione del Sender: buildApplicationArea() ricade comunque
  * sui default statici di config.sender per i campi mancanti.
  *
- * NB: richiede in-process, come cartelle sorelle, session/src (+ myPeople +
- * dmlConfigSync, di cui session dipende) e v360/ — sia i chiamanti esterni
- * (jobcard, pkFavorite, pkManager) sia la lambda dms stessa (index.js
- * ::resolveInquirySender, chiamata SEMPRE per l'azione "inquiry", senza che
- * il chiamante debba risolvere/passare il Sender esplicitamente) devono
- * quindi impacchettarle (Makefile, Metadata: BuildMethod: makefile in
- * template.yaml), esattamente come già fanno con dms/dbManager.
+ * Sessione e brand vengono risolti via REST IAM dai servizi proprietari:
+ * cache, pool e credenziali non vengono copiati nel pacchetto dms.
  *
  * @param {{ username?: string, vin?: string }} [identifiers]
  * @param {object} [overrides] - campi già noti/espliciti (mainSincom/market/
@@ -283,8 +260,7 @@ async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
   const needsSessionFields = !result.mainSincom || !result.market || !result.language || !result.dealerCountryCode;
   if (username && needsSessionFields) {
     try {
-      const { getCachedSessionContext } = require(path.resolve(__dirname, '../session/src/sessionContextCache'));
-      const resolved = await getCachedSessionContext(username);
+      const resolved = await callService('session', 'getContext', { args: [username] });
       result.mainSincom = result.mainSincom || resolved.mainSincom;
       result.market = result.market || resolved.market;
       result.language = result.language || resolved.language;
@@ -296,8 +272,7 @@ async function resolveDynamicSenderFields(identifiers = {}, overrides = {}) {
 
   if (!result.brand && vin) {
     try {
-      const { getCachedBrand } = require(path.resolve(__dirname, '../v360/v360Service'));
-      const brand = await getCachedBrand(vin);
+      const brand = await callService('v360', 'getBrand', { args: [vin] });
       if (brand) result.brand = brand;
     } catch (err) {
       console.warn(`[dms] impossibile risolvere il brand da v360 per vin="${vin}": ${err.message}`);
@@ -395,24 +370,20 @@ async function buildApplicationArea(senderOverrides = {}) {
   } = senderOverrides || {};
   if (dealerNumberId && market && brand) {
     try {
-      const { getPool } = require(path.resolve(__dirname, '../dbManager/db'));
-      const { getPhysicalSiteAndSincom } = require(path.resolve(__dirname, '../dbManager/AnagSnowflakesRepository'));
-      const pool = await getPool();
       const {
         physicalSiteId, dealerNumberIdSource, dealerArcadCode, arcadBrand,
-      } = await getPhysicalSiteAndSincom(pool, {
+      } = await callService('dbmanager', 'getPhysicalSiteAndSincom', { args: [{
         mainSincom: dealerNumberId,
         market,
         brand,
         pairedOicCode,
-      });
+      }] });
       if (physicalSiteId) s.physicalSiteId = physicalSiteId;
       if (dealerNumberIdSource) s.dealerNumberIdSource = dealerNumberIdSource;
 
       if (arcadBrand && dealerArcadCode) {
         try {
-          const brandOwnerRepository = getBrandOwnerRepository();
-          const brandOwners = await brandOwnerRepository.getBrandOwners();
+          const brandOwners = await callService('v360', 'getBrandOwners');
           const brandOwner = brandOwners.find((entry) => entry.codbrand === arcadBrand);
           if (brandOwner && brandOwner.owner === 'XP') s.dealerNumberIdSource = dealerArcadCode;
         } catch (ownerErr) {
@@ -690,7 +661,6 @@ module.exports = {
   validateTypeSection,
   buildUpSellingPackages,
   buildWorkLines,
-  _resetBrandOwnerRepository,
 };
 
 /**
