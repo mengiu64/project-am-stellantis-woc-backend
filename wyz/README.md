@@ -12,7 +12,7 @@ L'azione è l'ultimo segmento del path (es. `/api/wyz/searchQuote`) oppure `even
 
 Chiama in parallelo `vehicle-brands`, `vehicle-types`, `brands`, `seasons` e restituisce un unico oggetto normalizzato per le dropdown.
 
-Input: `customerRrdiCode` (string, obbligatorio), `hubCode` (string, obbligatorio) — usati dall'endpoint `brands`.
+Input: `customerRrdiCode` (string, obbligatorio), `hubCode` (string, obbligatorio) — inoltrati come query parameter agli endpoint `brands` e `vehicle-types`.
 
 ```json
 {
