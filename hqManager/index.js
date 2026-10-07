@@ -249,17 +249,17 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'setDomain') {
-      await manager.setDomain(market, iddomain, descr);
+      await manager.setDomain(market, iddomain, descr, event);
       return response(200, { success: true, market, iddomain, descr });
     }
 
     if (action === 'deleteDomain') {
-      await manager.deleteDomain(market, iddomain);
+      await manager.deleteDomain(market, iddomain, event);
       return response(200, { success: true, market, iddomain });
     }
 
     if (action === 'setDomainVisible') {
-      await manager.setDomainVisible(body);
+      await manager.setDomainVisible(body, event);
       return response(200, { success: true, domain: body.domain });
     }
 

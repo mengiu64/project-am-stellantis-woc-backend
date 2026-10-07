@@ -372,19 +372,29 @@ class HqManager {
    * @param {string} market
    * @param {number} iddomain
    * @param {string} descr
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   username e market dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async setDomain(market, iddomain, descr) {
-    return repository.setDomain(market, iddomain, descr);
+  async setDomain(market, iddomain, descr, event = {}) {
+    const username = await resolveUsername(event);
+    const codmarket = await resolveCodmarket(event);
+
+    return repository.setDomain(market, iddomain, descr, username, codmarket);
   }
 
   /**
    * @param {string} market
    * @param {number} iddomain
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   username e market dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async deleteDomain(market, iddomain) {
-    return repository.deleteDomain(market, iddomain);
+  async deleteDomain(market, iddomain, event = {}) {
+    const username = await resolveUsername(event);
+    const codmarket = await resolveCodmarket(event);
+
+    return repository.deleteDomain(market, iddomain, username, codmarket);
   }
 
   /**
@@ -392,16 +402,21 @@ class HqManager {
    * { iddomain, value } dell'array presente in payload.domain, in sequenza.
    *
    * @param {{ domain: Array<{ iddomain: number, value: number }> }} payload
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   username e market dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async setDomainVisible(payload) {
+  async setDomainVisible(payload, event = {}) {
     const domain = payload && payload.domain;
     if (!Array.isArray(domain) || domain.length === 0) {
       throw new Error('"domain" is required');
     }
 
+    const username = await resolveUsername(event, payload);
+    const codmarket = await resolveCodmarket(event, payload);
+
     for (const { iddomain, value } of domain) {
-      await repository.setDomainVisible(iddomain, value);
+      await repository.setDomainVisible(iddomain, value, username, codmarket);
     }
   }
 

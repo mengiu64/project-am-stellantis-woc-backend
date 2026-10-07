@@ -43,8 +43,6 @@ describe('HqManager — consumer REST', () => {
     ['setMarketDisable', ['1000'], 'setPkMarketDisable'],
     ['checkIsPkMarketEnabled', ['1000'], 'checkIsPkMarketEnabled'],
     ['insertDomain', ['1000', 'Meccanica'], 'insertDomain'],
-    ['setDomain', ['1000', 42, 'Meccanica'], 'setDomain'],
-    ['deleteDomain', ['1000', 42], 'deleteDomain'],
     ['insertPackage', ['1000', '00006821', 42, 'Tagliando', 60, 100.5], 'insertPackage'],
     ['setPackage', [7, 42, 'Tagliando', 60, 100.5], 'setPackage'],
     ['deletePackage', [7], 'deletePackage'],
@@ -284,7 +282,6 @@ describe('HqManager — consumer REST', () => {
   });
 
   test.each([
-    ['setDomainVisible', 'domain', 'iddomain'],
     ['setPackageVisible', 'package', 'idpackage'],
   ])('%s invoca una REST per elemento', async (method, key, idKey) => {
     await manager[method]({ [key]: [{ [idKey]: 7, value: 0 }, { [idKey]: 8, value: 1 }] });
@@ -292,6 +289,20 @@ describe('HqManager — consumer REST', () => {
       ['dbmanager', method, { args: [7, 0] }],
       ['dbmanager', method, { args: [8, 1] }],
     ]);
+  });
+
+  test.each([
+    ['setDomain', ['1000', 42, 'Meccanica'], ['1000', 42, 'Meccanica']],
+    ['deleteDomain', ['1000', 42], ['1000', 42]],
+    ['setDomainVisible', [{ domain: [{ iddomain: 7, value: 0 }] }], [7, 0]],
+  ])('%s passa username e codmarket dell\'audit dalla sessione autenticata', async (method, args, repoArgs) => {
+    callService.mockImplementation(async (service) => service === 'session'
+      ? { firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' }
+      : undefined);
+    await manager[method](...args, event);
+    expect(callService).toHaveBeenLastCalledWith('dbmanager', method, {
+      args: [...repoArgs, 'Mario Rossi', '1000'],
+    });
   });
 
   test.each([

@@ -900,12 +900,18 @@ describe('HqRepository', () => {
     it('runs the UPDATE with the given market/iddomain/descr', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setDomain(pool, '1000', 42, 'Meccanica');
+      await setDomain(pool, '1000', 42, 'Meccanica', 'Mario Rossi', '1000');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('UPDATE woc.hq_pk_domain'),
         ['1000', 42, 'Meccanica'],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'update', 'updated Meccanica '],
       );
     });
   });
@@ -919,16 +925,24 @@ describe('HqRepository', () => {
     });
 
     it('runs the UPDATE SET deleted = 1 with the given market/iddomain', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
+      const pool = makePool(async (sql) => (sql.includes('SELECT descr')
+        ? { rows: [{ descr: 'Meccanica' }] }
+        : { rows: [] }));
 
-      await deleteDomain(pool, '1000', 42);
+      await deleteDomain(pool, '1000', 42, 'Mario Rossi', '1000');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('UPDATE woc.hq_pk_domain'),
         ['1000', 42],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SET deleted = 1'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'delete', 'deleted Meccanica '],
+      );
     });
   });
 
@@ -943,14 +957,20 @@ describe('HqRepository', () => {
     it('runs the UPDATE SET visible = value with the given iddomain', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setDomainVisible(pool, 7, 0);
+      await setDomainVisible(pool, 7, 0, 'Mario Rossi', '1000');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('UPDATE woc.hq_pk_domain'),
         [7, 0],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SET visible = $2'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'update', 'setDomainVisible  '],
+      );
     });
   });
 
@@ -1185,10 +1205,24 @@ describe('HqRepository', () => {
       expect(pool.connect).not.toHaveBeenCalled();
     });
 
-    it('throws when marketOrig is missing', async () => {
-      const { pool } = makeClientPool();
-      await expect(clonePk(pool, '2000', undefined)).rejects.toThrow('"marketOrig" is required');
-      expect(pool.connect).not.toHaveBeenCalled();
+    it.each([[undefined], [null], ['']])('clones common rows (market NULL or empty) when marketOrig is %p', async (marketOrig) => {
+      const { pool, client } = makeClientPool(async (sql) => {
+        if (sql.includes('SELECT iddomain, descr FROM woc.hq_pk_domain')) {
+          return { rows: [{ iddomain: 10, descr: 'Meccanica' }] };
+        }
+        if (sql.includes('INSERT INTO woc.hq_pk_domain')) return { rows: [{ iddomain: 99 }] };
+        return { rows: [] };
+      });
+
+      await clonePk(pool, '2000', marketOrig);
+
+      const selects = client.query.mock.calls.filter(([sql]) => sql.startsWith('SELECT'));
+      expect(selects).toHaveLength(2);
+      for (const [sql, params] of selects) {
+        expect(sql).toContain("(market IS NULL OR market = '')");
+        expect(params).toEqual([]);
+      }
+      expect(client.query).toHaveBeenCalledWith('COMMIT');
     });
 
     it('clones hq_pk_domain (once per market)/hq_pk_packages from marketOrig to marketTarget in a single transaction, remapping iddomain (no hq_pk_oic involved)', async () => {

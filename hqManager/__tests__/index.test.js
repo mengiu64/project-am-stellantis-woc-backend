@@ -226,7 +226,7 @@ describe('hqManager/index.js', () => {
         body: { market: '3110', iddomain: 42, descr: 'Meccanica' },
       });
 
-      expect(instance.setDomain).toHaveBeenCalledWith('3110', 42, 'Meccanica');
+      expect(instance.setDomain).toHaveBeenCalledWith('3110', 42, 'Meccanica', expect.any(Object));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42, descr: 'Meccanica' });
     });
@@ -241,7 +241,7 @@ describe('hqManager/index.js', () => {
         body: { market: '3110', iddomain: 42 },
       });
 
-      expect(instance.deleteDomain).toHaveBeenCalledWith('3110', 42);
+      expect(instance.deleteDomain).toHaveBeenCalledWith('3110', 42, expect.any(Object));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42 });
     });
@@ -254,7 +254,7 @@ describe('hqManager/index.js', () => {
       const domain = [{ iddomain: 7, value: 0 }, { iddomain: 8, value: 1 }];
       const res = await handler({ action: 'setDomainVisible', body: { domain } });
 
-      expect(instance.setDomainVisible).toHaveBeenCalledWith({ domain });
+      expect(instance.setDomainVisible).toHaveBeenCalledWith({ domain }, expect.any(Object));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, domain });
     });
