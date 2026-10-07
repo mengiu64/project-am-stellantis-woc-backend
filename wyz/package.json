@@ -1,0 +1,76 @@
+{
+  "name": "wyz",
+  "version": "1.0.0",
+  "description": "Wyz lambda - wrapper REST verso Wyz Tyre search (OAuth2 client_credentials)",
+  "main": "index.js",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "jest --testEnvironment=node",
+    "test:coverage": "jest --testEnvironment=node --coverage --ci --outputFile=coverage/jest-results.json"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1083.0",
+    "@aws-sdk/client-secrets-manager": "^3.800.0",
+    "@aws-sdk/client-ssm": "^3.800.0",
+    "@aws-sdk/lib-dynamodb": "^3.1083.0"
+  },
+  "devDependencies": {
+    "jest": "^30.5.2",
+    "jest-html-reporters": "^3.1.7"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "authService.js",
+      "httpClient.js",
+      "wyzService.js",
+      "config.js",
+      "secretsLoader.js",
+      "dynamoCache.js",
+      "index.js"
+    ],
+    "coverageReporters": [
+      "html",
+      "text",
+      "lcov",
+      "json-summary",
+      "cobertura"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    },
+    "reporters": [
+      "default",
+      [
+        "jest-html-reporters",
+        {
+          "publicPath": "./coverage",
+          "filename": "test-report.html",
+          "openReport": false,
+          "includeConsoleLog": true,
+          "includeFailureMsg": true,
+          "expand": true
+        }
+      ]
+    ]
+  },
+  "overrides": {
+    "@istanbuljs/load-nyc-config": {
+      "js-yaml": "^4.3.2"
+    }
+  }
+}
