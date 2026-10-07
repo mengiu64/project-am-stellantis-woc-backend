@@ -43,7 +43,7 @@ async function getSecretValue(secretArn) {
 
 /**
  * Carica le credenziali Wyz (SSM → Secrets Manager) con cache in memoria.
- * Chiavi obbligatorie: WYZ_CLIENT_ID, WYZ_CLIENT_SECRET.
+ * Chiavi obbligatorie: WYZ_IBM_CLIENT_ID, WYZ_IBM_CLIENT_SECRET.
  * Chiavi opzionali: WYZ_BASE_URL, WYZ_IAM_BASE_URL, WYZ_TENANT (override dei default preprod).
  * @returns {Promise<object>}
  * @throws {Error} se WYZ_PARAM_NAME manca, o parametro/secret non sono recuperabili/completi
@@ -67,7 +67,7 @@ async function loadSecrets() {
   const secrets = await getSecretValue(secretArn);
 
   // Validazione delle chiavi obbligatorie
-  const requiredKeys = ['WYZ_CLIENT_ID', 'WYZ_CLIENT_SECRET'];
+  const requiredKeys = ['WYZ_IBM_CLIENT_ID', 'WYZ_IBM_CLIENT_SECRET'];
   const missingKeys = requiredKeys.filter((k) => !secrets[k]);
   if (missingKeys.length > 0) {
     throw new Error(`[secrets] Chiavi mancanti nel secret: ${missingKeys.join(', ')}`);

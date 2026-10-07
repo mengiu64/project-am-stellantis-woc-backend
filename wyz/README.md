@@ -56,11 +56,13 @@ Secret Manager (`sm-np-bsn0027990-<env>-wyz`, prod `sm-bsn0027990-wyz`), JSON:
 
 | Chiave | Obbligatoria | Default |
 |---|---|---|
-| `WYZ_CLIENT_ID` | sì | — (preprod: `wi-advisor`) |
-| `WYZ_CLIENT_SECRET` | sì | — |
+| `WYZ_IBM_CLIENT_ID` | sì | — (preprod: `wi-advisor`) |
+| `WYZ_IBM_CLIENT_SECRET` | sì | — |
 | `WYZ_BASE_URL` | no | `https://api-preprod.wyzexchange.com` |
 | `WYZ_IAM_BASE_URL` | no | `https://preprod-iam.wyzexchange.com` |
 | `WYZ_TENANT` | no | `STA` |
+
+In locale, usare gli stessi nomi `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET` nel file `.env` o nelle variabili d'ambiente.
 
 In **stage/prod** impostare gli URL/tenant di produzione nel secret. Parametro SSM e secret vanno creati fuori banda.
 Il parametro `partner=WIADVISOR` è aggiunto dalla lambda; `X-Correlation-Id` = `requestContext.requestId`.
