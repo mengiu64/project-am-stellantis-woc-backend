@@ -96,7 +96,7 @@ Parameters:
 
   AuroraAutoStartClusterIdentifier:
     Type: String
-    Default: rds-np-bsn0027990-stage-aurora-migrated-20261002
+    Default: rds-np-bsn0027990-stage-aurora
     Description: >-
       Identificativo del cluster Aurora stage attivo. Se vuoto, usa
       il nome standard del cluster dell'ambiente.
@@ -669,11 +669,21 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-pkdocsoa-config-*"
+        # functionServiceDb (woc.listfunctions): secret Aurora applicativo con
+        # credenziali e proxyhost/proxyport/proxydbname dell'RDS Proxy.
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-pkdocsoa-config"
           DOCSOA_CERT_SECRET_ID:    !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
           DOCSOA_KEY_SECRET_ID:     !Sub "sm-np-bsn0027990-${Environment}-apic-key"
+          DOCSOA_DB_SECRET_ID:      !Ref DocsoaDbSecretId
 
   PkDocsoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -1009,8 +1019,12 @@ Resources:
   # nessun errore se già avviato manualmente prima dello scheduling).
   # Deployata SOLO per l'ambiente stage (Condition: IsStage): l'ambiente dev resta
   # sempre acceso (nessuno spegnimento automatico osservato), prod non è gestito da
-  # questo scheduler. L'identificativo può essere specificato dopo una migrazione
-  # tramite AuroraAutoStartClusterIdentifier (default: cluster migrato di stage).
+  # questo scheduler. Il cluster è indicato dal parametro AuroraAutoStartClusterIdentifier
+  # (default: rds-np-bsn0027990-stage-aurora; se vuoto: rds-np-bsn0027990-${Environment}-aurora).
+  # Attenzione: su uno stack esistente sam deploy riusa il valore già salvato del parametro
+  # (UsePreviousValue) se non è passato in --parameter-overrides: il Default si applica
+  # solo se lo stack non ha ancora il parametro. Per questo il job deploy-stage di
+  # .github/workflows/unit-tests.yml lo passa sempre in modo esplicito.
   AuroraAutoStartFunction:
     Type: AWS::Serverless::Function
     Condition: IsStage

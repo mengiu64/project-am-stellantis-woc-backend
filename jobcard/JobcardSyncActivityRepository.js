@@ -6,15 +6,20 @@
  *
  * Ad ogni saveJobcard, PRIMA dell'invio a DGT, jobcard registra il payload con un
  * UPSERT su jobcardid:
- *   - INSERT: jobcardid, creationdate (= now()), payload
- *   - UPDATE (jobcardid già presente): solo payload
+ *   - INSERT: jobcardid, creationdate (= now()), payload (djcsynch NULL)
+ *   - UPDATE (jobcardid già presente): payload, con djcsynch azzerato a NULL
+ *     (esito del nuovo invio non ancora noto)
+ * DOPO l'invio, recordDjcSynch registra in djcsynch l'esito della chiamata a
+ * DGT: true se DGT risponde success: true, false altrimenti (success diverso
+ * da true o errore token/HTTP/rete).
  * ack/techreason/businessreason/lastupdate sono popolati in un secondo momento
  * (esito della sincronizzazione, da synch-status), non da questa lambda, che
- * li legge soltanto (getSyncStatus) per restituirli nelle risposte di
- * jobCardDetails e saveJobcard come ack/techReason/businessReason.
- * getLastPayload rilegge il payload registrato, insieme ad ack/techreason/
- * businessreason della stessa riga (azione GET "lastPayload"), per recuperare
- * le modifiche inviate quando l'aggiornamento verso DJC/DGT fallisce.
+ * li legge soltanto (getSyncStatus), insieme a djcsynch, per restituirli nelle
+ * risposte di jobCardDetails e saveJobcard come djcsynch/ack/techReason/
+ * businessReason.
+ * getLastPayload rilegge il payload registrato, insieme a djcsynch/ack/
+ * techreason/businessreason della stessa riga (azione GET "lastPayload"), per
+ * recuperare le modifiche inviate quando l'aggiornamento verso DJC/DGT fallisce.
  *
  * Copia di djc/JobcardSyncActivityRepository.js, mantenuta in sync, salvo
  * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload (solo jobcard).
@@ -23,23 +28,29 @@
 const UPSERT_SQL = `
   INSERT INTO woc.jobcard_sync_activity (jobcardid, creationdate, payload)
   VALUES ($1, now(), $2::jsonb)
-  ON CONFLICT (jobcardid) DO UPDATE SET payload = EXCLUDED.payload
+  ON CONFLICT (jobcardid) DO UPDATE SET payload = EXCLUDED.payload, djcsynch = NULL
   RETURNING jobcardid, creationdate`;
 
+const UPDATE_DJC_SYNCH_SQL = `
+  UPDATE woc.jobcard_sync_activity
+  SET djcsynch = $2
+  WHERE jobcardid = $1
+  RETURNING jobcardid, djcsynch`;
+
 const SELECT_SYNC_STATUS_SQL = `
-  SELECT ack, techreason, businessreason
+  SELECT djcsynch, ack, techreason, businessreason
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
 
 const SELECT_LAST_PAYLOAD_SQL = `
-  SELECT jobcardid, ack, techreason, businessreason, payload
+  SELECT jobcardid, djcsynch, ack, techreason, businessreason, payload
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
 
-// Attesa massima della lettura dell'esito (best-effort): un DB lento o
-// irraggiungibile non deve bloccare la risposta di jobCardDetails/saveJobcard
-// (stesso limite di 5 s di connectionTimeoutMillis/statement_timeout usato negli
-// altri moduli).
+// Attesa massima della lettura dell'esito e della scrittura di djcsynch
+// (best-effort): un DB lento o irraggiungibile non deve bloccare la risposta di
+// jobCardDetails/saveJobcard (stesso limite di 5 s di connectionTimeoutMillis/
+// statement_timeout usato negli altri moduli).
 const SYNC_STATUS_TIMEOUT_MS = 5000;
 
 // Ordine di priorità dell'identificativo della jobcard in roInfo (almeno uno
@@ -61,6 +72,28 @@ function resolveJobCardId(payload) {
     }
   }
   return null;
+}
+
+/**
+ * Attende promise al massimo timeoutMs ms, poi rifiuta con "timeout dopo
+ * <timeoutMs> ms" (l'operazione sottostante non viene annullata). Il timer non
+ * trattiene l'event loop e viene sempre cancellato.
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} timeoutMs
+ * @returns {Promise<T>}
+ */
+async function withTimeout(promise, timeoutMs) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`timeout dopo ${timeoutMs} ms`)), timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -96,14 +129,62 @@ async function recordSyncActivity(payload, { getPool } = {}) {
 }
 
 /**
+ * UPDATE di djcsynch per jobcardid.
+ * @param {import('pg').Pool} pool
+ * @param {string} jobCardId
+ * @param {boolean} djcsynch
+ * @returns {Promise<{jobcardid: string, djcsynch: boolean}|null>} la riga
+ *          aggiornata, o null se la jobcard non è presente
+ */
+async function updateDjcSynch(pool, jobCardId, djcsynch) {
+  const { rows } = await pool.query(UPDATE_DJC_SYNCH_SQL, [jobCardId, djcsynch]);
+  return rows[0] ?? null;
+}
+
+/**
+ * Registra in djcsynch l'esito della chiamata saveJobcard verso DGT: true solo
+ * se djcsynch === true (DGT ha risposto success: true), altrimenti false.
+ * Best-effort, a differenza di recordSyncActivity: il payload è già stato
+ * inviato a DGT, quindi id assente, riga inesistente, errori DB o attesa oltre
+ * SYNC_STATUS_TIMEOUT_MS vengono solo loggati e non fanno fallire la risposta.
+ * @param {string|number|null|undefined} jobCardId
+ * @param {boolean} djcsynch
+ * @param {object} [deps]
+ * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
+ * @param {number} [deps.timeoutMs] - attesa massima in ms (iniettabile nei test)
+ * @returns {Promise<boolean>} true se djcsynch è stato aggiornato
+ */
+async function recordDjcSynch(jobCardId, djcsynch, { getPool, timeoutMs = SYNC_STATUS_TIMEOUT_MS } = {}) {
+  const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
+  if (!id) return false;
+
+  const value = djcsynch === true;
+  try {
+    const resolveGetPool = getPool ?? require('./db').getPool;
+    const row = await withTimeout((async () => updateDjcSynch(await resolveGetPool(), id, value))(), timeoutMs);
+    if (!row) {
+      console.warn(`[jobCard] jobcard_sync_activity aggiornamento djcsynch: jobcardid=${id} non presente`);
+      return false;
+    }
+    console.log(`[jobCard] jobcard_sync_activity djcsynch=${value} jobcardid=${id}`);
+    return true;
+  } catch (err) {
+    console.warn(`[jobCard] jobcard_sync_activity aggiornamento djcsynch fallito jobcardid=${id}: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Converte una riga di woc.jobcard_sync_activity nei campi della risposta
- * (camelCase). Riga assente o valori NULL (esito non ancora popolato da
- * synch-status) diventano stringa vuota.
- * @param {{ack?: string|null, techreason?: string|null, businessreason?: string|null}|null} [row]
- * @returns {{ack: string, techReason: string, businessReason: string}}
+ * (camelCase). Riga assente o valori NULL (esito non ancora popolato) diventano
+ * null per djcsynch e stringa vuota per ack/techReason/businessReason.
+ * @param {{djcsynch?: boolean|null, ack?: string|null, techreason?: string|null,
+ *          businessreason?: string|null}|null} [row]
+ * @returns {{djcsynch: boolean|null, ack: string, techReason: string, businessReason: string}}
  */
 function toSyncStatus(row) {
   return {
+    djcsynch: row?.djcsynch ?? null,
     ack: row?.ack ?? '',
     techReason: row?.techreason ?? '',
     businessReason: row?.businessreason ?? '',
@@ -111,11 +192,11 @@ function toSyncStatus(row) {
 }
 
 /**
- * SELECT di ack/techreason/businessreason per jobcardid.
+ * SELECT di djcsynch/ack/techreason/businessreason per jobcardid.
  * @param {import('pg').Pool} pool
  * @param {string} jobCardId
- * @returns {Promise<{ack: string|null, techreason: string|null, businessreason: string|null}|null>}
- *          la riga, o null se la jobcard non è presente
+ * @returns {Promise<{djcsynch: boolean|null, ack: string|null, techreason: string|null,
+ *          businessreason: string|null}|null>} la riga, o null se la jobcard non è presente
  */
 async function selectSyncStatus(pool, jobCardId) {
   const { rows } = await pool.query(SELECT_SYNC_STATUS_SQL, [jobCardId]);
@@ -123,46 +204,38 @@ async function selectSyncStatus(pool, jobCardId) {
 }
 
 /**
- * Legge l'esito della sincronizzazione della jobcard (ack/techreason/
- * businessreason di woc.jobcard_sync_activity, per jobcardid) da restituire
- * nelle risposte di jobCardDetails/saveJobcard. Best-effort: id assente, riga
- * inesistente, valori NULL, errori DB o attesa oltre SYNC_STATUS_TIMEOUT_MS
- * producono stringhe vuote; l'errore viene solo loggato e non fa fallire la
- * risposta.
+ * Legge l'esito della jobcard (djcsynch/ack/techreason/businessreason di
+ * woc.jobcard_sync_activity, per jobcardid) da restituire nelle risposte di
+ * jobCardDetails/saveJobcard. Best-effort: id assente, riga inesistente,
+ * valori NULL, errori DB o attesa oltre SYNC_STATUS_TIMEOUT_MS producono
+ * djcsynch null e stringhe vuote; l'errore viene solo loggato e non fa
+ * fallire la risposta.
  * @param {string|number|null|undefined} jobCardId
  * @param {object} [deps]
  * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
  * @param {number} [deps.timeoutMs] - attesa massima in ms (iniettabile nei test)
- * @returns {Promise<{ack: string, techReason: string, businessReason: string}>}
+ * @returns {Promise<{djcsynch: boolean|null, ack: string, techReason: string, businessReason: string}>}
  */
 async function getSyncStatus(jobCardId, { getPool, timeoutMs = SYNC_STATUS_TIMEOUT_MS } = {}) {
   const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
   if (!id) return toSyncStatus(null);
 
-  let timer;
   try {
     const resolveGetPool = getPool ?? require('./db').getPool;
-    const read = (async () => selectSyncStatus(await resolveGetPool(), id))();
-    const timeout = new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`timeout dopo ${timeoutMs} ms`)), timeoutMs);
-      timer.unref?.();
-    });
-    return toSyncStatus(await Promise.race([read, timeout]));
+    return toSyncStatus(await withTimeout((async () => selectSyncStatus(await resolveGetPool(), id))(), timeoutMs));
   } catch (err) {
     console.warn(`[jobCard] jobcard_sync_activity lettura esito fallita jobcardid=${id}: ${err.message}`);
     return toSyncStatus(null);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
 /**
- * Aggiunge ack/techReason/businessReason (v. getSyncStatus) al body della
- * risposta: subito prima di jobCardDetail quando presente (jobCardDetails),
- * altrimenti in coda (saveJobcard). Un body non oggetto viene restituito
- * invariato.
+ * Aggiunge djcsynch/ack/techReason/businessReason (v. getSyncStatus) al body
+ * della risposta: subito prima di jobCardDetail quando presente
+ * (jobCardDetails), altrimenti in coda (saveJobcard). Un body non oggetto
+ * viene restituito invariato.
  * @param {object} body - risposta DGT (eventualmente già arricchita)
- * @param {{ack: string, techReason: string, businessReason: string}} syncStatus
+ * @param {{djcsynch: boolean|null, ack: string, techReason: string, businessReason: string}} syncStatus
  * @returns {object} nuovo body con i campi dell'esito
  */
 function withSyncStatus(body, syncStatus) {
@@ -174,13 +247,13 @@ function withSyncStatus(body, syncStatus) {
 }
 
 /**
- * SELECT del payload registrato e dell'esito (ack/techreason/businessreason)
- * per jobcardid.
+ * SELECT del payload registrato e dell'esito (djcsynch/ack/techreason/
+ * businessreason) per jobcardid.
  * @param {import('pg').Pool} pool
  * @param {string} jobCardId
- * @returns {Promise<{jobcardid: string, ack: string|null, techreason: string|null,
- *          businessreason: string|null, payload: object}|null>} la riga, o null
- *          se la jobcard non è presente
+ * @returns {Promise<{jobcardid: string, djcsynch: boolean|null, ack: string|null,
+ *          techreason: string|null, businessreason: string|null, payload: object}|null>}
+ *          la riga, o null se la jobcard non è presente
  */
 async function selectLastPayload(pool, jobCardId) {
   const { rows } = await pool.query(SELECT_LAST_PAYLOAD_SQL, [jobCardId]);
@@ -192,17 +265,18 @@ async function selectLastPayload(pool, jobCardId) {
  * payload di woc.jobcard_sync_activity, sovrascritta ad ogni saveJobcard PRIMA
  * dell'invio a DGT, quindi presente anche se l'invio è poi fallito): consente
  * di recuperare le modifiche inviate in delta (azione GET "lastPayload").
- * Con la stessa SELECT restituisce anche ack/techReason/businessReason della
+ * Con la stessa SELECT restituisce anche djcsynch (esito dell'ultima chiamata
+ * saveJobcard verso DGT; NULL -> null) e ack/techReason/businessReason della
  * riga (esito dell'ultima sincronizzazione registrata da synch-status; NULL ->
- * stringa vuota, come getSyncStatus).
+ * stringa vuota), come getSyncStatus.
  * Bloccante, a differenza di getSyncStatus: id assente -> errore "is
  * required" senza accesso al DB; errori DB/pool propagati al chiamante.
  * @param {string|number|null|undefined} jobCardId
  * @param {object} [deps]
  * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
- * @returns {Promise<{jobCardId: string, ack: string, techReason: string,
- *          businessReason: string, payload: object}|null>} null se la jobcard
- *          non ha un payload registrato
+ * @returns {Promise<{jobCardId: string, djcsynch: boolean|null, ack: string,
+ *          techReason: string, businessReason: string, payload: object}|null>}
+ *          null se la jobcard non ha un payload registrato
  */
 async function getLastPayload(jobCardId, { getPool } = {}) {
   const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
@@ -215,14 +289,18 @@ async function getLastPayload(jobCardId, { getPool } = {}) {
 
 module.exports = {
   resolveJobCardId,
+  withTimeout,
   upsertSyncActivity,
   recordSyncActivity,
+  updateDjcSynch,
+  recordDjcSynch,
   selectSyncStatus,
   getSyncStatus,
   withSyncStatus,
   selectLastPayload,
   getLastPayload,
   UPSERT_SQL,
+  UPDATE_DJC_SYNCH_SQL,
   SELECT_SYNC_STATUS_SQL,
   SELECT_LAST_PAYLOAD_SQL,
 };

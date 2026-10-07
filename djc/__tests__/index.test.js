@@ -11,6 +11,7 @@ jest.mock('../jobCardService', () => ({
 jest.mock('../JobcardSyncActivityRepository', () => ({
   ...jest.requireActual('../JobcardSyncActivityRepository'),
   recordSyncActivity: jest.fn(),
+  recordDjcSynch: jest.fn(),
   getSyncStatus: jest.fn(),
 }));
 
@@ -18,12 +19,12 @@ const fs = require('fs');
 const { callService } = require('../../serviceClient');
 const { getBearerToken } = require('../authService');
 const { saveJobCard } = require('../jobCardService');
-const { recordSyncActivity, getSyncStatus } = require('../JobcardSyncActivityRepository');
+const { recordSyncActivity, recordDjcSynch, getSyncStatus } = require('../JobcardSyncActivityRepository');
 const { handler } = require('../index');
 
 describe('djc REST appointment consumer', () => {
   const saved = { success: true, message: 'saved' };
-  const syncStatus = { ack: 'OK', techReason: '', businessReason: '' };
+  const syncStatus = { djcsynch: true, ack: 'OK', techReason: '', businessReason: '' };
   const savedWithSyncStatus = { ...saved, ...syncStatus };
   const payload = () => ({
     appointments: [{
@@ -41,6 +42,7 @@ describe('djc REST appointment consumer', () => {
     getBearerToken.mockResolvedValue('local-dgt-token');
     saveJobCard.mockResolvedValue(saved);
     recordSyncActivity.mockResolvedValue({ jobcardid: 'SRP-1', creationdate: new Date('2026-09-30T10:00:00Z') });
+    recordDjcSynch.mockResolvedValue(true);
     getSyncStatus.mockResolvedValue(syncStatus);
     callService.mockResolvedValue({ success: true, data: { isValid: true } });
   });
@@ -53,6 +55,7 @@ describe('djc REST appointment consumer', () => {
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body)).toEqual(savedWithSyncStatus);
     expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', body);
+    expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', true);
     expect(callService).toHaveBeenCalledWith('agendasoanaga', 'updatenaga', expect.objectContaining({
       apptId: 'AP-1', recepDate: '2026-09-10T00:00:00.000Z', recepHours: '0815',
       pdvid: null, user: null, idVINSF: null, source: 'WiAdvisor',
@@ -76,28 +79,85 @@ describe('djc REST appointment consumer', () => {
     expect(callService).not.toHaveBeenCalled();
   });
 
-  test('appends ack/techReason/businessReason read by the tracked jobcardid after saving', async () => {
+  test('records djcsynch from the DGT success flag and appends djcsynch/ack/techReason/businessReason after saving', async () => {
     const dgtSaved = { statusCode: 200, success: true, message: 'Job Card Transaction Successful', jobCardId: 'JCID-84521' };
-    const outcome = { ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' };
+    const outcome = { djcsynch: null, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' };
     saveJobCard.mockResolvedValueOnce(dgtSaved);
     getSyncStatus.mockResolvedValueOnce(outcome);
 
     const result = await handler({ action: 'saveJobcard', body: { payload: payload() } });
 
     expect(result.statusCode).toBe(200);
-    expect(result.body).toBe(JSON.stringify({ ...dgtSaved, ...outcome }));
+    expect(result.body).toBe(JSON.stringify({ ...dgtSaved, djcsynch: true, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' }));
+    expect(recordDjcSynch).toHaveBeenCalledTimes(1);
+    expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', true);
     expect(getSyncStatus).toHaveBeenCalledTimes(1);
     expect(getSyncStatus).toHaveBeenCalledWith('SRP-1');
-    expect(getSyncStatus.mock.invocationCallOrder[0]).toBeGreaterThan(saveJobCard.mock.invocationCallOrder[0]);
+    const order = [recordSyncActivity, getBearerToken, saveJobCard, recordDjcSynch, callService, getSyncStatus]
+      .map((fn) => fn.mock.invocationCallOrder[0]);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
-  test('does not read the sync outcome when the DGT save fails', async () => {
+  test.each([
+    { statusCode: 200, success: false, message: 'Job Card Transaction Failed' },
+    { statusCode: 200, success: 'true', message: 'Job Card Transaction Successful' },
+    { statusCode: 200, message: 'no success flag' },
+  ])('records and returns djcsynch false when DGT does not answer success: true (%p)', async (dgtSaved) => {
+    saveJobCard.mockResolvedValueOnce(dgtSaved);
+
+    const result = await handler({ action: 'saveJobcard', body: payload() });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toBe(JSON.stringify({ ...dgtSaved, ...syncStatus, djcsynch: false }));
+    expect(recordDjcSynch).toHaveBeenCalledTimes(1);
+    expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', false);
+  });
+
+  test('records djcsynch false and returns the unchanged error when the DGT save fails', async () => {
     saveJobCard.mockRejectedValueOnce(new Error('[djc] saveJobCard failed: HTTP 500'));
 
     const result = await handler({ action: 'saveJobcard', body: payload() });
 
     expect(result.statusCode).toBe(502);
     expect(JSON.parse(result.body)).toEqual({ success: false, message: '[djc] saveJobCard failed: HTTP 500' });
+    expect(recordDjcSynch).toHaveBeenCalledTimes(1);
+    expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', false);
+    expect(callService).not.toHaveBeenCalled();
     expect(getSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test('records djcsynch false when the DGT token cannot be obtained', async () => {
+    getBearerToken.mockRejectedValueOnce(new Error('[djc] token request failed'));
+
+    const result = await handler({ action: 'saveJobcard', body: payload() });
+
+    expect(result.statusCode).toBe(502);
+    expect(JSON.parse(result.body)).toEqual({ success: false, message: '[djc] token request failed' });
+    expect(saveJobCard).not.toHaveBeenCalled();
+    expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', false);
+    expect(getSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test('neither calls DGT nor records djcsynch when the payload cannot be recorded', async () => {
+    recordSyncActivity.mockRejectedValueOnce(new Error('connection refused'));
+
+    const result = await handler({ action: 'saveJobcard', body: payload() });
+
+    expect(result.statusCode).toBe(502);
+    expect(JSON.parse(result.body)).toEqual({ success: false, message: 'connection refused' });
+    expect(getBearerToken).not.toHaveBeenCalled();
+    expect(saveJobCard).not.toHaveBeenCalled();
+    expect(recordDjcSynch).not.toHaveBeenCalled();
+    expect(callService).not.toHaveBeenCalled();
+  });
+
+  test('still answers with the DGT outcome when recording djcsynch fails (best-effort)', async () => {
+    recordDjcSynch.mockResolvedValueOnce(false);
+    getSyncStatus.mockResolvedValueOnce({ djcsynch: null, ack: 'OK', techReason: '', businessReason: '' });
+
+    const result = await handler({ action: 'saveJobcard', body: payload() });
+
+    expect(result.statusCode).toBe(200);
+    expect(result.body).toBe(JSON.stringify(savedWithSyncStatus));
   });
 });
