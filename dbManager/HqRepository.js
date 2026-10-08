@@ -104,7 +104,8 @@
  *
  * getPackageListHQ(market)/getPackageListSM(market, oic) leggono la
  * gerarchia mercato -> dominio -> pacchetto configurata per il mercato
- * (obbligatorio in entrambe) e, per getPackageListSM, anche per l'OIC
+ * (obbligatorio in getPackageListSM; in getPackageListHQ, se assente/vuoto,
+ * vengono letti i domini/pacchetti comuni con market NULL o '') e, per getPackageListSM, anche per l'OIC
  * (obbligatorio, filtro diretto su pk.oic, nessuna tabella hq_pk_oic
  * coinvolta): i domini si agganciano sempre solo per market (condivisi fra
  * tutti gli OIC dello stesso mercato); getPackageListSM restituisce SOLO i
@@ -913,7 +914,7 @@ async function setPackageVisible(pool, idpackage, value) {
  * @returns {Promise<Array<{ market: string, oic: null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
 async function getPackageListHQ(pool, market) {
-  if (!market) throw new Error('"market" is required');
+  const hasMarket = market !== undefined && market !== null && market !== '';
 
   const selectColumns = `dom.iddomain
                           , dom.descr AS domaindescr
@@ -924,13 +925,19 @@ async function getPackageListHQ(pool, market) {
                           , pk.pricewithvat
                           , pk.visible AS pkvisible`;
 
-  const sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
+  // market assente/vuoto: solo domini/pacchetti comuni (market NULL o ''), senza hq_pk_market
+  const sql = hasMarket
+    ? `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
              FROM woc.hq_pk_market mk
              LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
-           WHERE mk.market = $1`;
+           WHERE mk.market = $1`
+    : `SELECT dom.market, NULL::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_domain dom
+             LEFT JOIN woc.hq_pk_packages pk ON (pk.market IS NULL OR pk.market = '') AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
+           WHERE (dom.market IS NULL OR dom.market = '') AND dom.deleted = 0`;
 
-  const { rows } = await pool.query(sql, [market]);
+  const { rows } = await pool.query(sql, hasMarket ? [market] : []);
 
   return rows.map((row) => ({
     market: row.market,

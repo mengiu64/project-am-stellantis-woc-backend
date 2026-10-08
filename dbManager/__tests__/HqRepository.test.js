@@ -1069,16 +1069,17 @@ describe('HqRepository', () => {
   });
 
   describe('getPackageListHQ', () => {
-    it('throws when market is missing', async () => {
-      const pool = makePool();
-      await expect(getPackageListHQ(pool, undefined)).rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
-    });
+    it.each([null, undefined, ''])('reads common rows (market NULL or empty) when market is %p', async (market) => {
+      const pool = makePool(async () => ({ rows: [] }));
 
-    it('throws when market is an empty string', async () => {
-      const pool = makePool();
-      await expect(getPackageListHQ(pool, '')).rejects.toThrow('"market" is required');
-      expect(pool.query).not.toHaveBeenCalled();
+      const result = await getPackageListHQ(pool, market);
+
+      expect(result).toEqual([]);
+      const [sql, params] = pool.query.mock.calls[0];
+      expect(params).toEqual([]);
+      expect(sql).toEqual(expect.stringContaining("(dom.market IS NULL OR dom.market = '') AND dom.deleted = 0"));
+      expect(sql).toEqual(expect.stringContaining("(pk.market IS NULL OR pk.market = '') AND pk.oic IS NULL"));
+      expect(sql).not.toEqual(expect.stringContaining('hq_pk_market'));
     });
 
     it('domains shared by market, packages filtered by oic IS NULL, no hq_pk_oic involved', async () => {
