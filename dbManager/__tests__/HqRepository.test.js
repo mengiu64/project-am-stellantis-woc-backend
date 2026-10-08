@@ -533,7 +533,7 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await insertVehicleInspection(pool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'jdoe', '1000');
+      await insertVehicleInspection(pool, '1000', 'EXTERIOR', 'Controllo carrozzeria', 'jdoe');
 
       expect(pool.query).toHaveBeenCalledTimes(3);
       expect(pool.query).toHaveBeenNthCalledWith(
@@ -557,7 +557,7 @@ describe('HqRepository', () => {
   describe('cloneVeicInspection', () => {
     function makeClientPool(queryImpl) {
       const client = { query: jest.fn(queryImpl), release: jest.fn() };
-      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      const pool = { connect: jest.fn().mockResolvedValue(client), query: jest.fn().mockResolvedValue({ rows: [] }) };
       return { pool, client };
     }
 
@@ -589,7 +589,7 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await cloneVeicInspection(pool, '2000', '1000', 'EXTERIOR');
+      await cloneVeicInspection(pool, '2000', '1000', 'EXTERIOR', 'Mario Rossi', '1000');
 
       expect(pool.connect).toHaveBeenCalledTimes(1);
       expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
@@ -619,6 +619,11 @@ describe('HqRepository', () => {
 
       expect(client.query).toHaveBeenLastCalledWith('COMMIT');
       expect(client.release).toHaveBeenCalledTimes(1);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      const [auditSql, auditParams] = pool.query.mock.calls[0];
+      expect(auditSql).toContain('INSERT INTO woc.hq_audit');
+      expect(auditParams).toEqual(['Mario Rossi', 'EXTERIOR', '1000', 'propagate', 'cloned  EXTERIOR: from  market  1000 into market  2000']);
     });
 
     it('clones rows with marketOrig null/undefined (market IS NULL OR market = \'\')', async () => {
@@ -630,7 +635,7 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await cloneVeicInspection(pool, '2000', undefined, 'EXTERIOR');
+      await cloneVeicInspection(pool, '2000', undefined, 'EXTERIOR', 'Mario Rossi', '1000');
 
       const [selectSql, selectParams] = client.query.mock.calls[2];
       expect(selectSql).toEqual(expect.stringContaining("(market IS NULL OR market = '')"));
@@ -650,7 +655,8 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await expect(cloneVeicInspection(pool, '2000', '1000', 'EXTERIOR')).rejects.toThrow('boom');
+      await expect(cloneVeicInspection(pool, '2000', '1000', 'EXTERIOR', 'Mario Rossi', '1000')).rejects.toThrow('boom');
+      expect(pool.query).not.toHaveBeenCalled();
 
       expect(client.query).toHaveBeenCalledWith('BEGIN');
       expect(client.query).toHaveBeenCalledWith('ROLLBACK');
@@ -790,14 +796,19 @@ describe('HqRepository', () => {
     it('upserts hq_pk_market (deleted = 0)', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setPkMarketEnable(pool, '1000');
+      await setPkMarketEnable(pool, '1000', 'Mario Rossi');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO woc.hq_pk_market'),
         ['1000'],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ON CONFLICT (market) DO UPDATE SET deleted = 0'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'create', '!! domain configuration at market level  1000 '],
+      );
     });
   });
 
@@ -805,14 +816,19 @@ describe('HqRepository', () => {
     it('upserts hq_pk_market (deleted = 1)', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setPkMarketDisable(pool, '1000');
+      await setPkMarketDisable(pool, '1000', 'Mario Rossi');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO woc.hq_pk_market'),
         ['1000'],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('ON CONFLICT (market) DO UPDATE SET deleted = 1'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'create', '!! domain configuration at OIC level  1000 '],
+      );
     });
   });
 
@@ -840,16 +856,21 @@ describe('HqRepository', () => {
     it('inserts the domain (shared by all oics of the market) and returns the generated iddomain', async () => {
       const pool = makePool(async () => ({ rows: [{ iddomain: 42 }] }));
 
-      const result = await insertDomain(pool, '1000', 'Meccanica');
+      const result = await insertDomain(pool, '1000', 'Meccanica', 'Mario Rossi');
 
       expect(result).toBe(42);
-      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO woc.hq_pk_domain'),
         ['1000', 'Meccanica'],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING iddomain'));
       expect(pool.query.mock.calls[0][0]).not.toEqual(expect.stringContaining('oic'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'insert', 'Added Meccanica '],
+      );
     });
   });
 
@@ -900,7 +921,7 @@ describe('HqRepository', () => {
     it('runs the UPDATE with the given market/iddomain/descr', async () => {
       const pool = makePool(async () => ({ rows: [] }));
 
-      await setDomain(pool, '1000', 42, 'Meccanica', 'Mario Rossi', '1000');
+      await setDomain(pool, '1000', 42, 'Meccanica', 'Mario Rossi');
 
       expect(pool.query).toHaveBeenCalledTimes(2);
       expect(pool.query).toHaveBeenNthCalledWith(
@@ -929,7 +950,7 @@ describe('HqRepository', () => {
         ? { rows: [{ descr: 'Meccanica' }] }
         : { rows: [] }));
 
-      await deleteDomain(pool, '1000', 42, 'Mario Rossi', '1000');
+      await deleteDomain(pool, '1000', 42, 'Mario Rossi');
 
       expect(pool.query).toHaveBeenCalledTimes(3);
       expect(pool.query).toHaveBeenNthCalledWith(
@@ -943,6 +964,22 @@ describe('HqRepository', () => {
         expect.stringContaining('INSERT INTO woc.hq_audit'),
         ['Mario Rossi', 'pkdomain', '1000', 'delete', 'deleted Meccanica '],
       );
+    });
+
+    it.each([null, undefined, ''])('targets common domains (market NULL or empty) when market is %p', async (market) => {
+      const pool = makePool(async (sql) => (sql.includes('SELECT descr')
+        ? { rows: [{ descr: 'Meccanica' }] }
+        : { rows: [] }));
+
+      await deleteDomain(pool, market, 42, 'Mario Rossi');
+
+      for (const n of [1, 2]) {
+        const [sql, params] = pool.query.mock.calls[n - 1];
+        expect(sql).toContain("(market IS NULL OR market = '')");
+        expect(sql).toContain('iddomain = $1');
+        expect(params).toEqual([42]);
+      }
+      expect(pool.query.mock.calls[2][1]).toEqual(['Mario Rossi', 'pkdomain', market, 'delete', 'deleted Meccanica ']);
     });
   });
 
@@ -983,17 +1020,29 @@ describe('HqRepository', () => {
     });
 
     it('inserts the package and returns the generated idpackage', async () => {
-      const pool = makePool(async () => ({ rows: [{ idpackage: 7 }] }));
+      const pool = makePool(async (sql) => (sql.includes('hq_pk_domain')
+        ? { rows: [{ descrdomain: 'Meccanica' }] }
+        : { rows: [{ idpackage: 7 }] }));
 
-      const result = await insertPackage(pool, '1000', '00006821', 42, 'Tagliando', 60, 100.5);
+      const result = await insertPackage(pool, '1000', '00006821', 42, 'Tagliando', 60, 100.5, 'Mario Rossi');
 
       expect(result).toBe(7);
-      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query).toHaveBeenCalledTimes(3);
       expect(pool.query).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO woc.hq_pk_packages'),
         ['1000', '00006821', 42, 'Tagliando', 60, 100.5],
       );
       expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING idpackage'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('FROM woc.hq_pk_domain'),
+        [42],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'insert', 'market 1000 : Added Package  Tagliando in domain Meccanica '],
+      );
     });
   });
 
@@ -1013,14 +1062,28 @@ describe('HqRepository', () => {
     });
 
     it('runs the UPDATE with the given idpackage/iddomain/descr/timeop/pricewithvat', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
+      const pool = makePool(async (sql) => (sql.includes('hq_pk_domain')
+        ? { rows: [{ descrdomain: 'Meccanica' }] }
+        : { rows: [{ market: '1000' }] }));
 
-      await setPackage(pool, 7, 42, 'Tagliando', 60, 100.5);
+      await setPackage(pool, 7, 42, 'Tagliando', 60, 100.5, 'Mario Rossi');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
         expect.stringContaining('UPDATE woc.hq_pk_packages'),
         [7, 42, 'Tagliando', 60, 100.5],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('RETURNING market'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('FROM woc.hq_pk_domain'),
+        [42],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'update', 'market 1000 : updated Package  Tagliando in domain Meccanica timeop:60  pricewithvat:100.5'],
       );
     });
   });
@@ -1034,14 +1097,28 @@ describe('HqRepository', () => {
     });
 
     it('runs the DELETE with the given idpackage', async () => {
-      const pool = makePool(async () => ({ rows: [] }));
+      const pool = makePool(async (sql) => (sql.startsWith('SELECT')
+        ? { rows: [{ market: '1000', descrpk: 'Tagliando' }] }
+        : { rows: [] }));
 
-      await deletePackage(pool, 7);
+      await deletePackage(pool, 7, 'Mario Rossi');
 
-      expect(pool.query).toHaveBeenCalledTimes(1);
-      expect(pool.query).toHaveBeenCalledWith(
+      expect(pool.query).toHaveBeenCalledTimes(3);
+      expect(pool.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('FROM woc.hq_pk_packages'),
+        [7],
+      );
+      expect(pool.query.mock.calls[0][0]).toEqual(expect.stringContaining('SELECT market, descr AS descrpk'));
+      expect(pool.query).toHaveBeenNthCalledWith(
+        2,
         expect.stringContaining('DELETE FROM woc.hq_pk_packages'),
         [7],
+      );
+      expect(pool.query).toHaveBeenNthCalledWith(
+        3,
+        expect.stringContaining('INSERT INTO woc.hq_audit'),
+        ['Mario Rossi', 'pkdomain', '1000', 'delete', 'market 1000 : deleted Package  Tagliando '],
       );
     });
   });
@@ -1196,7 +1273,7 @@ describe('HqRepository', () => {
   describe('clonePk', () => {
     function makeClientPool(queryImpl) {
       const client = { query: jest.fn(queryImpl), release: jest.fn() };
-      const pool = { connect: jest.fn().mockResolvedValue(client) };
+      const pool = { connect: jest.fn().mockResolvedValue(client), query: jest.fn().mockResolvedValue({ rows: [] }) };
       return { pool, client };
     }
 
@@ -1215,7 +1292,7 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await clonePk(pool, '2000', marketOrig);
+      await clonePk(pool, '2000', marketOrig, 'Mario Rossi', '1000');
 
       const selects = client.query.mock.calls.filter(([sql]) => sql.startsWith('SELECT'));
       expect(selects).toHaveLength(2);
@@ -1242,7 +1319,7 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await clonePk(pool, '2000', '1000');
+      await clonePk(pool, '2000', '1000', 'Mario Rossi', '1000');
 
       expect(pool.connect).toHaveBeenCalledTimes(1);
       expect(client.query).toHaveBeenNthCalledWith(1, 'BEGIN');
@@ -1278,6 +1355,11 @@ describe('HqRepository', () => {
 
       expect(client.query).toHaveBeenLastCalledWith('COMMIT');
       expect(client.release).toHaveBeenCalledTimes(1);
+
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      const [auditSql, auditParams] = pool.query.mock.calls[0];
+      expect(auditSql).toContain('INSERT INTO woc.hq_audit');
+      expect(auditParams).toEqual(['Mario Rossi', 'pkdomain', '1000', 'propagate', 'cloned market  1000 into market  2000']);
     });
 
     it('rolls back and releases the client when a query fails', async () => {
@@ -1289,7 +1371,8 @@ describe('HqRepository', () => {
         return { rows: [] };
       });
 
-      await expect(clonePk(pool, '2000', '1000')).rejects.toThrow('boom');
+      await expect(clonePk(pool, '2000', '1000', 'Mario Rossi', '1000')).rejects.toThrow('boom');
+      expect(pool.query).not.toHaveBeenCalled();
 
       expect(client.query).toHaveBeenCalledWith('BEGIN');
       expect(client.query).toHaveBeenCalledWith('ROLLBACK');

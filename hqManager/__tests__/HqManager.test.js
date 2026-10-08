@@ -39,13 +39,7 @@ describe('HqManager — consumer REST', () => {
   test.each([
     ['getEnablingConfiguration', ['1000'], 'getEnablingConfiguration'],
     ['getVehicleInspection', ['1000', 'EXTERIOR'], 'getVehicleInspection'],
-    ['setMarketEnable', ['1000'], 'setPkMarketEnable'],
-    ['setMarketDisable', ['1000'], 'setPkMarketDisable'],
     ['checkIsPkMarketEnabled', ['1000'], 'checkIsPkMarketEnabled'],
-    ['insertDomain', ['1000', 'Meccanica'], 'insertDomain'],
-    ['insertPackage', ['1000', '00006821', 42, 'Tagliando', 60, 100.5], 'insertPackage'],
-    ['setPackage', [7, 42, 'Tagliando', 60, 100.5], 'setPackage'],
-    ['deletePackage', [7], 'deletePackage'],
     ['getPackageListHQ', ['1000'], 'getPackageListHQ'],
     ['getPackageListSM', ['1000', '00006821'], 'getPackageListSM'],
     ['searchAudit', ['1000', 'domain', '2024-01-01', '2024-12-31', 'create', 'mario.rossi'], 'searchAudit'],
@@ -258,10 +252,10 @@ describe('HqManager — consumer REST', () => {
       if (service === 'session') throw new Error('HTTP 502');
     });
     await manager.insertVehicleInspection('1000', 'EXTERIOR', 'Controllo', event);
-    expect(errorSpy).toHaveBeenCalledTimes(2);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('HTTP 502'));
     expect(callService).toHaveBeenLastCalledWith('dbmanager', 'insertVehicleInspection', {
-      args: ['1000', 'EXTERIOR', 'Controllo', 'mario.rossi', ''],
+      args: ['1000', 'EXTERIOR', 'Controllo', 'mario.rossi'],
     });
   });
 
@@ -292,9 +286,9 @@ describe('HqManager — consumer REST', () => {
   });
 
   test.each([
-    ['setDomain', ['1000', 42, 'Meccanica'], ['1000', 42, 'Meccanica']],
-    ['deleteDomain', ['1000', 42], ['1000', 42]],
     ['setDomainVisible', [{ domain: [{ iddomain: 7, value: 0 }] }], [7, 0]],
+    ['clonePk', ['2000', '1000'], ['2000', '1000']],
+    ['cloneVeicInspection', ['2000', null, 'EXTERIOR'], ['2000', null, 'EXTERIOR']],
   ])('%s passa username e codmarket dell\'audit dalla sessione autenticata', async (method, args, repoArgs) => {
     callService.mockImplementation(async (service) => service === 'session'
       ? { firstname: 'Mario', lastname: 'Rossi', codmarket: '1000' }
@@ -306,12 +300,22 @@ describe('HqManager — consumer REST', () => {
   });
 
   test.each([
-    ['clonePk', ['2000', '1000']],
-    ['cloneVeicInspection', ['2000', null, 'EXTERIOR']],
-  ])('%s conserva ritorno void', async (method, args) => {
-    callService.mockResolvedValue({ success: true });
-    expect(await manager[method](...args)).toBeUndefined();
-    expect(callService.mock.calls).toEqual([['dbmanager', method, { args }]]);
+    ['insertDomain', ['1000', 'Meccanica'], 'insertDomain'],
+    ['deletePackage', [7], 'deletePackage'],
+    ['setPackage', [7, 42, 'Tagliando', 60, 100.5], 'setPackage'],
+    ['insertPackage', ['1000', '00006821', 42, 'Tagliando', 60, 100.5], 'insertPackage'],
+    ['setDomain', ['1000', 42, 'Meccanica'], 'setDomain'],
+    ['deleteDomain', ['1000', 42], 'deleteDomain'],
+    ['setMarketEnable', ['1000'], 'setPkMarketEnable'],
+    ['setMarketDisable', ['1000'], 'setPkMarketDisable'],
+  ])('%s passa solo lo username dell\'audit (market = argomento) dalla sessione autenticata', async (method, args, operation) => {
+    callService.mockImplementation(async (service) => service === 'session'
+      ? { firstname: 'Mario', lastname: 'Rossi', codmarket: '9999' }
+      : undefined);
+    await manager[method](...args, event);
+    expect(callService).toHaveBeenLastCalledWith('dbmanager', operation, {
+      args: [...args, 'Mario Rossi'],
+    });
   });
 
   test.each([

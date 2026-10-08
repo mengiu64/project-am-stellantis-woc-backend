@@ -317,32 +317,37 @@ class HqManager {
    * @param {string} market
    * @param {string} type
    * @param {string} descr
-   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
-   *   lo username (firstname+lastname) e il market ("" se non risolvibile)
-   *   dell'audit, entrambi dalla sessione dell'utente autenticato.
+   * @param {object} [event] - usato da resolveUsername per
+   *   lo username dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
   async insertVehicleInspection(market, type, descr, event = {}) {
     const username = await resolveUsername(event);
-    const codmarket = await resolveCodmarket(event);
-
-    return repository.insertVehicleInspection(market, type, descr, username, codmarket);
+    return repository.insertVehicleInspection(market, type, descr, username);
   }
 
   /**
    * @param {string} market
+   * @param {object} [event] - usato da resolveUsername per
+   *   lo username dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async setMarketEnable(market) {
-    return repository.setPkMarketEnable(market);
+  async setMarketEnable(market, event = {}) {
+    const username = await resolveUsername(event);
+
+    return repository.setPkMarketEnable(market, username);
   }
 
   /**
    * @param {string} market
+   * @param {object} [event] - usato da resolveUsername per
+   *   lo username dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async setMarketDisable(market) {
-    return repository.setPkMarketDisable(market);
+  async setMarketDisable(market, event = {}) {
+    const username = await resolveUsername(event);
+
+    return repository.setPkMarketDisable(market, username);
   }
 
   /**
@@ -362,39 +367,41 @@ class HqManager {
    *
    * @param {string} market
    * @param {string} descr
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<number>} l'iddomain generato
    */
-  async insertDomain(market, descr) {
-    return repository.insertDomain(market, descr);
+  async insertDomain(market, descr, event = {}) {
+    const username = await resolveUsername(event);
+
+    return repository.insertDomain(market, descr, username);
   }
 
   /**
    * @param {string} market
    * @param {number} iddomain
    * @param {string} descr
-   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
-   *   username e market dell'audit (sessione dell'utente autenticato).
+   * @param {object} [event] - usato da resolveUsername per
+   *   lo username dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
   async setDomain(market, iddomain, descr, event = {}) {
     const username = await resolveUsername(event);
-    const codmarket = await resolveCodmarket(event);
 
-    return repository.setDomain(market, iddomain, descr, username, codmarket);
+    return repository.setDomain(market, iddomain, descr, username);
   }
 
   /**
    * @param {string} market
    * @param {number} iddomain
-   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
-   *   username e market dell'audit (sessione dell'utente autenticato).
+   * @param {object} [event] - usato da resolveUsername per
+   *   lo username dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
   async deleteDomain(market, iddomain, event = {}) {
     const username = await resolveUsername(event);
-    const codmarket = await resolveCodmarket(event);
 
-    return repository.deleteDomain(market, iddomain, username, codmarket);
+    return repository.deleteDomain(market, iddomain, username);
   }
 
   /**
@@ -427,10 +434,14 @@ class HqManager {
    * @param {string} descr
    * @param {number} timeop
    * @param {number} pricewithvat
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<number>} l'idpackage generato
    */
-  async insertPackage(market, oic, iddomain, descr, timeop, pricewithvat) {
-    return repository.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
+  async insertPackage(market, oic, iddomain, descr, timeop, pricewithvat, event = {}) {
+    const username = await resolveUsername(event);
+
+    return repository.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat, username);
   }
 
   /**
@@ -439,18 +450,26 @@ class HqManager {
    * @param {string} descr
    * @param {number} timeop
    * @param {number} pricewithvat
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async setPackage(idpackage, iddomain, descr, timeop, pricewithvat) {
-    return repository.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
+  async setPackage(idpackage, iddomain, descr, timeop, pricewithvat, event = {}) {
+    const username = await resolveUsername(event);
+
+    return repository.setPackage(idpackage, iddomain, descr, timeop, pricewithvat, username);
   }
 
   /**
    * @param {number} idpackage
+   * @param {object} [event] - usato da resolveUsername per lo username
+   *   dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async deletePackage(idpackage) {
-    return repository.deletePackage(idpackage);
+  async deletePackage(idpackage, event = {}) {
+    const username = await resolveUsername(event);
+
+    return repository.deletePackage(idpackage, username);
   }
 
   /**
@@ -502,10 +521,15 @@ class HqManager {
    *
    * @param {string} marketTarget
    * @param {string} marketOrig
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   username e market dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async clonePk(marketTarget, marketOrig) {
-    await repository.clonePk(marketTarget, marketOrig);
+  async clonePk(marketTarget, marketOrig, event = {}) {
+    const username = await resolveUsername(event);
+    const codmarket = await resolveCodmarket(event);
+
+    await repository.clonePk(marketTarget, marketOrig, username, codmarket);
   }
 
   /**
@@ -518,10 +542,15 @@ class HqManager {
    * @param {string} marketTarget
    * @param {string|null} [marketOrig]
    * @param {string} type
+   * @param {object} [event] - usato da resolveUsername/resolveCodmarket per
+   *   username e market dell'audit (sessione dell'utente autenticato).
    * @returns {Promise<void>}
    */
-  async cloneVeicInspection(marketTarget, marketOrig, type) {
-    await repository.cloneVeicInspection(marketTarget, marketOrig, type);
+  async cloneVeicInspection(marketTarget, marketOrig, type, event = {}) {
+    const username = await resolveUsername(event);
+    const codmarket = await resolveCodmarket(event);
+
+    await repository.cloneVeicInspection(marketTarget, marketOrig, type, username, codmarket);
   }
 
   /**
