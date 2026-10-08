@@ -29,11 +29,15 @@
 -- eseguita) e (solo jobcard) di jobCardDetails.
 -- jobcard rilegge anche payload, insieme a djcsynch/ack/techreason/
 -- businessreason (azione GET lastPayload), per recuperare le modifiche inviate
--- quando l'aggiornamento verso DJC/DGT fallisce.
+-- quando l'aggiornamento verso DJC/DGT fallisce, ed elimina la riga (azione
+-- POST deleteSynch, e azione GET lastPayload dopo la lettura del payload) solo
+-- se djcsynch è false e ack/techreason/businessreason sono vuoti (NULL o
+-- stringa vuota).
 --
 -- Ambienti esistenti: la colonna djcsynch si aggiunge con
--- alter_table_jobcard_sync_activity_add_djcsynch.sql (da eseguire PRIMA del
--- deploy di jobcard/djc che la usano).
+-- alter_table_jobcard_sync_activity_add_djcsynch.sql e il privilegio DELETE
+-- con grant_delete_jobcard_sync_activity.sql (da eseguire PRIMA del deploy di
+-- jobcard/djc che li usano).
 -- ============================================================================
 
 BEGIN;
@@ -69,6 +73,6 @@ COMMENT ON COLUMN woc.jobcard_sync_activity.djcsynch       IS 'Esito dell''ultim
 -- ============================================================================
 -- GRANT privilegi all'utente applicativo
 -- ============================================================================
-GRANT SELECT, INSERT, UPDATE ON TABLE woc.jobcard_sync_activity TO wiadvisor_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE woc.jobcard_sync_activity TO wiadvisor_app;
 
 COMMIT;

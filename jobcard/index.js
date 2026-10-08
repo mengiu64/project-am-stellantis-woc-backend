@@ -10,6 +10,7 @@
  *   node index.js saveJobcard <payloadJsonFile>
  *   node index.js dml         <jobCardId>
  *   node index.js lastPayload <jobCardId>
+ *   node index.js deleteSynch <jobCardId>
  *   node index.js getDealerConfiguration <market> [oic]
  *
  * Options for "list" (key=value):
@@ -39,6 +40,7 @@
  *   node index.js saveJobcard ./payload.json
  *   node index.js dml 79
  *   node index.js lastPayload JCID-84521
+ *   node index.js deleteSynch JCID-84521
  *   node index.js getDealerConfiguration 1000 00007584
  *
  * "dml" (getDataFromDMLFromTmp) legge /tmp/<jobCardId>.json, già salvato da
@@ -91,8 +93,20 @@
  * Include anche djcsynch/ack/techReason/businessReason della stessa riga (tra
  * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri),
  * letti con la stessa SELECT.
- * Legge solo dal DB (nessuna chiamata DGT, nessun token): jobCardId mancante ->
- * 400, nessun payload registrato -> 404, errore DB -> 502.
+ * Dopo la lettura, se djcsynch è false e ack/techReason/businessReason sono
+ * vuoti, elimina la riga (stesse condizioni di "deleteSynch", ricontrollate
+ * dalla DELETE) e lo segnala con deleted: true; best-effort: un errore della
+ * DELETE viene loggato e la risposta resta 200 con deleted: false.
+ * Solo DB (nessuna chiamata DGT, nessun token): jobCardId mancante -> 400,
+ * nessun payload registrato -> 404, errore della lettura -> 502.
+ *
+ * "deleteSynch" (POST /api/repairorder/deleteSynch, body { "jobCardId": ... })
+ * elimina la riga della jobcard da woc.jobcard_sync_activity solo se djcsynch è
+ * false (ultimo invio a DGT fallito) e ack/techReason/businessReason sono vuoti
+ * (NULL o stringa vuota: nessun esito registrato da synch-status), verificati
+ * nella stessa DELETE. Solo DB (nessuna chiamata DGT, nessun token); da API
+ * Gateway solo POST (altri metodi -> 405): jobCardId mancante -> 400, jobcard
+ * non presente -> 404, condizioni non rispettate -> 409, errore DB -> 502.
  *
  * "getDealerConfiguration" (GET /api/repairorder/getDealerConfiguration?market=...&oic=...)
  * restituisce la configurazione dealer (vehicle inspection + pacchetti) per un
@@ -110,7 +124,7 @@ const { callService, isInternalRequest } = require('../serviceClient');
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
-const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml', 'lastPayload', 'getDealerConfiguration'];
+const VALID_ACTIONS = ['list', 'listCurrent', 'details', 'saveJobcard', 'dml', 'lastPayload', 'deleteSynch', 'getDealerConfiguration'];
 
 /**
  * Estrae lo username autenticato per il Sender dinamico dell'azione "dml"
@@ -540,16 +554,29 @@ async function addJobCardSyncStatus(body, jobCardId, djcsynch) {
  * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce,
  * con l'esito (djcsynch/ack/techReason/businessReason) registrato sulla stessa
  * riga.
+ * Dopo la lettura, se djcsynch è false e ack/techReason/businessReason sono
+ * vuoti (canDeleteSynch), elimina la riga con deleteSynch, che ricontrolla le
+ * condizioni nella DELETE: deleted indica se la riga è stata eliminata.
+ * Best-effort: un errore della DELETE viene solo loggato, il payload viene
+ * comunque restituito (deleted: false).
  * Jobcard senza payload registrato -> errore con isRecordNotFound (404
  * nell'handler, stessa convenzione di synch-status).
  */
 async function getJobCardLastPayload(jobCardId) {
-  const { getLastPayload } = require('./JobcardSyncActivityRepository');
+  const { getLastPayload, canDeleteSynch, deleteSynch } = require('./JobcardSyncActivityRepository');
   const lastPayload = await getLastPayload(jobCardId);
   if (!lastPayload) {
     const err = new Error(`[jobCard] payload not found for jobCardId ${String(jobCardId).trim()}`);
     err.isRecordNotFound = true;
     throw err;
+  }
+  let deleted = false;
+  if (canDeleteSynch(lastPayload)) {
+    try {
+      deleted = (await deleteSynch(lastPayload.jobCardId))?.deleted === true;
+    } catch (err) {
+      console.warn(`[jobCard] jobcard_sync_activity eliminazione (lastPayload) fallita jobcardid=${lastPayload.jobCardId}: ${err.message}`);
+    }
   }
   return {
     statusCode: 200,
@@ -560,7 +587,40 @@ async function getJobCardLastPayload(jobCardId) {
     ack: lastPayload.ack,
     techReason: lastPayload.techReason,
     businessReason: lastPayload.businessReason,
+    deleted,
     payload: lastPayload.payload,
+  };
+}
+
+/**
+ * Elimina la riga di woc.jobcard_sync_activity della jobcard (azione POST
+ * "deleteSynch") solo se djcsynch è false e ack/techReason/businessReason sono
+ * vuoti (v. JobcardSyncActivityRepository.deleteSynch).
+ * Jobcard non presente -> errore con isRecordNotFound (404 nell'handler);
+ * condizioni non rispettate -> errore con isConflict (409), con l'esito attuale
+ * nel messaggio.
+ */
+async function deleteJobCardSynch(jobCardId) {
+  const { deleteSynch } = require('./JobcardSyncActivityRepository');
+  const outcome = await deleteSynch(jobCardId);
+  if (!outcome) {
+    const err = new Error(`[jobCard] sync activity not found for jobCardId ${String(jobCardId).trim()}`);
+    err.isRecordNotFound = true;
+    throw err;
+  }
+  if (!outcome.deleted) {
+    const { djcsynch, ack, techReason, businessReason } = outcome;
+    const err = new Error(`[jobCard] sync activity for jobCardId ${outcome.jobCardId} cannot be deleted: `
+      + 'djcsynch must be false and ack/techReason/businessReason empty '
+      + `(current: ${JSON.stringify({ djcsynch, ack, techReason, businessReason })})`);
+    err.isConflict = true;
+    throw err;
+  }
+  return {
+    statusCode: 200,
+    success: true,
+    message: 'Job card sync activity deleted successfully',
+    jobCardId: outcome.jobCardId,
   };
 }
 
@@ -612,6 +672,22 @@ exports.handler = async (event) => {
     };
   }
 
+  // deleteSynch serve solo a eliminare la riga: da API Gateway (REST:
+  // httpMethod, HTTP API v2: requestContext.http.method) solo POST, così un
+  // link o un prefetch GET non la invocano per errore. L'invocazione diretta
+  // (nessun metodo HTTP) resta ammessa.
+  const method = event.httpMethod || event.requestContext?.http?.method;
+  if (action === 'deleteSynch' && method && String(method).toUpperCase() !== 'POST') {
+    return {
+      statusCode: 405,
+      headers: { 'Content-Type': 'application/json', Allow: 'POST' },
+      body: JSON.stringify({
+        success: false,
+        message: `Method not allowed: "${method}". Valid methods for deleteSynch: POST`,
+      }),
+    };
+  }
+
   try {
     let result;
     if (action === 'dml') {
@@ -622,7 +698,12 @@ exports.handler = async (event) => {
     } else if (action === 'lastPayload') {
       // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId da query
       // string (GET) o body; mancante -> 400, payload non registrato -> 404.
+      // Riga eliminata dopo la lettura se eliminabile (deleted nella risposta).
       result = await getJobCardLastPayload(body.jobCardId ?? body.id);
+    } else if (action === 'deleteSynch') {
+      // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId dal body
+      // POST; mancante -> 400, riga assente -> 404, non eliminabile -> 409.
+      result = await deleteJobCardSynch(body.jobCardId ?? body.id);
     } else if (action === 'getDealerConfiguration') {
       // Solo dbManager via REST interno (nessuna chiamata DGT, quindi nessun
       // token): market/oic da query string (GET) o body; market mancante -> 400.
@@ -656,8 +737,13 @@ exports.handler = async (event) => {
       body: JSON.stringify(result),
     };
   } catch (err) {
-    // isRecordNotFound: jobcard senza payload registrato (azione lastPayload).
-    const statusCode = err.isRecordNotFound ? 404 : (err.message.includes('is required') ? 400 : 502);
+    // isRecordNotFound: jobcard senza riga registrata (azioni lastPayload e
+    // deleteSynch); isConflict: riga non eliminabile (deleteSynch). isConflict
+    // precede "is required": il messaggio 409 riporta businessReason, testo
+    // libero del DMS.
+    const statusCode = err.isRecordNotFound ? 404
+      : err.isConflict ? 409
+        : (err.message.includes('is required') ? 400 : 502);
     return {
       statusCode,
       headers: { 'Content-Type': 'application/json' },
@@ -740,6 +826,13 @@ async function runLastPayload(jobCardId) {
   return result;
 }
 
+async function runDeleteSynch(jobCardId) {
+  console.log('\n=== JobCard Delete Synch ===');
+  const result = await deleteJobCardSynch(jobCardId);
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
 async function runGetDealerConfiguration(market, oic) {
   console.log('\n=== Dealer Configuration ===');
   const result = await getDealerConfiguration(market, oic);
@@ -776,6 +869,8 @@ async function main() {
       await runDml(jobCardId);
     } else if (command === 'lastPayload') {
       await runLastPayload(param);
+    } else if (command === 'deleteSynch') {
+      await runDeleteSynch(param);
     } else if (command === 'getDealerConfiguration') {
       const market = param || '1000';
       await runGetDealerConfiguration(market, rest[0]);
@@ -787,6 +882,7 @@ async function main() {
       console.error('  node index.js saveJobcard <payloadJsonFile>');
       console.error('  node index.js dml         <jobCardId>');
       console.error('  node index.js lastPayload <jobCardId>');
+      console.error('  node index.js deleteSynch <jobCardId>');
       console.error('  node index.js getDealerConfiguration <market> [oic]');
       process.exit(1);
     }

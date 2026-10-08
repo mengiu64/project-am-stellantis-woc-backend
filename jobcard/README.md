@@ -1,7 +1,7 @@
 # JobCard Lambda
 
 Client Node.js per l'integrazione con le API Stellantis DGT (Digital Layer).  
-Ottiene un token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**, e per inviare (**JobCard Save**) i payload di Digital Job Card costruiti dalla lambda `djc`. Rilegge inoltre dal DB l'ultimo payload inviato (**JobCard Last Payload**), per recuperarlo quando l'aggiornamento verso DJC/DGT fallisce.
+Ottiene un token da **PingFederate** e lo usa per interrogare i servizi **JobCard List** e **JobCard Details**, e per inviare (**JobCard Save**) i payload di Digital Job Card costruiti dalla lambda `djc`. Rilegge inoltre dal DB l'ultimo payload inviato (**JobCard Last Payload**), per recuperarlo quando l'aggiornamento verso DJC/DGT fallisce, ed elimina la riga se l'invio è fallito e non c'è un esito di sincronizzazione (dopo la lettura del payload, o su richiesta con **JobCard Delete Synch**).
 
 ---
 
@@ -13,13 +13,13 @@ jobcard/
 ├── httpClient.js      # Wrapper HTTPS (no dipendenze esterne)
 ├── authService.js     # Autenticazione PingFederate → Bearer token
 ├── jobCardService.js  # getJobCardList / getJobCardDetails / saveJobCard
-├── JobcardSyncActivityRepository.js # woc.jobcard_sync_activity: UPSERT ed esito DGT djcsynch (saveJobcard), lettura esito djcsynch/ack/techReason/businessReason (details/saveJobcard) e ultimo payload con esito (lastPayload)
+├── JobcardSyncActivityRepository.js # woc.jobcard_sync_activity: UPSERT ed esito DGT djcsynch (saveJobcard), lettura esito djcsynch/ack/techReason/businessReason (details/saveJobcard), ultimo payload con esito (lastPayload) ed eliminazione condizionata (deleteSynch)
 ├── db.js              # Pool pg Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── index.js           # Entry point CLI
 └── package.json
 ```
 
-> Dipendenze npm: SDK AWS (DynamoDB/Secrets Manager) e `pg` (solo per `woc.jobcard_sync_activity`: `saveJobcard`, `details` e `lastPayload`).
+> Dipendenze npm: SDK AWS (DynamoDB/Secrets Manager) e `pg` (solo per `woc.jobcard_sync_activity`: `saveJobcard`, `details`, `lastPayload` e `deleteSynch`).
 
 ---
 
@@ -210,8 +210,8 @@ sync NAGA (che può valorizzare `appointments[].appointmentInternalId`), così l
 tabella contiene il payload effettivamente inviato. Stessa implementazione di
 `djc` (v. [`djc/README.md`](../djc/README.md)); DDL in
 `sql/create_table_jobcard_sync_activity.sql` (ambienti esistenti:
-`sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, da eseguire prima del
-deploy).
+`sql/alter_table_jobcard_sync_activity_add_djcsynch.sql` e
+`sql/grant_delete_jobcard_sync_activity.sql`, da eseguire prima del deploy).
 
 **Esito della chiamata DGT (`djcsynch`)**: subito dopo la chiamata a DGT l'esito
 viene registrato nella colonna booleana `djcsynch` della stessa riga: `true` se
@@ -296,6 +296,16 @@ stringa vuota). Essendo popolati in modo asincrono, subito dopo un
 `saveJobcard` fallito questi ultimi possono essere ancora vuoti o riferirsi
 alla sincronizzazione precedente, mentre `djcsynch` vale già `false`.
 
+Dopo la lettura, se `djcsynch` = `false` e `ack`/`techReason`/`businessReason`
+sono vuoti (`NULL` o stringa vuota: ultimo invio a DGT fallito senza esito di
+sincronizzazione), la riga viene eliminata con le stesse condizioni di
+[JobCard Delete Synch](#jobcard-delete-synch), ricontrollate nella `DELETE`; il
+payload letto viene comunque restituito e `deleted` (tra `businessReason` e
+`payload`) indica se la riga è stata eliminata (le chiamate successive
+rispondono poi `404`). L'eliminazione è best-effort: un errore della `DELETE`
+(es. `permission denied` senza `sql/grant_delete_jobcard_sync_activity.sql`)
+viene solo loggato e la risposta resta `200` con `deleted: false`.
+
 ```bash
 node index.js lastPayload <jobCardId>
 ```
@@ -320,6 +330,7 @@ anche `id`). Legge solo dal DB: nessuna chiamata DGT né token PingFederate.
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "deleted": false,
   "payload": {
     "roInfo": {
       "jobCardSrpId": "JCID-84521",
@@ -338,6 +349,56 @@ anche `id`). Legge solo dal DB: nessuna chiamata DGT né token PingFederate.
 | `400` | `jobCardId` mancante (`[jobCard] jobCardId is required`) |
 | `404` | nessun payload registrato per la job card (`[jobCard] payload not found for jobCardId <id>`) |
 | `502` | errore DB |
+
+---
+
+### JobCard Delete Synch
+
+Elimina (POST) la riga della job card da `woc.jobcard_sync_activity` solo se
+l'ultimo invio a DGT è fallito e non c'è un esito di sincronizzazione:
+`djcsynch` = `false` e `ack`/`techreason`/`businessreason` vuoti (`NULL` o
+stringa vuota). Con `djcsynch` `true` o `NULL` (esito non ancora noto) o con un
+esito registrato da `synch-status` la riga resta. Le condizioni sono nella
+stessa `DELETE`, quindi valgono anche con aggiornamenti concorrenti della riga.
+Insieme alla riga si perde l'ultimo payload: dopo l'eliminazione `lastPayload`
+risponde `404`. La stessa eliminazione avviene anche in `lastPayload`, dopo la
+lettura del payload (v. sopra).
+
+```bash
+node index.js deleteSynch <jobCardId>
+```
+
+**Esempio:**
+```bash
+node index.js deleteSynch JCID-84521
+```
+
+**Endpoint:** `POST /api/repairorder/deleteSynch` con body
+`{ "jobCardId": "JCID-84521" }` (accettato anche `id`). Da API Gateway solo
+`POST`; l'invocazione diretta (`{ "action": "deleteSynch", "body": { ... } }`)
+non ha metodo HTTP ed è ammessa. Legge e scrive solo sul DB: nessuna chiamata
+DGT né token PingFederate.
+
+**Risposta di successo (200):**
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card sync activity deleted successfully",
+  "jobCardId": "JCID-84521"
+}
+```
+
+**Errori** (body `{ "success": false, "message": "..." }`):
+
+| Status | Caso |
+|---|---|
+| `400` | `jobCardId` mancante (`[jobCard] jobCardId is required`) |
+| `404` | nessuna riga per la job card (`[jobCard] sync activity not found for jobCardId <id>`) |
+| `405` | metodo diverso da `POST` (header `Allow: POST`) |
+| `409` | riga presente ma non eliminabile; il messaggio riporta l'esito attuale (`[jobCard] sync activity for jobCardId <id> cannot be deleted: ... (current: {"djcsynch":true,"ack":"OK",...})`) |
+| `502` | errore DB, compreso `permission denied` se manca il `GRANT DELETE` (`sql/grant_delete_jobcard_sync_activity.sql`) |
 
 ---
 
@@ -400,7 +461,7 @@ JOBCARD_PING_CLIENT_ID=your_ping_client_id_here
 JOBCARD_PING_CLIENT_SECRET=your_ping_client_secret_here
 DGT_CLIENT_ID=your_dgt_client_id_here
 DGT_CLIENT_SECRET=your_dgt_client_secret_here
-# woc.jobcard_sync_activity (saveJobcard, details e lastPayload)
+# woc.jobcard_sync_activity (saveJobcard, details, lastPayload e deleteSynch)
 JOBCARD_DB_HOST=your_rds_proxy_endpoint_here
 JOBCARD_DB_USER=wiadvisor_app
 JOBCARD_DB_PASSWORD=your_db_password_here
@@ -418,7 +479,7 @@ Configura le variabili d'ambiente direttamente sull'ambiente di esecuzione (es. 
 | `JOBCARD_PING_CLIENT_SECRET` | Client Secret PingFederate (dedicato jobcard) |
 | `DGT_CLIENT_ID` | Client ID Stellantis DGT API |
 | `DGT_CLIENT_SECRET` | Client Secret Stellantis DGT API |
-| `JOBCARD_DB_HOST` | Endpoint RDS Proxy Aurora "wiadvisor" (`woc.jobcard_sync_activity`, solo `saveJobcard`, `details` e `lastPayload`) |
+| `JOBCARD_DB_HOST` | Endpoint RDS Proxy Aurora "wiadvisor" (`woc.jobcard_sync_activity`, solo `saveJobcard`, `details`, `lastPayload` e `deleteSynch`) |
 | `JOBCARD_DB_SECRET_ID` | Secret Aurora `wiadvisor_app` (default `sm-np-bsn0027990-dev-aurora-app`); in locale in alternativa `JOBCARD_DB_USER`/`JOBCARD_DB_PASSWORD` |
 | `JOBCARD_DB_PORT` / `JOBCARD_DB_NAME` / `JOBCARD_DB_SSL` | Opzionali (default dal secret / `5432` / `wiadvisor`; `JOBCARD_DB_SSL=false` solo per Postgres locale senza TLS) |
 

@@ -548,7 +548,7 @@ Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, wi
 | `jobCardService` | `getJobCardList(token, params)` | JobCard list with filters and pagination |
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Details of a single JobCard, enriched with DML data (see below) |
 | `jobCardService` | `getDealerConfiguration(market, oic)` | Dealer configuration (vehicle inspection + packages) for a market/oic, see below |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`), and best-effort recording of the DGT call outcome in `djcsynch`; best-effort read of `djcsynch`/`ack`/`techreason`/`businessreason`, returned as `djcsynch`/`ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload`, with `djcsynch`/`ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action (`jobcard` only, see below) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`), and best-effort recording of the DGT call outcome in `djcsynch`; best-effort read of `djcsynch`/`ack`/`techreason`/`businessreason`, returned as `djcsynch`/`ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload`, with `djcsynch`/`ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action; conditional deletion of the row (`canDeleteSynch`/`deleteSynch`) for the `deleteSynch` action and for `lastPayload` after the read (both `jobcard` only, see below) |
 | `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
 
 #### `getJobCardList` parameters
@@ -647,7 +647,10 @@ outcome for an existing one. When the DGT call fails, `saveJobcard` records
 The `djcsynch` column is added to existing environments by
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, to be run **before**
 deploying `jobcard`/`djc` (without the column, `saveJobcard` and `lastPayload`
-answer `502`).
+answer `502`). The `DELETE` privilege used by `deleteSynch` and `lastPayload` is
+granted by `sql/grant_delete_jobcard_sync_activity.sql`, to be run **before**
+deploying `jobcard` (without it, `deleteSynch` answers `502` and `lastPayload`
+does not delete the row).
 
 #### `lastPayload` (GET) — last payload sent to DJC/DGT
 
@@ -660,6 +663,15 @@ fails. It is the sanitized payload actually sent, overwritten on every
 call, no token) and is blocking: missing `jobCardId` → `400`, no recorded
 payload → `404`, DB error → `502` (body `{ "success": false, "message": "..." }`).
 `jobcard` lambda only (CLI: `node index.js lastPayload <jobCardId>`).
+
+After the read, when `djcsynch` = `false` and `ack`/`techReason`/
+`businessReason` are empty (`NULL` or empty string: last send to DGT failed
+with no synchronization outcome), it deletes the row with the same conditions
+as `deleteSynch` (see below), re-checked by the `DELETE`, and still returns the
+payload it read; `deleted` (between `businessReason` and `payload`) tells
+whether the row was deleted (later calls then answer `404`). The deletion is
+best-effort: a `DELETE` error (e.g. missing privilege) is only logged and the
+response stays `200` with `deleted: false`.
 
 The response also includes `djcsynch`, `ack`, `techReason` and `businessReason`
 from the same row (read by the same SELECT as the payload), between `jobCardId`
@@ -680,7 +692,38 @@ refer to the previous synchronization, while `djcsynch` is already `false`.
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "deleted": false,
   "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
+}
+```
+
+#### `deleteSynch` (POST) — deleting the sync row
+
+`POST /api/repairorder/deleteSynch` with body `{ "jobCardId": "<id>" }` (`id`
+is also accepted) deletes the job card row from `woc.jobcard_sync_activity`
+only when the last send to DGT failed and there is no synchronization outcome:
+`djcsynch` = `false` and empty `ack`/`techreason`/`businessreason` (`NULL` or
+empty string). With `djcsynch` `true` or `NULL` (outcome not known yet), or with
+an outcome recorded by `synch-status`, the row is kept. The conditions are part
+of the `DELETE` itself, so they also hold under concurrent updates of the row.
+The last payload is deleted with the row (`lastPayload` then answers `404`).
+
+It reads and writes the DB only (no DGT call, no token). From API Gateway only
+`POST` is allowed (other methods → `405`, header `Allow: POST`); direct
+invocation has no HTTP method and is allowed. Outcomes: `200` row deleted,
+missing `jobCardId` → `400`, no row → `404`, row that cannot be deleted → `409`
+(the message reports the current `djcsynch`/`ack`/`techReason`/
+`businessReason`), DB error → `502` (body `{ "success": false, "message": "..." }`).
+Requires the `DELETE` privilege of `wiadvisor_app`
+(`sql/grant_delete_jobcard_sync_activity.sql`). `jobcard` lambda only (CLI:
+`node index.js deleteSynch <jobCardId>`).
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card sync activity deleted successfully",
+  "jobCardId": "JCID-84521"
 }
 ```
 
@@ -763,10 +806,12 @@ index.js getDealerConfiguration <market> [oic]`.
 node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
 node index.js lastPayload <jobCardId>
+node index.js deleteSynch <jobCardId>
 node index.js getDealerConfiguration <market> [oic]
 # e.g.: node index.js list 0062219 vin=VIN123 page=2
 # e.g.: node index.js details 79
 # e.g.: node index.js lastPayload JCID-84521
+# e.g.: node index.js deleteSynch JCID-84521
 # e.g.: node index.js getDealerConfiguration 1000 00007584
 ```
 
@@ -1595,7 +1640,8 @@ cd agendaSoa && npm run test:coverage
 - **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID required; `DocumentID`/`CustomerIdDms` optional content but always present in the payload, sent as `''` and `null` respectively when omitted), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
 - **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors; for `jobCardService`: `jobs[].packageType`/`packageCharge` enrichment (all `jobType`/`packageCode`/`paymentType` combinations), placement before `partInfo`/`laborInfo`, `roInfo.roSource` added right after `sourceApplication` (including missing `roInfo`/`sourceApplication`)
 - **jobcard / djc: JobcardSyncActivityRepository / index** – `djcsynch` recording (`recordDjcSynch`: only `true` → `true`, empty id without DB access, missing row/DB or pool errors/timeout → `false` with a warning, never propagated; the UPSERT resets it to `NULL` on conflict); sync-outcome read (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string, `null` for `djcsynch`), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: `djcsynch` recorded after the DGT call (`true` only on `success: true`; `false` on any other `success`, DGT or token error, the error being returned unchanged; neither DGT call nor recording when the UPSERT fails) and returned with the call value even when recording fails; outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`, with `djcsynch` read from the DB in `details`) after the DGT call, never read when the DGT call fails
-- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string and `djcsynch` `NULL` → `null`, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`payload` (in this order) without token or DGT calls, `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on DB errors; only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`)
+- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string and `djcsynch` `NULL` → `null`, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`deleted`/`payload` (in this order) without token or DGT calls; after the read `deleteSynch` only when `djcsynch` is `false` with an empty outcome (`deleted: true`), no DELETE with `djcsynch` `null`/`true` or a recorded outcome, `deleted: false` when the DELETE removes nothing or fails (error logged, response still 200); `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on read errors (no DELETE); only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`); `canDeleteSynch` (same conditions as the DELETE: `djcsynch` strictly `false`, `NULL` or empty `ack`/`techReason`/`businessReason` without trimming)
+- **jobcard: JobcardSyncActivityRepository / index (`deleteSynch`)** – `deleteSynch` (conditional DELETE on `djcsynch IS FALSE` and `NULL` or empty `ack`/`techreason`/`businessreason`; deleted row with the DELETE only; no deleted row → SELECT of the outcome: existing row → `deleted: false` with the current outcome, missing row → `null`; normalized id, missing id → "is required" error without DB access, DB/pool errors propagated); handler: API Gateway POST event (REST and HTTP API v2, case-insensitive method), direct invocation and `id` alias, 200 response without token or DGT calls, `404` when the row does not exist, `409` with the current outcome in the message (even when it contains "is required"), `400` when `jobCardId` is missing, `502` on DB errors, `405` with the `Allow: POST` header for GET/DELETE without DB access
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
 - **WsIQPckEper / DocSOARestClient / MenuPricingSoapClient** – SOAP/REST envelope/request construction, response parsing, HTTP/SOAP error handling, all public client methods

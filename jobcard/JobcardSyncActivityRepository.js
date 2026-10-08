@@ -20,9 +20,17 @@
  * getLastPayload rilegge il payload registrato, insieme a djcsynch/ack/
  * techreason/businessreason della stessa riga (azione GET "lastPayload"), per
  * recuperare le modifiche inviate quando l'aggiornamento verso DJC/DGT fallisce.
+ * deleteSynch elimina la riga della jobcard (azione POST "deleteSynch") solo se
+ * djcsynch è false (ultimo invio a DGT fallito) e ack/techreason/businessreason
+ * sono vuoti (NULL o stringa vuota: nessun esito registrato da synch-status).
+ * canDeleteSynch verifica le stesse condizioni sull'esito già letto: l'azione
+ * "lastPayload", dopo aver letto il payload, elimina la riga con deleteSynch
+ * solo se rispettate.
  *
  * Copia di djc/JobcardSyncActivityRepository.js, mantenuta in sync, salvo
- * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload (solo jobcard).
+ * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload e
+ * DELETE_SYNC_ACTIVITY_SQL/canDeleteSynch/deleteSyncActivity/deleteSynch (solo
+ * jobcard).
  */
 
 const UPSERT_SQL = `
@@ -46,6 +54,19 @@ const SELECT_LAST_PAYLOAD_SQL = `
   SELECT jobcardid, djcsynch, ack, techreason, businessreason, payload
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
+
+// Le condizioni di deleteSynch sono nella stessa DELETE, quindi verificate
+// sulla versione corrente della riga anche con UPDATE concorrenti (djcsynch da
+// jobcard/djc, esito da synch-status): djcsynch NULL (esito non ancora noto)
+// non è false, la riga resta.
+const DELETE_SYNC_ACTIVITY_SQL = `
+  DELETE FROM woc.jobcard_sync_activity
+  WHERE jobcardid = $1
+    AND djcsynch IS FALSE
+    AND COALESCE(ack, '') = ''
+    AND COALESCE(techreason, '') = ''
+    AND COALESCE(businessreason, '') = ''
+  RETURNING jobcardid`;
 
 // Attesa massima della lettura dell'esito e della scrittura di djcsynch
 // (best-effort): un DB lento o irraggiungibile non deve bloccare la risposta di
@@ -287,6 +308,65 @@ async function getLastPayload(jobCardId, { getPool } = {}) {
   return row ? { jobCardId: row.jobcardid, ...toSyncStatus(row), payload: row.payload } : null;
 }
 
+/**
+ * true se l'esito (campi camelCase, v. toSyncStatus) rispetta le condizioni di
+ * DELETE_SYNC_ACTIVITY_SQL: djcsynch false e ack/techReason/businessReason
+ * NULL o stringa vuota (senza trim, come COALESCE(x, '') = ''). Evita la
+ * DELETE quando la riga letta non è eliminabile; la DELETE ricontrolla comunque
+ * le condizioni sulla versione corrente della riga.
+ * @param {{djcsynch?: boolean|null, ack?: string|null, techReason?: string|null,
+ *          businessReason?: string|null}|null} [syncStatus]
+ * @returns {boolean}
+ */
+function canDeleteSynch(syncStatus) {
+  const { djcsynch, ack, techReason, businessReason } = syncStatus ?? {};
+  return djcsynch === false && [ack, techReason, businessReason].every((value) => (value ?? '') === '');
+}
+
+/**
+ * DELETE condizionato per jobcardid (v. DELETE_SYNC_ACTIVITY_SQL).
+ * @param {import('pg').Pool} pool
+ * @param {string} jobCardId
+ * @returns {Promise<{jobcardid: string}|null>} la riga eliminata, o null se la
+ *          jobcard non è presente o non rispetta le condizioni
+ */
+async function deleteSyncActivity(pool, jobCardId) {
+  const { rows } = await pool.query(DELETE_SYNC_ACTIVITY_SQL, [jobCardId]);
+  return rows[0] ?? null;
+}
+
+/**
+ * Elimina la riga della jobcard (azione POST "deleteSynch") solo se djcsynch è
+ * false (ultimo invio a DGT fallito) e ack/techreason/businessreason sono vuoti
+ * (NULL o stringa vuota: nessun esito registrato da synch-status). Se nessuna
+ * riga viene eliminata, rilegge l'esito (selectSyncStatus) per distinguere la
+ * jobcard non presente dalle condizioni non rispettate.
+ * Bloccante, come getLastPayload: id assente -> errore "is required" senza
+ * accesso al DB; errori DB/pool propagati al chiamante.
+ * @param {string|number|null|undefined} jobCardId
+ * @param {object} [deps]
+ * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
+ * @returns {Promise<{jobCardId: string, deleted: true}|{jobCardId: string,
+ *          deleted: false, djcsynch: boolean|null, ack: string, techReason: string,
+ *          businessReason: string}|null>} deleted: true se la riga è stata
+ *          eliminata, deleted: false con l'esito attuale se non rispetta le
+ *          condizioni, null se la jobcard non è presente
+ */
+async function deleteSynch(jobCardId, { getPool } = {}) {
+  const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
+  if (!id) throw new Error('[jobCard] jobCardId is required');
+
+  const resolveGetPool = getPool ?? require('./db').getPool;
+  const pool = await resolveGetPool();
+  const deletedRow = await deleteSyncActivity(pool, id);
+  if (deletedRow) {
+    console.log(`[jobCard] jobcard_sync_activity delete jobcardid=${id}`);
+    return { jobCardId: deletedRow.jobcardid, deleted: true };
+  }
+  const row = await selectSyncStatus(pool, id);
+  return row ? { jobCardId: id, deleted: false, ...toSyncStatus(row) } : null;
+}
+
 module.exports = {
   resolveJobCardId,
   withTimeout,
@@ -299,8 +379,12 @@ module.exports = {
   withSyncStatus,
   selectLastPayload,
   getLastPayload,
+  canDeleteSynch,
+  deleteSyncActivity,
+  deleteSynch,
   UPSERT_SQL,
   UPDATE_DJC_SYNCH_SQL,
   SELECT_SYNC_STATUS_SQL,
   SELECT_LAST_PAYLOAD_SQL,
+  DELETE_SYNC_ACTIVITY_SQL,
 };

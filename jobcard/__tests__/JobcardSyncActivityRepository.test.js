@@ -15,10 +15,14 @@ const {
   withSyncStatus,
   selectLastPayload,
   getLastPayload,
+  canDeleteSynch,
+  deleteSyncActivity,
+  deleteSynch,
   UPSERT_SQL,
   UPDATE_DJC_SYNCH_SQL,
   SELECT_SYNC_STATUS_SQL,
   SELECT_LAST_PAYLOAD_SQL,
+  DELETE_SYNC_ACTIVITY_SQL,
 } = require('../JobcardSyncActivityRepository');
 
 describe('JobcardSyncActivityRepository', () => {
@@ -451,6 +455,117 @@ describe('JobcardSyncActivityRepository', () => {
     test('propagates pool creation errors (blocking)', async () => {
       const getPool = jest.fn().mockRejectedValue(new Error('secret fetch failed'));
       await expect(getLastPayload('SRP-1', { getPool })).rejects.toThrow('secret fetch failed');
+    });
+  });
+
+  describe('canDeleteSynch', () => {
+    test.each([
+      [{ djcsynch: false, ack: '', techReason: '', businessReason: '' }, true],
+      [{ djcsynch: false, ack: null, techReason: null, businessReason: null }, true],
+      [{ djcsynch: false }, true],
+      [{ djcsynch: null, ack: '', techReason: '', businessReason: '' }, false],
+      [{ djcsynch: true, ack: '', techReason: '', businessReason: '' }, false],
+      [{ ack: '', techReason: '', businessReason: '' }, false],
+      [{ djcsynch: false, ack: 'OK', techReason: '', businessReason: '' }, false],
+      [{ djcsynch: false, ack: '', techReason: 'SUCCESS_WITHOUT_UPDATE', businessReason: '' }, false],
+      [{ djcsynch: false, ack: '', techReason: '', businessReason: 'UNSYNCED - No data found in dispatching table' }, false],
+      // nessun trim, come COALESCE(x, '') = '' nella DELETE
+      [{ djcsynch: false, ack: ' ', techReason: '', businessReason: '' }, false],
+      [null, false],
+      [undefined, false],
+    ])('%j -> %s (same conditions as DELETE_SYNC_ACTIVITY_SQL)', (syncStatus, expected) => {
+      expect(canDeleteSynch(syncStatus)).toBe(expected);
+    });
+  });
+
+  describe('deleteSyncActivity', () => {
+    test('deletes by jobcardid only if djcsynch is false and ack/techreason/businessreason are NULL or empty', async () => {
+      const pool = { query: jest.fn().mockResolvedValue({ rows: [{ jobcardid: 'SRP-1' }] }) };
+
+      await expect(deleteSyncActivity(pool, 'SRP-1')).resolves.toEqual({ jobcardid: 'SRP-1' });
+      expect(pool.query).toHaveBeenCalledWith(DELETE_SYNC_ACTIVITY_SQL, ['SRP-1']);
+      expect(DELETE_SYNC_ACTIVITY_SQL).toMatch(
+        /DELETE FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1\s+AND djcsynch IS FALSE\s+AND COALESCE\(ack, ''\) = ''\s+AND COALESCE\(techreason, ''\) = ''\s+AND COALESCE\(businessreason, ''\) = ''\s+RETURNING jobcardid$/,
+      );
+    });
+
+    test('returns null when no row is deleted', async () => {
+      const pool = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+      await expect(deleteSyncActivity(pool, 'SRP-1')).resolves.toBeNull();
+    });
+  });
+
+  describe('deleteSynch', () => {
+    const poolReturning = (...results) => {
+      const query = jest.fn();
+      results.forEach((rows) => query.mockResolvedValueOnce({ rows }));
+      return { query };
+    };
+
+    test('deletes the row with the conditional DELETE only, using the injected getPool', async () => {
+      const pool = poolReturning([{ jobcardid: 'SRP-1' }]);
+      const getPool = jest.fn().mockResolvedValue(pool);
+
+      await expect(deleteSynch('SRP-1', { getPool })).resolves.toEqual({ jobCardId: 'SRP-1', deleted: true });
+      expect(pool.query.mock.calls).toEqual([[DELETE_SYNC_ACTIVITY_SQL, ['SRP-1']]]);
+      expect(logSpy).toHaveBeenCalledWith('[jobCard] jobcard_sync_activity delete jobcardid=SRP-1');
+      expect(db.getPool).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      [{ djcsynch: true, ack: null, techreason: null, businessreason: null }, { djcsynch: true, ack: '', techReason: '', businessReason: '' }],
+      [{ djcsynch: null, ack: null, techreason: null, businessreason: null }, { djcsynch: null, ack: '', techReason: '', businessReason: '' }],
+      [{ djcsynch: false, ack: 'KO', techreason: 'FAILED', businessreason: 'FAILED - DMS down' },
+        { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down' }],
+    ])('returns deleted: false with the current outcome when the row does not meet the conditions (case %#)', async (row, outcome) => {
+      const pool = poolReturning([], [row]);
+      const getPool = jest.fn().mockResolvedValue(pool);
+
+      await expect(deleteSynch('SRP-1', { getPool })).resolves.toEqual({ jobCardId: 'SRP-1', deleted: false, ...outcome });
+      expect(pool.query.mock.calls).toEqual([
+        [DELETE_SYNC_ACTIVITY_SQL, ['SRP-1']],
+        [SELECT_SYNC_STATUS_SQL, ['SRP-1']],
+      ]);
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    test('returns null when the jobcard is not tracked', async () => {
+      const getPool = jest.fn().mockResolvedValue(poolReturning([], []));
+      await expect(deleteSynch('SRP-404', { getPool })).resolves.toBeNull();
+    });
+
+    test('defaults to db.getPool and trims/stringifies the id', async () => {
+      const pool = { query: jest.fn().mockImplementation(async (sql, [id]) => ({ rows: [{ jobcardid: id }] })) };
+      db.getPool.mockResolvedValue(pool);
+
+      await expect(deleteSynch(' SRP-1 ')).resolves.toEqual({ jobCardId: 'SRP-1', deleted: true });
+      await expect(deleteSynch(84564621)).resolves.toEqual({ jobCardId: '84564621', deleted: true });
+      expect(db.getPool).toHaveBeenCalledTimes(2);
+      expect(pool.query.mock.calls.map(([, params]) => params)).toEqual([['SRP-1'], ['84564621']]);
+    });
+
+    test.each([undefined, null, '', '   '])('throws an "is required" error (-> 400) without touching the DB for id %p', async (id) => {
+      const getPool = jest.fn();
+      await expect(deleteSynch(id, { getPool })).rejects.toThrow('[jobCard] jobCardId is required');
+      expect(getPool).not.toHaveBeenCalled();
+      expect(db.getPool).not.toHaveBeenCalled();
+    });
+
+    test('propagates DB errors (blocking)', async () => {
+      const getPool = jest.fn().mockResolvedValue({ query: jest.fn().mockRejectedValue(new Error('permission denied for table jobcard_sync_activity')) });
+      await expect(deleteSynch('SRP-1', { getPool })).rejects.toThrow('permission denied for table jobcard_sync_activity');
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    test('propagates errors of the follow-up SELECT', async () => {
+      const query = jest.fn().mockResolvedValueOnce({ rows: [] }).mockRejectedValueOnce(new Error('connection reset'));
+      const getPool = jest.fn().mockResolvedValue({ query });
+      await expect(deleteSynch('SRP-1', { getPool })).rejects.toThrow('connection reset');
+    });
+
+    test('propagates pool creation errors (blocking)', async () => {
+      const getPool = jest.fn().mockRejectedValue(new Error('secret fetch failed'));
+      await expect(deleteSynch('SRP-1', { getPool })).rejects.toThrow('secret fetch failed');
     });
   });
 });
