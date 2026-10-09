@@ -643,7 +643,8 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
   (token/HTTP/rete), `null` se non ancora noto (riga assente o precedente alla
   colonna, oppure nuovo payload non ancora inviato: l'UPSERT lo azzera a `NULL`).
 - `ack`/`techReason`/`businessReason`: esito della sincronizzazione DMS,
-  popolato da [synch-status](#synch-status).
+  popolato da [synch-status](#synch-status); azzerati dall'UPSERT a ogni
+  `saveJobcard` (stringa vuota finché non arriva l'esito del nuovo invio).
 
 ```json
 {
@@ -900,7 +901,9 @@ ultimo payload inviato (sovrascritto ad ogni `saveJobcard`); `djcsynch` =
 esito della chiamata DGT (`true` se DGT risponde `success: true`, altrimenti
 `false`, anche su errore token/HTTP/rete), registrato best-effort subito dopo
 l'invio e azzerato a `NULL` dall'UPSERT; `ack`/`techreason`/
-`businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`. Il
+`businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`
+(`ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT, così l'esito
+della push precedente non viene letto come esito del nuovo invio). Il
 salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
 in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
 (`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate; solo quella
@@ -2117,7 +2120,7 @@ cd agendaSoa && npm run test:coverage
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
-- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch` a `NULL`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
 - **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
 - **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
