@@ -7,8 +7,10 @@
  * Ad ogni saveJobcard, PRIMA dell'invio a DGT, jobcard registra il payload con un
  * UPSERT su jobcardid:
  *   - INSERT: jobcardid, creationdate (= now()), payload (djcsynch NULL)
- *   - UPDATE (jobcardid già presente): payload, con djcsynch azzerato a NULL
- *     (esito del nuovo invio non ancora noto)
+ *   - UPDATE (jobcardid già presente): payload, con djcsynch e l'esito della
+ *     push precedente (ack/techreason/businessreason) azzerati a NULL: l'esito
+ *     del nuovo invio non è ancora noto e quello vecchio non deve essere letto
+ *     come esito del nuovo invio
  * DOPO l'invio, recordDjcSynch registra in djcsynch l'esito della chiamata a
  * DGT: true se DGT risponde success: true, false altrimenti (success diverso
  * da true o errore token/HTTP/rete).
@@ -36,7 +38,8 @@
 const UPSERT_SQL = `
   INSERT INTO woc.jobcard_sync_activity (jobcardid, creationdate, payload)
   VALUES ($1, now(), $2::jsonb)
-  ON CONFLICT (jobcardid) DO UPDATE SET payload = EXCLUDED.payload, djcsynch = NULL
+  ON CONFLICT (jobcardid) DO UPDATE SET payload = EXCLUDED.payload, djcsynch = NULL,
+    ack = NULL, techreason = NULL, businessreason = NULL
   RETURNING jobcardid, creationdate`;
 
 const UPDATE_DJC_SYNCH_SQL = `

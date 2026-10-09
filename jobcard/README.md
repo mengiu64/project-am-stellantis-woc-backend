@@ -202,9 +202,11 @@ node index.js saveJobcard ./payload.json
 (e prima del recupero del token) il payload sanitizzato viene salvato con un
 UPSERT su `jobcardid` = `roInfo.jobCardSrpId` (fallback `dmsRepairOrderId`, poi
 `jobCardLegacyId`): al primo inserimento `creationdate` = `now()`, ai successivi
-vengono aggiornati `payload` e `djcsynch` (azzerato a `NULL`: esito del nuovo
-invio non ancora noto); `ack`/`techreason`/`businessreason`/`lastupdate`
-sono popolati in un secondo momento. Bloccante: id mancante → `400`, errore DB →
+vengono aggiornati `payload` e `djcsynch`, azzerato a `NULL` insieme a
+`ack`/`techreason`/`businessreason` (esito del nuovo invio non ancora noto:
+quello della push precedente non deve essere letto come esito del nuovo invio);
+`ack`/`techreason`/`businessreason`/`lastupdate` sono popolati in un secondo
+momento. Bloccante: id mancante → `400`, errore DB →
 `502`, e il payload non viene inviato a DGT. Da CLI il salvataggio avviene dopo la
 sync NAGA (che può valorizzare `appointments[].appointmentInternalId`), così la
 tabella contiene il payload effettivamente inviato. Stessa implementazione di

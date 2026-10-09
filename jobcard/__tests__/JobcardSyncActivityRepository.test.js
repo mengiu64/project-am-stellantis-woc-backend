@@ -89,11 +89,26 @@ describe('JobcardSyncActivityRepository', () => {
       expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, ['SRP-1', JSON.stringify(payload)]);
     });
 
-    test('UPSERT updates payload and resets djcsynch on conflict (creationdate/ack/reasons/lastupdate untouched)', () => {
+    test('UPSERT updates payload and resets djcsynch and the previous push outcome on conflict (creationdate/lastupdate untouched)', () => {
       expect(UPSERT_SQL).toMatch(/INSERT INTO woc\.jobcard_sync_activity \(jobcardid, creationdate, payload\)/);
       expect(UPSERT_SQL).toMatch(
-        /ON CONFLICT \(jobcardid\) DO UPDATE SET payload = EXCLUDED\.payload, djcsynch = NULL\s+RETURNING/,
+        /ON CONFLICT \(jobcardid\) DO UPDATE SET payload = EXCLUDED\.payload, djcsynch = NULL,\s+ack = NULL, techreason = NULL, businessreason = NULL\s+RETURNING/,
       );
+    });
+
+    test('UPSERT clears ack/techreason/businessreason so a new save never reports the outcome of the previous push', () => {
+      const [, conflictClause] = UPSERT_SQL.split('ON CONFLICT (jobcardid) DO UPDATE SET');
+      const [setClause] = conflictClause.split('RETURNING');
+      const assignments = setClause.split(',').map((part) => part.trim().replace(/\s+/g, ' '));
+
+      expect(assignments).toEqual([
+        'payload = EXCLUDED.payload',
+        'djcsynch = NULL',
+        'ack = NULL',
+        'techreason = NULL',
+        'businessreason = NULL',
+      ]);
+      expect(setClause).not.toMatch(/creationdate|lastupdate/);
     });
   });
 
