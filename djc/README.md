@@ -362,7 +362,7 @@ dagli arricchimenti di sola UI, cioè esattamente quello inviato — v.
 | `creationdate` | `now()` al primo inserimento; non modificata dagli UPSERT successivi |
 | `payload` (JSONB) | payload inviato a DGT; sovrascritto ad ogni `saveJobcard` |
 | `djcsynch` (BOOLEAN) | esito della chiamata DGT, registrato (best-effort) subito dopo l'invio: `true` se DGT risponde `success: true`, `false` se risponde altrimenti o se token/HTTP/rete falliscono; azzerato a `NULL` dall'UPSERT (esito del nuovo invio non ancora noto) |
-| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento da `synch-status` (esito della sincronizzazione) |
+| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento da `synch-status` (esito della sincronizzazione); `ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT (l'esito della push precedente non deve essere letto come esito del nuovo invio), `lastupdate` invariato |
 
 Negli ambienti esistenti la colonna `djcsynch` si aggiunge con
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, da eseguire **prima**
