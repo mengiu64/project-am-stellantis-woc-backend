@@ -67,7 +67,7 @@ function buildConfig(secrets) {
       // URL dell'endpoint SOAP (diverso tra dev/stage e prod): nessun default per non chiamare l'ambiente sbagliato
       baseUrl: secrets.WYZ_STOCKPRIX_BASE_URL,
       // Porta della Secrets Extension dal secret wyz (default 2773 se assente o non numerica)
-      extensionPort: Number(secrets.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || DEFAULT_EXTENSION_PORT,
+      extensionPort: Number(secrets.WYZ_STOCKPRIX_HTTP_PORT) || DEFAULT_EXTENSION_PORT,
       // Utente Basic Auth del servizio Panier SOA
       username: secrets.STOCKPRIX_USERNAME,
       // Password Basic Auth del servizio Panier SOA
@@ -119,6 +119,7 @@ async function getConfig() {
       STOCKPRIX_PASSWORD: process.env.STOCKPRIX_PASSWORD,
       STOCKPRIX_CLIENT_ID: process.env.STOCKPRIX_CLIENT_ID,
       WYZ_STOCKPRIX_BASE_URL: process.env.WYZ_STOCKPRIX_BASE_URL,
+      WYZ_STOCKPRIX_HTTP_PORT: process.env.WYZ_STOCKPRIX_HTTP_PORT,
     };
   }
 

@@ -111,10 +111,10 @@ Secret Manager (`sm-np-bsn0027990-<env>-wyz`, prod `sm-bsn0027990-wyz`), JSON:
 | `STOCKPRIX_PASSWORD` | solo per `getStockPrix` | — |
 | `STOCKPRIX_CLIENT_ID` | solo per `getStockPrix` | — (`client_id` IBM API Connect, diverso tra preprod e prod) |
 | `WYZ_STOCKPRIX_BASE_URL` | solo per `getStockPrix` | — (base URL per ambiente, v. tabella sopra) |
-| `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT` | no | `2773` (porta della Secrets Extension) |
+| `WYZ_STOCKPRIX_HTTP_PORT` | no | `2773` (porta della Secrets Extension) |
 
 In locale, usare gli stessi nomi `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET` nel file `.env` o nelle variabili d'ambiente.
-Per `getStockPrix` in locale valorizzare anche `STOCKPRIX_*`, `WYZ_STOCKPRIX_BASE_URL` e i percorsi dei file PEM `WYZ_CERT_FILE` / `WYZ_KEY_FILE`.
+Per `getStockPrix` in locale valorizzare anche `STOCKPRIX_*`, `WYZ_STOCKPRIX_BASE_URL`, `WYZ_STOCKPRIX_HTTP_PORT` e i percorsi dei file PEM `WYZ_CERT_FILE` / `WYZ_KEY_FILE`.
 
 In **stage/prod** impostare gli URL/tenant di produzione nel secret. Parametro SSM e secret vanno creati fuori banda.
 Il parametro `partner=WIADVISOR` è aggiunto dalla lambda; `X-Correlation-Id` = `requestContext.requestId`.
