@@ -28,6 +28,8 @@ const { WyzError } = require('./wyzService');
 const SOAP_ENV_NS = 'http://schemas.xmlsoap.org/soap/envelope/';
 // Namespace del servizio StockPrix.
 const STOCKPRIX_NS = 'http://xml.inetpsa.com/pnr/stockprixservice/';
+const STOCKPRIX_PREPROD_PATH = '/api/cert-aai/applications/panier-soa/ws/StockPrixService/v1';
+const STOCKPRIX_PROD_PATH = '/applications/panier-soa/ws/StockPrixService/v1';
 // Numero massimo di righe ricambio per chiamata (limite del servizio: 1..100).
 const MAX_PART_LINES = 100;
 // Pattern di customerDMSHeader imposto dall'XSD del servizio.
@@ -42,6 +44,10 @@ const VIN_PATTERN = /^[A-Za-z0-9]{17}$/;
 const MAX_STRING_LENGTH = 40;
 // Quantità massima accettata per riga.
 const MAX_QUANTITY = 99999;
+
+function getStockPrixServicePath(hostname) {
+  return hostname === 'api-cert-preprod.groupe-psa.com' ? STOCKPRIX_PREPROD_PATH : STOCKPRIX_PROD_PATH;
+}
 
 // Opzioni del parser: niente array per elementi singoli, attributi ignorati, prefissi namespace rimossi.
 const XML_PARSER_OPTIONS = {
@@ -404,14 +410,14 @@ function normalizeItem(d) {
  * @throws {WyzError}
  */
 async function callStockPrix(xml, sp, correlationId) {
-  // Parsing dell'URL configurato.
+  // Parsing della base URL configurata.
   let endpoint;
   try {
-    // URL dell'endpoint per l'ambiente corrente.
-    endpoint = new URL(sp.url);
+    // Base URL dell'ambiente corrente.
+    endpoint = new URL(sp.baseUrl);
   } catch (err) {
     // Configurazione errata.
-    console.error(`[getStockPrix] URL StockPrixService non valido: "${sp.url}"`);
+    console.error(`[getStockPrix] Base URL StockPrixService non valida: "${sp.baseUrl}"`);
     // 500: errore interno di configurazione.
     throw new WyzError('Configurazione StockPrixService non valida', 500);
   }
@@ -431,7 +437,7 @@ async function callStockPrix(xml, sp, correlationId) {
   // Query string con il client_id IBM API Connect.
   const qs = new URLSearchParams({ client_id: sp.clientId }).toString();
   // Path completo della richiesta.
-  const path = `${endpoint.pathname}?${qs}`;
+  const path = `${getStockPrixServicePath(endpoint.hostname)}?${qs}`;
   // Credenziali Basic Auth codificate.
   const basic = Buffer.from(`${sp.username}:${sp.password}`).toString('base64');
 
@@ -577,7 +583,7 @@ async function getStockPrix(params, ctx = {}) {
     ['STOCKPRIX_USERNAME', sp.username],
     ['STOCKPRIX_PASSWORD', sp.password],
     ['STOCKPRIX_CLIENT_ID', sp.clientId],
-    ['WYZ_STOCKPRIX_URL', sp.url],
+    ['WYZ_STOCKPRIX_BASE_URL', sp.baseUrl],
   ].filter(([, v]) => !isNonEmptyString(v)).map(([k]) => k);
   // Secret incompleto: errore interno di configurazione.
   if (missing.length > 0) {

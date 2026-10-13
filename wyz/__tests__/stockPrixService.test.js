@@ -19,7 +19,7 @@ const {
 const { WyzError } = require('../wyzService');
 
 const SP = {
-  url: 'https://api-cert-preprod.groupe-psa.com/api/cert-aai/applications/panier-soa/ws/StockPrixService/v1',
+  baseUrl: 'https://api-cert-preprod.groupe-psa.com',
   extensionPort: 2773,
   username: 'USR',
   password: 'PWD',
@@ -173,10 +173,13 @@ describe('stockPrixService', () => {
     });
 
     it('usa la porta esplicita dell\'URL e il dealer dell\'authorizer', async () => {
-      mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, url: 'https://h.test:8443/ws' } });
+      mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, baseUrl: 'https://api-cert.groupe-psa.com:8443' } });
       mockRequest.mockResolvedValue({ statusCode: 200, body: OK_BODY });
       await getStockPrix(VALID, { authorizer: { profile: JSON.stringify({ dealer_code: '111111A' }) } });
-      expect(mockRequest.mock.calls[0][0]).toMatchObject({ hostname: 'h.test', port: '8443', path: '/ws?client_id=cid' });
+      expect(mockRequest.mock.calls[0][0]).toMatchObject({
+        hostname: 'api-cert.groupe-psa.com', port: '8443',
+        path: '/applications/panier-soa/ws/StockPrixService/v1?client_id=cid',
+      });
       expect(mockRequest.mock.calls[0][1]).toContain('<dealerId>111111A</dealerId>');
     });
 
@@ -192,14 +195,14 @@ describe('stockPrixService', () => {
     });
 
     it('secret incompleto -> 500 senza chiamare il servizio', async () => {
-      mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, password: '', clientId: undefined, url: undefined } });
+      mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, password: '', clientId: undefined, baseUrl: undefined } });
       await expect(getStockPrix(VALID)).rejects.toMatchObject({ statusCode: 500, message: 'Configurazione StockPrixService incompleta' });
-      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('STOCKPRIX_PASSWORD, STOCKPRIX_CLIENT_ID, WYZ_STOCKPRIX_URL'));
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('STOCKPRIX_PASSWORD, STOCKPRIX_CLIENT_ID, WYZ_STOCKPRIX_BASE_URL'));
       expect(mockRequest).not.toHaveBeenCalled();
     });
 
     it('URL non valido -> 500', async () => {
-      mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, url: 'not a url' } });
+      mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, baseUrl: 'not a url' } });
       await expect(getStockPrix(VALID)).rejects.toMatchObject({ statusCode: 500 });
     });
 
