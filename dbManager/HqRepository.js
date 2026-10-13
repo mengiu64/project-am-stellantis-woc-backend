@@ -104,7 +104,8 @@
  *
  * getPackageListHQ(market)/getPackageListSM(market, oic) leggono la
  * gerarchia mercato -> dominio -> pacchetto configurata per il mercato
- * (obbligatorio in entrambe) e, per getPackageListSM, anche per l'OIC
+ * (obbligatorio in getPackageListSM; in getPackageListHQ, se assente/vuoto,
+ * vengono letti i domini/pacchetti comuni con market NULL o '') e, per getPackageListSM, anche per l'OIC
  * (obbligatorio, filtro diretto su pk.oic, nessuna tabella hq_pk_oic
  * coinvolta): i domini si agganciano sempre solo per market (condivisi fra
  * tutti gli OIC dello stesso mercato); getPackageListSM restituisce SOLO i
@@ -446,10 +447,9 @@ async function deletetVehicleInspection(pool, id, value, username, codmarket) {
  * @param {string} type
  * @param {string} descr
  * @param {string} username
- * @param {string} codmarket
  * @returns {Promise<void>}
  */
-async function insertVehicleInspection(pool, market, type, descr, username, codmarket) {
+async function insertVehicleInspection(pool, market, type, descr, username) {
   if (!type) throw new Error('"type" is required');
   if (!descr) throw new Error('"descr" is required');
 
@@ -471,7 +471,7 @@ async function insertVehicleInspection(pool, market, type, descr, username, codm
   );
   const [{ type: insertedType, descr: insertedDescr, visible } = {}] = rows;
 
-  await insertAudit(pool, username, insertedType, codmarket, 'insert', `${insertedType} ${insertedDescr} visible: ${visible}`);
+  await insertAudit(pool, username, insertedType, market, 'insert', `${insertedType} ${insertedDescr} visible: ${visible}`);
 }
 
 /**
@@ -490,9 +490,11 @@ async function insertVehicleInspection(pool, market, type, descr, username, codm
  * @param {string|null} [marketOrig] - se assente/vuoto, clona le righe comuni
  *                                     senza mercato (market IS NULL OR market = '')
  * @param {string} type
+ * @param {string} username - registrato nell'audit (actiontype 'propagate')
+ * @param {string} codmarket - market dell'audit
  * @returns {Promise<void>}
  */
-async function cloneVeicInspection(pool, marketTarget, marketOrig, type) {
+async function cloneVeicInspection(pool, marketTarget, marketOrig, type, username, codmarket) {
   if (!marketTarget) throw new Error('"marketTarget" is required');
   if (!type) throw new Error('"type" is required');
 
@@ -534,6 +536,8 @@ async function cloneVeicInspection(pool, marketTarget, marketOrig, type) {
   } finally {
     client.release();
   }
+
+  await insertAudit(pool, username, type, codmarket, 'propagate', `cloned  ${type}: from  market  ${marketOrig} into market  ${marketTarget}`);
 }
 
 /**
@@ -625,36 +629,42 @@ async function getAddressByOics(pool, { oics } = {}) {
 
 /**
  * Abilita un mercato (woc.hq_pk_market.deleted = 0, upsert sulla PK
- * "market") per il mercato indicato.
+ * "market") per il mercato indicato e registra una riga di audit.
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
+ * @param {string} username - registrato nell'audit
  * @returns {Promise<void>}
  */
-async function setPkMarketEnable(pool, market) {
+async function setPkMarketEnable(pool, market, username) {
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 0)
      ON CONFLICT (market) DO UPDATE SET deleted = 0`,
     [market],
   );
+
+  await insertAudit(pool, username, 'pkdomain', market, 'create', `!! domain configuration at market level  ${market} `);
 }
 
 /**
  * Disabilita un mercato (woc.hq_pk_market.deleted = 1, upsert sulla PK
- * "market") per il mercato indicato.
+ * "market") per il mercato indicato e registra una riga di audit.
  *
  * @param {import('pg').Pool} pool
  * @param {string} market
+ * @param {string} username - registrato nell'audit
  * @returns {Promise<void>}
  */
-async function setPkMarketDisable(pool, market) {
+async function setPkMarketDisable(pool, market, username) {
   await pool.query(
     `INSERT INTO woc.hq_pk_market (market, deleted)
      VALUES ($1, 1)
      ON CONFLICT (market) DO UPDATE SET deleted = 1`,
     [market],
   );
+
+  await insertAudit(pool, username, 'pkdomain', market, 'create', `!! domain configuration at OIC level  ${market} `);
 }
 /**
  * Verifica se il mercato indicato e' abilitato, leggendo il flag "deleted"
@@ -683,15 +693,18 @@ async function checkIsPkMarketEnabled(pool, market) {
  * @param {import('pg').Pool} pool
  * @param {string} market
  * @param {string} descr
+ * @param {string} username - registrato nell'audit (market dell'audit = market)
  * @returns {Promise<number>} l'iddomain generato
  */
-async function insertDomain(pool, market, descr) {
+async function insertDomain(pool, market, descr, username) {
   const { rows } = await pool.query(
     `INSERT INTO woc.hq_pk_domain (market, descr)
      VALUES (NULLIF($1, ''), $2)
      RETURNING iddomain`,
     [market, descr],
   );
+
+  await insertAudit(pool, username, 'pkdomain', market, 'insert', `Added ${descr} `);
 
   return rows[0].iddomain;
 }
@@ -727,9 +740,10 @@ async function deleteOicPkHierarchy(pool, market, oic) {
  * @param {string} market
  * @param {number} iddomain
  * @param {string} descr
+ * @param {string} username
  * @returns {Promise<void>}
  */
-async function setDomain(pool, market, iddomain, descr) {
+async function setDomain(pool, market, iddomain, descr, username) {
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   await pool.query(
@@ -739,27 +753,45 @@ async function setDomain(pool, market, iddomain, descr) {
         AND iddomain = $2`,
     [market, iddomain, descr],
   );
+
+  await insertAudit(pool, username, 'pkdomain', market, 'update', `updated ${descr} `);
 }
 
 /**
  * Cancella (logicamente, woc.hq_pk_domain.deleted = 1) il dominio
- * (market, iddomain) indicato.
+ * (market, iddomain) indicato. Se market e' assente/vuoto agisce sul dominio
+ * comune (market IS NULL OR market = '').
  *
  * @param {import('pg').Pool} pool
- * @param {string} market
+ * @param {string|null} market
  * @param {number} iddomain
+ * @param {string} username
  * @returns {Promise<void>}
  */
-async function deleteDomain(pool, market, iddomain) {
+async function deleteDomain(pool, market, iddomain, username) {
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
+
+  // market assente/vuoto: dominio comune (market NULL o '')
+  const hasMarket = market !== undefined && market !== null && market !== '';
+  const marketCondition = hasMarket ? 'market = $1' : "(market IS NULL OR market = '')";
+  const params = hasMarket ? [market, iddomain] : [iddomain];
+  const idParam = hasMarket ? '$2' : '$1';
 
   await pool.query(
     `UPDATE woc.hq_pk_domain
         SET deleted = 1
-      WHERE market = $1
-        AND iddomain = $2`,
-    [market, iddomain],
+      WHERE ${marketCondition}
+        AND iddomain = ${idParam}`,
+    params,
   );
+
+  const { rows } = await pool.query(
+    `SELECT descr FROM woc.hq_pk_domain WHERE ${marketCondition} AND iddomain = ${idParam}`,
+    params,
+  );
+  const [{ descr } = {}] = rows;
+
+  await insertAudit(pool, username, 'pkdomain', market, 'delete', `deleted ${descr} `);
 }
 
 /**
@@ -769,9 +801,11 @@ async function deleteDomain(pool, market, iddomain) {
  * @param {import('pg').Pool} pool
  * @param {number} iddomain
  * @param {number} value
+ * @param {string} username
+ * @param {string} codmarket
  * @returns {Promise<void>}
  */
-async function setDomainVisible(pool, iddomain, value) {
+async function setDomainVisible(pool, iddomain, value, username, codmarket) {
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   await pool.query(
@@ -780,6 +814,8 @@ async function setDomainVisible(pool, iddomain, value) {
       WHERE iddomain = $1`,
     [iddomain, value],
   );
+
+  await insertAudit(pool, username, 'pkdomain', codmarket, 'update', `setDomainVisible  `);
 }
 
 
@@ -794,9 +830,10 @@ async function setDomainVisible(pool, iddomain, value) {
  * @param {string} descr
  * @param {number} timeop
  * @param {number} pricewithvat
+ * @param {string} username - registrato nell'audit (market dell'audit = market)
  * @returns {Promise<number>} l'idpackage generato
  */
-async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat) {
+async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewithvat, username) {
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
   const { rows } = await pool.query(
@@ -806,13 +843,24 @@ async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewi
     [market, oic, iddomain, descr, timeop, pricewithvat],
   );
 
+  const { rows: domainRows } = await pool.query(
+    `SELECT descr AS descrdomain
+       FROM woc.hq_pk_domain
+      WHERE iddomain = $1`,
+    [iddomain],
+  );
+  const [{ descrdomain } = {}] = domainRows;
+
+  await insertAudit(pool, username, 'pkdomain', market, 'insert', `market ${market} : Added Package  ${descr} in domain ${descrdomain} `);
+
   return rows[0].idpackage;
 }
 
 /**
  * Modifica iddomain/descr/timeop/pricewithvat del pacchetto con idpackage
  * indicato (idpackage e' univoco a livello globale, generato dalla sequence
- * woc.hq_pk_packages_idpackage_seq).
+ * woc.hq_pk_packages_idpackage_seq). Registra una riga di audit con il market
+ * del pacchetto (RETURNING market dell'UPDATE).
  *
  * @param {import('pg').Pool} pool
  * @param {number} idpackage
@@ -820,40 +868,65 @@ async function insertPackage(pool, market, oic, iddomain, descr, timeop, pricewi
  * @param {string} descr
  * @param {number} timeop
  * @param {number} pricewithvat
+ * @param {string} username - registrato nell'audit
  * @returns {Promise<void>}
  */
-async function setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat) {
+async function setPackage(pool, idpackage, iddomain, descr, timeop, pricewithvat, username) {
   if (idpackage === undefined || idpackage === null) throw new Error('"idpackage" is required');
   if (iddomain === undefined || iddomain === null) throw new Error('"iddomain" is required');
 
-  await pool.query(
+  const { rows } = await pool.query(
     `UPDATE woc.hq_pk_packages
         SET iddomain = $2,
             descr = $3,
             timeop = $4,
             pricewithvat = $5
-      WHERE idpackage = $1`,
+      WHERE idpackage = $1
+      RETURNING market`,
     [idpackage, iddomain, descr, timeop, pricewithvat],
   );
+  const [{ market } = {}] = rows;
+
+  const { rows: domainRows } = await pool.query(
+    `SELECT descr AS descrdomain
+       FROM woc.hq_pk_domain
+      WHERE iddomain = $1`,
+    [iddomain],
+  );
+  const [{ descrdomain } = {}] = domainRows;
+
+  await insertAudit(pool, username, 'pkdomain', market, 'update', `market ${market} : updated Package  ${descr} in domain ${descrdomain} timeop:${timeop}  pricewithvat:${pricewithvat}`);
 }
 
 /**
  * Cancella (fisicamente) il pacchetto con idpackage indicato da
  * woc.hq_pk_packages (idpackage e' univoco a livello globale, generato dalla
- * sequence woc.hq_pk_packages_idpackage_seq).
+ * sequence woc.hq_pk_packages_idpackage_seq). Market e descr del pacchetto per
+ * l'audit sono letti PRIMA della DELETE (la riga poi non esiste piu').
  *
  * @param {import('pg').Pool} pool
  * @param {number} idpackage
+ * @param {string} username - registrato nell'audit
  * @returns {Promise<void>}
  */
-async function deletePackage(pool, idpackage) {
+async function deletePackage(pool, idpackage, username) {
   if (idpackage === undefined || idpackage === null) throw new Error('"idpackage" is required');
+
+  const { rows: pkRows } = await pool.query(
+    `SELECT market, descr AS descrpk
+       FROM woc.hq_pk_packages
+      WHERE idpackage = $1`,
+    [idpackage],
+  );
+  const [{ market, descrpk } = {}] = pkRows;
 
   await pool.query(
     `DELETE FROM woc.hq_pk_packages
       WHERE idpackage = $1`,
     [idpackage],
   );
+
+  await insertAudit(pool, username, 'pkdomain', market, 'delete', `market ${market} : deleted Package  ${descrpk} `);
 }
 
 /**
@@ -895,7 +968,7 @@ async function setPackageVisible(pool, idpackage, value) {
  * @returns {Promise<Array<{ market: string, oic: null, domainDescr: string|null, domVisible: number|null, idpackage: number|null, packageDescr: string|null, timeop: number|null, pricewithvat: number|null, pkVisible: number|null }>>}
  */
 async function getPackageListHQ(pool, market) {
-  if (!market) throw new Error('"market" is required');
+  const hasMarket = market !== undefined && market !== null && market !== '';
 
   const selectColumns = `dom.iddomain
                           , dom.descr AS domaindescr
@@ -906,13 +979,19 @@ async function getPackageListHQ(pool, market) {
                           , pk.pricewithvat
                           , pk.visible AS pkvisible`;
 
-  const sql = `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
+  // market assente/vuoto: solo domini/pacchetti comuni (market NULL o ''), senza hq_pk_market
+  const sql = hasMarket
+    ? `SELECT mk.market, NULL::varchar AS oic, ${selectColumns}
              FROM woc.hq_pk_market mk
              LEFT JOIN woc.hq_pk_domain dom ON dom.market = mk.market AND dom.deleted = 0
              LEFT JOIN woc.hq_pk_packages pk ON pk.market = mk.market AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
-           WHERE mk.market = $1`;
+           WHERE mk.market = $1`
+    : `SELECT dom.market, NULL::varchar AS oic, ${selectColumns}
+             FROM woc.hq_pk_domain dom
+             LEFT JOIN woc.hq_pk_packages pk ON (pk.market IS NULL OR pk.market = '') AND pk.oic IS NULL AND pk.iddomain = dom.iddomain
+           WHERE (dom.market IS NULL OR dom.market = '') AND dom.deleted = 0`;
 
-  const { rows } = await pool.query(sql, [market]);
+  const { rows } = await pool.query(sql, hasMarket ? [market] : []);
 
   return rows.map((row) => ({
     market: row.market,
@@ -1009,12 +1088,18 @@ async function getPackageListSM(pool, market, oic) {
  *
  * @param {import('pg').Pool} pool
  * @param {string} marketTarget
- * @param {string} marketOrig
+ * @param {string|null} [marketOrig] - se assente/vuoto, clona le righe comuni (market NULL o '')
+ * @param {string} username - registrato nell'audit (section 'pkdomain', actiontype 'propagate')
+ * @param {string} codmarket - market dell'audit
  * @returns {Promise<void>}
  */
-async function clonePk(pool, marketTarget, marketOrig) {
+async function clonePk(pool, marketTarget, marketOrig, username, codmarket) {
   if (!marketTarget) throw new Error('"marketTarget" is required');
-  if (!marketOrig) throw new Error('"marketOrig" is required');
+
+  // marketOrig assente/vuoto: clona le righe comuni (market NULL o '')
+  const hasMarketOrig = marketOrig !== undefined && marketOrig !== null && marketOrig !== '';
+  const origCondition = hasMarketOrig ? 'market = $1' : "(market IS NULL OR market = '')";
+  const origParams = hasMarketOrig ? [marketOrig] : [];
 
   const client = await pool.connect();
   try {
@@ -1030,8 +1115,8 @@ async function clonePk(pool, marketTarget, marketOrig) {
     //    rimappando iddomain vecchio -> nuovo per preservare la relazione
     //    dominio/pacchetto nel clone dei pacchetti.
     const { rows: domainRows } = await client.query(
-      `SELECT iddomain, descr FROM woc.hq_pk_domain WHERE market = $1`,
-      [marketOrig],
+      `SELECT iddomain, descr FROM woc.hq_pk_domain WHERE ${origCondition} AND deleted = 0`,
+      origParams,
     );
     const iddomainMap = new Map();
     for (const { iddomain, descr } of domainRows) {
@@ -1047,10 +1132,12 @@ async function clonePk(pool, marketTarget, marketOrig) {
     // 3) Copia i pacchetti del mercato originale sul mercato target,
     //    rimappando l'iddomain sui nuovi domini appena clonati.
     const { rows: packageRows } = await client.query(
-      `SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE market = $1`,
-      [marketOrig],
+      `SELECT oic, iddomain, descr, timeop, pricewithvat FROM woc.hq_pk_packages WHERE ${origCondition}`,
+      origParams,
     );
     for (const { oic, iddomain, descr, timeop, pricewithvat } of packageRows) {
+      // Salta i pacchetti il cui dominio e' cancellato (non clonato)
+      if (iddomain != null && !iddomainMap.has(iddomain)) continue;
       await client.query(
         `INSERT INTO woc.hq_pk_packages (market, oic, iddomain, descr, timeop, pricewithvat)
          VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -1065,6 +1152,8 @@ async function clonePk(pool, marketTarget, marketOrig) {
   } finally {
     client.release();
   }
+
+  await insertAudit(pool, username, 'pkdomain', codmarket, 'propagate', `cloned market  ${marketOrig} into market  ${marketTarget}`);
 }
 
 /**

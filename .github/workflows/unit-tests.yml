@@ -5182,6 +5182,9 @@ jobs:
           npm cache clean --force
           df -h .
 
+      # AuroraAutoStartClusterIdentifier/AuroraAutoStartBastionName espliciti: su uno
+      # stack esistente sam deploy riusa il valore salvato (UsePreviousValue) dei
+      # parametri non passati e ignorerebbe il Default del template.
       - name: SAM Deploy — stage
         run: |
           sam deploy \
@@ -5201,6 +5204,8 @@ jobs:
               ServiceUrlsSecretId="sm-np-bsn0027990-stage-service-urls" \
               PkFavoriteDbSecretId="${{ vars.STAGE_PKFAVORITE_DB_SECRET_ID }}" \
               DocsoaDbSecretId="${{ vars.STAGE_DOCSOA_DB_SECRET_ID }}" \
+              AuroraAutoStartClusterIdentifier="rds-np-bsn0027990-stage-aurora" \
+              AuroraAutoStartBastionName="ec2-np-bsn0027990-stage-bastion" \
               TranslationsBucketNameOverride='""'
 
       - name: Align internal REST routes and IAM policies

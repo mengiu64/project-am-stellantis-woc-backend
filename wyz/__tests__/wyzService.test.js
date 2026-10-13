@@ -86,6 +86,9 @@ describe('wyzService', () => {
       const brandsCall = mockHttps.mock.calls.map(([o]) => o).find((o) => o.path.startsWith('/api/tyres/brands'));
       expect(brandsCall.path).toBe('/api/tyres/brands?customerRrdiCode=C1&hubCode=H1&partner=WIADVISOR');
       expect(brandsCall.headers).toMatchObject({ Authorization: 'Bearer tok', 'X-Correlation-Id': 'cid' });
+      const vehicleTypesCall = mockHttps.mock.calls.map(([o]) => o).find((o) => o.path.startsWith('/api/tyres/vehicle-types'));
+      expect(vehicleTypesCall.path).toBe('/api/tyres/vehicle-types?customerRrdiCode=C1&hubCode=H1&partner=WIADVISOR');
+      expect(vehicleTypesCall.headers).toMatchObject({ Authorization: 'Bearer tok', 'X-Correlation-Id': 'cid' });
       const seasonsCall = mockHttps.mock.calls.map(([o]) => o).find((o) => o.path.startsWith('/api/tyres/seasons'));
       expect(seasonsCall.path).toBe('/api/tyres/seasons?partner=WIADVISOR');
     });
