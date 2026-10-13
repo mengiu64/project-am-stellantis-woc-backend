@@ -11,6 +11,9 @@
  *     push precedente (ack/techreason/businessreason) azzerati a NULL: l'esito
  *     del nuovo invio non è ancora noto e quello vecchio non deve essere letto
  *     come esito del nuovo invio
+ *   - nessuna scrittura se la push precedente è stata accettata da DGT
+ *     (djcsynch true) ma non ha ancora l'ack (NULL o vuoto), salvo force:
+ *     errore con isAckPending (409 SYNC_ACK_PENDING)
  * DOPO l'invio, recordDjcSynch registra in djcsynch l'esito della chiamata a
  * DGT: true se DGT risponde success: true, false altrimenti (success diverso
  * da true o errore token/HTTP/rete).
@@ -23,11 +26,20 @@
  * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload (solo jobcard).
  */
 
+// UPSERT condizionale atomico: se la riga esiste con djcsynch true e ack vuoto
+// (NULL o stringa vuota: push precedente accettata da DGT, esito non ancora
+// arrivato da synch-status) l'UPDATE non viene eseguito e RETURNING non
+// restituisce righe, salvo $3 (force) true. La condizione è valutata sulla
+// versione corrente della riga, quindi anche con UPDATE concorrenti.
+// djcsynch NULL o false non blocca.
 const UPSERT_SQL = `
   INSERT INTO woc.jobcard_sync_activity (jobcardid, creationdate, payload)
   VALUES ($1, now(), $2::jsonb)
   ON CONFLICT (jobcardid) DO UPDATE SET payload = EXCLUDED.payload, djcsynch = NULL,
     ack = NULL, techreason = NULL, businessreason = NULL
+  WHERE $3::boolean
+    OR NOT (woc.jobcard_sync_activity.djcsynch IS TRUE
+            AND COALESCE(woc.jobcard_sync_activity.ack, '') = '')
   RETURNING jobcardid, creationdate`;
 
 const UPDATE_DJC_SYNCH_SQL = `
@@ -91,34 +103,47 @@ async function withTimeout(promise, timeoutMs) {
 }
 
 /**
- * UPSERT del payload saveJobcard in woc.jobcard_sync_activity.
+ * UPSERT condizionale del payload saveJobcard in woc.jobcard_sync_activity
+ * (v. UPSERT_SQL).
  * @param {import('pg').Pool} pool
  * @param {string} jobCardId
  * @param {object} payload - payload effettivamente inviato a DGT
- * @returns {Promise<{jobcardid: string, creationdate: Date}>}
+ * @param {boolean} [force=false] - scrive anche se la push precedente attende l'ack
+ * @returns {Promise<{jobcardid: string, creationdate: Date}|undefined>} la riga
+ *          registrata, undefined se bloccata (push precedente senza ack)
  */
-async function upsertSyncActivity(pool, jobCardId, payload) {
-  const { rows } = await pool.query(UPSERT_SQL, [jobCardId, JSON.stringify(payload)]);
+async function upsertSyncActivity(pool, jobCardId, payload, force = false) {
+  const { rows } = await pool.query(UPSERT_SQL, [jobCardId, JSON.stringify(payload), force === true]);
   return rows[0];
 }
 
 /**
  * Registra il payload saveJobcard (bloccante: eventuali errori vengono
  * propagati al chiamante, che non deve inviare il payload a DGT).
+ * Se la riga ha djcsynch true e ack vuoto (push precedente non ancora
+ * confermata) e force non è true, nessuna scrittura: errore con
+ * isAckPending (409 SYNC_ACK_PENDING nell'handler).
  * @param {object} payload - payload effettivamente inviato a DGT
  * @param {object} [deps]
  * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
+ * @param {boolean} [deps.force=false] - salvataggio forzato dall'utente
  * @returns {Promise<{jobcardid: string, creationdate: Date}>}
  */
-async function recordSyncActivity(payload, { getPool } = {}) {
+async function recordSyncActivity(payload, { getPool, force = false } = {}) {
   const jobCardId = resolveJobCardId(payload);
   if (!jobCardId) {
     throw new Error(`[djc] roInfo.${JOBCARD_ID_FIELDS.join('/')} is required`);
   }
   const resolveGetPool = getPool ?? require('./db').getPool;
   const pool = await resolveGetPool();
-  const row = await upsertSyncActivity(pool, jobCardId, payload);
-  console.log(`[djc] jobcard_sync_activity upsert jobcardid=${jobCardId}`);
+  const row = await upsertSyncActivity(pool, jobCardId, payload, force);
+  if (!row) {
+    const err = new Error(`[djc] save blocked for jobCardId ${jobCardId}: previous synchronization not acknowledged yet`);
+    err.isAckPending = true;
+    err.jobCardId = jobCardId;
+    throw err;
+  }
+  console.log(`[djc] jobcard_sync_activity upsert jobcardid=${jobCardId}${force === true ? ' (force)' : ''}`);
   return row;
 }
 

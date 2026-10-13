@@ -13,9 +13,9 @@
  *
  * "saveJobcard" (POST /jobCard) usa lo stesso client PingFederate/DGT di jobcard
  * (authService.js/httpClient.js/config.js, copie sincronizzate con quelle di
- * jobcard): API Gateway instrada le richieste POST verso questa lambda, mentre
- * jobcard resta responsabile delle GET (jobCardList/jobCardDetails) ed espone la
- * stessa azione "saveJobcard" per chiamata diretta/CLI. La risposta di
+ * jobcard): API Gateway instrada le richieste POST /api/repairorder/{proxy+}
+ * verso la lambda jobcard; questa lambda mantiene la stessa azione
+ * "saveJobcard", allineata, per chiamata diretta/CLI. La risposta di
  * "saveJobcard" include in coda djcsynch/ack/techReason/businessReason:
  * djcsynch è l'esito della chiamata a DGT appena eseguita (true se DGT ha
  * risposto success: true, altrimenti false), registrato anche nella colonna
@@ -194,10 +194,38 @@ async function syncAppointmentsToNaga(payload) {
  * DB fallisce, l'errore viene propagato e il payload NON viene inviato a DGT.
  * @returns {Promise<{jobcardid: string, creationdate: Date}>} la riga registrata
  */
-async function recordJobCardSyncActivity(jobCardPayload) {
+async function recordJobCardSyncActivity(jobCardPayload, force = false) {
   const { sanitizeJobCardPayload } = require('./jobCardService');
   const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
-  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload), { force });
+}
+
+/**
+ * Save forzata (popup "Forza salvataggio" del FE): da API Gateway solo query
+ * string ?force=true; in invocazione diretta (event.action) anche body.force
+ * (true o 'true'). Copia di jobcard/index.js::resolveSaveForce.
+ * @returns {boolean}
+ */
+function resolveSaveForce(event, body) {
+  if (event?.queryStringParameters?.force === 'true') return true;
+  return Boolean(event?.action) && (body?.force === true || body?.force === 'true');
+}
+
+/**
+ * Corpo della risposta 409 della save bloccata: la push precedente è stata
+ * accettata da DGT (djcsynch true) ma non ha ancora l'ack. Copia di
+ * jobcard/index.js::buildAckPendingBody.
+ */
+function buildAckPendingBody(message) {
+  return {
+    success: false,
+    code: 'SYNC_ACK_PENDING',
+    message,
+    djcsynch: true,
+    ack: '',
+    techReason: '',
+    businessReason: '',
+  };
 }
 
 /**
@@ -306,15 +334,25 @@ exports.handler = async (event) => {
   // non richiede jobCardId né DjcManager, quindi viene gestito separatamente dal
   // resto del dispatcher (che invece legge /tmp/<jobCardId>.json).
   // Prima dell'invio il payload viene registrato in woc.jobcard_sync_activity
-  // (v. recordJobCardSyncActivity): errore DB -> 502, id jobcard mancante -> 400.
+  // (v. recordJobCardSyncActivity): errore DB -> 502, id jobcard mancante -> 400,
+  // push precedente accettata da DGT ma senza ack e senza force -> 409
+  // SYNC_ACK_PENDING (nessuna scrittura, nessuna chiamata DGT/Naga).
   // L'esito dell'invio (success DGT) viene registrato in djcsynch, false anche
   // quando token/DGT falliscono (v. saveJobCardWithDjcSynch, errore poi
   // propagato invariato -> 502). Dopo l'invio, la risposta viene completata con
   // djcsynch/ack/techReason/businessReason (v. addJobCardSyncStatus, best-effort).
   if (action === 'saveJobcard') {
     try {
-      const jobCardPayload = body.payload ?? body;
-      const syncActivity = await recordJobCardSyncActivity(jobCardPayload);
+      const force = resolveSaveForce(event, body);
+      // force non fa parte del payload: va tolto prima di body.payload ?? body
+      // (il dispatcher unisce query string e body).
+      const { force: _force, ...saveBody } = body;
+      const jobCardPayload = saveBody.payload ?? saveBody;
+      const syncActivity = await recordJobCardSyncActivity(jobCardPayload, force);
+      if (force) {
+        // Audit della save forzata: sub SEMPRE dall'authorizer, mai dal body.
+        console.warn(`[djc] saveJobcard forced jobcardid=${syncActivity?.jobcardid} sub=${event?.requestContext?.authorizer?.sub ?? 'n/a'}`);
+      }
       const { saved, djcsynch } = await saveJobCardWithDjcSynch(jobCardPayload, syncActivity?.jobcardid);
       await syncAppointmentsToNaga(jobCardPayload);
       const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid, djcsynch);
@@ -324,6 +362,13 @@ exports.handler = async (event) => {
         body: JSON.stringify(result),
       };
     } catch (err) {
+      if (err.isAckPending) {
+        return {
+          statusCode: 409,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(buildAckPendingBody(err.message)),
+        };
+      }
       const statusCode = err.message.includes('is required') ? 400 : 502;
       return {
         statusCode,

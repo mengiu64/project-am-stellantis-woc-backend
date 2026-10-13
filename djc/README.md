@@ -347,6 +347,11 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
 saveJobCard`) ed è quella effettivamente integrata da API Gateway per la POST
 `/api/repairorder/saveJobcard`; questa versione resta per invocazione diretta/CLI.
 Entrambe registrano il payload in `woc.jobcard_sync_activity` (v. sotto).
+Se la push precedente è stata accettata da DGT (`djcsynch = true`) ma non ha
+ancora l'`ack`, la save risponde `409` `SYNC_ACK_PENDING` senza scrivere né
+chiamare DGT/Naga, salvo `force` (query string `?force=true`, in invocazione
+diretta `body.force`), tolto dal body prima di risolvere il payload; stessa
+logica di `jobcard` (v. README di root, "Save bloccata in attesa dell'ack").
 
 #### Tracciamento su DB: `woc.jobcard_sync_activity`
 

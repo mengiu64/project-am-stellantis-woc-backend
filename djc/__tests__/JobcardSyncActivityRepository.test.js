@@ -79,19 +79,34 @@ describe('JobcardSyncActivityRepository', () => {
       const payload = { roInfo: { jobCardSrpId: 'SRP-1' }, jobs: [{ jobDescription: 'x' }] };
 
       await expect(upsertSyncActivity(pool, 'SRP-1', payload)).resolves.toBe(row);
-      expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, ['SRP-1', JSON.stringify(payload)]);
+      expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, ['SRP-1', JSON.stringify(payload), false]);
+    });
+
+    test('passes force as $3 (strictly boolean) and returns undefined when the UPSERT is blocked', async () => {
+      const pool = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+      await expect(upsertSyncActivity(pool, 'SRP-1', {}, true)).resolves.toBeUndefined();
+      expect(pool.query).toHaveBeenLastCalledWith(UPSERT_SQL, ['SRP-1', '{}', true]);
+      await upsertSyncActivity(pool, 'SRP-1', {}, 'true');
+      expect(pool.query).toHaveBeenLastCalledWith(UPSERT_SQL, ['SRP-1', '{}', false]);
+    });
+
+    test('UPSERT updates the row only when forced or when the previous push is not waiting for its ack', () => {
+      const [, whereClause] = UPSERT_SQL.split('businessreason = NULL');
+      expect(whereClause.replace(/\s+/g, ' ').trim()).toBe(
+        "WHERE $3::boolean OR NOT (woc.jobcard_sync_activity.djcsynch IS TRUE AND COALESCE(woc.jobcard_sync_activity.ack, '') = '') RETURNING jobcardid, creationdate",
+      );
     });
 
     test('UPSERT updates payload and resets djcsynch and the previous push outcome on conflict (creationdate/lastupdate untouched)', () => {
       expect(UPSERT_SQL).toMatch(/INSERT INTO woc\.jobcard_sync_activity \(jobcardid, creationdate, payload\)/);
       expect(UPSERT_SQL).toMatch(
-        /ON CONFLICT \(jobcardid\) DO UPDATE SET payload = EXCLUDED\.payload, djcsynch = NULL,\s+ack = NULL, techreason = NULL, businessreason = NULL\s+RETURNING/,
+        /ON CONFLICT \(jobcardid\) DO UPDATE SET payload = EXCLUDED\.payload, djcsynch = NULL,\s+ack = NULL, techreason = NULL, businessreason = NULL\s+WHERE/,
       );
     });
 
     test('UPSERT clears ack/techreason/businessreason so a new save never reports the outcome of the previous push', () => {
       const [, conflictClause] = UPSERT_SQL.split('ON CONFLICT (jobcardid) DO UPDATE SET');
-      const [setClause] = conflictClause.split('RETURNING');
+      const [setClause] = conflictClause.split('WHERE');
       const assignments = setClause.split(',').map((part) => part.trim().replace(/\s+/g, ' '));
 
       expect(assignments).toEqual([
@@ -114,8 +129,26 @@ describe('JobcardSyncActivityRepository', () => {
       const getPool = jest.fn().mockResolvedValue(pool);
 
       await expect(recordSyncActivity(payload, { getPool })).resolves.toBe(row);
-      expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, ['84564621', JSON.stringify(payload)]);
+      expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, ['84564621', JSON.stringify(payload), false]);
       expect(db.getPool).not.toHaveBeenCalled();
+    });
+
+    test('throws isAckPending without writing when the previous push is waiting for its ack', async () => {
+      const pool = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+      const error = await recordSyncActivity(payload, { getPool: async () => pool }).catch((err) => err);
+      expect(error.isAckPending).toBe(true);
+      expect(error.jobCardId).toBe('84564621');
+      expect(error.message).toBe('[djc] save blocked for jobCardId 84564621: previous synchronization not acknowledged yet');
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(console.log).not.toHaveBeenCalled();
+    });
+
+    test('forces the UPSERT and logs it', async () => {
+      const row = { jobcardid: '84564621' };
+      const pool = { query: jest.fn().mockResolvedValue({ rows: [row] }) };
+      await expect(recordSyncActivity(payload, { getPool: async () => pool, force: true })).resolves.toBe(row);
+      expect(pool.query).toHaveBeenCalledWith(UPSERT_SQL, ['84564621', JSON.stringify(payload), true]);
+      expect(console.log).toHaveBeenCalledWith('[djc] jobcard_sync_activity upsert jobcardid=84564621 (force)');
     });
 
     test('defaults to db.getPool when no getPool is injected', async () => {

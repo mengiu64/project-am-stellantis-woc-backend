@@ -160,4 +160,69 @@ describe('djc REST appointment consumer', () => {
     expect(result.statusCode).toBe(200);
     expect(result.body).toBe(JSON.stringify(savedWithSyncStatus));
   });
+
+  describe('saveJobcard blocked while the previous push waits for its ack (SYNC_ACK_PENDING)', () => {
+    const apiEvent = (body, queryStringParameters) => ({
+      httpMethod: 'POST',
+      path: '/api/repairorder/saveJobcard',
+      queryStringParameters,
+      body: JSON.stringify(body),
+      requestContext: { authorizer: { sub: 'trusted' } },
+    });
+
+    beforeEach(() => jest.spyOn(console, 'warn').mockImplementation(() => {}));
+
+    test('answers 409 SYNC_ACK_PENDING without calling DGT/Naga nor recording djcsynch', async () => {
+      recordSyncActivity.mockRejectedValueOnce(Object.assign(
+        new Error('[djc] save blocked for jobCardId SRP-1: previous synchronization not acknowledged yet'),
+        { isAckPending: true, jobCardId: 'SRP-1' },
+      ));
+
+      const result = await handler(apiEvent(payload()));
+
+      expect(result.statusCode).toBe(409);
+      expect(JSON.parse(result.body)).toEqual({
+        success: false,
+        code: 'SYNC_ACK_PENDING',
+        message: '[djc] save blocked for jobCardId SRP-1: previous synchronization not acknowledged yet',
+        djcsynch: true,
+        ack: '',
+        techReason: '',
+        businessReason: '',
+      });
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload(), { force: false });
+      [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus, callService].forEach((fn) => expect(fn).not.toHaveBeenCalled());
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    test('?force=true forces the save, strips force from the payload and logs the authorizer sub', async () => {
+      const result = await handler(apiEvent(payload(), { force: 'true' }));
+
+      expect(result.statusCode).toBe(200);
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload(), { force: true });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload());
+      expect(console.warn).toHaveBeenCalledWith('[djc] saveJobcard forced jobcardid=SRP-1 sub=trusted');
+    });
+
+    test.each([[{ force: 'false' }], [undefined]])('query string %p does not force the save', async (query) => {
+      await handler(apiEvent(payload(), query));
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload(), { force: false });
+      expect(saveJobCard.mock.calls[0][1]).not.toHaveProperty('force');
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    test('ignores force in the JSON body of an API Gateway request', async () => {
+      await handler(apiEvent({ ...payload(), force: true }));
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload(), { force: false });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload());
+    });
+
+    test.each([true, 'true'])('direct invocation accepts body.force (%p)', async (force) => {
+      const result = await handler({ action: 'saveJobcard', body: { payload: payload(), force } });
+
+      expect(result.statusCode).toBe(200);
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload(), { force: true });
+      expect(console.warn).toHaveBeenCalledWith('[djc] saveJobcard forced jobcardid=SRP-1 sub=n/a');
+    });
+  });
 });

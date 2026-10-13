@@ -609,9 +609,10 @@ Vedi `jobcard/README.md` per la tabella completa delle regole.
 Azione che invia (POST) un payload di **Digital Job Card** alla Push API SRP per
 creare/aggiornare una Job Card — condivisa (stesso client PingFederate/DGT) con
 la lambda **[djc](#djc)**, che ne è la declinazione dedicata alla costruzione dei
-payload (`Save*`). **API Gateway instrada le richieste POST verso la lambda
-`djc`**; questa azione resta disponibile qui per chiamata diretta/CLI e per
-coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
+payload (`Save*`). **API Gateway instrada le richieste POST
+`/api/repairorder/{proxy+}` (quindi `saveJobcard`) verso questa lambda
+`jobcard`**; `djc` ne mantiene una copia allineata per chiamata diretta/CLI.
+Regole di obbligatorietà (M/M(O)/M(C)), payload di
 esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
 `jobcard/README.md` e `djc/README.md`.
 
@@ -685,6 +686,46 @@ in modo asincrono): vuoti per una jobcard nuova, l'esito della
 sincronizzazione precedente per una già presente. Se la chiamata DGT fallisce,
 `saveJobcard` registra `djcsynch` = `false` e risponde con l'errore invariato
 (`{ "success": false, "message": "..." }`, senza `djcsynch`).
+
+#### Save bloccata in attesa dell'ack (`409 SYNC_ACK_PENDING`) e `force`
+
+Se la riga di `woc.jobcard_sync_activity` ha `djcsynch = true` (push
+precedente accettata da DGT) e `ack` `NULL` o vuoto (esito non ancora arrivato
+da [synch-status](#synch-status)), `saveJobcard` **non** registra il nuovo
+payload e risponde `409`, senza chiamare DGT né agendaSoaNaga e senza
+scrivere `djcsynch`:
+
+```json
+{
+  "success": false,
+  "code": "SYNC_ACK_PENDING",
+  "message": "[jobCard] save blocked for jobCardId JCID-84521: previous synchronization not acknowledged yet",
+  "djcsynch": true,
+  "ack": "",
+  "techReason": "",
+  "businessReason": ""
+}
+```
+
+Il controllo è nell'UPSERT stesso (atomico, valutato sulla versione corrente
+della riga): `ON CONFLICT (jobcardid) DO UPDATE ... WHERE $force OR NOT
+(djcsynch IS TRUE AND COALESCE(ack, '') = '')`; nessuna riga restituita →
+`409`. Riga assente (prima save) o `djcsynch` `NULL`/`false` non bloccano.
+
+L'utente può forzare la save dal FE (popup "Forza salvataggio"):
+`POST /api/repairorder/saveJobcard?force=true` (solo `true` esatto; in
+invocazione diretta anche `body.force` `true`/`"true"`). `force` viene tolto
+dal body **prima** di risolvere il payload (il dispatcher unisce query string
+e body), quindi non viene mai salvato in `payload` né inviato a DGT; un
+`force` nel body JSON di una richiesta API Gateway viene ignorato. La save
+forzata viene loggata (`console.warn`) con `jobcardid` e `sub`
+dell'authorizer (mai un valore del body). Nessun DDL richiesto.
+
+> Rischio noto: dopo una save forzata, un evento Kafka in ritardo della push
+> precedente può scrivere `ack` sulla riga del nuovo payload (`synch-status`
+> aggiorna solo per `jobcardid`).
+
+La stessa logica è replicata in `djc` (log con prefisso `[djc]`).
 
 #### `lastPayload` (GET) — ultimo payload inviato a DJC/DGT
 
@@ -904,8 +945,10 @@ l'invio e azzerato a `NULL` dall'UPSERT; `ack`/`techreason`/
 `businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`
 (`ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT, così l'esito
 della push precedente non viene letto come esito del nuovo invio). Il
-salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
-in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
+salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`,
+push precedente accettata da DGT ma ancora senza `ack` → `409
+SYNC_ACK_PENDING` (salvo `?force=true`, v. [jobcard](#jobcard) → "Save
+bloccata in attesa dell'ack"), e in tutti i casi il payload non viene inviato a DGT. Stessa implementazione
 (`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate; solo quella
 di `jobcard` aggiunge la lettura `getLastPayload` e l'eliminazione
 `deleteSynch`, v. `lastPayload`/`deleteSynch`) nelle due
@@ -2120,8 +2163,8 @@ cd agendaSoa && npm run test:coverage
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
-- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
-- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`, solo con `force` o se la push precedente non attende l'ack; nessuna riga → errore `isAckPending` senza log di upsert; `force` passato come `$3` booleano e loggato), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
+- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce; `409 SYNC_ACK_PENDING` (body completo) senza DGT/Naga/`recordDjcSynch`; `force` solo da `?force=true` (o `body.force` in invocazione diretta), tolto dal payload, ignorato nel body API Gateway, save forzata loggata con `sub` dell'authorizer
 - **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 

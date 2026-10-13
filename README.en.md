@@ -645,6 +645,50 @@ outcome for an existing one. When the DGT call fails, `saveJobcard` records
 `djcsynch` = `false` and answers with the unchanged error
 (`{ "success": false, "message": "..." }`, without `djcsynch`).
 
+#### Save blocked while waiting for the ack (`409 SYNC_ACK_PENDING`) and `force`
+
+API Gateway routes the POST requests `/api/repairorder/{proxy+}` (hence
+`saveJobcard`) to this `jobcard` lambda; `djc` keeps an aligned copy for direct
+invocation/CLI.
+
+When the `woc.jobcard_sync_activity` row has `djcsynch = true` (previous push
+accepted by DGT) and a `NULL` or empty `ack` (outcome not received yet from
+[synch-status](#synch-status)), `saveJobcard` does **not** record the new
+payload and answers `409`, without calling DGT or agendaSoaNaga and without
+writing `djcsynch`:
+
+```json
+{
+  "success": false,
+  "code": "SYNC_ACK_PENDING",
+  "message": "[jobCard] save blocked for jobCardId JCID-84521: previous synchronization not acknowledged yet",
+  "djcsynch": true,
+  "ack": "",
+  "techReason": "",
+  "businessReason": ""
+}
+```
+
+The check lives in the UPSERT itself (atomic, evaluated on the current row
+version): `ON CONFLICT (jobcardid) DO UPDATE ... WHERE $force OR NOT
+(djcsynch IS TRUE AND COALESCE(ack, '') = '')`; no returned row → `409`. A
+missing row (first save) or a `NULL`/`false` `djcsynch` never blocks.
+
+The user can force the save from the FE ("Force save" popup):
+`POST /api/repairorder/saveJobcard?force=true` (exactly `true`; on direct
+invocation also `body.force` `true`/`"true"`). `force` is removed from the
+body **before** resolving the payload (the dispatcher merges query string and
+body), so it is never stored in `payload` nor sent to DGT; a `force` in the
+JSON body of an API Gateway request is ignored. A forced save is logged
+(`console.warn`) with `jobcardid` and the authorizer `sub` (never a body
+value). No DDL required.
+
+> Known risk: after a forced save, a late Kafka event of the previous push may
+> write `ack` on the row of the new payload (`synch-status` updates by
+> `jobcardid` only).
+
+The same logic is replicated in `djc` (logs prefixed with `[djc]`).
+
 The `djcsynch` column is added to existing environments by
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, to be run **before**
 deploying `jobcard`/`djc` (without the column, `saveJobcard` and `lastPayload`
@@ -1640,7 +1684,7 @@ cd agendaSoa && npm run test:coverage
 - **authService** – valid cache, expired/missing cache (renewal), cache writing, HTTP error, missing `access_token`, default `expires_in`
 - **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID required; `DocumentID`/`CustomerIdDms` optional content but always present in the payload, sent as `''` and `null` respectively when omitted), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
 - **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors; for `jobCardService`: `jobs[].packageType`/`packageCharge` enrichment (all `jobType`/`packageCode`/`paymentType` combinations), placement before `partInfo`/`laborInfo`, `roInfo.roSource` added right after `sourceApplication` (including missing `roInfo`/`sourceApplication`)
-- **jobcard / djc: JobcardSyncActivityRepository / index** – `djcsynch` recording (`recordDjcSynch`: only `true` → `true`, empty id without DB access, missing row/DB or pool errors/timeout → `false` with a warning, never propagated; the UPSERT resets it, together with `ack`/`techreason`/`businessreason`, to `NULL` on conflict); sync-outcome read (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string, `null` for `djcsynch`), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: `djcsynch` recorded after the DGT call (`true` only on `success: true`; `false` on any other `success`, DGT or token error, the error being returned unchanged; neither DGT call nor recording when the UPSERT fails) and returned with the call value even when recording fails; outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`, with `djcsynch` read from the DB in `details`) after the DGT call, never read when the DGT call fails
+- **jobcard / djc: JobcardSyncActivityRepository / index** – conditional UPSERT (updates only with `force` or when the previous push is not waiting for its ack; no row → `isAckPending` error; `force` passed as boolean `$3`), `409 SYNC_ACK_PENDING` (full body) without DGT/Naga/`recordDjcSynch`, `force` only from `?force=true` (or `body.force` on direct invocation), stripped from the payload, ignored in an API Gateway body, forced save logged with the authorizer `sub`; `djcsynch` recording (`recordDjcSynch`: only `true` → `true`, empty id without DB access, missing row/DB or pool errors/timeout → `false` with a warning, never propagated; the UPSERT resets it, together with `ack`/`techreason`/`businessreason`, to `NULL` on conflict); sync-outcome read (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string, `null` for `djcsynch`), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: `djcsynch` recorded after the DGT call (`true` only on `success: true`; `false` on any other `success`, DGT or token error, the error being returned unchanged; neither DGT call nor recording when the UPSERT fails) and returned with the call value even when recording fails; outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`, with `djcsynch` read from the DB in `details`) after the DGT call, never read when the DGT call fails
 - **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string and `djcsynch` `NULL` → `null`, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`deleted`/`payload` (in this order) without token or DGT calls; after the read `deleteSynch` only when `djcsynch` is `false` with an empty outcome (`deleted: true`), no DELETE with `djcsynch` `null`/`true` or a recorded outcome, `deleted: false` when the DELETE removes nothing or fails (error logged, response still 200); `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on read errors (no DELETE); only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`); `canDeleteSynch` (same conditions as the DELETE: `djcsynch` strictly `false`, `NULL` or empty `ack`/`techReason`/`businessReason` without trimming)
 - **jobcard: JobcardSyncActivityRepository / index (`deleteSynch`)** – `deleteSynch` (conditional DELETE on `djcsynch IS FALSE` and `NULL` or empty `ack`/`techreason`/`businessreason`; deleted row with the DELETE only; no deleted row → SELECT of the outcome: existing row → `deleted: false` with the current outcome, missing row → `null`; normalized id, missing id → "is required" error without DB access, DB/pool errors propagated); handler: API Gateway POST event (REST and HTTP API v2, case-insensitive method), direct invocation and `id` alias, 200 response without token or DGT calls, `404` when the row does not exist, `409` with the current outcome in the message (even when it contains "is required"), `400` when `jobCardId` is missing, `502` on DB errors, `405` with the `Allow: POST` header for GET/DELETE without DB access
 

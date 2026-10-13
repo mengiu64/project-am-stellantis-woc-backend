@@ -207,7 +207,13 @@ vengono aggiornati `payload` e `djcsynch`, azzerato a `NULL` insieme a
 quello della push precedente non deve essere letto come esito del nuovo invio);
 `ack`/`techreason`/`businessreason`/`lastupdate` sono popolati in un secondo
 momento. Bloccante: id mancante → `400`, errore DB →
-`502`, e il payload non viene inviato a DGT. Da CLI il salvataggio avviene dopo la
+`502`, e il payload non viene inviato a DGT. Se la riga ha `djcsynch = true` e
+`ack` `NULL`/vuoto (push precedente non ancora confermata) l'UPSERT
+condizionale non scrive nulla e la save risponde `409` con `code:
+"SYNC_ACK_PENDING"` (nessuna chiamata DGT/Naga, nessun `recordDjcSynch`);
+`POST /api/repairorder/saveJobcard?force=true` (in invocazione diretta
+`body.force`) forza la save, loggata con il `sub` dell'authorizer. Dettagli nel
+README di root ("Save bloccata in attesa dell'ack"). Da CLI il salvataggio avviene dopo la
 sync NAGA (che può valorizzare `appointments[].appointmentInternalId`), così la
 tabella contiene il payload effettivamente inviato. Stessa implementazione di
 `djc` (v. [`djc/README.md`](../djc/README.md)); DDL in

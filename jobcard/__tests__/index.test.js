@@ -233,6 +233,90 @@ describe('jobcard REST consumers', () => {
     [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus].forEach((fn) => expect(fn).not.toHaveBeenCalled());
   });
 
+  describe('saveJobcard blocked while the previous push waits for its ack (SYNC_ACK_PENDING)', () => {
+    const ackPendingError = () => Object.assign(
+      new Error('[jobCard] save blocked for jobCardId SRP-1: previous synchronization not acknowledged yet'),
+      { isAckPending: true, jobCardId: 'SRP-1' },
+    );
+    const apiEvent = (payload, queryStringParameters, sub = 'trusted') => ({
+      httpMethod: 'POST',
+      path: '/api/repairorder/saveJobcard',
+      queryStringParameters,
+      body: JSON.stringify(payload),
+      requestContext: { authorizer: { sub } },
+    });
+
+    test('answers 409 SYNC_ACK_PENDING without calling DGT/Naga nor recording djcsynch', async () => {
+      recordSyncActivity.mockRejectedValueOnce(ackPendingError());
+
+      const response = await handler(apiEvent(makePayload()));
+
+      expect(response.statusCode).toBe(409);
+      expect(response.headers).toEqual({ 'Content-Type': 'application/json' });
+      expect(JSON.parse(response.body)).toEqual({
+        success: false,
+        code: 'SYNC_ACK_PENDING',
+        message: '[jobCard] save blocked for jobCardId SRP-1: previous synchronization not acknowledged yet',
+        djcsynch: true,
+        ack: '',
+        techReason: '',
+        businessReason: '',
+      });
+      expect(recordSyncActivity).toHaveBeenCalledWith(makePayload(), { force: false });
+      [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus, callService].forEach((fn) => expect(fn).not.toHaveBeenCalled());
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    test('?force=true forces the save, strips force from the payload and logs the authorizer sub', async () => {
+      const payload = makePayload([]);
+
+      const response = await handler(apiEvent(payload, { force: 'true' }));
+
+      expect(response.statusCode).toBe(200);
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload, { force: true });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload);
+      expect(saveJobCard.mock.calls[0][1]).not.toHaveProperty('force');
+      expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', true);
+      expect(console.warn).toHaveBeenCalledWith('[jobCard] saveJobcard forced jobcardid=SRP-1 sub=trusted');
+    });
+
+    test.each([
+      [{ force: 'false' }],
+      [{ force: 'TRUE' }],
+      [undefined],
+    ])('query string %p does not force the save', async (query) => {
+      await handler(apiEvent(makePayload([]), query));
+      expect(recordSyncActivity).toHaveBeenCalledWith(makePayload([]), { force: false });
+      expect(saveJobCard.mock.calls[0][1]).not.toHaveProperty('force');
+      expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining('forced'));
+    });
+
+    test('ignores force in the JSON body of an API Gateway request', async () => {
+      await handler(apiEvent({ ...makePayload([]), force: true }));
+      expect(recordSyncActivity).toHaveBeenCalledWith(makePayload([]), { force: false });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', makePayload([]));
+    });
+
+    test.each([true, 'true'])('direct invocation accepts body.force (%p) and never logs a body identity as sub', async (force) => {
+      const payload = makePayload([]);
+
+      const response = await handler({ action: 'saveJobcard', body: { payload, force, username: 'local' } });
+
+      expect(response.statusCode).toBe(200);
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload, { force: true });
+      expect(console.warn).toHaveBeenCalledWith('[jobCard] saveJobcard forced jobcardid=SRP-1 sub=n/a');
+    });
+
+    test('direct invocation with an unwrapped payload strips force before saving', async () => {
+      const payload = makePayload([]);
+
+      await handler({ action: 'saveJobcard', body: { ...payload, force: false } });
+
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload, { force: false });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload);
+    });
+  });
+
   test('saveJobcard still answers with the DGT outcome when recording djcsynch fails (best-effort)', async () => {
     recordDjcSynch.mockResolvedValueOnce(false);
 
