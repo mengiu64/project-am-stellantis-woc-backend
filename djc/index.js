@@ -16,8 +16,12 @@
  * jobcard): API Gateway instrada le richieste POST verso questa lambda, mentre
  * jobcard resta responsabile delle GET (jobCardList/jobCardDetails) ed espone la
  * stessa azione "saveJobcard" per chiamata diretta/CLI. La risposta di
- * "saveJobcard" include in coda ack/techReason/businessReason, letti da
- * woc.jobcard_sync_activity per jobcardid (stringa vuota se assenti).
+ * "saveJobcard" include in coda djcsynch/ack/techReason/businessReason:
+ * djcsynch è l'esito della chiamata a DGT appena eseguita (true se DGT ha
+ * risposto success: true, altrimenti false), registrato anche nella colonna
+ * djcsynch di woc.jobcard_sync_activity (false anche quando la chiamata
+ * fallisce); ack/techReason/businessReason sono letti dalla stessa tabella per
+ * jobcardid (stringa vuota se assenti).
  *
  * Esempio:
  *   node index.js SaveRoInfo "0/2" "1/2" false true true false false true TAG-001 N
@@ -197,16 +201,47 @@ async function recordJobCardSyncActivity(jobCardPayload) {
 }
 
 /**
- * Aggiunge in coda alla risposta di saveJobcard ack/techReason/businessReason,
- * letti da woc.jobcard_sync_activity per jobcardid (esito della
- * sincronizzazione popolato da synch-status). Best-effort: un errore DB lascia
- * i campi vuoti senza far fallire la risposta (v.
+ * Invia il payload a DGT (saveJobCard) e registra in djcsynch di
+ * woc.jobcard_sync_activity l'esito della chiamata: true se DGT risponde
+ * success: true, false se risponde altrimenti o se token/HTTP/rete falliscono
+ * (in quel caso l'errore viene poi propagato invariato). Scrittura
+ * best-effort (v. JobcardSyncActivityRepository.recordDjcSynch); stessa
+ * logica di jobcard/index.js::saveJobCardWithDjcSynch.
+ * @param {object} jobCardPayload - payload saveJobcard
+ * @param {string} jobCardId - jobcardid registrato da recordJobCardSyncActivity
+ * @returns {Promise<{saved: object, djcsynch: boolean}>} risposta DGT ed esito
+ */
+async function saveJobCardWithDjcSynch(jobCardPayload, jobCardId) {
+  const { recordDjcSynch } = require('./JobcardSyncActivityRepository');
+  let saved;
+  try {
+    const { getBearerToken } = require('./authService');
+    const { saveJobCard } = require('./jobCardService');
+    saved = await saveJobCard(await getBearerToken(), jobCardPayload);
+  } catch (err) {
+    await recordDjcSynch(jobCardId, false);
+    throw err;
+  }
+  const djcsynch = saved?.success === true;
+  await recordDjcSynch(jobCardId, djcsynch);
+  return { saved, djcsynch };
+}
+
+/**
+ * Aggiunge in coda alla risposta di saveJobcard djcsynch/ack/techReason/
+ * businessReason, letti da woc.jobcard_sync_activity per jobcardid (djcsynch:
+ * esito dell'ultima chiamata saveJobcard verso DGT; ack/techReason/
+ * businessReason: esito della sincronizzazione popolato da synch-status).
+ * djcsynch, se passato, sostituisce il valore letto dal DB con l'esito della
+ * chiamata appena eseguita. Best-effort: un errore DB lascia i campi vuoti
+ * (djcsynch null) senza far fallire la risposta (v.
  * JobcardSyncActivityRepository.getSyncStatus). Copia sincronizzata di
  * jobcard/index.js::addJobCardSyncStatus.
  */
-async function addJobCardSyncStatus(body, jobCardId) {
+async function addJobCardSyncStatus(body, jobCardId, djcsynch) {
   const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
-  return withSyncStatus(body, await getSyncStatus(jobCardId));
+  const syncStatus = await getSyncStatus(jobCardId);
+  return withSyncStatus(body, djcsynch === undefined ? syncStatus : { ...syncStatus, djcsynch });
 }
 
 const VALID_ACTIONS = [
@@ -272,18 +307,17 @@ exports.handler = async (event) => {
   // resto del dispatcher (che invece legge /tmp/<jobCardId>.json).
   // Prima dell'invio il payload viene registrato in woc.jobcard_sync_activity
   // (v. recordJobCardSyncActivity): errore DB -> 502, id jobcard mancante -> 400.
-  // Dopo l'invio, la risposta viene completata con ack/techReason/businessReason
-  // letti dalla stessa riga (v. addJobCardSyncStatus, best-effort).
+  // L'esito dell'invio (success DGT) viene registrato in djcsynch, false anche
+  // quando token/DGT falliscono (v. saveJobCardWithDjcSynch, errore poi
+  // propagato invariato -> 502). Dopo l'invio, la risposta viene completata con
+  // djcsynch/ack/techReason/businessReason (v. addJobCardSyncStatus, best-effort).
   if (action === 'saveJobcard') {
     try {
-      const { getBearerToken } = require('./authService');
-      const { saveJobCard } = require('./jobCardService');
       const jobCardPayload = body.payload ?? body;
       const syncActivity = await recordJobCardSyncActivity(jobCardPayload);
-      const token = await getBearerToken();
-      const saved = await saveJobCard(token, jobCardPayload);
+      const { saved, djcsynch } = await saveJobCardWithDjcSynch(jobCardPayload, syncActivity?.jobcardid);
       await syncAppointmentsToNaga(jobCardPayload);
-      const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
+      const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid, djcsynch);
       return {
         statusCode: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -465,13 +499,10 @@ async function main() {
         process.exit(1);
       }
       const payload = JSON.parse(fs.readFileSync(payloadJsonFile, 'utf8'));
-      const { getBearerToken } = require('./authService');
-      const { saveJobCard } = require('./jobCardService');
       const syncActivity = await recordJobCardSyncActivity(payload);
-      const token = await getBearerToken();
-      const saved = await saveJobCard(token, payload);
+      const { saved, djcsynch } = await saveJobCardWithDjcSynch(payload, syncActivity?.jobcardid);
       await syncAppointmentsToNaga(payload);
-      const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid);
+      const result = await addJobCardSyncStatus(saved, syncActivity?.jobcardid, djcsynch);
       printResult('saveJobcard', result);
 
       console.log('\n✅ Completato.');

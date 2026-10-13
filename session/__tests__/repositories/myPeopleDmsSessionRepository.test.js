@@ -80,7 +80,7 @@ function buildRepository(overrides = {}) {
     getDmlConfigurationFn: jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE),
     getBrandLogosFn: jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE),
     getCountryIsoCodeFn: jest.fn().mockResolvedValue('IT'),
-    getPhysicalSiteAndPdvIdFn: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' }),
+    getPhysicalSiteAndPdvIdFn: jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001', dpEnIdent: 'DMS001' }),
     getBrandsByOicsFn: jest.fn().mockResolvedValue(new Map()),
     getDisabledOicsFn: jest.fn().mockResolvedValue(new Set()),
     getEnableSignatureByOicsFn: jest.fn().mockResolvedValue(new Map()),
@@ -99,7 +99,7 @@ describe('MyPeopleDmsSessionRepository', () => {
     const getDmlConfigurationFn = jest.fn().mockResolvedValue(DML_CONFIGURATION_RESPONSE);
     const getBrandLogosFn = jest.fn().mockResolvedValue(BRAND_LOGOS_BY_CODE);
     const getCountryIsoCodeFn = jest.fn().mockResolvedValue('IT');
-    const getPhysicalSiteAndPdvIdFn = jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001' });
+    const getPhysicalSiteAndPdvIdFn = jest.fn().mockResolvedValue({ physicalSiteId: 'PS001', dealerArcadCode: 'DLR001', dpEnIdent: 'DMS001' });
     const repository = buildRepository({
       readUserProfilesFn,
       getDmsSettingsCacheFn,
@@ -142,6 +142,7 @@ describe('MyPeopleDmsSessionRepository', () => {
       profile: null,
       physicalsite: 'PS001',
       pdvId: 'DLR001',
+      dpEnIdent: 'DMS001',
       sessionbrand: '00',
       inmandate: null,
       language: 'it',
@@ -304,6 +305,7 @@ describe('MyPeopleDmsSessionRepository', () => {
       profile: null,
       physicalsite: null,
       pdvId: null,
+      dpEnIdent: null,
       sessionbrand: null,
       inmandate: null,
       language: null,

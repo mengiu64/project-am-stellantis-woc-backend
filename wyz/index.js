@@ -7,6 +7,7 @@
  *  - getSearchFilters : chiama vehicle-brands, vehicle-types, brands e seasons e restituisce
  *                       i riferimenti dei filtri già normalizzati per il front-end
  *  - searchQuote      : chiama POST /api/tyres/search/quote
+ *  - getStockPrix     : wrapper SOAP mTLS di StockPrixService (Panier SOA PSA) — stock e prezzi ricambi
  *
  * L'azione è l'ultimo segmento del path (API Gateway proxy, es. /api/wyz/searchQuote)
  * oppure event.action (invocazione diretta).
@@ -19,19 +20,27 @@
  *     "quantity": 2, "vehicleTypes": ["<uuid>"], "vehicleBrands": ["<uuid>"],
  *     "seasons": ["<uuid>"], "brands": ["<uuid>"], "speedIndexes": ["H"], "loadIndexes": [91] }
  *
+ * Esempio input getStockPrix (body JSON; dealerId da authorizer, nel body solo per invocazione diretta):
+ *   { "customerDMSHeader": "95754", "country": "FR", "brand": "AC", "vin": "",
+ *     "partLines": [{ "partReference": "00001109AK", "quantity": 1 }] }
+ *
  * Uso CLI:
  *   node index.js getSearchFilters <payloadJsonFile>
  *   node index.js searchQuote      <payloadJsonFile>
+ *   node index.js getStockPrix     <payloadJsonFile>
  */
 
 const fs = require('fs');
 const { randomUUID } = require('crypto');
 const { getSearchFilters, searchQuote, WyzError } = require('./wyzService');
+// Azione StockPrixService (SOAP con certificato client)
+const { getStockPrix } = require('./stockPrixService');
 
 // Azioni supportate → funzione di servizio
 const ACTIONS = {
   getSearchFilters, // Metodo 1: riferimenti filtri (4 chiamate Wyz)
   searchQuote, // Metodo 2: ricerca preventivi pneumatici
+  getStockPrix, // Metodo 3: stock e prezzi ricambi (StockPrixService, mTLS)
 };
 const VALID_ACTIONS = Object.keys(ACTIONS);
 
@@ -104,7 +113,10 @@ exports.handler = async (event) => {
 
   try {
     const payload = body.payload ?? body;
-    const result = await ACTIONS[action](payload, { correlationId });
+    // Identità verificata dal Lambda Authorizer: passata alle azioni solo se presente nell'evento
+    const authorizer = ev.requestContext && ev.requestContext.authorizer;
+    const ctx = { correlationId, ...(authorizer ? { authorizer } : {}) };
+    const result = await ACTIONS[action](payload, ctx);
     console.log(`[handler] Azione "${action}" completata con successo`);
 
     // getSearchFilters restituisce già { filters }; searchQuote restituisce il contenuto di "data"

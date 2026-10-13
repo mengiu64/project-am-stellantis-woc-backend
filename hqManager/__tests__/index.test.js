@@ -170,7 +170,7 @@ describe('hqManager/index.js', () => {
 
       const res = await handler({ action: 'setMarketEnable', body: { market: '3110' } });
 
-      expect(instance.setMarketEnable).toHaveBeenCalledWith('3110');
+      expect(instance.setMarketEnable).toHaveBeenCalledWith('3110', expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110' });
     });
@@ -182,7 +182,7 @@ describe('hqManager/index.js', () => {
 
       const res = await handler({ action: 'setMarketDisable', body: { market: '3110' } });
 
-      expect(instance.setMarketDisable).toHaveBeenCalledWith('3110');
+      expect(instance.setMarketDisable).toHaveBeenCalledWith('3110', expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110' });
     });
@@ -209,7 +209,7 @@ describe('hqManager/index.js', () => {
         body: { market: '3110', descr: 'Meccanica' },
       });
 
-      expect(instance.insertDomain).toHaveBeenCalledWith('3110', 'Meccanica');
+      expect(instance.insertDomain).toHaveBeenCalledWith('3110', 'Meccanica', expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
         success: true, market: '3110', descr: 'Meccanica', iddomain: 42,
@@ -226,7 +226,7 @@ describe('hqManager/index.js', () => {
         body: { market: '3110', iddomain: 42, descr: 'Meccanica' },
       });
 
-      expect(instance.setDomain).toHaveBeenCalledWith('3110', 42, 'Meccanica');
+      expect(instance.setDomain).toHaveBeenCalledWith('3110', 42, 'Meccanica', expect.any(Object));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42, descr: 'Meccanica' });
     });
@@ -241,7 +241,7 @@ describe('hqManager/index.js', () => {
         body: { market: '3110', iddomain: 42 },
       });
 
-      expect(instance.deleteDomain).toHaveBeenCalledWith('3110', 42);
+      expect(instance.deleteDomain).toHaveBeenCalledWith('3110', 42, expect.any(Object));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, market: '3110', iddomain: 42 });
     });
@@ -254,7 +254,7 @@ describe('hqManager/index.js', () => {
       const domain = [{ iddomain: 7, value: 0 }, { iddomain: 8, value: 1 }];
       const res = await handler({ action: 'setDomainVisible', body: { domain } });
 
-      expect(instance.setDomainVisible).toHaveBeenCalledWith({ domain });
+      expect(instance.setDomainVisible).toHaveBeenCalledWith({ domain }, expect.any(Object));
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, domain });
     });
@@ -271,7 +271,7 @@ describe('hqManager/index.js', () => {
         },
       });
 
-      expect(instance.insertPackage).toHaveBeenCalledWith('3110', '00006821', 42, 'Tagliando', 60, 100.5);
+      expect(instance.insertPackage).toHaveBeenCalledWith('3110', '00006821', 42, 'Tagliando', 60, 100.5, expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
         success: true, market: '3110', oic: '00006821', iddomain: 42, descr: 'Tagliando', timeop: 60, pricewithvat: 100.5, idpackage: 7,
@@ -290,7 +290,7 @@ describe('hqManager/index.js', () => {
         },
       });
 
-      expect(instance.setPackage).toHaveBeenCalledWith(7, 42, 'Tagliando', 60, 100.5);
+      expect(instance.setPackage).toHaveBeenCalledWith(7, 42, 'Tagliando', 60, 100.5, expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
         success: true, idpackage: 7, iddomain: 42, descr: 'Tagliando', timeop: 60, pricewithvat: 100.5,
@@ -304,7 +304,7 @@ describe('hqManager/index.js', () => {
 
       const res = await handler({ action: 'deletePackage', body: { idpackage: 7 } });
 
-      expect(instance.deletePackage).toHaveBeenCalledWith(7);
+      expect(instance.deletePackage).toHaveBeenCalledWith(7, expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, idpackage: 7 });
     });
@@ -359,7 +359,7 @@ describe('hqManager/index.js', () => {
 
       const res = await handler({ action: 'clonePk', body: { marketTarget: '2000', marketOrig: '1000' } });
 
-      expect(instance.clonePk).toHaveBeenCalledWith('2000', '1000');
+      expect(instance.clonePk).toHaveBeenCalledWith('2000', '1000', expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, marketTarget: '2000', marketOrig: '1000' });
     });
@@ -374,7 +374,7 @@ describe('hqManager/index.js', () => {
         body: { marketTarget: '3136', marketOrig: '1000', type: 'damagearea' },
       });
 
-      expect(instance.cloneVeicInspection).toHaveBeenCalledWith('3136', '1000', 'damagearea');
+      expect(instance.cloneVeicInspection).toHaveBeenCalledWith('3136', '1000', 'damagearea', expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
         success: true, marketTarget: '3136', marketOrig: '1000', type: 'damagearea',
@@ -391,7 +391,7 @@ describe('hqManager/index.js', () => {
         queryStringParameters: { marketTarget: '3136', marketOrig: '1000', type: 'damagearea' },
       });
 
-      expect(instance.cloneVeicInspection).toHaveBeenCalledWith('3136', '1000', 'damagearea');
+      expect(instance.cloneVeicInspection).toHaveBeenCalledWith('3136', '1000', 'damagearea', expect.anything());
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({
         success: true, marketTarget: '3136', marketOrig: '1000', type: 'damagearea',
