@@ -8,22 +8,36 @@
 --      dall'azione saveJobcard (POST /jobCard) della lambda djc
 --
 -- Owner (logico): djc Lambda (djc/JobcardSyncActivityRepository.js)
--- Ad ogni saveJobcard la lambda djc esegue un UPSERT su jobcardid, PRIMA
--- dell'invio a DGT:
---   - INSERT: jobcardid, creationdate (= now()), payload
---   - UPDATE (jobcardid già presente): solo payload (creationdate e gli altri
---     campi restano invariati)
+-- Ad ogni saveJobcard la lambda djc (e jobcard, per parità CLI/invocazione
+-- diretta) esegue un UPSERT su jobcardid, PRIMA dell'invio a DGT:
+--   - INSERT: jobcardid, creationdate (= now()), payload (djcsynch NULL)
+--   - UPDATE (jobcardid già presente): payload, con djcsynch azzerato a NULL
+--     (esito del nuovo invio non ancora noto); creationdate e gli altri campi
+--     restano invariati
+-- DOPO l'invio a DGT la stessa lambda registra in djcsynch (best-effort)
+-- l'esito della chiamata: true se DGT risponde success: true, false se
+-- risponde altrimenti o se la chiamata fallisce (token/HTTP/rete).
 -- ack/techreason/businessreason/lastupdate NON sono valorizzati da djc: vengono
 -- popolati in un secondo momento da synch-status (esito asincrono della
 -- sincronizzazione): ack = OK/KO, techreason = djc_sync_status,
 -- businessreason = dmsSynchroStatus e dmsReturnMessage da jobCardDetails,
 -- concatenati con " - " quando entrambi sono presenti.
--- jobcard e djc li rileggono per jobcardid (SELECT best-effort, NULL -> "") e
--- li restituiscono come ack/techReason/businessReason nella risposta di
--- saveJobcard e (solo jobcard) di jobCardDetails.
--- jobcard rilegge anche payload, insieme ad ack/techreason/businessreason
--- (azione GET lastPayload), per recuperare le modifiche inviate quando
--- l'aggiornamento verso DJC/DGT fallisce.
+-- jobcard e djc li rileggono per jobcardid insieme a djcsynch (SELECT
+-- best-effort, NULL -> "" per ack/techreason/businessreason, NULL -> null per
+-- djcsynch) e li restituiscono come djcsynch/ack/techReason/businessReason
+-- nella risposta di saveJobcard (djcsynch = esito della chiamata appena
+-- eseguita) e (solo jobcard) di jobCardDetails.
+-- jobcard rilegge anche payload, insieme a djcsynch/ack/techreason/
+-- businessreason (azione GET lastPayload), per recuperare le modifiche inviate
+-- quando l'aggiornamento verso DJC/DGT fallisce, ed elimina la riga (azione
+-- POST deleteSynch, e azione GET lastPayload dopo la lettura del payload) solo
+-- se djcsynch è false e ack/techreason/businessreason sono vuoti (NULL o
+-- stringa vuota).
+--
+-- Ambienti esistenti: la colonna djcsynch si aggiunge con
+-- alter_table_jobcard_sync_activity_add_djcsynch.sql e il privilegio DELETE
+-- con grant_delete_jobcard_sync_activity.sql (da eseguire PRIMA del deploy di
+-- jobcard/djc che li usano).
 -- ============================================================================
 
 BEGIN;
@@ -39,6 +53,7 @@ CREATE TABLE IF NOT EXISTS woc.jobcard_sync_activity
     techreason      TEXT,
     businessreason  TEXT,
     lastupdate      TIMESTAMPTZ,
+    djcsynch        BOOLEAN,
 
     CONSTRAINT pk_jobcard_sync_activity PRIMARY KEY (jobcardid)
 );
@@ -53,10 +68,11 @@ COMMENT ON COLUMN woc.jobcard_sync_activity.ack            IS 'Esito (ack) della
 COMMENT ON COLUMN woc.jobcard_sync_activity.techreason     IS 'Motivazione tecnica dell''esito — popolata in un secondo momento';
 COMMENT ON COLUMN woc.jobcard_sync_activity.businessreason IS 'Motivazione di business dell''esito — popolata in un secondo momento';
 COMMENT ON COLUMN woc.jobcard_sync_activity.lastupdate     IS 'Data ultimo aggiornamento dell''esito — popolata in un secondo momento';
+COMMENT ON COLUMN woc.jobcard_sync_activity.djcsynch       IS 'Esito dell''ultima chiamata saveJobcard verso DGT: true se DGT risponde success: true, false se risponde altrimenti o la chiamata fallisce, NULL se non ancora noto (azzerato dall''UPSERT del nuovo payload) — popolato da jobcard/djc';
 
 -- ============================================================================
 -- GRANT privilegi all'utente applicativo
 -- ============================================================================
-GRANT SELECT, INSERT, UPDATE ON TABLE woc.jobcard_sync_activity TO wiadvisor_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE woc.jobcard_sync_activity TO wiadvisor_app;
 
 COMMIT;

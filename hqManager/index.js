@@ -229,12 +229,12 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'setMarketEnable') {
-      await manager.setMarketEnable(market);
+      await manager.setMarketEnable(market, event);
       return response(200, { success: true, market });
     }
 
     if (action === 'setMarketDisable') {
-      await manager.setMarketDisable(market);
+      await manager.setMarketDisable(market, event);
       return response(200, { success: true, market });
     }
 
@@ -244,37 +244,37 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'insertDomain') {
-      const newIddomain = await manager.insertDomain(market, descr);
+      const newIddomain = await manager.insertDomain(market, descr, event);
       return response(200, { success: true, market, descr, iddomain: newIddomain });
     }
 
     if (action === 'setDomain') {
-      await manager.setDomain(market, iddomain, descr);
+      await manager.setDomain(market, iddomain, descr, event);
       return response(200, { success: true, market, iddomain, descr });
     }
 
     if (action === 'deleteDomain') {
-      await manager.deleteDomain(market, iddomain);
+      await manager.deleteDomain(market, iddomain, event);
       return response(200, { success: true, market, iddomain });
     }
 
     if (action === 'setDomainVisible') {
-      await manager.setDomainVisible(body);
+      await manager.setDomainVisible(body, event);
       return response(200, { success: true, domain: body.domain });
     }
 
     if (action === 'insertPackage') {
-      const newIdpackage = await manager.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat);
+      const newIdpackage = await manager.insertPackage(market, oic, iddomain, descr, timeop, pricewithvat, event);
       return response(200, { success: true, market, oic, iddomain, descr, timeop, pricewithvat, idpackage: newIdpackage });
     }
 
     if (action === 'setPackage') {
-      await manager.setPackage(idpackage, iddomain, descr, timeop, pricewithvat);
+      await manager.setPackage(idpackage, iddomain, descr, timeop, pricewithvat, event);
       return response(200, { success: true, idpackage, iddomain, descr, timeop, pricewithvat });
     }
 
     if (action === 'deletePackage') {
-      await manager.deletePackage(idpackage);
+      await manager.deletePackage(idpackage, event);
       return response(200, { success: true, idpackage });
     }
 
@@ -294,12 +294,12 @@ exports.handler = async (event = {}) => {
     }
 
     if (action === 'clonePk') {
-      await manager.clonePk(marketTarget, marketOrig);
+      await manager.clonePk(marketTarget, marketOrig, event);
       return response(200, { success: true, marketTarget, marketOrig });
     }
 
     if (action === 'cloneVeicInspection') {
-      await manager.cloneVeicInspection(marketTarget, marketOrig, type);
+      await manager.cloneVeicInspection(marketTarget, marketOrig, type, event);
       return response(200, { success: true, marketTarget, marketOrig, type });
     }
 

@@ -96,10 +96,17 @@ Parameters:
 
   AuroraAutoStartClusterIdentifier:
     Type: String
-    Default: rds-np-bsn0027990-stage-aurora-migrated-20261002
+    Default: rds-np-bsn0027990-stage-aurora
     Description: >-
       Identificativo del cluster Aurora stage attivo. Se vuoto, usa
       il nome standard del cluster dell'ambiente.
+
+  AuroraAutoStartBastionName:
+    Type: String
+    Default: ec2-np-bsn0027990-stage-bastion
+    Description: >-
+      Valore del tag Name del bastion EC2 di accesso ad Aurora stage. Se vuoto,
+      usa il nome standard del bastion dell'ambiente.
 
   # ── pkDocsoa (functionServiceDb — tabella woc.listfunctions su Aurora PostgreSQL) ──
   DocsoaDbSecretId:
@@ -118,6 +125,7 @@ Conditions:
   IsStage: !Equals [!Ref Environment, stage]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
   HasAuroraAutoStartClusterIdentifier: !Not [!Equals [!Ref AuroraAutoStartClusterIdentifier, '']]
+  HasAuroraAutoStartBastionName: !Not [!Equals [!Ref AuroraAutoStartBastionName, '']]
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -466,6 +474,78 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${MoparDocFunction}"
       RetentionInDays: 30
 
+  # WyzFunction: wrapper REST verso il servizio esterno "Wyz – Tyre search"
+  # (OAuth2 client_credentials su IAM Keycloak). Azioni: getSearchFilters
+  # (vehicle-brands + vehicle-types + brands + seasons in un'unica risposta
+  # normalizzata per il front-end) e searchQuote (POST /api/tyres/search/quote).
+  # Stessa architettura e stessi permessi di MoparDocFunction, esclusi quelli
+  # Aurora (wyz non usa il database): credenziali da SSM -> Secrets Manager e
+  # cache del token OAuth2 su TmpCacheTable.
+  # Azione getStockPrix: wrapper SOAP di StockPrixService (Panier SOA PSA) in
+  # mutual TLS con gli STESSI secret cert/key di AgendaSoaFunction
+  # (sm-np-bsn0027990-${Environment}-apic-cert/-apic-key), letti tramite il layer
+  # AWS Parameters and Secrets Lambda Extension; Basic Auth e client_id nel secret wyz.
+  WyzFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-wyz"
+      CodeUri: wyz/
+      # Layer Secrets Extension (localhost:2773) per il recupero dei secret mTLS di getStockPrix
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
+      Policies:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub
+                  - "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ParamPath}"
+                  - ParamPath: !If [IsProd, "/app/BSN0027990/wyz", !Sub "/app/np-BSN0027990-${Environment}/wyz"]
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !If
+                  - IsProd
+                  - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-bsn0027990-wyz-*"
+                  - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-wyz-*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+        # wyz/dynamoCache.js — cache del token OAuth2 Wyz su DynamoDB (v. TmpCacheTable)
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt TmpCacheTable.Arn
+        # wyz/certService.js — sola lettura dei secret cert/key mTLS di StockPrixService (least-privilege)
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
+      Environment:
+        Variables:
+          WYZ_PARAM_NAME: !If
+            - IsProd
+            - /app/BSN0027990/wyz
+            - !Sub /app/np-BSN0027990-${Environment}/wyz
+          DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
+          # Id dei secret mTLS (stessi di AgendaSoaFunction); URL StockPrixService e porta Extension sono nel secret wyz
+          WYZ_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          WYZ_KEY_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-key"
+
+  WyzFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${WyzFunction}"
+      RetentionInDays: 30
+
   V360Function:
     Type: AWS::Serverless::Function
     Metadata:
@@ -614,11 +694,21 @@ Resources:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-pkdocsoa-config-*"
+        # functionServiceDb (woc.listfunctions): secret Aurora applicativo con
+        # credenziali e proxyhost/proxyport/proxydbname dell'RDS Proxy.
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${DocsoaDbSecretId}-*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
       Environment:
         Variables:
           WOC_CONFIG_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-pkdocsoa-config"
           DOCSOA_CERT_SECRET_ID:    !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
           DOCSOA_KEY_SECRET_ID:     !Sub "sm-np-bsn0027990-${Environment}-apic-key"
+          DOCSOA_DB_SECRET_ID:      !Ref DocsoaDbSecretId
 
   PkDocsoaFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -861,9 +951,15 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: "*"
+        # dbManager/S3ConfigRepository.js — anagrafiche statiche HQ
+        # (hq_sections.json, hq_actiontype.json) in config/ su TranslationsBucket,
+        # stesso pattern di V360Function.
+        - S3ReadPolicy:
+            BucketName: !Ref TranslationsBucket
       Environment:
         Variables:
           DBMANAGER_DB_SECRET_ID: !Ref DocsoaDbSecretId
+          CONFIG_BUCKET_NAME: !Ref TranslationsBucket
 
   DbManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
@@ -936,20 +1032,29 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${DmlConfigSyncFunction}"
       RetentionInDays: 30
 
-  # ── auroraAutoStart (riavvio automatico mattutino del cluster Aurora di stage) ──
+  # ── auroraAutoStart (riavvio automatico mattutino di cluster Aurora e bastion EC2 di stage) ──
   #
   # Un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo
-  # repository) spegne ogni sera il cluster Aurora di stage
-  # per risparmio costi (tag "stla_scheduler_action" applicato al cluster), ma NON
-  # prevede un riavvio automatico al mattino: verificato via CloudTrail (tutti gli
-  # StartDBCluster storici erano invocazioni manuali di un operatore). Questa Lambda,
-  # triggerata da EventBridge Schedule (Events.WeekdayMorningStart sotto), chiama
-  # rds:StartDBCluster SOLO se lo stato corrente del cluster è "stopped" (idempotente:
-  # nessun errore se già avviato manualmente prima dello scheduling).
+  # repository) spegne ogni sera (~19:03 UTC) il cluster Aurora di stage e il bastion
+  # EC2 usato per accedervi, per risparmio costi (tag "stla_scheduler_action" applicato
+  # a entrambi), ma NON prevede un riavvio automatico al mattino: verificato via
+  # CloudTrail (tutti gli StartDBCluster/StartInstances storici erano invocazioni
+  # manuali di un operatore). Questa Lambda, triggerata da EventBridge Schedule
+  # (Events.WeekdayMorningStart sotto), chiama rds:StartDBCluster / ec2:StartInstances
+  # SOLO se lo stato corrente della risorsa è "stopped" (idempotente: nessun errore
+  # se già avviata manualmente prima dello scheduling).
   # Deployata SOLO per l'ambiente stage (Condition: IsStage): l'ambiente dev resta
   # sempre acceso (nessuno spegnimento automatico osservato), prod non è gestito da
-  # questo scheduler. L'identificativo può essere specificato dopo una migrazione
-  # tramite AuroraAutoStartClusterIdentifier (default: cluster migrato di stage).
+  # questo scheduler. Il cluster è indicato dal parametro AuroraAutoStartClusterIdentifier
+  # (default: rds-np-bsn0027990-stage-aurora; se vuoto: rds-np-bsn0027990-${Environment}-aurora),
+  # il bastion dal tag Name indicato dal parametro AuroraAutoStartBastionName (default:
+  # ec2-np-bsn0027990-stage-bastion; se vuoto: ec2-np-bsn0027990-${Environment}-bastion):
+  # il bastion è gestito da Terraform, il tag Name resta stabile anche se l'istanza
+  # (e quindi il suo ID) viene ricreata.
+  # Attenzione: su uno stack esistente sam deploy riusa il valore già salvato dei parametri
+  # (UsePreviousValue) se non sono passati in --parameter-overrides: il Default si applica
+  # solo se lo stack non ha ancora il parametro. Per questo il job deploy-stage di
+  # .github/workflows/unit-tests.yml li passa sempre in modo esplicito.
   AuroraAutoStartFunction:
     Type: AWS::Serverless::Function
     Condition: IsStage
@@ -969,12 +1074,33 @@ Resources:
                     - HasAuroraAutoStartClusterIdentifier
                     - !Ref AuroraAutoStartClusterIdentifier
                     - !Sub "rds-np-bsn0027990-${Environment}-aurora"
+            # DescribeInstances non supporta permessi a livello di risorsa.
+            - Effect: Allow
+              Action: ec2:DescribeInstances
+              Resource: "*"
+            # Solo istanze con il tag Name del bastion. Il volume del bastion è cifrato
+            # con la chiave AWS-managed aws/ebs: nessun permesso KMS necessario (con una
+            # CMK servirebbe kms:CreateGrant, altrimenti l'istanza tornerebbe "stopped"
+            # subito dopo uno StartInstances apparentemente riuscito).
+            - Effect: Allow
+              Action: ec2:StartInstances
+              Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/Name: !If
+                    - HasAuroraAutoStartBastionName
+                    - !Ref AuroraAutoStartBastionName
+                    - !Sub "ec2-np-bsn0027990-${Environment}-bastion"
       Environment:
         Variables:
           AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER: !If
             - HasAuroraAutoStartClusterIdentifier
             - !Ref AuroraAutoStartClusterIdentifier
             - !Sub "rds-np-bsn0027990-${Environment}-aurora"
+          AURORAAUTOSTART_BASTION_NAME: !If
+            - HasAuroraAutoStartBastionName
+            - !Ref AuroraAutoStartBastionName
+            - !Sub "ec2-np-bsn0027990-${Environment}-bastion"
       Events:
         WeekdayMorningStart:
           Type: Schedule
@@ -982,13 +1108,13 @@ Resources:
             # 06:00 UTC nei giorni lavorativi (lun-ven) = 08:00 CEST / 07:00 CET:
             # con margine rispetto all'orario di lavoro EMEA (~08:00-09:00 locale),
             # considerando anche i pochi minuti necessari ad Aurora per passare da
-            # "stopped" ad "available". Nessuna esecuzione nel weekend (il cluster
-            # viene comunque rispento la sera dal tool Stellantis se avviato per
+            # "stopped" ad "available". Nessuna esecuzione nel weekend (cluster e bastion
+            # vengono comunque rispenti la sera dal tool Stellantis se avviati per
             # errore). Nota: EventBridge Schedule interpreta sempre l'orario in UTC,
             # non in ora locale — regolabile senza toccare il codice.
             Schedule: cron(0 6 ? * MON-FRI *)
             Name: !Sub "sch-np-bsn0027990-${Environment}-auroraautostart-weekday-morning"
-            Description: Avvio automatico mattutino (lun-ven) del cluster Aurora di stage se spento
+            Description: Avvio automatico mattutino (lun-ven) di cluster Aurora e bastion EC2 di stage se spenti
             Enabled: true
 
   AuroraAutoStartFunctionLogGroup:
@@ -1147,6 +1273,8 @@ Outputs:
     Value: !GetAtt DjcFunction.Arn
   MoparDocFunctionArn:
     Value: !GetAtt MoparDocFunction.Arn
+  WyzFunctionArn:
+    Value: !GetAtt WyzFunction.Arn
   V360FunctionArn:
     Value: !GetAtt V360Function.Arn
   SrpV360OtaFunctionArn:

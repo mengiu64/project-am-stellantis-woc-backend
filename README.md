@@ -58,16 +58,27 @@ project-am-stellantis-woc-backend/
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
+├── wyz/                # Lambda – wrapper REST verso Wyz Tyre search (getSearchFilters, searchQuote) + StockPrixService SOAP mTLS (getStockPrix)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 ├── synch-status/       # Lambda – Aggiornamento stato sincronizzazione DJC (4 eventi Kafka) su Aurora PostgreSQL via RDS Proxy; security demandata al gateway IBM APIC
 ├── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
-└── auroraAutoStart/    # Lambda – Avvio automatico mattutino (EventBridge Schedule, solo stage) del cluster Aurora se spento dal tool Stellantis di startstop
+└── auroraAutoStart/    # Lambda – Avvio automatico mattutino (EventBridge Schedule, solo stage) del cluster Aurora e del bastion EC2 se spenti dal tool Stellantis di startstop
 
 ```
 
 ---
 
 ## Moduli
+
+### wyz
+
+Le credenziali obbligatorie sono `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET`,
+sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
+`WYZ_PARAM_NAME` indica il parametro SSM contenente l'ARN/ID del secret.
+L'azione `getStockPrix` (StockPrixService, SOAP mTLS) usa anche le chiavi `STOCKPRIX_USERNAME`,
+`STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` e `WYZ_STOCKPRIX_HTTP_PORT` (default 2773)
+del secret wyz e i secret cert/key di agendaSoa (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, layer Secrets Extension).
+Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
 ### Comunicazione REST tra Lambda
 
@@ -558,7 +569,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Dettaglio di una singola JobCard, arricchito con i dati DML (v. sotto) |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
 | `jobCardService` | `getDealerConfiguration(market, oic)` | Configurazione dealer (vehicle inspection + pacchetti) per mercato/oic, v. sotto |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`); lettura best-effort di `ack`/`techreason`/`businessreason`, restituiti come `ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`; lettura del `payload` registrato, con `ack`/`techReason`/`businessReason` della stessa riga, per l'azione `lastPayload` (solo `jobcard`, v. sotto) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`), e registrazione best-effort in `djcsynch` dell'esito della chiamata DGT; lettura best-effort di `djcsynch`/`ack`/`techreason`/`businessreason`, restituiti come `djcsynch`/`ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`; lettura del `payload` registrato, con `djcsynch`/`ack`/`techReason`/`businessReason` della stessa riga, per l'azione `lastPayload`; eliminazione condizionata della riga (`canDeleteSynch`/`deleteSynch`) per l'azione `deleteSynch` e per `lastPayload` dopo la lettura (entrambe solo `jobcard`, v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -623,12 +634,20 @@ risposta di `saveJobcard` (già persistita con successo sulla DGT).
 
 #### Esito della sincronizzazione nelle risposte `details`/`saveJobcard`
 
-Le risposte delle azioni `details` e `saveJobcard` includono `ack`, `techReason`
-e `businessReason`, letti da `woc.jobcard_sync_activity` per `jobcardid` (colonne
-`ack`/`techreason`/`businessreason`, popolate da [synch-status](#synch-status)
-con l'esito della sincronizzazione DMS): in `details` (`jobcardid` = `jobCardId`
-richiesto) subito prima di `jobCardDetail`, in `saveJobcard` (`jobcardid`
-restituito dall'UPSERT) in coda alla risposta DGT.
+Le risposte delle azioni `details` e `saveJobcard` includono `djcsynch`, `ack`,
+`techReason` e `businessReason`, letti da `woc.jobcard_sync_activity` per
+`jobcardid` (colonne `djcsynch`/`ack`/`techreason`/`businessreason`): in
+`details` (`jobcardid` = `jobCardId` richiesto) subito prima di `jobCardDetail`,
+in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
+
+- `djcsynch` (booleano): esito dell'ultima chiamata `saveJobcard` verso DGT,
+  registrato da `jobcard`/`djc` subito dopo la chiamata: `true` se DGT risponde
+  `success: true`, `false` se risponde altrimenti o se la chiamata fallisce
+  (token/HTTP/rete), `null` se non ancora noto (riga assente o precedente alla
+  colonna, oppure nuovo payload non ancora inviato: l'UPSERT lo azzera a `NULL`).
+- `ack`/`techReason`/`businessReason`: esito della sincronizzazione DMS,
+  popolato da [synch-status](#synch-status); azzerati dall'UPSERT a ogni
+  `saveJobcard` (stringa vuota finché non arriva l'esito del nuovo invio).
 
 ```json
 {
@@ -636,6 +655,7 @@ restituito dall'UPSERT) in coda alla risposta DGT.
   "statusCode": 200,
   "success": true,
   "message": "Job card retrieved successfully",
+  "djcsynch": true,
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
@@ -649,7 +669,8 @@ restituito dall'UPSERT) in coda alla risposta DGT.
   "success": true,
   "message": "Job Card Transaction Successful",
   "jobCardId": "JCID-84521",
-  "ack": "OK",
+  "djcsynch": true,
+  "ack": "",
   "techReason": "",
   "businessReason": ""
 }
@@ -658,10 +679,15 @@ restituito dall'UPSERT) in coda alla risposta DGT.
 I campi sono aggiunti nell'handler (e nel CLI) dopo la chiamata DGT: la cache
 DynamoDB, l'azione `dml` e l'operazione interna `getJobCardDetails` usata da
 `synch-status` restano invariate. Lettura best-effort: riga assente, valori
-`NULL`, errore DB o attesa oltre 5 s → stringa vuota, senza far fallire la
-risposta. In `saveJobcard` i valori sono quelli registrati al momento della
-risposta (`synch-status` li aggiorna in modo asincrono): vuoti per una jobcard
-nuova, l'esito della sincronizzazione precedente per una già presente.
+`NULL`, errore DB o attesa oltre 5 s → stringa vuota (`null` per `djcsynch`),
+senza far fallire la risposta. In `saveJobcard` `djcsynch` è l'esito della
+chiamata appena eseguita (anche se la sua scrittura su DB, best-effort con lo
+stesso limite di 5 s, fallisce), mentre `ack`/`techReason`/`businessReason`
+sono quelli registrati al momento della risposta (`synch-status` li aggiorna
+in modo asincrono): vuoti per una jobcard nuova, l'esito della
+sincronizzazione precedente per una già presente. Se la chiamata DGT fallisce,
+`saveJobcard` registra `djcsynch` = `false` e risponde con l'errore invariato
+(`{ "success": false, "message": "..." }`, senza `djcsynch`).
 
 #### `lastPayload` (GET) — ultimo payload inviato a DJC/DGT
 
@@ -676,12 +702,24 @@ così com'è. Legge solo dal DB (nessuna chiamata DGT né token) ed è bloccante
 `502` (body `{ "success": false, "message": "..." }`). Solo nella lambda
 `jobcard` (CLI: `node index.js lastPayload <jobCardId>`).
 
-La risposta include anche `ack`, `techReason` e `businessReason` della stessa
-riga (letti con la stessa SELECT del payload), tra `jobCardId` e `payload`:
-esito dell'ultima sincronizzazione registrata da `synch-status` (`NULL` →
-stringa vuota). Essendo popolati in modo asincrono, subito dopo un
-`saveJobcard` fallito possono essere ancora vuoti o riferirsi alla
-sincronizzazione precedente.
+Dopo la lettura, se `djcsynch` = `false` e `ack`/`techReason`/`businessReason`
+sono vuoti (`NULL` o stringa vuota: ultimo invio a DGT fallito senza esito di
+sincronizzazione), elimina la riga con le stesse condizioni di `deleteSynch`
+(v. sotto), ricontrollate nella `DELETE`, e restituisce comunque il payload
+letto; `deleted` (tra `businessReason` e `payload`) indica se la riga è stata
+eliminata (le chiamate successive rispondono poi `404`). L'eliminazione è
+best-effort: un errore della `DELETE` (es. privilegio mancante) viene solo
+loggato e la risposta resta `200` con `deleted: false`.
+
+La risposta include anche `djcsynch`, `ack`, `techReason` e `businessReason`
+della stessa riga (letti con la stessa SELECT del payload), tra `jobCardId` e
+`payload`: `djcsynch` è l'esito dell'invio a DGT dell'ultimo payload (`true`/
+`false`, `null` se non ancora noto, v. sopra), `ack`/`techReason`/
+`businessReason` l'esito dell'ultima sincronizzazione registrata da
+`synch-status` (`NULL` → stringa vuota). Essendo popolati in modo asincrono,
+subito dopo un `saveJobcard` fallito questi ultimi possono essere ancora vuoti
+o riferirsi alla sincronizzazione precedente, mentre `djcsynch` vale già
+`false`.
 
 ```json
 {
@@ -689,10 +727,43 @@ sincronizzazione precedente.
   "success": true,
   "message": "Job card payload retrieved successfully",
   "jobCardId": "JCID-84521",
+  "djcsynch": true,
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "deleted": false,
   "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
+}
+```
+
+#### `deleteSynch` (POST) — eliminazione della riga di sincronizzazione
+
+`POST /api/repairorder/deleteSynch` con body `{ "jobCardId": "<id>" }`
+(accettato anche `id`) elimina la riga della jobcard da
+`woc.jobcard_sync_activity` solo se l'ultimo invio a DGT è fallito e non c'è
+un esito di sincronizzazione: `djcsynch` = `false` e `ack`/`techreason`/
+`businessreason` vuoti (`NULL` o stringa vuota). Con `djcsynch` `true` o
+`NULL` (esito non ancora noto) o con un esito registrato da `synch-status` la
+riga resta. Le condizioni sono nella stessa `DELETE`, quindi valgono anche con
+aggiornamenti concorrenti della riga. Con la riga si perde anche l'ultimo
+payload (`lastPayload` risponde poi `404`).
+
+Legge e scrive solo sul DB (nessuna chiamata DGT né token). Da API Gateway è
+ammesso solo `POST` (altri metodi → `405`, header `Allow: POST`); l'invocazione
+diretta non ha metodo HTTP ed è ammessa. Esiti: `200` riga eliminata,
+`jobCardId` mancante → `400`, riga assente → `404`, riga non eliminabile →
+`409` (il messaggio riporta `djcsynch`/`ack`/`techReason`/`businessReason`
+attuali), errore DB → `502` (body `{ "success": false, "message": "..." }`).
+Richiede il privilegio `DELETE` di `wiadvisor_app`
+(`sql/grant_delete_jobcard_sync_activity.sql`). Solo nella lambda `jobcard`
+(CLI: `node index.js deleteSynch <jobCardId>`).
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Job card sync activity deleted successfully",
+  "jobCardId": "JCID-84521"
 }
 ```
 
@@ -777,11 +848,13 @@ node index.js list    <dealerId> [key=value ...]
 node index.js details <jobCardId>
 node index.js saveJobcard <payloadJsonFile>
 node index.js lastPayload <jobCardId>
+node index.js deleteSynch <jobCardId>
 node index.js getDealerConfiguration <market> [oic]
 # es: node index.js list 0062219 vin=VIN123 page=2
 # es: node index.js details 79
 # es: node index.js saveJobcard ./payload.json
 # es: node index.js lastPayload JCID-84521
+# es: node index.js deleteSynch JCID-84521
 # es: node index.js getDealerConfiguration 1000 00007584
 ```
 
@@ -806,7 +879,7 @@ riferimento (`get.json`).
 | `DjcManager` | `Save*(...)` | Costruisce `json_orig`/`json_mod` per una sezione della Job Card (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`) |
 | `authService` | `getBearerToken()` | Ottiene/rinnova il Bearer token PingFederate (cache su file) — copia sincronizzata di `jobcard/authService.js` |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`) — copia sincronizzata di `jobcard/jobCardService.js` |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `getSyncStatus(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT, e lettura best-effort dell'esito restituito nella risposta (v. sotto) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT, registrazione best-effort in `djcsynch` dell'esito della chiamata DGT e lettura best-effort dell'esito restituito nella risposta (v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js — copia di `jobcard/httpClient.js` |
 
 > `config.js`/`authService.js`/`httpClient.js` sono mantenuti **in sync** con gli
@@ -827,16 +900,30 @@ Prima dell'invio a DGT, sia `jobcard` sia `djc` registrano il payload (UPSERT su
 tabella Aurora `woc.jobcard_sync_activity` (`sql/create_table_jobcard_sync_activity.sql`):
 `jobcardid` = `roInfo.jobCardSrpId` (fallback `dmsRepairOrderId`, poi
 `jobCardLegacyId`), `creationdate` = data del primo inserimento, `payload` =
-ultimo payload inviato (sovrascritto ad ogni `saveJobcard`); `ack`/`techreason`/
-`businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`. Il
+ultimo payload inviato (sovrascritto ad ogni `saveJobcard`); `djcsynch` =
+esito della chiamata DGT (`true` se DGT risponde `success: true`, altrimenti
+`false`, anche su errore token/HTTP/rete), registrato best-effort subito dopo
+l'invio e azzerato a `NULL` dall'UPSERT; `ack`/`techreason`/
+`businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`
+(`ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT, così l'esito
+della push precedente non viene letto come esito del nuovo invio). Il
 salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
 in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
 (`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate; solo quella
-di `jobcard` aggiunge la lettura `getLastPayload`, v. `lastPayload`) nelle due
+di `jobcard` aggiunge la lettura `getLastPayload` e l'eliminazione
+`deleteSynch`, v. `lastPayload`/`deleteSynch`) nelle due
 lambda, con env `JOBCARD_DB_*` in `jobcard` e `DJC_DB_*` in `djc`. Dettagli in
-`djc/README.md`. Dopo l'invio, entrambe aggiungono in coda alla risposta `ack`/
-`techReason`/`businessReason` letti dalla stessa riga (best-effort, v.
-[jobcard](#jobcard) → "Esito della sincronizzazione nelle risposte").
+`djc/README.md`. Dopo l'invio, entrambe aggiungono in coda alla risposta
+`djcsynch` (esito della chiamata appena eseguita) e `ack`/`techReason`/
+`businessReason` letti dalla stessa riga (best-effort, v.
+[jobcard](#jobcard) → "Esito della sincronizzazione nelle risposte"). La
+colonna `djcsynch` si aggiunge agli ambienti esistenti con
+`sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, da eseguire **prima**
+del deploy di `jobcard`/`djc` (senza la colonna `saveJobcard` e `lastPayload`
+rispondono `502`). Il privilegio `DELETE` per `deleteSynch` e `lastPayload` si
+concede con `sql/grant_delete_jobcard_sync_activity.sql`, da eseguire **prima**
+del deploy di `jobcard` (senza, `deleteSynch` risponde `502` e `lastPayload`
+non elimina la riga).
 
 Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
 tabella degli identificativi per array, semantica `removalAction`/update
@@ -1621,23 +1708,24 @@ node index.js sync
 
 ### auroraAutoStart
 
-Lambda **schedulata** (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC nei giorni lavorativi lun-ven, vedi `template.yaml`) il cui unico scopo è **avviare automaticamente ogni mattina il cluster Aurora di stage se risulta spento**.
+Lambda **schedulata** (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC nei giorni lavorativi lun-ven, vedi `template.yaml`) il cui unico scopo è **riaccendere automaticamente ogni mattina il cluster Aurora di stage e il bastion EC2 usato per accedervi, se risultano spenti**.
 
-**Contesto:** un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo repository) spegne ogni sera il cluster Aurora `rds-np-bsn0027990-${Environment}-aurora` per risparmio costi sull'ambiente non-prod (verificabile dal tag `stla_scheduler_action` applicato al cluster e dagli eventi RDS ~19:12 UTC), ma **non prevede alcun riavvio automatico al mattino** — confermato via CloudTrail: prima di questa Lambda, tutte le chiamate `StartDBCluster` storiche erano invocazioni manuali di un operatore.
+**Contesto:** un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo repository; in CloudTrail il ruolo `stla-ccoe-foundations-stopstart-application`) spegne ogni sera (~19:03 UTC), per risparmio costi sull'ambiente non-prod, sia il cluster Aurora `rds-np-bsn0027990-${Environment}-aurora` sia il bastion EC2 `ec2-np-bsn0027990-${Environment}-bastion` (verificabile dal tag `stla_scheduler_action` applicato a entrambi), ma **non prevede alcun riavvio automatico al mattino** — confermato via CloudTrail: prima di questa Lambda, tutte le chiamate `StartDBCluster` e `StartInstances` storiche erano invocazioni manuali di un operatore.
 
-Ad ogni esecuzione:
-1. legge lo stato corrente del cluster (`rds:DescribeDBClusters`);
-2. se lo stato è `"stopped"`, invoca `rds:StartDBCluster`;
-3. se lo stato è qualsiasi altro valore (`available`, `starting`, `backing-up`, ...) non fa nulla — idempotente, sicuro da rieseguire anche se il cluster è già stato avviato manualmente prima dello scheduling.
+Ad ogni esecuzione, in parallelo e in modo indipendente (`Promise.allSettled`: un errore su una risorsa non blocca l'altra; l'esito di entrambe viene loggato e il primo errore viene poi propagato, così l'invocazione viene ritentata):
+1. **cluster Aurora:** legge lo stato corrente (`rds:DescribeDBClusters`) e, se `"stopped"`, invoca `rds:StartDBCluster`;
+2. **bastion EC2:** cerca le istanze non terminate con il tag `Name` configurato (`ec2:DescribeInstances`) e invoca `ec2:StartInstances` su quelle `"stopped"`. La ricerca avviene per tag e non per instance ID perché il bastion è gestito da Terraform e l'ID cambia se l'istanza viene ricreata;
+3. per qualsiasi altro stato (`available`/`running`, `starting`/`pending`, `stopping`, `backing-up`, ...) non fa nulla — idempotente, sicuro da rieseguire anche se le risorse sono già state avviate manualmente prima dello scheduling.
 
-> **Nota:** deployata **solo per l'ambiente stage** (`Condition: IsStage` in `template.yaml`) — l'ambiente **dev** resta sempre acceso 24/7 (nessuno spegnimento automatico osservato) e **prod** non è gestito da questo scheduler. Nessun nuovo parametro CloudFormation: il nome del cluster è derivato con la stessa convenzione di naming già in uso (`rds-np-bsn0027990-${Environment}-aurora`).
+> **Nota:** deployata **solo per l'ambiente stage** (`Condition: IsStage` in `template.yaml`) — l'ambiente **dev** resta sempre acceso 24/7 (nessuno spegnimento automatico osservato) e **prod** non è gestito da questo scheduler. Cluster e bastion sono configurati tramite i parametri CloudFormation `AuroraAutoStartClusterIdentifier` e `AuroraAutoStartBastionName` (vedi la sezione *Variabili d'ambiente*).
 
 #### Funzioni principali
 
 | Funzione | Descrizione |
 |---|---|
-| `handler()` | Entry-point Lambda (trigger `Schedule`): legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` e chiama `startClusterIfStopped()` |
+| `handler()` | Entry-point Lambda (trigger `Schedule`): legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` (obbligatoria) e `AURORAAUTOSTART_BASTION_NAME` (se assente l'avvio del bastion viene saltato), chiama in parallelo `startClusterIfStopped()` e `startBastionIfStopped()` e ritorna `{cluster, bastion}` |
 | `startClusterIfStopped(dbClusterIdentifier, deps)` | Verifica lo stato del cluster e lo avvia solo se `"stopped"`; ritorna `{clusterIdentifier, previousStatus, action, message}`; dipendenze iniettabili via `deps` per i test |
+| `startBastionIfStopped(instanceName, deps)` | Cerca le istanze EC2 non terminate con tag `Name` uguale a `instanceName` e avvia (un'unica chiamata `StartInstances`) solo quelle `"stopped"`; errore se nessuna istanza viene trovata; ritorna `{instanceName, instances: [{instanceId, previousStatus, action, message}]}`; dipendenze iniettabili via `deps` per i test |
 
 #### Utilizzo CLI
 
@@ -1708,7 +1796,7 @@ JOBCARD_PING_CLIENT_ID=...          # Client ID PingFederate (dedicato jobcard)
 JOBCARD_PING_CLIENT_SECRET=...      # Client Secret PingFederate (dedicato jobcard)
 DGT_CLIENT_ID=...                  # X-IBM-Client-Id per le API DGT
 DGT_CLIENT_SECRET=...              # X-IBM-Client-Secret per le API DGT
-JOBCARD_DB_HOST=...                # RDS Proxy Aurora "wiadvisor" — woc.jobcard_sync_activity (saveJobcard, details e lastPayload)
+JOBCARD_DB_HOST=...                # RDS Proxy Aurora "wiadvisor" — woc.jobcard_sync_activity (saveJobcard, details, lastPayload e deleteSynch)
 JOBCARD_DB_SECRET_ID=...           # Secret wiadvisor_app (in locale in alternativa JOBCARD_DB_USER/JOBCARD_DB_PASSWORD); opzionali JOBCARD_DB_PORT/NAME/SSL
 WOC_INTERNAL_API_URL=https://<private-api-id>.execute-api.eu-west-1.amazonaws.com/wia
 WOC_INTERNAL_TIMEOUT_MS=25000
@@ -1777,6 +1865,7 @@ DOCSOA_IBM_CLIENT_ID=...               # X-IBM-Client-Id per il gateway API Conn
 DOCSOA_IBM_CLIENT_SECRET=...           # X-IBM-Client-Secret per il gateway API Connect
 DOCSOA_CERT_SECRET_ID=sm-np-bsn0027990-dev-apic-cert # (opzionale) id secret Secrets Manager col certificato client mTLS (STESSO usato da myPeople)
 DOCSOA_KEY_SECRET_ID=sm-np-bsn0027990-dev-apic-key  # (opzionale) id secret Secrets Manager con la chiave privata mTLS (STESSO usato da myPeople)
+DOCSOA_DB_SECRET_ID=sm-np-bsn0027990-dev-aurora-app # secret Aurora applicativo (credenziali + proxyhost/proxyport/proxydbname) per functionServiceDb; in Lambda impostato da template.yaml (DocsoaDbSecretId), in locale in alternativa DOCSOA_DB_HOST
 PROXY_HOST=...                         # (opzionale) proxy corporate Stellantis/PSA
 PROXY_PORT=8080                        # (opzionale) porta proxy
 ```
@@ -1916,11 +2005,12 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 ### auroraAutoStart
 
 ```env
-AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora-migrated-20261002  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AURORAAUTOSTART_BASTION_NAME=ec2-np-bsn0027990-stage-bastion          # (opzionale in Lambda: impostata da template.yaml; se assente l'avvio del bastion viene saltato)
 AWS_REGION=eu-west-1                                                  # (opzionale in Lambda: già impostata automaticamente da AWS)
 ```
 
-> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (di default il cluster migrato di stage; se vuoto usa il nome storico). La policy IAM usa lo stesso identificativo. Nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
+> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (default `rds-np-bsn0027990-stage-aurora`; se vuoto usa il nome standard `rds-np-bsn0027990-${Environment}-aurora`) e `AURORAAUTOSTART_BASTION_NAME` con il parametro `AuroraAutoStartBastionName` (valore del tag `Name` del bastion; default `ec2-np-bsn0027990-stage-bastion`; se vuoto usa il nome standard `ec2-np-bsn0027990-${Environment}-bastion`). La policy IAM usa gli stessi valori: `rds:StartDBCluster` solo sul cluster indicato, `ec2:StartInstances` solo sulle istanze con quel tag `Name` (`ec2:DescribeInstances` non supporta permessi a livello di risorsa e richiede `Resource: "*"`). Su uno stack già esistente `sam deploy` riusa il valore salvato dei parametri (`UsePreviousValue`) e ignora il `Default`: per questo il job `deploy-stage` di `.github/workflows/unit-tests.yml` passa sempre `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` e `AuroraAutoStartBastionName=ec2-np-bsn0027990-stage-bastion` in `--parameter-overrides` (usare gli stessi override per un deploy manuale). Nessun secret/credenziale DB richiesto (usa solo le API di gestione RDS ed EC2 via IAM, non si connette al database).
 
 ---
 
@@ -1964,8 +2054,8 @@ cd agendaSoa && npm run test:coverage
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
 | **synch-status** | 3 | 81 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
-| **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
-| **Totale** | **57** | **727** | |
+| **auroraAutoStart** | 3 | 20 | `index` (handler), `services/auroraClusterService`, `services/bastionInstanceService` |
+| **Totale** | **68** | **950** | |
 
 ### Copertura del codice
 
@@ -2028,14 +2118,15 @@ cd agendaSoa && npm run test:coverage
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
 - **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP; `sanitizeJobCardPayload`
-- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`ack`/`techreason`/`businessreason`/`payload`, esito in camelCase con `NULL` → stringa vuota, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati)
-- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`ack`/`techReason`/`businessReason`/`payload` (in quest'ordine) senza token né chiamate DGT, `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore DB; solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
+- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, esito in camelCase con `NULL` → stringa vuota e `djcsynch` `NULL` → `null`, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati) e `deleteSynch` (DELETE condizionata su `djcsynch IS FALSE` e `ack`/`techreason`/`businessreason` `NULL` o vuoti; riga eliminata con la sola DELETE; nessuna riga eliminata → SELECT dell'esito: riga presente → `deleted: false` con l'esito attuale, riga assente → `null`; id normalizzato, id mancante → errore "is required" senza accesso al DB, errori DB/pool propagati) e `canDeleteSynch` (stesse condizioni della DELETE: `djcsynch` strettamente `false`, `ack`/`techReason`/`businessReason` `NULL` o vuoti senza trim)
+- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`deleted`/`payload` (in quest'ordine) senza token né chiamate DGT; dopo la lettura `deleteSynch` solo se `djcsynch` è `false` con esito vuoto (`deleted: true`), nessuna DELETE con `djcsynch` `null`/`true` o esito presente, `deleted: false` se la DELETE non elimina nulla o fallisce (errore loggato, risposta comunque 200); `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore della lettura (senza DELETE); solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
+- **jobcard: index (`deleteSynch`)** – evento API Gateway POST (REST e HTTP API v2, metodo case-insensitive), invocazione diretta e alias `id`, risposta 200 senza token né chiamate DGT, `404` se la riga non esiste, `409` con l'esito attuale nel messaggio (anche se contiene "is required"), `400` se `jobCardId` manca, `502` su errore DB, `405` con header `Allow: POST` per GET/DELETE senza accesso al DB
 
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
-- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna solo `payload`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); lettura dell'esito (`ack`/`techreason`/`businessreason` → `ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
-- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
+- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
 - **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
@@ -2086,8 +2177,9 @@ cd agendaSoa && npm run test:coverage
 - **DmsSettingsRepository** – `listEnabledDealers` (combinazioni attive ordinate), `upsertDmsSettings` (validazione `country`/`brand`/`dealer`, scomposizione della risposta in colonne separate `success`/`data`, default `success:false`/`data:[]` per risposte assenti/fallite), `getDmsSettings` (validazione parametri, ricostruzione di `{success, data}` da riga trovata, `null` se combinazione mai vista, normalizzazione difensiva di `data` non-array), `registerDealer` (`INSERT ... ON CONFLICT DO NOTHING`, nessuna query se `country`/`brand`/`dealer` mancante)
 
 #### auroraAutoStart
-- **index (handler)** – legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` e delega a `startClusterIfStopped`; errore se la variabile non è impostata; propagazione dell'errore in caso di fallimento del servizio
+- **index (handler)** – legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER`/`AURORAAUTOSTART_BASTION_NAME` e delega in parallelo a `startClusterIfStopped`/`startBastionIfStopped`; errore se la variabile del cluster non è impostata (nessun servizio invocato); bastion saltato senza errore se la sua variabile non è impostata; isolamento dei fallimenti (`Promise.allSettled`: un errore sul cluster non blocca l'avvio del bastion e viceversa), con log dell'esito di entrambi e propagazione dell'errore
 - **services/auroraClusterService (startClusterIfStopped)** – avvio (`rds:StartDBCluster`) solo quando lo stato corrente è `"stopped"`; nessuna azione (idempotente) per qualunque altro stato (`available`, `starting`, ...); errore se il cluster non viene trovato; dipendenze iniettabili (`rdsClient`) per i test, con copertura anche del ramo di default (istanziazione interna di `RDSClient`)
+- **services/bastionInstanceService (startBastionIfStopped)** – ricerca per tag `Name` escludendo le istanze terminate; avvio (`ec2:StartInstances`) solo quando lo stato corrente è `"stopped"`; nessuna azione per `running`/`pending`/`stopping`; più istanze con lo stesso tag (avvio delle sole spente in un'unica chiamata); errore se nessuna istanza viene trovata (anche con `Reservations` assente); propagazione dell'errore di `StartInstances`; dipendenze iniettabili (`ec2Client`) per i test, con copertura anche del ramo di default (istanziazione interna di `EC2Client`)
 
 ---
 
