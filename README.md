@@ -58,11 +58,11 @@ project-am-stellantis-woc-backend/
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
-├── wyz/                # Lambda – wrapper REST verso Wyz Tyre search (getSearchFilters, searchQuote)
+├── wyz/                # Lambda – wrapper REST verso Wyz Tyre search (getSearchFilters, searchQuote) + StockPrixService SOAP mTLS (getStockPrix)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 ├── synch-status/       # Lambda – Aggiornamento stato sincronizzazione DJC (4 eventi Kafka) su Aurora PostgreSQL via RDS Proxy; security demandata al gateway IBM APIC
 ├── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
-└── auroraAutoStart/    # Lambda – Avvio automatico mattutino (EventBridge Schedule, solo stage) del cluster Aurora se spento dal tool Stellantis di startstop
+└── auroraAutoStart/    # Lambda – Avvio automatico mattutino (EventBridge Schedule, solo stage) del cluster Aurora e del bastion EC2 se spenti dal tool Stellantis di startstop
 
 ```
 
@@ -75,6 +75,9 @@ project-am-stellantis-woc-backend/
 Le credenziali obbligatorie sono `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET`,
 sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
 `WYZ_PARAM_NAME` indica il parametro SSM contenente l'ARN/ID del secret.
+L'azione `getStockPrix` (StockPrixService, SOAP mTLS) usa anche le chiavi `STOCKPRIX_USERNAME`,
+`STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` e `WYZ_STOCKPRIX_HTTP_PORT` (default 2773)
+del secret wyz e i secret cert/key di agendaSoa (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, layer Secrets Extension).
 Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
 ### Comunicazione REST tra Lambda
@@ -1705,23 +1708,24 @@ node index.js sync
 
 ### auroraAutoStart
 
-Lambda **schedulata** (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC nei giorni lavorativi lun-ven, vedi `template.yaml`) il cui unico scopo è **avviare automaticamente ogni mattina il cluster Aurora di stage se risulta spento**.
+Lambda **schedulata** (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC nei giorni lavorativi lun-ven, vedi `template.yaml`) il cui unico scopo è **riaccendere automaticamente ogni mattina il cluster Aurora di stage e il bastion EC2 usato per accedervi, se risultano spenti**.
 
-**Contesto:** un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo repository) spegne ogni sera il cluster Aurora `rds-np-bsn0027990-${Environment}-aurora` per risparmio costi sull'ambiente non-prod (verificabile dal tag `stla_scheduler_action` applicato al cluster e dagli eventi RDS ~19:12 UTC), ma **non prevede alcun riavvio automatico al mattino** — confermato via CloudTrail: prima di questa Lambda, tutte le chiamate `StartDBCluster` storiche erano invocazioni manuali di un operatore.
+**Contesto:** un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo repository; in CloudTrail il ruolo `stla-ccoe-foundations-stopstart-application`) spegne ogni sera (~19:03 UTC), per risparmio costi sull'ambiente non-prod, sia il cluster Aurora `rds-np-bsn0027990-${Environment}-aurora` sia il bastion EC2 `ec2-np-bsn0027990-${Environment}-bastion` (verificabile dal tag `stla_scheduler_action` applicato a entrambi), ma **non prevede alcun riavvio automatico al mattino** — confermato via CloudTrail: prima di questa Lambda, tutte le chiamate `StartDBCluster` e `StartInstances` storiche erano invocazioni manuali di un operatore.
 
-Ad ogni esecuzione:
-1. legge lo stato corrente del cluster (`rds:DescribeDBClusters`);
-2. se lo stato è `"stopped"`, invoca `rds:StartDBCluster`;
-3. se lo stato è qualsiasi altro valore (`available`, `starting`, `backing-up`, ...) non fa nulla — idempotente, sicuro da rieseguire anche se il cluster è già stato avviato manualmente prima dello scheduling.
+Ad ogni esecuzione, in parallelo e in modo indipendente (`Promise.allSettled`: un errore su una risorsa non blocca l'altra; l'esito di entrambe viene loggato e il primo errore viene poi propagato, così l'invocazione viene ritentata):
+1. **cluster Aurora:** legge lo stato corrente (`rds:DescribeDBClusters`) e, se `"stopped"`, invoca `rds:StartDBCluster`;
+2. **bastion EC2:** cerca le istanze non terminate con il tag `Name` configurato (`ec2:DescribeInstances`) e invoca `ec2:StartInstances` su quelle `"stopped"`. La ricerca avviene per tag e non per instance ID perché il bastion è gestito da Terraform e l'ID cambia se l'istanza viene ricreata;
+3. per qualsiasi altro stato (`available`/`running`, `starting`/`pending`, `stopping`, `backing-up`, ...) non fa nulla — idempotente, sicuro da rieseguire anche se le risorse sono già state avviate manualmente prima dello scheduling.
 
-> **Nota:** deployata **solo per l'ambiente stage** (`Condition: IsStage` in `template.yaml`) — l'ambiente **dev** resta sempre acceso 24/7 (nessuno spegnimento automatico osservato) e **prod** non è gestito da questo scheduler. Nessun nuovo parametro CloudFormation: il nome del cluster è derivato con la stessa convenzione di naming già in uso (`rds-np-bsn0027990-${Environment}-aurora`).
+> **Nota:** deployata **solo per l'ambiente stage** (`Condition: IsStage` in `template.yaml`) — l'ambiente **dev** resta sempre acceso 24/7 (nessuno spegnimento automatico osservato) e **prod** non è gestito da questo scheduler. Cluster e bastion sono configurati tramite i parametri CloudFormation `AuroraAutoStartClusterIdentifier` e `AuroraAutoStartBastionName` (vedi la sezione *Variabili d'ambiente*).
 
 #### Funzioni principali
 
 | Funzione | Descrizione |
 |---|---|
-| `handler()` | Entry-point Lambda (trigger `Schedule`): legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` e chiama `startClusterIfStopped()` |
+| `handler()` | Entry-point Lambda (trigger `Schedule`): legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` (obbligatoria) e `AURORAAUTOSTART_BASTION_NAME` (se assente l'avvio del bastion viene saltato), chiama in parallelo `startClusterIfStopped()` e `startBastionIfStopped()` e ritorna `{cluster, bastion}` |
 | `startClusterIfStopped(dbClusterIdentifier, deps)` | Verifica lo stato del cluster e lo avvia solo se `"stopped"`; ritorna `{clusterIdentifier, previousStatus, action, message}`; dipendenze iniettabili via `deps` per i test |
+| `startBastionIfStopped(instanceName, deps)` | Cerca le istanze EC2 non terminate con tag `Name` uguale a `instanceName` e avvia (un'unica chiamata `StartInstances`) solo quelle `"stopped"`; errore se nessuna istanza viene trovata; ritorna `{instanceName, instances: [{instanceId, previousStatus, action, message}]}`; dipendenze iniettabili via `deps` per i test |
 
 #### Utilizzo CLI
 
@@ -2002,10 +2006,11 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 
 ```env
 AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora  # (opzionale in Lambda: impostata da template.yaml; obbligatoria solo per CLI/test locali)
+AURORAAUTOSTART_BASTION_NAME=ec2-np-bsn0027990-stage-bastion          # (opzionale in Lambda: impostata da template.yaml; se assente l'avvio del bastion viene saltato)
 AWS_REGION=eu-west-1                                                  # (opzionale in Lambda: già impostata automaticamente da AWS)
 ```
 
-> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (default `rds-np-bsn0027990-stage-aurora`; se vuoto usa il nome standard `rds-np-bsn0027990-${Environment}-aurora`). La policy IAM usa lo stesso identificativo. Su uno stack già esistente `sam deploy` riusa il valore salvato del parametro (`UsePreviousValue`) e ignora il `Default`: per questo il job `deploy-stage` di `.github/workflows/unit-tests.yml` passa sempre `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` in `--parameter-overrides` (usare lo stesso override per un deploy manuale). Nessun secret/credenziale DB richiesto (usa solo l'API di gestione RDS via IAM, non si connette al database).
+> **Nota:** in Lambda `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` è valorizzata da `template.yaml` con il parametro `AuroraAutoStartClusterIdentifier` (default `rds-np-bsn0027990-stage-aurora`; se vuoto usa il nome standard `rds-np-bsn0027990-${Environment}-aurora`) e `AURORAAUTOSTART_BASTION_NAME` con il parametro `AuroraAutoStartBastionName` (valore del tag `Name` del bastion; default `ec2-np-bsn0027990-stage-bastion`; se vuoto usa il nome standard `ec2-np-bsn0027990-${Environment}-bastion`). La policy IAM usa gli stessi valori: `rds:StartDBCluster` solo sul cluster indicato, `ec2:StartInstances` solo sulle istanze con quel tag `Name` (`ec2:DescribeInstances` non supporta permessi a livello di risorsa e richiede `Resource: "*"`). Su uno stack già esistente `sam deploy` riusa il valore salvato dei parametri (`UsePreviousValue`) e ignora il `Default`: per questo il job `deploy-stage` di `.github/workflows/unit-tests.yml` passa sempre `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` e `AuroraAutoStartBastionName=ec2-np-bsn0027990-stage-bastion` in `--parameter-overrides` (usare gli stessi override per un deploy manuale). Nessun secret/credenziale DB richiesto (usa solo le API di gestione RDS ed EC2 via IAM, non si connette al database).
 
 ---
 
@@ -2049,8 +2054,8 @@ cd agendaSoa && npm run test:coverage
 | **isStellantisBrand** | 3 | 36 | `index` (handler), `shared/dbClient`, property-based (`fast-check`) |
 | **synch-status** | 3 | 81 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
-| **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
-| **Totale** | **57** | **727** | |
+| **auroraAutoStart** | 3 | 20 | `index` (handler), `services/auroraClusterService`, `services/bastionInstanceService` |
+| **Totale** | **68** | **950** | |
 
 ### Copertura del codice
 
@@ -2172,8 +2177,9 @@ cd agendaSoa && npm run test:coverage
 - **DmsSettingsRepository** – `listEnabledDealers` (combinazioni attive ordinate), `upsertDmsSettings` (validazione `country`/`brand`/`dealer`, scomposizione della risposta in colonne separate `success`/`data`, default `success:false`/`data:[]` per risposte assenti/fallite), `getDmsSettings` (validazione parametri, ricostruzione di `{success, data}` da riga trovata, `null` se combinazione mai vista, normalizzazione difensiva di `data` non-array), `registerDealer` (`INSERT ... ON CONFLICT DO NOTHING`, nessuna query se `country`/`brand`/`dealer` mancante)
 
 #### auroraAutoStart
-- **index (handler)** – legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` e delega a `startClusterIfStopped`; errore se la variabile non è impostata; propagazione dell'errore in caso di fallimento del servizio
+- **index (handler)** – legge `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER`/`AURORAAUTOSTART_BASTION_NAME` e delega in parallelo a `startClusterIfStopped`/`startBastionIfStopped`; errore se la variabile del cluster non è impostata (nessun servizio invocato); bastion saltato senza errore se la sua variabile non è impostata; isolamento dei fallimenti (`Promise.allSettled`: un errore sul cluster non blocca l'avvio del bastion e viceversa), con log dell'esito di entrambi e propagazione dell'errore
 - **services/auroraClusterService (startClusterIfStopped)** – avvio (`rds:StartDBCluster`) solo quando lo stato corrente è `"stopped"`; nessuna azione (idempotente) per qualunque altro stato (`available`, `starting`, ...); errore se il cluster non viene trovato; dipendenze iniettabili (`rdsClient`) per i test, con copertura anche del ramo di default (istanziazione interna di `RDSClient`)
+- **services/bastionInstanceService (startBastionIfStopped)** – ricerca per tag `Name` escludendo le istanze terminate; avvio (`ec2:StartInstances`) solo quando lo stato corrente è `"stopped"`; nessuna azione per `running`/`pending`/`stopping`; più istanze con lo stesso tag (avvio delle sole spente in un'unica chiamata); errore se nessuna istanza viene trovata (anche con `Reservations` assente); propagazione dell'errore di `StartInstances`; dipendenze iniettabili (`ec2Client`) per i test, con copertura anche del ramo di default (istanziazione interna di `EC2Client`)
 
 ---
 
