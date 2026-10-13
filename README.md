@@ -76,7 +76,7 @@ Le credenziali obbligatorie sono `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET`,
 sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
 `WYZ_PARAM_NAME` indica il parametro SSM contenente l'ARN/ID del secret.
 L'azione `getStockPrix` (StockPrixService, SOAP mTLS) usa anche le chiavi `STOCKPRIX_USERNAME`,
-`STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_URL` e `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT` (default 2773)
+`STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` e `PARAMETERS_SECRETS_EXTENSION_HTTP_PORT` (default 2773)
 del secret wyz e i secret cert/key di agendaSoa (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, layer Secrets Extension).
 Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
