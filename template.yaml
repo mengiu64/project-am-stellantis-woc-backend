@@ -101,6 +101,13 @@ Parameters:
       Identificativo del cluster Aurora stage attivo. Se vuoto, usa
       il nome standard del cluster dell'ambiente.
 
+  AuroraAutoStartBastionName:
+    Type: String
+    Default: ec2-np-bsn0027990-stage-bastion
+    Description: >-
+      Valore del tag Name del bastion EC2 di accesso ad Aurora stage. Se vuoto,
+      usa il nome standard del bastion dell'ambiente.
+
   # ── pkDocsoa (functionServiceDb — tabella woc.listfunctions su Aurora PostgreSQL) ──
   DocsoaDbSecretId:
     Type: String
@@ -118,6 +125,7 @@ Conditions:
   IsStage: !Equals [!Ref Environment, stage]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
   HasAuroraAutoStartClusterIdentifier: !Not [!Equals [!Ref AuroraAutoStartClusterIdentifier, '']]
+  HasAuroraAutoStartBastionName: !Not [!Equals [!Ref AuroraAutoStartBastionName, '']]
 
 # ── Globals ───────────────────────────────────────────────────────────────────
 
@@ -1024,24 +1032,29 @@ Resources:
       LogGroupName: !Sub "/aws/lambda/${DmlConfigSyncFunction}"
       RetentionInDays: 30
 
-  # ── auroraAutoStart (riavvio automatico mattutino del cluster Aurora di stage) ──
+  # ── auroraAutoStart (riavvio automatico mattutino di cluster Aurora e bastion EC2 di stage) ──
   #
   # Un tool centralizzato Stellantis ("Stellantis startstop tool", esterno a questo
-  # repository) spegne ogni sera il cluster Aurora di stage
-  # per risparmio costi (tag "stla_scheduler_action" applicato al cluster), ma NON
-  # prevede un riavvio automatico al mattino: verificato via CloudTrail (tutti gli
-  # StartDBCluster storici erano invocazioni manuali di un operatore). Questa Lambda,
-  # triggerata da EventBridge Schedule (Events.WeekdayMorningStart sotto), chiama
-  # rds:StartDBCluster SOLO se lo stato corrente del cluster è "stopped" (idempotente:
-  # nessun errore se già avviato manualmente prima dello scheduling).
+  # repository) spegne ogni sera (~19:03 UTC) il cluster Aurora di stage e il bastion
+  # EC2 usato per accedervi, per risparmio costi (tag "stla_scheduler_action" applicato
+  # a entrambi), ma NON prevede un riavvio automatico al mattino: verificato via
+  # CloudTrail (tutti gli StartDBCluster/StartInstances storici erano invocazioni
+  # manuali di un operatore). Questa Lambda, triggerata da EventBridge Schedule
+  # (Events.WeekdayMorningStart sotto), chiama rds:StartDBCluster / ec2:StartInstances
+  # SOLO se lo stato corrente della risorsa è "stopped" (idempotente: nessun errore
+  # se già avviata manualmente prima dello scheduling).
   # Deployata SOLO per l'ambiente stage (Condition: IsStage): l'ambiente dev resta
   # sempre acceso (nessuno spegnimento automatico osservato), prod non è gestito da
   # questo scheduler. Il cluster è indicato dal parametro AuroraAutoStartClusterIdentifier
-  # (default: rds-np-bsn0027990-stage-aurora; se vuoto: rds-np-bsn0027990-${Environment}-aurora).
-  # Attenzione: su uno stack esistente sam deploy riusa il valore già salvato del parametro
-  # (UsePreviousValue) se non è passato in --parameter-overrides: il Default si applica
+  # (default: rds-np-bsn0027990-stage-aurora; se vuoto: rds-np-bsn0027990-${Environment}-aurora),
+  # il bastion dal tag Name indicato dal parametro AuroraAutoStartBastionName (default:
+  # ec2-np-bsn0027990-stage-bastion; se vuoto: ec2-np-bsn0027990-${Environment}-bastion):
+  # il bastion è gestito da Terraform, il tag Name resta stabile anche se l'istanza
+  # (e quindi il suo ID) viene ricreata.
+  # Attenzione: su uno stack esistente sam deploy riusa il valore già salvato dei parametri
+  # (UsePreviousValue) se non sono passati in --parameter-overrides: il Default si applica
   # solo se lo stack non ha ancora il parametro. Per questo il job deploy-stage di
-  # .github/workflows/unit-tests.yml lo passa sempre in modo esplicito.
+  # .github/workflows/unit-tests.yml li passa sempre in modo esplicito.
   AuroraAutoStartFunction:
     Type: AWS::Serverless::Function
     Condition: IsStage
@@ -1061,12 +1074,33 @@ Resources:
                     - HasAuroraAutoStartClusterIdentifier
                     - !Ref AuroraAutoStartClusterIdentifier
                     - !Sub "rds-np-bsn0027990-${Environment}-aurora"
+            # DescribeInstances non supporta permessi a livello di risorsa.
+            - Effect: Allow
+              Action: ec2:DescribeInstances
+              Resource: "*"
+            # Solo istanze con il tag Name del bastion. Il volume del bastion è cifrato
+            # con la chiave AWS-managed aws/ebs: nessun permesso KMS necessario (con una
+            # CMK servirebbe kms:CreateGrant, altrimenti l'istanza tornerebbe "stopped"
+            # subito dopo uno StartInstances apparentemente riuscito).
+            - Effect: Allow
+              Action: ec2:StartInstances
+              Resource: !Sub "arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+              Condition:
+                StringEquals:
+                  aws:ResourceTag/Name: !If
+                    - HasAuroraAutoStartBastionName
+                    - !Ref AuroraAutoStartBastionName
+                    - !Sub "ec2-np-bsn0027990-${Environment}-bastion"
       Environment:
         Variables:
           AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER: !If
             - HasAuroraAutoStartClusterIdentifier
             - !Ref AuroraAutoStartClusterIdentifier
             - !Sub "rds-np-bsn0027990-${Environment}-aurora"
+          AURORAAUTOSTART_BASTION_NAME: !If
+            - HasAuroraAutoStartBastionName
+            - !Ref AuroraAutoStartBastionName
+            - !Sub "ec2-np-bsn0027990-${Environment}-bastion"
       Events:
         WeekdayMorningStart:
           Type: Schedule
@@ -1074,13 +1108,13 @@ Resources:
             # 06:00 UTC nei giorni lavorativi (lun-ven) = 08:00 CEST / 07:00 CET:
             # con margine rispetto all'orario di lavoro EMEA (~08:00-09:00 locale),
             # considerando anche i pochi minuti necessari ad Aurora per passare da
-            # "stopped" ad "available". Nessuna esecuzione nel weekend (il cluster
-            # viene comunque rispento la sera dal tool Stellantis se avviato per
+            # "stopped" ad "available". Nessuna esecuzione nel weekend (cluster e bastion
+            # vengono comunque rispenti la sera dal tool Stellantis se avviati per
             # errore). Nota: EventBridge Schedule interpreta sempre l'orario in UTC,
             # non in ora locale — regolabile senza toccare il codice.
             Schedule: cron(0 6 ? * MON-FRI *)
             Name: !Sub "sch-np-bsn0027990-${Environment}-auroraautostart-weekday-morning"
-            Description: Avvio automatico mattutino (lun-ven) del cluster Aurora di stage se spento
+            Description: Avvio automatico mattutino (lun-ven) di cluster Aurora e bastion EC2 di stage se spenti
             Enabled: true
 
   AuroraAutoStartFunctionLogGroup:

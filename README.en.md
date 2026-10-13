@@ -54,7 +54,7 @@ project-am-stellantis-woc-backend/
 ├── isStellantisBrand/  # Lambda – Stellantis brand verification (Aurora PostgreSQL via RDS Proxy)
 ├── synch-status/       # Lambda – DJC synchronization status update (4 Kafka events) on Aurora PostgreSQL via RDS Proxy; security delegated to the IBM APIC gateway
 ├── dmlConfigSync/      # Lambda – daily sync (EventBridge Schedule) of DML company-types/customer-titles + dms/settings per market/dealer -> Aurora cache, read by session
-└── auroraAutoStart/    # Lambda – weekday morning auto-start (EventBridge Schedule, stage only) of the Aurora cluster if stopped by the Stellantis startstop tool
+└── auroraAutoStart/    # Lambda – weekday morning auto-start (EventBridge Schedule, stage only) of the Aurora cluster and the EC2 bastion if stopped by the Stellantis startstop tool
 
 ```
 
@@ -1357,13 +1357,13 @@ node index.js sync
 
 ### auroraAutoStart
 
-**Scheduled** Lambda (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC on weekdays, see `template.yaml`) whose sole purpose is to **automatically start the stage Aurora cluster every morning if it is stopped**.
+**Scheduled** Lambda (EventBridge Schedule, `cron(0 6 ? * MON-FRI *)` — 06:00 UTC on weekdays, see `template.yaml`) whose sole purpose is to **automatically start, every morning, the stage Aurora cluster and the EC2 bastion used to access it, if they are stopped**.
 
-**Context:** a centralized Stellantis tool ("Stellantis startstop tool", external to this repository) stops the Aurora cluster `rds-np-bsn0027990-${Environment}-aurora` every evening for cost savings on the non-prod environment (visible via the `stla_scheduler_action` tag on the cluster and RDS events around 19:12 UTC), but does **not** provide any automatic morning restart — confirmed via CloudTrail: before this Lambda, every historical `StartDBCluster` call was a manual operator invocation.
+**Context:** a centralized Stellantis tool ("Stellantis startstop tool", external to this repository; the `stla-ccoe-foundations-stopstart-application` role in CloudTrail) stops every evening (~19:03 UTC), for cost savings on the non-prod environment, both the Aurora cluster `rds-np-bsn0027990-${Environment}-aurora` and the EC2 bastion `ec2-np-bsn0027990-${Environment}-bastion` (visible via the `stla_scheduler_action` tag on both), but does **not** provide any automatic morning restart — confirmed via CloudTrail: before this Lambda, every historical `StartDBCluster` and `StartInstances` call was a manual operator invocation.
 
-On each run: reads the cluster's current status (`rds:DescribeDBClusters`); if `"stopped"`, calls `rds:StartDBCluster`; for any other status (`available`, `starting`, `backing-up`, ...) it does nothing — idempotent, safe to re-run even if the cluster was already started manually before the schedule fires.
+On each run, in parallel and independently (`Promise.allSettled`: a failure on one resource does not block the other; both outcomes are logged, then the first error is propagated so the invocation is retried): **Aurora cluster** — reads its current status (`rds:DescribeDBClusters`) and, if `"stopped"`, calls `rds:StartDBCluster`; **EC2 bastion** — looks up the non-terminated instances with the configured `Name` tag (`ec2:DescribeInstances`) and calls `ec2:StartInstances` on the `"stopped"` ones (lookup by tag rather than instance ID because the bastion is managed by Terraform and its ID changes if the instance is recreated). For any other status (`available`/`running`, `starting`/`pending`, `stopping`, `backing-up`, ...) it does nothing — idempotent, safe to re-run even if the resources were already started manually before the schedule fires.
 
-> **Note:** deployed **only for the `stage` environment** (`Condition: IsStage` in `template.yaml`) — `dev` stays always on (no automatic shutdown observed) and `prod` is not managed by this scheduler. No new CloudFormation parameter: the cluster name follows the same existing naming convention (`rds-np-bsn0027990-${Environment}-aurora`).
+> **Note:** deployed **only for the `stage` environment** (`Condition: IsStage` in `template.yaml`) — `dev` stays always on (no automatic shutdown observed) and `prod` is not managed by this scheduler. Cluster and bastion are configured through the `AuroraAutoStartClusterIdentifier` and `AuroraAutoStartBastionName` CloudFormation parameters (see the *Environment variables* section).
 
 #### CLI usage
 
@@ -1584,10 +1584,11 @@ WOC_INTERNAL_TIMEOUT_MS=25000
 
 ```env
 AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER=rds-np-bsn0027990-stage-aurora # (optional in Lambda: set by template.yaml; required only for local CLI/tests)
+AURORAAUTOSTART_BASTION_NAME=ec2-np-bsn0027990-stage-bastion         # (optional in Lambda: set by template.yaml; when missing the bastion start is skipped)
 AWS_REGION=eu-west-1                                                  # (optional in Lambda: already set automatically by AWS)
 ```
 
-> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is set by the `AuroraAutoStartClusterIdentifier` template parameter (default `rds-np-bsn0027990-stage-aurora`; when empty it falls back to the standard name `rds-np-bsn0027990-${Environment}-aurora`). The IAM policy targets the same cluster. On an existing stack `sam deploy` reuses the parameter's stored value (`UsePreviousValue`) and ignores the `Default`: this is why the `deploy-stage` job in `.github/workflows/unit-tests.yml` always passes `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` in `--parameter-overrides` (use the same override for manual deploys). No DB secret/credential is required (only the RDS management API is used).
+> **Note:** in Lambda, `AURORAAUTOSTART_DB_CLUSTER_IDENTIFIER` is set by the `AuroraAutoStartClusterIdentifier` template parameter (default `rds-np-bsn0027990-stage-aurora`; when empty it falls back to the standard name `rds-np-bsn0027990-${Environment}-aurora`) and `AURORAAUTOSTART_BASTION_NAME` by the `AuroraAutoStartBastionName` parameter (value of the bastion's `Name` tag; default `ec2-np-bsn0027990-stage-bastion`; when empty it falls back to the standard name `ec2-np-bsn0027990-${Environment}-bastion`). The IAM policy uses the same values: `rds:StartDBCluster` only on that cluster, `ec2:StartInstances` only on instances carrying that `Name` tag (`ec2:DescribeInstances` does not support resource-level permissions and requires `Resource: "*"`). On an existing stack `sam deploy` reuses the parameters' stored values (`UsePreviousValue`) and ignores the `Default`: this is why the `deploy-stage` job in `.github/workflows/unit-tests.yml` always passes `AuroraAutoStartClusterIdentifier=rds-np-bsn0027990-stage-aurora` and `AuroraAutoStartBastionName=ec2-np-bsn0027990-stage-bastion` in `--parameter-overrides` (use the same overrides for manual deploys). No DB secret/credential is required (only the RDS and EC2 management APIs are used).
 
 ---
 
@@ -1627,7 +1628,7 @@ cd agendaSoa && npm run test:coverage
 | **session** | 7 | 74 | `index` (handler + CLI), `errors`, `repositoryFactory`, `repositories/sessionRepository`, `repositories/s3SessionRepository`, `repositories/myPeopleDmsSessionRepository` (+ lazy-load) |
 | **synch-status** | 3 | 81 | `index` (handler + `_validatePayload`/`_buildResponse`), `jobcardSyncActivity`, `config` |
 | **dmlConfigSync** | 4 | 50 | `index` (handler + CLI + `runSync`/`syncMarket`/`syncDealer`), `db`, `DmlConfigRepository`, `DmsSettingsRepository` |
-| **auroraAutoStart** | 2 | 8 | `index` (handler), `services/auroraClusterService` |
+| **auroraAutoStart** | 3 | 20 | `index` (handler), `services/auroraClusterService`, `services/bastionInstanceService` |
 | **Total** | **44+** | **491+** | |
 
 ### Code coverage
