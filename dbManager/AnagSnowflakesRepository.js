@@ -123,7 +123,8 @@ async function getCountryIsoCode(pool, { market }) {
  *
  * @param {import('pg').Pool} pool
  * @param {{ mainSincom: string, market: string, brand: string, pairedOicCode?: string }} params
- * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null, dealerArcadCode: string|null, arcadBrand: string|null }>}
+ * @returns {Promise<{ physicalSiteId: string|null, dealerNumberIdSource: string|null, dealerArcadCode: string|null, dpEnIdent: string|null, arcadBrand: string|null }>}
+ *          dpEnIdent e' woc.dms_snowflakes.dp_en_ident (LEFT JOIN su cd_dealer_arcad_code = en_ident).
  *          tutti null se non e' stata trovata alcuna riga corrispondente
  *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD).
  *          arcadBrand e' il codice ARCAD/RefTech a 2 lettere risolto per il brand
@@ -141,7 +142,7 @@ async function getPhysicalSiteAndSincom(pool, {
 
   const arcadBrand = await resolveArcadBrandCode(pool, brand);
   if (!arcadBrand) {
-    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand: null };
+    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, dpEnIdent: null, arcadBrand: null };
   }
 
   const queryParams = [mainSincom, market, arcadBrand];
@@ -152,8 +153,9 @@ async function getPhysicalSiteAndSincom(pool, {
   }
 
   const { rows } = await pool.query(
-    `SELECT s.cd_paired_oic_code, s.cd_sincom_code, s.cd_dealer_arcad_code
+    `SELECT s.cd_paired_oic_code, s.cd_sincom_code, s.cd_dealer_arcad_code, dms.dp_en_ident
        FROM woc.ang_snowflakes s
+            LEFT JOIN woc.dms_snowflakes dms ON s.cd_dealer_arcad_code = dms.en_ident
       WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
         AND s.cd_contract_brand_arcad_code = $3
@@ -163,13 +165,14 @@ async function getPhysicalSiteAndSincom(pool, {
   );
 
   if (rows.length === 0) {
-    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, arcadBrand };
+    return { physicalSiteId: null, dealerNumberIdSource: null, dealerArcadCode: null, dpEnIdent: null, arcadBrand };
   }
 
   return {
     physicalSiteId: rows[0].cd_paired_oic_code,
     dealerNumberIdSource: rows[0].cd_sincom_code,
     dealerArcadCode: rows[0].cd_dealer_arcad_code,
+    dpEnIdent: rows[0].dp_en_ident ?? null,
     arcadBrand,
   };
 }
@@ -194,8 +197,9 @@ async function getPhysicalSiteAndSincom(pool, {
  *
  * @param {import('pg').Pool} pool
  * @param {{ mainSincom: string, market: string, brand: string, oic: string }} params
- * @returns {Promise<{ physicalSiteId: string|null, dealerArcadCode: string|null }>}
- *          entrambi null se non e' stata trovata alcuna riga corrispondente
+ * @returns {Promise<{ physicalSiteId: string|null, dealerArcadCode: string|null, dpEnIdent: string|null }>}
+ *          dpEnIdent e' woc.dms_snowflakes.dp_en_ident (LEFT JOIN su cd_dealer_arcad_code = en_ident).
+ *          tutti null se non e' stata trovata alcuna riga corrispondente
  *          (incluso il caso in cui il brand non sia risolvibile in formato ARCAD)
  */
 async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } = {}) {
@@ -206,12 +210,13 @@ async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } 
 
   const arcadBrand = await resolveArcadBrandCode(pool, brand);
   if (!arcadBrand) {
-    return { physicalSiteId: null, dealerArcadCode: null };
+    return { physicalSiteId: null, dealerArcadCode: null, dpEnIdent: null };
   }
 
   const { rows } = await pool.query(
-    `SELECT s.gn_physical_site_arcad as physicalsite, s.CD_DEALER_ARCAD_CODE as podvInfo 
+    `SELECT s.gn_physical_site_arcad as physicalsite, s.CD_DEALER_ARCAD_CODE as podvInfo, dms.dp_en_ident
        FROM woc.ang_snowflakes s
+            LEFT JOIN woc.dms_snowflakes dms ON s.cd_dealer_arcad_code = dms.en_ident
       WHERE (s.cd_main_sincom_code = $1 OR s.gn_legal_entity = $1)
         AND s.cd_market_code = $2
         AND s.cd_contract_brand_arcad_code = $3
@@ -222,12 +227,13 @@ async function getPhysicalSiteAndPdvId(pool, { mainSincom, market, brand, oic } 
   );
 
   if (rows.length === 0) {
-    return { physicalSiteId: null, dealerArcadCode: null };
+    return { physicalSiteId: null, dealerArcadCode: null, dpEnIdent: null };
   }
 
   return {
     physicalSiteId: rows[0].physicalsite,
     dealerArcadCode: rows[0].podvinfo,
+    dpEnIdent: rows[0].dp_en_ident ?? null,
   };
 }
 

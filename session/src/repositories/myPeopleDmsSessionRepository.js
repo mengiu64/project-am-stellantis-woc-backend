@@ -273,7 +273,8 @@ const BRAND_CODE_TO_REFTECH = {
  *      dealer mai visto prima).
  *
  *      Espone infine `physicalsite` (gn_physical_site_arcad) e `pdvId`
- *      (cd_dealer_arcad_code), risolti dalla tabella woc.ang_snowflakes a
+ *      (cd_dealer_arcad_code), oltre a `dpEnIdent` (woc.dms_snowflakes.dp_en_ident,
+ *      LEFT JOIN su cd_dealer_arcad_code = en_ident), risolti dalla tabella woc.ang_snowflakes a
  *      partire da mainSincom/market/brand/oic (v. loadGetPhysicalSiteAndPdvId,
  *      stessi criteri di dbManager/AnagSnowflakesRepository.js
  *      ::getPhysicalSiteAndPdvId). Stesso principio fault-tolerant delle
@@ -493,9 +494,9 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       (dealer && market && brandReftech && oic)
         ? getPhysicalSiteAndPdvId({ mainSincom: dealer, market, brand: brandReftech, oic }).catch((err) => {
           console.error(`[session] lettura physicalSite/pdvId (woc.ang_snowflakes) fallita per mainSincom="${dealer}" market="${market}" brand="${brandReftech}" oic="${oic}": ${err.message}`);
-          return { physicalSiteId: null, dealerArcadCode: null };
+          return { physicalSiteId: null, dealerArcadCode: null, dpEnIdent: null };
         })
-        : Promise.resolve({ physicalSiteId: null, dealerArcadCode: null }),
+        : Promise.resolve({ physicalSiteId: null, dealerArcadCode: null, dpEnIdent: null }),
       oicCodes.length > 0
         ? getBrandsByOics({ oics: oicCodes }).catch((err) => {
           console.error(`[session] lettura brand per oic (woc.ang_snowflakes) fallita: ${err.message}`);
@@ -617,6 +618,7 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       profile: (wiAdvDlApp && wiAdvDlApp.PROFILE) || null,
       physicalsite: physicalSiteAndSincom.physicalSiteId ?? null,
       pdvId: physicalSiteAndSincom.dealerArcadCode ?? null,
+      dpEnIdent: physicalSiteAndSincom.dpEnIdent ?? null,
       sessionbrand: rawBrandCode,
       inmandate: null,
       language: iso2 ? iso2.toLowerCase() : null,
@@ -686,6 +688,7 @@ function buildHqSessionData(username, authProfile) {
     profile: null,
     physicalsite: null,
     pdvId: null,
+    dpEnIdent: null,
     sessionbrand: null,
     inmandate: null,
     language: null,

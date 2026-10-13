@@ -2,10 +2,12 @@
 
 const mockFilters = jest.fn();
 const mockQuote = jest.fn();
+const mockStockPrix = jest.fn();
 jest.mock('../wyzService', () => {
   const actual = jest.requireActual('../wyzService');
   return { ...actual, getSearchFilters: (...a) => mockFilters(...a), searchQuote: (...a) => mockQuote(...a) };
 });
+jest.mock('../stockPrixService', () => ({ getStockPrix: (...a) => mockStockPrix(...a) }));
 jest.mock('fs');
 
 const fs = require('fs');
@@ -68,6 +70,19 @@ describe('wyz handler', () => {
       const [payload, ctx] = mockQuote.mock.calls[0];
       expect(payload).toEqual({ width: 1 });
       expect(ctx.correlationId).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('getStockPrix -> 200 con data e authorizer passato nel contesto', async () => {
+      mockStockPrix.mockResolvedValue({ items: [{ partReference: 'P' }] });
+      const authorizer = { sub: 'u1', profile: '{"dealer_code":"111111A"}' };
+      const res = await handler({
+        path: '/api/wyz/getStockPrix', httpMethod: 'POST',
+        body: JSON.stringify({ partLines: [] }),
+        requestContext: { requestId: 'req-2', authorizer },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(parse(res)).toEqual({ success: true, data: { items: [{ partReference: 'P' }] } });
+      expect(mockStockPrix).toHaveBeenCalledWith({ partLines: [] }, { correlationId: 'req-2', authorizer });
     });
 
     it('evento assente -> azione sconosciuta 400', async () => {

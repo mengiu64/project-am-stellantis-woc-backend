@@ -207,10 +207,13 @@ async function getSearchFilters(params, ctx = {}) {
   const { correlationId } = ctx;
   console.log(`[getSearchFilters] Avvio 4 chiamate Wyz (customerRrdiCode=${params.customerRrdiCode}, hubCode=${params.hubCode})`);
 
-  // brands è l'unico endpoint che richiede il codice cliente/hub
   const calls = {
     vehicleBrands: () => callWyz('GET', '/api/tyres/vehicle-brands', { correlationId }),
-    vehicleTypes: () => callWyz('GET', '/api/tyres/vehicle-types', { correlationId }),
+    vehicleTypes: () =>
+      callWyz('GET', '/api/tyres/vehicle-types', {
+        query: { customerRrdiCode: params.customerRrdiCode, hubCode: params.hubCode },
+        correlationId,
+      }),
     tyreBrands: () =>
       callWyz('GET', '/api/tyres/brands', {
         query: { customerRrdiCode: params.customerRrdiCode, hubCode: params.hubCode },
