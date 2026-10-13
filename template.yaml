@@ -473,11 +473,18 @@ Resources:
   # Stessa architettura e stessi permessi di MoparDocFunction, esclusi quelli
   # Aurora (wyz non usa il database): credenziali da SSM -> Secrets Manager e
   # cache del token OAuth2 su TmpCacheTable.
+  # Azione getStockPrix: wrapper SOAP di StockPrixService (Panier SOA PSA) in
+  # mutual TLS con gli STESSI secret cert/key di AgendaSoaFunction
+  # (sm-np-bsn0027990-${Environment}-apic-cert/-apic-key), letti tramite il layer
+  # AWS Parameters and Secrets Lambda Extension; Basic Auth e client_id nel secret wyz.
   WyzFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-wyz"
       CodeUri: wyz/
+      # Layer Secrets Extension (localhost:2773) per il recupero dei secret mTLS di getStockPrix
+      Layers:
+        - !Ref MyPeopleExtensionLayerArn
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
@@ -505,6 +512,13 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
               Resource: !GetAtt TmpCacheTable.Arn
+        # wyz/certService.js — sola lettura dei secret cert/key mTLS di StockPrixService (least-privilege)
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource:
+                - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-cert-*"
+                - !Sub "arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:sm-np-bsn0027990-${Environment}-apic-key-*"
       Environment:
         Variables:
           WYZ_PARAM_NAME: !If
@@ -512,6 +526,9 @@ Resources:
             - /app/BSN0027990/wyz
             - !Sub /app/np-BSN0027990-${Environment}/wyz
           DYNAMO_CACHE_TABLE_NAME: !Ref TmpCacheTable
+          # Id dei secret mTLS (stessi di AgendaSoaFunction); URL StockPrixService e porta Extension sono nel secret wyz
+          WYZ_CERT_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-cert"
+          WYZ_KEY_SECRET_ID: !Sub "sm-np-bsn0027990-${Environment}-apic-key"
 
   WyzFunctionLogGroup:
     Type: AWS::Logs::LogGroup

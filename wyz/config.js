@@ -16,6 +16,9 @@ const DEFAULT_TENANT = 'STA';
 const PARTNER = 'WIADVISOR';
 // Timeout socket verso Wyz (ms): inferiore al Timeout Lambda (30s) per poter rispondere con un errore gestito
 const HTTP_TIMEOUT_MS = 10000;
+// Porta di default della AWS Parameters and Secrets Lambda Extension
+const DEFAULT_EXTENSION_PORT = 2773;
+
 
 let cachedConfig = null;
 
@@ -59,6 +62,23 @@ function buildConfig(secrets) {
     },
     partner: PARTNER,
     timeoutMs: HTTP_TIMEOUT_MS,
+    // StockPrixService (SOAP mTLS): URL, porta Extension, credenziali Basic Auth e client_id dal secret wyz
+    stockPrix: {
+      // URL dell'endpoint SOAP (diverso tra dev/stage e prod): nessun default per non chiamare l'ambiente sbagliato
+      url: secrets.WYZ_STOCKPRIX_URL,
+      // Porta della Secrets Extension dal secret wyz (default 2773 se assente o non numerica)
+      extensionPort: Number(secrets.PARAMETERS_SECRETS_EXTENSION_HTTP_PORT) || DEFAULT_EXTENSION_PORT,
+      // Utente Basic Auth del servizio Panier SOA
+      username: secrets.STOCKPRIX_USERNAME,
+      // Password Basic Auth del servizio Panier SOA
+      password: secrets.STOCKPRIX_PASSWORD,
+      // client_id IBM API Connect passato in query string
+      clientId: secrets.STOCKPRIX_CLIENT_ID,
+      // Nome applicazione chiamante richiesto dal servizio
+      clientApplicationName: PARTNER,
+      // Timeout socket della chiamata SOAP
+      timeoutMs: HTTP_TIMEOUT_MS,
+    },
   };
 }
 
@@ -94,6 +114,11 @@ async function getConfig() {
       WYZ_BASE_URL: process.env.WYZ_BASE_URL,
       WYZ_IAM_BASE_URL: process.env.WYZ_IAM_BASE_URL,
       WYZ_TENANT: process.env.WYZ_TENANT,
+      // Credenziali StockPrixService (opzionali: verificate solo dall'azione getStockPrix)
+      STOCKPRIX_USERNAME: process.env.STOCKPRIX_USERNAME,
+      STOCKPRIX_PASSWORD: process.env.STOCKPRIX_PASSWORD,
+      STOCKPRIX_CLIENT_ID: process.env.STOCKPRIX_CLIENT_ID,
+      WYZ_STOCKPRIX_URL: process.env.WYZ_STOCKPRIX_URL,
     };
   }
 
