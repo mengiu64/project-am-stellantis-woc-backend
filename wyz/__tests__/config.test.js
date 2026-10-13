@@ -17,7 +17,7 @@ describe('config.getConfig (wyz)', () => {
     jest.spyOn(console, 'log').mockImplementation(() => {});
     process.env = { ...originalEnv };
     ['WYZ_PARAM_NAME', 'WYZ_IBM_CLIENT_ID', 'WYZ_IBM_CLIENT_SECRET', 'WYZ_BASE_URL', 'WYZ_IAM_BASE_URL', 'WYZ_TENANT',
-      'WYZ_STOCKPRIX_BASE_URL', 'STOCKPRIX_USERNAME', 'STOCKPRIX_PASSWORD', 'STOCKPRIX_CLIENT_ID']
+      'WYZ_STOCKPRIX_BASE_URL', 'WYZ_STOCKPRIX_HTTP_PORT', 'STOCKPRIX_USERNAME', 'STOCKPRIX_PASSWORD', 'STOCKPRIX_CLIENT_ID']
       .forEach((k) => delete process.env[k]);
     fs = require('fs');
     fs.existsSync.mockReturnValue(false);
@@ -62,13 +62,13 @@ describe('config.getConfig (wyz)', () => {
     expect(mockLoadSecrets).not.toHaveBeenCalled();
   });
 
-  it('stockPrix: URL, porta Extension e credenziali dal secret', async () => {
+  it('stockPrix: base URL, porta Extension e credenziali dal secret', async () => {
     process.env.WYZ_PARAM_NAME = '/p';
     mockLoadSecrets.mockResolvedValue({
       WYZ_IBM_CLIENT_ID: 'a', WYZ_IBM_CLIENT_SECRET: 'b',
       STOCKPRIX_USERNAME: 'u', STOCKPRIX_PASSWORD: 'p', STOCKPRIX_CLIENT_ID: 'c',
       WYZ_STOCKPRIX_BASE_URL: 'https://api-cert.groupe-psa.com',
-      PARAMETERS_SECRETS_EXTENSION_HTTP_PORT: '2774',
+      WYZ_STOCKPRIX_HTTP_PORT: '2774',
     });
 
     const cfg = await getConfig();
@@ -87,14 +87,15 @@ describe('config.getConfig (wyz)', () => {
     expect(cfg.stockPrix.extensionPort).toBe(2773);
   });
 
-  it('in locale legge le credenziali stockPrix dalle variabili di ambiente', async () => {
+  it('in locale legge credenziali e porta stockPrix dalle variabili di ambiente', async () => {
     Object.assign(process.env, {
       WYZ_IBM_CLIENT_ID: 'id', WYZ_IBM_CLIENT_SECRET: 'sec',
       STOCKPRIX_USERNAME: 'u', STOCKPRIX_PASSWORD: 'p', STOCKPRIX_CLIENT_ID: 'c',
       WYZ_STOCKPRIX_BASE_URL: 'https://x.test',
+      WYZ_STOCKPRIX_HTTP_PORT: '2775',
     });
     const cfg = await getConfig();
-    expect(cfg.stockPrix).toMatchObject({ username: 'u', password: 'p', clientId: 'c', baseUrl: 'https://x.test' });
+    expect(cfg.stockPrix).toMatchObject({ username: 'u', password: 'p', clientId: 'c', baseUrl: 'https://x.test', extensionPort: 2775 });
   });
 
   it('in locale lancia errore se mancano le variabili obbligatorie', async () => {

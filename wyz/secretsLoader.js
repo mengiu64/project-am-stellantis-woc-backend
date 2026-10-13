@@ -46,7 +46,7 @@ async function getSecretValue(secretArn) {
  * Chiavi obbligatorie: WYZ_IBM_CLIENT_ID, WYZ_IBM_CLIENT_SECRET.
  * Chiavi opzionali: WYZ_BASE_URL, WYZ_IAM_BASE_URL, WYZ_TENANT (override dei default preprod),
  * STOCKPRIX_USERNAME, STOCKPRIX_PASSWORD, STOCKPRIX_CLIENT_ID, WYZ_STOCKPRIX_BASE_URL (verificate dall'azione getStockPrix),
- * PARAMETERS_SECRETS_EXTENSION_HTTP_PORT (porta della Secrets Extension, default 2773).
+ * WYZ_STOCKPRIX_HTTP_PORT (porta della Secrets Extension, default 2773).
  * @returns {Promise<object>}
  * @throws {Error} se WYZ_PARAM_NAME manca, o parametro/secret non sono recuperabili/completi
  */
