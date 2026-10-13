@@ -328,3 +328,115 @@ describe('HqManager — consumer REST', () => {
     expect(callService).not.toHaveBeenCalled();
   });
 });
+
+describe('HqManager.insertdmsSnowflakes', () => {
+  const mockSend = jest.fn();
+  let manager;
+  let logSpy;
+  let errorSpy;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.doMock('@aws-sdk/client-s3', () => ({
+      S3Client: jest.fn(() => ({ send: mockSend })),
+      ListObjectsV2Command: jest.fn((input) => ({ type: 'list', input })),
+      GetObjectCommand: jest.fn((input) => ({ type: 'get', input })),
+    }), { virtual: true });
+    jest.doMock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: true });
+    mockSend.mockReset();
+    logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    manager = new (require('../HqManager').HqManager)();
+    require('../../serviceClient').callService.mockImplementation(async (s, op, { args }) => ({
+      received: args[0].length, saved: args[0].length, inserted: 1, updated: args[0].length - 1,
+    }));
+  });
+
+  afterEach(() => { logSpy.mockRestore(); errorSpy.mockRestore(); });
+
+  const body = (text) => ({ Body: { transformToString: async () => text } });
+
+  test('legge i file, parsa il CSV (apici, newline, BOM) e salva via dbManager', async () => {
+    mockSend.mockImplementation(async (cmd) => {
+      if (cmd.type === 'list') return { Contents: [{ Key: 'DM_MCO_DPR_RA_SITE.csv_1' }, { Key: 'DM_MCO_DPR_RA_SITE.csv_2' }] };
+      if (cmd.input.Key.endsWith('_1')) return body('\uFEFFGN_ROW_HASH,GN_LEGAL_ENTITY,X\r\nh1,"A, ""B""",\r\nh2,"line1\nline2",y\r\n');
+      return body('GN_ROW_HASH,GN_LEGAL_ENTITY\nh3,C');
+    });
+
+    const result = await manager.insertdmsSnowflakes();
+
+    const { callService } = require('../../serviceClient');
+    expect(callService).toHaveBeenCalledTimes(2);
+    expect(callService.mock.calls[0]).toEqual(['dbmanager', 'insertdmsSnowflakes', { args: [[
+      { gn_row_hash: 'h1', gn_legal_entity: 'A, "B"', x: '' },
+      { gn_row_hash: 'h2', gn_legal_entity: 'line1\nline2', x: 'y' },
+    ]] }]);
+    expect(result).toMatchObject({ files: 2, failedFiles: 0, recordsRead: 3, recordsSaved: 3, inserted: 2, updated: 1, errors: [] });
+  });
+
+  test('pagina il listing, invia a blocchi e continua dopo errore su un file', async () => {
+    const big = `GN_ROW_HASH\n${Array.from({ length: 1001 }, (_, i) => `h${i}`).join('\n')}`;
+    mockSend.mockImplementation(async (cmd) => {
+      if (cmd.type === 'list') {
+        return cmd.input.ContinuationToken
+          ? { Contents: [{ Key: 'b' }] }
+          : { Contents: [{ Key: 'a' }], IsTruncated: true, NextContinuationToken: 't' };
+      }
+      if (cmd.input.Key === 'a') throw new Error('s3 down');
+      return body(big);
+    });
+
+    const result = await manager.insertdmsSnowflakes();
+
+    expect(require('../../serviceClient').callService).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ files: 2, failedFiles: 1, recordsRead: 1001, recordsSaved: 1001, errors: [{ key: 'a', error: 's3 down' }] });
+  });
+
+  test('nessun file o CSV vuoto', async () => {
+    mockSend.mockImplementation(async (cmd) => (cmd.type === 'list' ? { Contents: [{ Key: 'e' }] } : body('')));
+    expect(await manager.insertdmsSnowflakes()).toMatchObject({ files: 1, recordsRead: 0 });
+    mockSend.mockImplementation(async () => ({}));
+    expect(await manager.insertdmsSnowflakes()).toMatchObject({ files: 0 });
+  });
+
+  test('insertLegalentitySnowflakes usa il prefisso DM_MCO_DEALER e l\'operazione dedicata', async () => {
+    mockSend.mockImplementation(async (cmd) => (cmd.type === 'list' ? { Contents: [{ Key: 'DM_MCO_DEALER_1' }] } : body('GN_ROW_HASH,GN_LEGAL_ENTITY\nh1,LE')));
+
+    const result = await manager.insertLegalentitySnowflakes();
+
+    expect(mockSend.mock.calls[0][0].input).toMatchObject({ Prefix: 'DM_MCO_DEALER' });
+    expect(require('../../serviceClient').callService).toHaveBeenCalledWith(
+      'dbmanager', 'insertLegalentitySnowflakes', { args: [[{ gn_row_hash: 'h1', gn_legal_entity: 'LE' }]] },
+    );
+    expect(result).toMatchObject({ files: 1, recordsRead: 1, recordsSaved: 1 });
+  });
+
+  test('insertAddrSnowflakes usa il prefisso DM_MCO_EXTERNAL_LOCATION e l\'operazione dedicata', async () => {
+    mockSend.mockImplementation(async (cmd) => (cmd.type === 'list' ? { Contents: [{ Key: 'DM_MCO_EXTERNAL_LOCATION_1' }] } : body('GN_ROW_HASH,GN_TOWN\nh1,Torino')));
+
+    const result = await manager.insertAddrSnowflakes();
+
+    expect(mockSend.mock.calls[0][0].input).toMatchObject({ Prefix: 'DM_MCO_EXTERNAL_LOCATION' });
+    expect(require('../../serviceClient').callService).toHaveBeenCalledWith(
+      'dbmanager', 'insertAddrSnowflakes', { args: [[{ gn_row_hash: 'h1', gn_town: 'Torino' }]] },
+    );
+    expect(result).toMatchObject({ files: 1, recordsRead: 1, recordsSaved: 1 });
+  });
+
+  test('insertAnagSnowflakes usa il prefisso DM_MCO_M2M e l\'operazione dedicata', async () => {
+    mockSend.mockImplementation(async (cmd) => (cmd.type === 'list' ? { Contents: [{ Key: 'DM_MCO_M2M_1' }] } : body('GN_ROW_HASH,GN_LEGAL_ENTITY\nh1,LE')));
+
+    const result = await manager.insertAnagSnowflakes();
+
+    expect(mockSend.mock.calls[0][0].input).toMatchObject({ Prefix: 'DM_MCO_M2M' });
+    expect(require('../../serviceClient').callService).toHaveBeenCalledWith(
+      'dbmanager', 'insertAnagSnowflakes', { args: [[{ gn_row_hash: 'h1', gn_legal_entity: 'LE' }]] },
+    );
+    expect(result).toMatchObject({ files: 1, recordsRead: 1, recordsSaved: 1 });
+  });
+
+  test('errore di listing propagato', async () => {
+    mockSend.mockRejectedValue(new Error('denied'));
+    await expect(manager.insertdmsSnowflakes()).rejects.toThrow('denied');
+  });
+});

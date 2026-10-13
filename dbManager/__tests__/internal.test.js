@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 test.each([
   ...Object.keys(hq).filter((name) => !['getAnagSection', 'getAnagAllocation'].includes(name)),
-  'getCountryIsoCode', 'getPhysicalSiteAndSincom', 'getPhysicalSiteAndPdvId', 'getBrandsByOics', 'getMarkets',
+  'getCountryIsoCode', 'getPhysicalSiteAndSincom', 'getPhysicalSiteAndPdvId', 'getBrandsByOics', 'getMarkets', 'insertdmsSnowflakes', 'insertLegalentitySnowflakes', 'insertAddrSnowflakes', 'insertAnagSnowflakes',
   'getPkwstouse', 'getConfigPackages',
 ])('dispatches %s locally with the owning DB pool', async (operation) => {
   const fn = hq[operation] || snowflakes[operation] || pk[operation] || config[operation];

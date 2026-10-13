@@ -9,7 +9,7 @@ const OPERATIONS = [
   'insertPackage', 'setPackage', 'deletePackage', 'setPackageVisible',
   'getPackageListHQ', 'getPackageListSM', 'clonePk', 'cloneVeicInspection', 'insertAudit', 'searchAudit',
   'getAnagSection', 'getAnagAllocation',
-  'checkIsPkMarketEnabled', 'deleteOicPkHierarchy',
+  'checkIsPkMarketEnabled', 'deleteOicPkHierarchy', 'insertdmsSnowflakes', 'insertLegalentitySnowflakes', 'insertAddrSnowflakes', 'insertAnagSnowflakes',
 ];
 
 // Nessun pool locale: ogni operazione conserva nome e ordine degli argomenti

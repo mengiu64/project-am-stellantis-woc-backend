@@ -32,6 +32,11 @@ Parameters:
       quando il nome auto-generato collide con un bucket già esistente in
       un altro account AWS (i nomi bucket S3 sono univoci globalmente).
 
+  SnowflakeExtractsBucketName:
+    Type: String
+    Default: s3-woc-bsn0027990-stage-m2m-snowflake-extracts
+    Description: Bucket S3 con le estrazioni Snowflake (DM_MCO_*) importate da HqManager
+
   VpcSubnetIds:
     Type: CommaDelimitedList
     Description: Comma-separated list of private Subnet IDs
@@ -953,9 +958,18 @@ Resources:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-hqmanager"
       CodeUri: ./
       Handler: hqManager/index.handler
+      # Import Snowflake (action importSnowflakes): file CSV anche grandi
+      Timeout: 900
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        # HqManager.js::insertdmsSnowflakes/insertLegalentitySnowflakes/
+        # insertAddrSnowflakes/insertAnagSnowflakes — lettura file DM_MCO_*
+        - S3ReadPolicy:
+            BucketName: !Ref SnowflakeExtractsBucketName
+      Environment:
+        Variables:
+          SNOWFLAKE_BUCKET_NAME: !Ref SnowflakeExtractsBucketName
   HqManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
