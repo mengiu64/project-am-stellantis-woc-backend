@@ -58,7 +58,7 @@ project-am-stellantis-woc-backend/
 ├── myPeople/           # Lambda – Profili utente PSA IURSMA (mTLS + Basic Auth)
 ├── pkFavorite/         # Lambda – Pacchetti preferiti dealer (PostgreSQL/Aurora + RDS Proxy)
 ├── moparDoc/           # Lambda – MoparDoc: CreateJobCard (job-docs) + getUploadDocURL/uploadedDoc (MoparDocs Browser API)
-├── wyz/                # Lambda – wrapper REST verso Wyz Tyre search (getSearchFilters, searchQuote)
+├── wyz/                # Lambda – wrapper REST verso Wyz Tyre search (getSearchFilters, searchQuote) + StockPrixService SOAP mTLS (getStockPrix)
 ├── isStellantisBrand/  # Lambda – Verifica appartenenza brand a Stellantis (Aurora PostgreSQL via RDS Proxy)
 ├── synch-status/       # Lambda – Aggiornamento stato sincronizzazione DJC (4 eventi Kafka) su Aurora PostgreSQL via RDS Proxy; security demandata al gateway IBM APIC
 ├── dmlConfigSync/      # Lambda – Sync giornaliera (EventBridge Schedule) company-types/customer-titles + dms/settings DML per mercato/dealer -> cache Aurora, letta da session
@@ -75,6 +75,9 @@ project-am-stellantis-woc-backend/
 Le credenziali obbligatorie sono `WYZ_IBM_CLIENT_ID` e `WYZ_IBM_CLIENT_SECRET`,
 sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
 `WYZ_PARAM_NAME` indica il parametro SSM contenente l'ARN/ID del secret.
+L'azione `getStockPrix` (StockPrixService, SOAP mTLS) usa anche le chiavi `STOCKPRIX_USERNAME`,
+`STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` e `WYZ_STOCKPRIX_HTTP_PORT` (default 2773)
+del secret wyz e i secret cert/key di agendaSoa (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, layer Secrets Extension).
 Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
 ### Comunicazione REST tra Lambda

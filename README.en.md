@@ -67,6 +67,9 @@ project-am-stellantis-woc-backend/
 The required credentials are `WYZ_IBM_CLIENT_ID` and `WYZ_IBM_CLIENT_SECRET`,
 both in the AWS secret JSON and in local environment variables. In Lambda,
 `WYZ_PARAM_NAME` identifies the SSM parameter containing the secret ARN/ID.
+The `getStockPrix` action (StockPrixService, SOAP over mTLS) also uses the `STOCKPRIX_USERNAME`,
+`STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` and `WYZ_STOCKPRIX_HTTP_PORT` (default 2773)
+keys of the wyz secret and the agendaSoa cert/key secrets (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, Secrets Extension layer).
 See [wyz/README.md](wyz/README.md) for the complete configuration.
 
 ### REST communication between Lambdas
