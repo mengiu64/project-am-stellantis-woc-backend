@@ -87,9 +87,13 @@
  * l'esito dell'ultima chiamata saveJobcard verso DGT (true se DGT ha risposto
  * success: true, false se ha risposto altrimenti o la chiamata è fallita, null
  * se non ancora noto), ack/techReason/businessReason l'esito della
- * sincronizzazione popolato da synch-status (stringa vuota se assente): in
- * "details" prima di jobCardDetail, in "saveJobcard" in coda alla risposta DGT
- * (con djcsynch della chiamata appena eseguita).
+ * sincronizzazione popolato da synch-status (stringa vuota se assente; tutti i
+ * campi null se la riga non c'è o non è leggibile): in "details" prima di
+ * jobCardDetail, in "saveJobcard" in coda alla risposta DGT (con djcsynch
+ * della chiamata appena eseguita).
+ * In "details", se la riga ha djcsynch true e ack KO (esito DMS negativo), la
+ * riga viene eliminata (DELETE atomica, best-effort con lo stesso timeout di
+ * 5 s) e i quattro campi sono restituiti null: la jobcard riparte da grigio.
  *
  * "lastPayload" (GET /api/repairorder/lastPayload?jobCardId=...) restituisce
  * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
@@ -571,12 +575,14 @@ async function saveJobCardWithDjcSynch(jobCardPayload, jobCardId, token) {
  * sincronizzazione popolato da synch-status): prima di jobCardDetail per
  * "details", in coda per "saveJobcard". djcsynch, se passato (saveJobcard),
  * sostituisce il valore letto dal DB con l'esito della chiamata appena
- * eseguita. Best-effort: un errore DB lascia i campi vuoti (djcsynch null)
- * senza far fallire la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ * eseguita. Best-effort: un errore DB lascia i campi a null senza far fallire
+ * la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ * Con deleteKo (solo "details") l'esito è letto con getDetailsSyncStatus, che
+ * prima elimina la riga con djcsynch true e ack KO (campi tutti null).
  */
-async function addJobCardSyncStatus(body, jobCardId, djcsynch) {
-  const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
-  const syncStatus = await getSyncStatus(jobCardId);
+async function addJobCardSyncStatus(body, jobCardId, djcsynch, { deleteKo = false } = {}) {
+  const { getSyncStatus, getDetailsSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
+  const syncStatus = await (deleteKo ? getDetailsSyncStatus : getSyncStatus)(jobCardId);
   return withSyncStatus(body, djcsynch === undefined ? syncStatus : { ...syncStatus, djcsynch });
 }
 
@@ -770,7 +776,8 @@ exports.handler = async (event) => {
       } else if (action === 'details') {
         const jobCardId = body.jobCardId ?? body.id;
         const details = await getJobCardDetails(token, jobCardId, resolveSessionContext(event, body));
-        result = await addJobCardSyncStatus(details, jobCardId);
+        // Riga con djcsynch true e ack KO eliminata: campi di sync tutti null.
+        result = await addJobCardSyncStatus(details, jobCardId, undefined, { deleteKo: true });
       }
     }
 
@@ -843,7 +850,7 @@ async function runDetails(jobCardId) {
   console.log('\n=== JobCard Details ===');
   const token = await getBearerToken();
   const details = await getJobCardDetails(token, jobCardId);
-  const result = await addJobCardSyncStatus(details, jobCardId);
+  const result = await addJobCardSyncStatus(details, jobCardId, undefined, { deleteKo: true });
   console.log(JSON.stringify(result, null, 2));
   return result;
 }

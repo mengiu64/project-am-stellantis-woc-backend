@@ -136,11 +136,20 @@ prima di `jobCardDetail`: `djcsynch` è l'esito dell'ultima chiamata
 `saveJobcard` verso DGT (`true`/`false`, v. "JobCard Save"), `ack`/
 `techReason`/`businessReason` l'esito della sincronizzazione DMS (popolati da
 `synch-status`).
+Se la riga ha `djcsynch = true` e `ack = 'KO'` (push accettata da DGT,
+rifiuto o errore del DMS), prima della lettura viene eliminata con una DELETE
+atomica (`... WHERE jobcardid = $1 AND djcsynch IS TRUE AND ack = 'KO'
+RETURNING jobcardid`) e i quattro campi sono restituiti `null`: il FE mostra la
+jobcard grigia con la versione DJC. Una save appena registrata non viene
+eliminata (l'UPSERT azzera `ack` a `NULL`); un evento Kafka in ritardo sulla
+riga eliminata viene solo loggato da `synch-status` ("record non trovato").
 L'aggiunta riguarda solo la risposta dell'azione `details` (handler e CLI): la
 cache DynamoDB, l'azione `dml` e l'operazione interna `getJobCardDetails` usata
-da `synch-status` restano invariate. Best-effort: riga assente, valori `NULL`,
-errore DB o attesa oltre 5 s → stringa vuota, `null` per `djcsynch` (l'errore
-viene solo loggato e non fa fallire la risposta).
+da `synch-status` restano invariate (nessuna eliminazione). Best-effort, con un
+unico limite di 5 s per DELETE e lettura: riga assente o eliminata, errore DB o
+attesa oltre 5 s → tutti i campi `null` (l'errore viene solo loggato e non fa
+fallire la risposta); valori `NULL` di una riga presente → stringa vuota,
+`null` per `djcsynch`.
 
 **Risposta di successo (200, estratto):**
 
@@ -238,9 +247,10 @@ Le colonne `ack`/`techreason`/`businessreason` sono aggiornate da
 `synch-status` in modo asincrono, quindi i valori riflettono l'ultimo esito
 registrato al momento della risposta: vuoti per una jobcard nuova, l'esito
 della sincronizzazione precedente per una già presente.
-Best-effort come in `details`: riga assente, valori `NULL`, errore DB o attesa
-oltre 5 s → stringa vuota, senza far fallire la risposta (il payload è già stato
-inviato a DGT).
+Best-effort come in `details` (senza eliminazione della riga KO): valori
+`NULL` → stringa vuota; riga assente, errore DB o attesa oltre 5 s → campi
+`null` (`djcsynch` resta l'esito della chiamata appena eseguita), senza far
+fallire la risposta (il payload è già stato inviato a DGT).
 
 **Payload e obbligatorietà**: il payload (`roInfo` obbligatorio, più le sezioni
 opzionali `customerInfo[]`, `vehicleInfo`, `jobs[]`, ecc.) segue le stesse

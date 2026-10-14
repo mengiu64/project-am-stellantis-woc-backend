@@ -17,6 +17,7 @@ jest.mock('../JobcardSyncActivityRepository', () => ({
   recordSyncActivity: jest.fn(),
   recordDjcSynch: jest.fn(),
   getSyncStatus: jest.fn(),
+  getDetailsSyncStatus: jest.fn(),
   getLastPayload: jest.fn(),
   deleteSynch: jest.fn(),
 }));
@@ -28,7 +29,7 @@ const {
   saveJobCard, getJobCardDetails, getJobCardList, getJobCardListCurrent, getDataFromDMLFromTmp, getDealerConfiguration,
 } = require('../jobCardService');
 const {
-  recordSyncActivity, recordDjcSynch, getSyncStatus, getLastPayload, deleteSynch,
+  recordSyncActivity, recordDjcSynch, getSyncStatus, getDetailsSyncStatus, getLastPayload, deleteSynch,
 } = require('../JobcardSyncActivityRepository');
 const { handler } = require('../index');
 
@@ -58,6 +59,7 @@ describe('jobcard REST consumers', () => {
     recordSyncActivity.mockResolvedValue({ jobcardid: 'SRP-1', creationdate: new Date('2026-09-30T10:00:00Z') });
     recordDjcSynch.mockResolvedValue(true);
     getSyncStatus.mockResolvedValue(syncStatus);
+    getDetailsSyncStatus.mockResolvedValue(syncStatus);
     callService.mockImplementation(async (service, operation) => {
       if (service === 'session') return session;
       if (operation === 'createnaga') return { success: true, data: { rdvId: 'NEW-AP' } };
@@ -344,14 +346,15 @@ describe('jobcard REST consumers', () => {
       ...syncStatus, jobCardDetail,
     }));
     expect(getJobCardDetails).toHaveBeenCalledWith('local-dgt-token', jobCardId, expect.objectContaining({ username: null }));
-    expect(getSyncStatus).toHaveBeenCalledWith(jobCardId);
+    expect(getDetailsSyncStatus).toHaveBeenCalledWith(jobCardId);
+    expect(getSyncStatus).not.toHaveBeenCalled();
     expect(details).not.toHaveProperty('ack');
     expect(recordDjcSynch).not.toHaveBeenCalled();
   });
 
   test.each([false, null])('details returns djcsynch as read from the DB (%p)', async (djcsynch) => {
     getJobCardDetails.mockResolvedValueOnce({ success: true, jobCardDetail: {} });
-    getSyncStatus.mockResolvedValueOnce({ ...syncStatus, djcsynch });
+    getDetailsSyncStatus.mockResolvedValueOnce({ ...syncStatus, djcsynch });
 
     const response = await handler({ action: 'details', body: { jobCardId: 'JCID-84506' } });
 
@@ -365,6 +368,20 @@ describe('jobcard REST consumers', () => {
 
     expect(response.statusCode).toBe(502);
     expect(getSyncStatus).not.toHaveBeenCalled();
+    expect(getDetailsSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test('details returns all sync fields null when the KO row has been deleted', async () => {
+    const jobCardDetail = { roInfo: { jobCardSrpId: 'JCID-84506' } };
+    getJobCardDetails.mockResolvedValueOnce({ success: true, jobCardDetail });
+    getDetailsSyncStatus.mockResolvedValueOnce({ djcsynch: null, ack: null, techReason: null, businessReason: null });
+
+    const response = await handler({ action: 'details', body: { jobCardId: 'JCID-84506' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      success: true, djcsynch: null, ack: null, techReason: null, businessReason: null, jobCardDetail,
+    });
   });
 
   test.each([
