@@ -90,18 +90,20 @@
  * sincronizzazione popolato da synch-status (stringa vuota se assente; tutti i
  * campi null se la riga non c'è o non è leggibile): in "details" prima di
  * jobCardDetail, in "saveJobcard" in coda alla risposta DGT (con djcsynch
- * della chiamata appena eseguita).
+ * della chiamata appena eseguita). Includono anche updateDateTime: ora
+ * dell'ultimo salvataggio su DJC letta da synch-status insieme all'esito
+ * (colonna lastupdate, ISO 8601), solo con ack OK/KO, altrimenti null.
  * In "details", se la riga ha djcsynch true e ack KO (esito DMS negativo), la
  * riga viene eliminata (DELETE atomica, best-effort con lo stesso timeout di
- * 5 s) e i quattro campi sono restituiti null: la jobcard riparte da grigio.
+ * 5 s) e tutti i campi sono restituiti null: la jobcard riparte da grigio.
  *
  * "lastPayload" (GET /api/repairorder/lastPayload?jobCardId=...) restituisce
  * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
  * woc.jobcard_sync_activity, registrata prima dell'invio): serve a recuperare
  * le modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
- * Include anche djcsynch/ack/techReason/businessReason della stessa riga (tra
- * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri),
- * letti con la stessa SELECT.
+ * Include anche djcsynch/ack/techReason/businessReason/updateDateTime della stessa riga (tra
+ * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri,
+ * updateDateTime come sopra), letti con la stessa SELECT.
  * Dopo la lettura, se djcsynch è false e ack/techReason/businessReason sono
  * vuoti, elimina la riga (stesse condizioni di "deleteSynch", ricontrollate
  * dalla DELETE) e lo segnala con deleted: true; best-effort: un errore della
@@ -539,6 +541,7 @@ function buildAckPendingBody(message) {
     ack: '',
     techReason: '',
     businessReason: '',
+    updateDateTime: null,
   };
 }
 
@@ -625,6 +628,7 @@ async function getJobCardLastPayload(jobCardId) {
     ack: lastPayload.ack,
     techReason: lastPayload.techReason,
     businessReason: lastPayload.businessReason,
+    updateDateTime: lastPayload.updateDateTime,
     deleted,
     payload: lastPayload.payload,
   };

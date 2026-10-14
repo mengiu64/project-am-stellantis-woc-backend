@@ -263,6 +263,7 @@ describe('jobcard REST consumers', () => {
         ack: '',
         techReason: '',
         businessReason: '',
+        updateDateTime: null,
       });
       expect(recordSyncActivity).toHaveBeenCalledWith(makePayload(), { force: false });
       [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus, callService].forEach((fn) => expect(fn).not.toHaveBeenCalled());
@@ -409,13 +410,15 @@ describe('jobcard REST consumers', () => {
     [{ action: 'lastPayload', body: { id: 'JCID-84522' } }, 'JCID-84522'],
   ])('lastPayload returns the last payload sent to DGT and its sync outcome, reading only the DB (case %#)', async (event, jobCardId) => {
     const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
-    const outcome = { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' };
+    const outcome = {
+      djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable', updateDateTime: '2026-10-13T09:55:05.000Z',
+    };
     getLastPayload.mockResolvedValueOnce({ jobCardId, ...outcome, payload });
 
     const response = await handler(event);
 
     expect(response.statusCode).toBe(200);
-    // toBe sulla stringa JSON: verifica anche l'ordine (djcsynch/ack/techReason/businessReason/deleted tra jobCardId e payload)
+    // toBe sulla stringa JSON: verifica anche l'ordine (djcsynch/ack/techReason/businessReason/updateDateTime/deleted tra jobCardId e payload)
     expect(response.body).toBe(JSON.stringify({
       statusCode: 200,
       success: true,
@@ -425,6 +428,7 @@ describe('jobcard REST consumers', () => {
       ack: 'KO',
       techReason: 'FAILED',
       businessReason: 'FAILED - DMS unavailable',
+      updateDateTime: '2026-10-13T09:55:05.000Z',
       deleted: false,
       payload,
     }));
@@ -445,7 +449,7 @@ describe('jobcard REST consumers', () => {
   ])('lastPayload deletes the row after reading the payload when djcsynch is false and the sync outcome is empty (case %#)', async (event, jobCardId) => {
     const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
     getLastPayload.mockResolvedValueOnce({
-      jobCardId, djcsynch: false, ack: '', techReason: '', businessReason: '', payload,
+      jobCardId, djcsynch: false, ack: '', techReason: '', businessReason: '', updateDateTime: null, payload,
     });
     deleteSynch.mockResolvedValueOnce({ jobCardId, deleted: true });
 
@@ -461,6 +465,7 @@ describe('jobcard REST consumers', () => {
       ack: '',
       techReason: '',
       businessReason: '',
+      updateDateTime: null,
       deleted: true,
       payload,
     }));

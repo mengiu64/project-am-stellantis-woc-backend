@@ -304,7 +304,7 @@ describe('JobcardSyncActivityRepository', () => {
       await expect(selectSyncStatus(pool, 'SRP-1')).resolves.toBe(row);
       expect(pool.query).toHaveBeenCalledWith(SELECT_SYNC_STATUS_SQL, ['SRP-1']);
       expect(SELECT_SYNC_STATUS_SQL).toMatch(
-        /SELECT djcsynch, ack, techreason, businessreason\s+FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1/,
+        /SELECT djcsynch, ack, techreason, businessreason, lastupdate\s+FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1/,
       );
     });
 
@@ -315,8 +315,8 @@ describe('JobcardSyncActivityRepository', () => {
   });
 
   describe('getSyncStatus', () => {
-    const empty = { djcsynch: null, ack: '', techReason: '', businessReason: '' };
-    const noRow = { djcsynch: null, ack: null, techReason: null, businessReason: null };
+    const empty = { djcsynch: null, ack: '', techReason: '', businessReason: '', updateDateTime: null };
+    const noRow = { djcsynch: null, ack: null, techReason: null, businessReason: null, updateDateTime: null };
     const poolReturning = (rows) => ({ query: jest.fn().mockResolvedValue({ rows }) });
 
     test('maps the row to djcsynch/ack/techReason/businessReason using the injected getPool', async () => {
@@ -324,8 +324,8 @@ describe('JobcardSyncActivityRepository', () => {
       const getPool = jest.fn().mockResolvedValue(pool);
 
       const result = await getSyncStatus('SRP-1', { getPool });
-      expect(result).toEqual({ djcsynch: true, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down' });
-      expect(Object.keys(result)).toEqual(['djcsynch', 'ack', 'techReason', 'businessReason']);
+      expect(result).toEqual({ djcsynch: true, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down', updateDateTime: null });
+      expect(Object.keys(result)).toEqual(['djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime']);
       expect(pool.query).toHaveBeenCalledWith(SELECT_SYNC_STATUS_SQL, ['SRP-1']);
       expect(db.getPool).not.toHaveBeenCalled();
     });
@@ -340,7 +340,7 @@ describe('JobcardSyncActivityRepository', () => {
       db.getPool.mockResolvedValue(pool);
 
       await expect(getSyncStatus(' SRP-1 '))
-        .resolves.toEqual({ djcsynch: null, ack: 'OK', techReason: 'SYNCED', businessReason: '' });
+        .resolves.toEqual({ djcsynch: null, ack: 'OK', techReason: 'SYNCED', businessReason: '', updateDateTime: null });
       await getSyncStatus(84564621);
       expect(db.getPool).toHaveBeenCalledTimes(2);
       expect(pool.query.mock.calls.map(([, params]) => params)).toEqual([['SRP-1'], ['84564621']]);
@@ -392,11 +392,59 @@ describe('JobcardSyncActivityRepository', () => {
         const getPool = jest.fn().mockResolvedValue(poolReturning([{ ack: 'OK' }]));
 
         await expect(getSyncStatus('SRP-1', { getPool }))
-          .resolves.toEqual({ djcsynch: null, ack: 'OK', techReason: '', businessReason: '' });
+          .resolves.toEqual({ djcsynch: null, ack: 'OK', techReason: '', businessReason: '', updateDateTime: null });
         expect(jest.getTimerCount()).toBe(0);
       } finally {
         jest.useRealTimers();
       }
+    });
+  });
+
+  describe('updateDateTime (lastupdate)', () => {
+    const lastupdate = new Date('2026-10-13T09:55:05Z');
+    const getPoolFor = (row) => jest.fn().mockResolvedValue({ query: jest.fn().mockResolvedValue({ rows: [row] }) });
+
+    test.each(['OK', 'KO'])('ack %s: returns lastupdate as an ISO string', async (ack) => {
+      const result = await getSyncStatus('SRP-1', { getPool: getPoolFor({ djcsynch: true, ack, lastupdate }) });
+      expect(result.updateDateTime).toBe('2026-10-13T09:55:05.000Z');
+      expect(Object.keys(result)).toEqual(['djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime']);
+    });
+
+    test('accepts lastupdate as a string (pg type parser not applied)', async () => {
+      const result = await getSyncStatus('SRP-1', {
+        getPool: getPoolFor({ ack: 'OK', lastupdate: '2026-10-13 11:55:05.123+02' }),
+      });
+      expect(result.updateDateTime).toBe('2026-10-13T09:55:05.123Z');
+    });
+
+    test.each([
+      ['ack NULL (save in attesa di esito)', { ack: null, lastupdate }],
+      ['ack vuoto', { ack: '', lastupdate }],
+      ['ack diverso da OK/KO', { ack: 'ok', lastupdate }],
+      ['lastupdate NULL', { ack: 'OK', lastupdate: null }],
+      ['lastupdate assente', { ack: 'KO' }],
+      ['lastupdate stringa vuota', { ack: 'OK', lastupdate: '' }],
+      ['lastupdate non valido', { ack: 'OK', lastupdate: 'not-a-date' }],
+    ])('%s: updateDateTime null', async (_label, row) => {
+      await expect(getSyncStatus('SRP-1', { getPool: getPoolFor(row) }))
+        .resolves.toMatchObject({ updateDateTime: null });
+    });
+
+    test('getDetailsSyncStatus returns updateDateTime when the row is not deleted', async () => {
+      const query = jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ djcsynch: true, ack: 'OK', lastupdate }] });
+
+      await expect(getDetailsSyncStatus('SRP-1', { getPool: jest.fn().mockResolvedValue({ query }) }))
+        .resolves.toMatchObject({ ack: 'OK', updateDateTime: '2026-10-13T09:55:05.000Z' });
+    });
+
+    test('getLastPayload returns updateDateTime between businessReason and payload', async () => {
+      const result = await getLastPayload('SRP-1', {
+        getPool: getPoolFor({ jobcardid: 'SRP-1', djcsynch: true, ack: 'KO', lastupdate, payload: {} }),
+      });
+      expect(result.updateDateTime).toBe('2026-10-13T09:55:05.000Z');
+      expect(Object.keys(result)).toEqual(['jobCardId', 'djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime', 'payload']);
     });
   });
 
@@ -418,7 +466,7 @@ describe('JobcardSyncActivityRepository', () => {
   });
 
   describe('getDetailsSyncStatus', () => {
-    const noRow = { djcsynch: null, ack: null, techReason: null, businessReason: null };
+    const noRow = { djcsynch: null, ack: null, techReason: null, businessReason: null, updateDateTime: null };
     // Prima chiamata: DELETE (righe eliminate), seconda: SELECT (righe lette).
     const poolWith = (deletedRows, selectedRows = []) => ({
       query: jest.fn()
@@ -432,7 +480,7 @@ describe('JobcardSyncActivityRepository', () => {
 
       const result = await getDetailsSyncStatus('SRP-1', { getPool });
       expect(result).toEqual(noRow);
-      expect(Object.keys(result)).toEqual(['djcsynch', 'ack', 'techReason', 'businessReason']);
+      expect(Object.keys(result)).toEqual(['djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime']);
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(pool.query).toHaveBeenCalledWith(DELETE_KO_SYNC_ACTIVITY_SQL, ['SRP-1']);
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('delete esito KO jobcardid=SRP-1'));
@@ -441,11 +489,11 @@ describe('JobcardSyncActivityRepository', () => {
 
     test.each([
       [{ djcsynch: true, ack: 'OK', techreason: 'SYNCED', businessreason: 'SYNCED - ok' },
-        { djcsynch: true, ack: 'OK', techReason: 'SYNCED', businessReason: 'SYNCED - ok' }],
+        { djcsynch: true, ack: 'OK', techReason: 'SYNCED', businessReason: 'SYNCED - ok', updateDateTime: null }],
       [{ djcsynch: false, ack: 'KO', techreason: 'FAILED', businessreason: null },
-        { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: '' }],
+        { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: '', updateDateTime: null }],
       [{ djcsynch: true, ack: null, techreason: null, businessreason: null },
-        { djcsynch: true, ack: '', techReason: '', businessReason: '' }],
+        { djcsynch: true, ack: '', techReason: '', businessReason: '', updateDateTime: null }],
     ])('without a KO row reads the outcome as getSyncStatus (%p)', async (row, expected) => {
       const pool = poolWith([], [row]);
       const getPool = jest.fn().mockResolvedValue(pool);
@@ -514,7 +562,7 @@ describe('JobcardSyncActivityRepository', () => {
         const getPool = jest.fn().mockResolvedValue(poolWith([], [{ djcsynch: true, ack: 'OK' }]));
 
         await expect(getDetailsSyncStatus('SRP-1', { getPool }))
-          .resolves.toEqual({ djcsynch: true, ack: 'OK', techReason: '', businessReason: '' });
+          .resolves.toEqual({ djcsynch: true, ack: 'OK', techReason: '', businessReason: '', updateDateTime: null });
         expect(jest.getTimerCount()).toBe(0);
       } finally {
         jest.useRealTimers();
@@ -523,7 +571,7 @@ describe('JobcardSyncActivityRepository', () => {
   });
 
   describe('withSyncStatus', () => {
-    const syncStatus = { djcsynch: true, ack: 'OK', techReason: '', businessReason: '' };
+    const syncStatus = { djcsynch: true, ack: 'OK', techReason: '', businessReason: '', updateDateTime: null };
 
     test('inserts the outcome right before jobCardDetail (jobCardDetails response)', () => {
       const jobCardDetail = { roInfo: { jobCardSrpId: 'SRP-1' } };
@@ -533,7 +581,7 @@ describe('JobcardSyncActivityRepository', () => {
 
       const result = withSyncStatus(body, syncStatus);
       expect(Object.keys(result)).toEqual([
-        'dmsAvailable', 'statusCode', 'success', 'message', 'djcsynch', 'ack', 'techReason', 'businessReason', 'jobCardDetail',
+        'dmsAvailable', 'statusCode', 'success', 'message', 'djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime', 'jobCardDetail',
       ]);
       expect(result).toEqual({ ...body, ...syncStatus });
       expect(result.jobCardDetail).toBe(jobCardDetail);
@@ -546,7 +594,7 @@ describe('JobcardSyncActivityRepository', () => {
 
       const result = withSyncStatus(body, syncStatus);
       expect(Object.keys(result)).toEqual([
-        'statusCode', 'success', 'message', 'jobCardId', 'djcsynch', 'ack', 'techReason', 'businessReason',
+        'statusCode', 'success', 'message', 'jobCardId', 'djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime',
       ]);
       expect(result).toEqual({ ...body, ...syncStatus });
     });
@@ -567,7 +615,7 @@ describe('JobcardSyncActivityRepository', () => {
       await expect(selectLastPayload(pool, 'SRP-1')).resolves.toBe(row);
       expect(pool.query).toHaveBeenCalledWith(SELECT_LAST_PAYLOAD_SQL, ['SRP-1']);
       expect(SELECT_LAST_PAYLOAD_SQL).toMatch(
-        /SELECT jobcardid, djcsynch, ack, techreason, businessreason, payload\s+FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1/,
+        /SELECT jobcardid, djcsynch, ack, techreason, businessreason, lastupdate, payload\s+FROM woc\.jobcard_sync_activity\s+WHERE jobcardid = \$1/,
       );
     });
 
@@ -589,9 +637,9 @@ describe('JobcardSyncActivityRepository', () => {
 
       const result = await getLastPayload('SRP-1', { getPool });
       expect(result).toEqual({
-        jobCardId: 'SRP-1', djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down', payload,
+        jobCardId: 'SRP-1', djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down', updateDateTime: null, payload,
       });
-      expect(Object.keys(result)).toEqual(['jobCardId', 'djcsynch', 'ack', 'techReason', 'businessReason', 'payload']);
+      expect(Object.keys(result)).toEqual(['jobCardId', 'djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime', 'payload']);
       expect(result.payload).toBe(payload);
       expect(pool.query).toHaveBeenCalledWith(SELECT_LAST_PAYLOAD_SQL, ['SRP-1']);
       expect(db.getPool).not.toHaveBeenCalled();
@@ -603,7 +651,7 @@ describe('JobcardSyncActivityRepository', () => {
       }]));
 
       await expect(getLastPayload('SRP-1', { getPool })).resolves.toEqual({
-        jobCardId: 'SRP-1', djcsynch: null, ack: '', techReason: '', businessReason: '', payload,
+        jobCardId: 'SRP-1', djcsynch: null, ack: '', techReason: '', businessReason: '', updateDateTime: null, payload,
       });
     });
 
@@ -643,17 +691,17 @@ describe('JobcardSyncActivityRepository', () => {
 
   describe('canDeleteSynch', () => {
     test.each([
-      [{ djcsynch: false, ack: '', techReason: '', businessReason: '' }, true],
-      [{ djcsynch: false, ack: null, techReason: null, businessReason: null }, true],
+      [{ djcsynch: false, ack: '', techReason: '', businessReason: '', updateDateTime: null }, true],
+      [{ djcsynch: false, ack: null, techReason: null, businessReason: null, updateDateTime: null }, true],
       [{ djcsynch: false }, true],
-      [{ djcsynch: null, ack: '', techReason: '', businessReason: '' }, false],
-      [{ djcsynch: true, ack: '', techReason: '', businessReason: '' }, false],
-      [{ ack: '', techReason: '', businessReason: '' }, false],
-      [{ djcsynch: false, ack: 'OK', techReason: '', businessReason: '' }, false],
-      [{ djcsynch: false, ack: '', techReason: 'SUCCESS_WITHOUT_UPDATE', businessReason: '' }, false],
-      [{ djcsynch: false, ack: '', techReason: '', businessReason: 'UNSYNCED - No data found in dispatching table' }, false],
+      [{ djcsynch: null, ack: '', techReason: '', businessReason: '', updateDateTime: null }, false],
+      [{ djcsynch: true, ack: '', techReason: '', businessReason: '', updateDateTime: null }, false],
+      [{ ack: '', techReason: '', businessReason: '', updateDateTime: null }, false],
+      [{ djcsynch: false, ack: 'OK', techReason: '', businessReason: '', updateDateTime: null }, false],
+      [{ djcsynch: false, ack: '', techReason: 'SUCCESS_WITHOUT_UPDATE', businessReason: '', updateDateTime: null }, false],
+      [{ djcsynch: false, ack: '', techReason: '', businessReason: 'UNSYNCED - No data found in dispatching table', updateDateTime: null }, false],
       // nessun trim, come COALESCE(x, '') = '' nella DELETE
-      [{ djcsynch: false, ack: ' ', techReason: '', businessReason: '' }, false],
+      [{ djcsynch: false, ack: ' ', techReason: '', businessReason: '', updateDateTime: null }, false],
       [null, false],
       [undefined, false],
     ])('%j -> %s (same conditions as DELETE_SYNC_ACTIVITY_SQL)', (syncStatus, expected) => {
@@ -696,10 +744,10 @@ describe('JobcardSyncActivityRepository', () => {
     });
 
     test.each([
-      [{ djcsynch: true, ack: null, techreason: null, businessreason: null }, { djcsynch: true, ack: '', techReason: '', businessReason: '' }],
-      [{ djcsynch: null, ack: null, techreason: null, businessreason: null }, { djcsynch: null, ack: '', techReason: '', businessReason: '' }],
+      [{ djcsynch: true, ack: null, techreason: null, businessreason: null }, { djcsynch: true, ack: '', techReason: '', businessReason: '', updateDateTime: null }],
+      [{ djcsynch: null, ack: null, techreason: null, businessreason: null }, { djcsynch: null, ack: '', techReason: '', businessReason: '', updateDateTime: null }],
       [{ djcsynch: false, ack: 'KO', techreason: 'FAILED', businessreason: 'FAILED - DMS down' },
-        { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down' }],
+        { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS down', updateDateTime: null }],
     ])('returns deleted: false with the current outcome when the row does not meet the conditions (case %#)', async (row, outcome) => {
       const pool = poolReturning([], [row]);
       const getPool = jest.fn().mockResolvedValue(pool);

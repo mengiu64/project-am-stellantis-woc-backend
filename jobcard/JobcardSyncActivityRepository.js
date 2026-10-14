@@ -21,13 +21,14 @@
  * (esito della sincronizzazione, da synch-status), non da questa lambda, che
  * li legge soltanto (getSyncStatus), insieme a djcsynch, per restituirli nelle
  * risposte di jobCardDetails e saveJobcard come djcsynch/ack/techReason/
- * businessReason.
+ * businessReason/updateDateTime (lastupdate in ISO, = updateDateTime DJC
+ * salvato da synch-status, solo con ack OK/KO, altrimenti null).
  * getDetailsSyncStatus (solo azione "details") elimina prima la riga con
  * djcsynch true e ack KO (esito DMS negativo già mostrato al FE): in quel caso
  * restituisce tutti i campi null e la jobcard riparte da grigio con la
  * versione DJC; altrimenti legge l'esito come getSyncStatus.
  * getLastPayload rilegge il payload registrato, insieme a djcsynch/ack/
- * techreason/businessreason della stessa riga (azione GET "lastPayload"), per
+ * techreason/businessreason/lastupdate della stessa riga (azione GET "lastPayload"), per
  * recuperare le modifiche inviate quando l'aggiornamento verso DJC/DGT fallisce.
  * deleteSynch elimina la riga della jobcard (azione POST "deleteSynch") solo se
  * djcsynch è false (ultimo invio a DGT fallito) e ack/techreason/businessreason
@@ -67,7 +68,7 @@ const UPDATE_DJC_SYNCH_SQL = `
   RETURNING jobcardid, djcsynch`;
 
 const SELECT_SYNC_STATUS_SQL = `
-  SELECT djcsynch, ack, techreason, businessreason
+  SELECT djcsynch, ack, techreason, businessreason, lastupdate
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
 
@@ -81,7 +82,7 @@ const DELETE_KO_SYNC_ACTIVITY_SQL = `
   RETURNING jobcardid`;
 
 const SELECT_LAST_PAYLOAD_SQL = `
-  SELECT jobcardid, djcsynch, ack, techreason, businessreason, payload
+  SELECT jobcardid, djcsynch, ack, techreason, businessreason, lastupdate, payload
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
 
@@ -238,26 +239,46 @@ async function recordDjcSynch(jobCardId, djcsynch, { getPool, timeoutMs = SYNC_S
   }
 }
 
+// Valori di ack per cui lastupdate è l'updateDateTime DJC scritto da
+// synch-status insieme all'esito (v. toUpdateDateTime).
+const SYNC_OUTCOME_ACKS = new Set(['OK', 'KO']);
+
+/**
+ * updateDateTime della risposta: lastupdate in ISO 8601 solo se l'esito è
+ * presente (ack OK/KO); senza esito lastupdate non è l'ora del salvataggio
+ * su DJC dell'esito corrente (es. riga appena riscritta dall'UPSERT), quindi
+ * null. null anche se lastupdate è assente o non valido.
+ * @param {string|null|undefined} ack
+ * @param {Date|string|null|undefined} lastupdate
+ * @returns {string|null}
+ */
+function toUpdateDateTime(ack, lastupdate) {
+  if (!SYNC_OUTCOME_ACKS.has(ack) || lastupdate === undefined || lastupdate === null || lastupdate === '') return null;
+  const date = lastupdate instanceof Date ? lastupdate : new Date(lastupdate);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 /**
  * Converte una riga di woc.jobcard_sync_activity nei campi della risposta
  * (camelCase). Riga assente (o eliminata, o non letta per errore/timeout):
  * tutti i campi null. Riga presente con valori NULL (esito non ancora
  * popolato): null per djcsynch e stringa vuota per ack/techReason/
- * businessReason.
+ * businessReason. updateDateTime: v. toUpdateDateTime.
  * @param {{djcsynch?: boolean|null, ack?: string|null, techreason?: string|null,
- *          businessreason?: string|null}|null} [row]
+ *          businessreason?: string|null, lastupdate?: Date|string|null}|null} [row]
  * @returns {{djcsynch: boolean|null, ack: string|null, techReason: string|null,
- *          businessReason: string|null}}
+ *          businessReason: string|null, updateDateTime: string|null}}
  */
 function toSyncStatus(row) {
   if (!row) {
-    return { djcsynch: null, ack: null, techReason: null, businessReason: null };
+    return { djcsynch: null, ack: null, techReason: null, businessReason: null, updateDateTime: null };
   }
   return {
     djcsynch: row?.djcsynch ?? null,
     ack: row?.ack ?? '',
     techReason: row?.techreason ?? '',
     businessReason: row?.businessreason ?? '',
+    updateDateTime: toUpdateDateTime(row?.ack, row?.lastupdate),
   };
 }
 
