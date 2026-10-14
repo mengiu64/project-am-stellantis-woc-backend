@@ -1001,6 +1001,7 @@ Resources:
               - !Sub "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts"
       Environment:
         Variables:
+          ENVIRONMENT: !Ref Environment
           SNOWFLAKE_BUCKET_NAME: !If
             - HasSnowflakeExtractsBucketOverride
             - !Ref SnowflakeExtractsBucketName
