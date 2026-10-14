@@ -2,7 +2,7 @@
 
 const repository = require('./repository');
 
-const SNOWFLAKE_DEFAULT_BUCKET = 's3-woc-bsn0027990-stage-m2m-snowflake-extracts';
+const SNOWFLAKE_DEFAULT_BUCKET = `s3-woc-bsn0027990-${process.env.ENVIRONMENT || 'stage'}-m2m-snowflake-extracts`;
 const SNOWFLAKE_FILE_PREFIX = 'DM_MCO_DPR_RA_SITE';
 const SNOWFLAKE_LEGALENTITY_FILE_PREFIX = 'DM_MCO_DEALER';
 const SNOWFLAKE_ADDR_FILE_PREFIX = 'DM_MCO_EXTERNAL_LOCATION';

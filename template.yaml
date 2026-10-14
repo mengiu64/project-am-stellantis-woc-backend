@@ -34,8 +34,11 @@ Parameters:
 
   SnowflakeExtractsBucketName:
     Type: String
-    Default: s3-woc-bsn0027990-stage-m2m-snowflake-extracts
-    Description: Bucket S3 con le estrazioni Snowflake (DM_MCO_*) importate da HqManager
+    Default: ''
+    Description: >-
+      Override opzionale del bucket S3 con le estrazioni Snowflake (DM_MCO_*)
+      importate da HqManager. Se vuoto (default), usa
+      "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts".
 
   VpcSubnetIds:
     Type: CommaDelimitedList
@@ -129,6 +132,7 @@ Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   IsStage: !Equals [!Ref Environment, stage]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
+  HasSnowflakeExtractsBucketOverride: !Not [!Equals [!Ref SnowflakeExtractsBucketName, '']]
   HasAuroraAutoStartClusterIdentifier: !Not [!Equals [!Ref AuroraAutoStartClusterIdentifier, '']]
   HasAuroraAutoStartBastionName: !Not [!Equals [!Ref AuroraAutoStartBastionName, '']]
 
@@ -991,10 +995,16 @@ Resources:
         # HqManager.js::insertdmsSnowflakes/insertLegalentitySnowflakes/
         # insertAddrSnowflakes/insertAnagSnowflakes — lettura file DM_MCO_*
         - S3ReadPolicy:
-            BucketName: !Ref SnowflakeExtractsBucketName
+            BucketName: !If
+              - HasSnowflakeExtractsBucketOverride
+              - !Ref SnowflakeExtractsBucketName
+              - !Sub "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts"
       Environment:
         Variables:
-          SNOWFLAKE_BUCKET_NAME: !Ref SnowflakeExtractsBucketName
+          SNOWFLAKE_BUCKET_NAME: !If
+            - HasSnowflakeExtractsBucketOverride
+            - !Ref SnowflakeExtractsBucketName
+            - !Sub "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts"
   HqManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
