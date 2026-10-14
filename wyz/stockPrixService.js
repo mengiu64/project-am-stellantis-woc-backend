@@ -38,6 +38,8 @@ const CUSTOMER_DMS_HEADER_PATTERN = /^[0-9A-Za-z-]{2,40}$/;
 const COUNTRY_PATTERN = /^[A-Za-z]{2}$/;
 // Codice brand a 2 caratteri (es. AC, AP, DS, OV).
 const BRAND_PATTERN = /^[A-Za-z0-9]{2}$/;
+// Pattern dealerIDType imposto dall'XSD di StockPrixService.
+const DEALER_ID_PATTERN = /^[0-9A-Za-z]{7,10}$/;
 // VIN di 17 caratteri alfanumerici (opzionale).
 const VIN_PATTERN = /^[A-Za-z0-9]{17}$/;
 // Lunghezza massima dei campi stringa liberi.
@@ -103,56 +105,11 @@ function toNumber(value) {
 }
 
 /**
- * Legge il profilo dal Lambda Authorizer (JSON string o oggetto).
- * @param {object} authorizer
- * @returns {object|null}
- */
-function parseProfile(authorizer) {
-  // Profilo assente.
-  if (!authorizer.profile) return null;
-  // Profilo già oggetto (invocazioni di test).
-  if (typeof authorizer.profile === 'object') return authorizer.profile;
-  try {
-    // Profilo canonico serializzato dall'authorizer.
-    return JSON.parse(authorizer.profile);
-  } catch (err) {
-    // Profilo malformato: trattato come assente.
-    console.warn(`[getStockPrix] authorizer.profile non è un JSON valido: ${err.message}`);
-    return null;
-  }
-}
-
-/**
- * Determina il dealerId. Con Lambda Authorizer è SOLO profile.dealer_code (mai il valore del client,
- * che potrebbe impersonare un altro dealer); il body è accettato solo senza authorizer (invocazione diretta/CLI).
+ * Legge il dealerId obbligatorio dal payload del client.
  * @param {object} input - payload del front-end
- * @param {object|undefined} authorizer - event.requestContext.authorizer
  * @returns {string}
- * @throws {WyzError} 400 se il dealer non è determinabile
  */
-function resolveDealerId(input, authorizer) {
-  // Richiesta proveniente da API Gateway con authorizer.
-  if (authorizer) {
-    // Profilo canonico dell'utente autenticato.
-    const profile = parseProfile(authorizer);
-    // Codice dealer del profilo.
-    const dealerCode = profile && profile.dealer_code;
-    // Senza dealer_code non si può procedere (errore applicativo, non 401/403).
-    if (!isNonEmptyString(dealerCode)) {
-      // Log senza dati sensibili.
-      console.error('[getStockPrix] dealer_code assente nel profilo dell\'authorizer');
-      // 400: richiesta non elaborabile per l'utente corrente.
-      throw new WyzError('Dealer code non disponibile nel profilo utente', 400);
-    }
-    // Il dealerId eventualmente inviato dal client viene ignorato.
-    if (isNonEmptyString(input.dealerId) && input.dealerId.trim() !== dealerCode.trim()) {
-      // Segnalazione nei log del tentativo di usare un dealer diverso.
-      console.warn('[getStockPrix] dealerId del body diverso da profile.dealer_code: ignorato');
-    }
-    // Dealer dell'utente autenticato.
-    return dealerCode.trim();
-  }
-  // Invocazione diretta/CLI: si usa il valore del payload (validato a valle).
+function resolveDealerId(input) {
   return isNonEmptyString(input.dealerId) ? input.dealerId.trim() : '';
 }
 
@@ -192,10 +149,10 @@ function validateInput(input, dealerId) {
     // Errore accumulato.
     errors.push('customerDMSHeader (2-40 caratteri alfanumerici o "-")');
   }
-  // dealerId obbligatorio.
-  if (!isNonEmptyString(dealerId) || dealerId.length > MAX_STRING_LENGTH) {
+  // dealerId obbligatorio con il pattern dell'XSD StockPrixService.
+  if (!isNonEmptyString(dealerId) || !DEALER_ID_PATTERN.test(dealerId.trim())) {
     // Errore accumulato.
-    errors.push(`dealerId (stringa obbligatoria, max ${MAX_STRING_LENGTH} caratteri)`);
+    errors.push('dealerId (stringa obbligatoria, 7-10 caratteri alfanumerici)');
   }
   // country obbligatorio (ISO alpha-2).
   if (typeof input.country !== 'string' || !COUNTRY_PATTERN.test(input.country.trim())) {
@@ -558,17 +515,17 @@ async function callStockPrix(xml, sp, correlationId) {
 /**
  * Azione getStockPrix — stock e prezzi dei ricambi indicati per il dealer.
  * @param {object} params - payload del front-end
- *   { customerDMSHeader, country, brand, vin?, dealerId? (solo senza authorizer),
+ *   { customerDMSHeader, country, brand, dealerId, vin?,
  *     partLines: [{ partReference, quantity, partReferenceManfacture?, triGramManfacture?, idManufacturer? }] }
- * @param {{correlationId?: string, authorizer?: object}} [ctx]
+ * @param {{correlationId?: string}} [ctx]
  * @returns {Promise<{items: object[]}>}
  * @throws {WyzError}
  */
 async function getStockPrix(params, ctx = {}) {
   // Payload normalizzato a oggetto.
   const input = params && typeof params === 'object' ? params : {};
-  // Dealer dall'authorizer (o dal payload solo in invocazione diretta).
-  const dealerId = resolveDealerId(input, ctx.authorizer);
+  // Dealer richiesto dal payload del client.
+  const dealerId = resolveDealerId(input);
   // Validazione e normalizzazione dell'input.
   const req = validateInput(input, dealerId);
   // Log di avvio (nessun dato sensibile).

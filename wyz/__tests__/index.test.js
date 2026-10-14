@@ -72,7 +72,7 @@ describe('wyz handler', () => {
       expect(ctx.correlationId).toMatch(/^[0-9a-f-]{36}$/);
     });
 
-    it('getStockPrix -> 200 con data e authorizer passato nel contesto', async () => {
+    it('getStockPrix -> 200 con data e correlationId nel contesto', async () => {
       mockStockPrix.mockResolvedValue({ items: [{ partReference: 'P' }] });
       const authorizer = { sub: 'u1', profile: '{"dealer_code":"111111A"}' };
       const res = await handler({
@@ -82,7 +82,7 @@ describe('wyz handler', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(parse(res)).toEqual({ success: true, data: { items: [{ partReference: 'P' }] } });
-      expect(mockStockPrix).toHaveBeenCalledWith({ partLines: [] }, { correlationId: 'req-2', authorizer });
+      expect(mockStockPrix).toHaveBeenCalledWith({ partLines: [] }, { correlationId: 'req-2' });
     });
 
     it('evento assente -> azione sconosciuta 400', async () => {
