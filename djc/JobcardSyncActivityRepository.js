@@ -23,7 +23,12 @@
  * risposta di saveJobcard come djcsynch/ack/techReason/businessReason.
  *
  * Copia di jobcard/JobcardSyncActivityRepository.js, mantenuta in sync, salvo
- * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload (solo jobcard).
+ * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload e
+ * DELETE_SYNC_ACTIVITY_SQL/canDeleteSynch/deleteSyncActivity/deleteSynch (solo
+ * jobcard). DELETE_KO_SYNC_ACTIVITY_SQL/deleteKoSyncActivity/
+ * getDetailsSyncStatus sono presenti solo per allineamento: in djc non vengono
+ * chiamati (l'eliminazione della riga KO avviene solo nell'azione "details"
+ * di jobcard, che djc non ha).
  */
 
 // UPSERT condizionale atomico: se la riga esiste con djcsynch true e ack vuoto
@@ -52,6 +57,15 @@ const SELECT_SYNC_STATUS_SQL = `
   SELECT djcsynch, ack, techreason, businessreason
   FROM woc.jobcard_sync_activity
   WHERE jobcardid = $1`;
+
+// DELETE atomica della riga con esito DMS KO dopo una push accettata da DGT
+// (djcsynch true): le condizioni sono valutate sulla versione corrente della
+// riga, quindi una save appena registrata (UPSERT che azzera ack a NULL) non
+// viene eliminata.
+const DELETE_KO_SYNC_ACTIVITY_SQL = `
+  DELETE FROM woc.jobcard_sync_activity
+  WHERE jobcardid = $1 AND djcsynch IS TRUE AND ack = 'KO'
+  RETURNING jobcardid`;
 
 // Attesa massima della lettura dell'esito e della scrittura di djcsynch
 // (best-effort): un DB lento o irraggiungibile non deve bloccare la risposta di
@@ -195,13 +209,19 @@ async function recordDjcSynch(jobCardId, djcsynch, { getPool, timeoutMs = SYNC_S
 
 /**
  * Converte una riga di woc.jobcard_sync_activity nei campi della risposta
- * (camelCase). Riga assente o valori NULL (esito non ancora popolato) diventano
- * null per djcsynch e stringa vuota per ack/techReason/businessReason.
+ * (camelCase). Riga assente (o eliminata, o non letta per errore/timeout):
+ * tutti i campi null. Riga presente con valori NULL (esito non ancora
+ * popolato): null per djcsynch e stringa vuota per ack/techReason/
+ * businessReason.
  * @param {{djcsynch?: boolean|null, ack?: string|null, techreason?: string|null,
  *          businessreason?: string|null}|null} [row]
- * @returns {{djcsynch: boolean|null, ack: string, techReason: string, businessReason: string}}
+ * @returns {{djcsynch: boolean|null, ack: string|null, techReason: string|null,
+ *          businessReason: string|null}}
  */
 function toSyncStatus(row) {
+  if (!row) {
+    return { djcsynch: null, ack: null, techReason: null, businessReason: null };
+  }
   return {
     djcsynch: row?.djcsynch ?? null,
     ack: row?.ack ?? '',
@@ -226,14 +246,15 @@ async function selectSyncStatus(pool, jobCardId) {
  * Legge l'esito della jobcard (djcsynch/ack/techreason/businessreason di
  * woc.jobcard_sync_activity, per jobcardid) da restituire nelle risposte di
  * jobCardDetails/saveJobcard. Best-effort: id assente, riga inesistente,
- * valori NULL, errori DB o attesa oltre SYNC_STATUS_TIMEOUT_MS producono
- * djcsynch null e stringhe vuote; l'errore viene solo loggato e non fa
- * fallire la risposta.
+ * errori DB o attesa oltre SYNC_STATUS_TIMEOUT_MS producono tutti i campi
+ * null (valori NULL di una riga presente: v. toSyncStatus); l'errore viene
+ * solo loggato e non fa fallire la risposta.
  * @param {string|number|null|undefined} jobCardId
  * @param {object} [deps]
  * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
  * @param {number} [deps.timeoutMs] - attesa massima in ms (iniettabile nei test)
- * @returns {Promise<{djcsynch: boolean|null, ack: string, techReason: string, businessReason: string}>}
+ * @returns {Promise<{djcsynch: boolean|null, ack: string|null, techReason: string|null,
+ *          businessReason: string|null}>}
  */
 async function getSyncStatus(jobCardId, { getPool, timeoutMs = SYNC_STATUS_TIMEOUT_MS } = {}) {
   const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
@@ -244,6 +265,55 @@ async function getSyncStatus(jobCardId, { getPool, timeoutMs = SYNC_STATUS_TIMEO
     return toSyncStatus(await withTimeout((async () => selectSyncStatus(await resolveGetPool(), id))(), timeoutMs));
   } catch (err) {
     console.warn(`[djc] jobcard_sync_activity lettura esito fallita jobcardid=${id}: ${err.message}`);
+    return toSyncStatus(null);
+  }
+}
+
+/**
+ * DELETE della riga con djcsynch true e ack KO per jobcardid (v.
+ * DELETE_KO_SYNC_ACTIVITY_SQL).
+ * @param {import('pg').Pool} pool
+ * @param {string} jobCardId
+ * @returns {Promise<{jobcardid: string}|null>} la riga eliminata, o null se la
+ *          jobcard non è presente o non ha l'esito KO
+ */
+async function deleteKoSyncActivity(pool, jobCardId) {
+  const { rows } = await pool.query(DELETE_KO_SYNC_ACTIVITY_SQL, [jobCardId]);
+  return rows[0] ?? null;
+}
+
+/**
+ * Esito della jobcard per l'azione "details" di jobcard (copia allineata, non
+ * chiamata in djc): se la riga ha djcsynch true e ack KO (push accettata da
+ * DGT, rifiuto o errore del DMS) la elimina (DELETE atomica con RETURNING) e
+ * restituisce tutti i campi null; altrimenti rilegge l'esito come
+ * getSyncStatus. Best-effort come getSyncStatus, con un unico timeout
+ * SYNC_STATUS_TIMEOUT_MS per DELETE e SELECT: id assente, errori DB o timeout
+ * producono tutti i campi null, l'errore viene solo loggato.
+ * @param {string|number|null|undefined} jobCardId
+ * @param {object} [deps]
+ * @param {() => Promise<import('pg').Pool>} [deps.getPool] - iniettabile nei test
+ * @param {number} [deps.timeoutMs] - attesa massima in ms (iniettabile nei test)
+ * @returns {Promise<{djcsynch: boolean|null, ack: string|null, techReason: string|null,
+ *          businessReason: string|null}>}
+ */
+async function getDetailsSyncStatus(jobCardId, { getPool, timeoutMs = SYNC_STATUS_TIMEOUT_MS } = {}) {
+  const id = jobCardId === undefined || jobCardId === null ? '' : String(jobCardId).trim();
+  if (!id) return toSyncStatus(null);
+
+  try {
+    const resolveGetPool = getPool ?? require('./db').getPool;
+    const row = await withTimeout((async () => {
+      const pool = await resolveGetPool();
+      if (await deleteKoSyncActivity(pool, id)) {
+        console.log(`[djc] jobcard_sync_activity delete esito KO jobcardid=${id}`);
+        return null;
+      }
+      return selectSyncStatus(pool, id);
+    })(), timeoutMs);
+    return toSyncStatus(row);
+  } catch (err) {
+    console.warn(`[djc] jobcard_sync_activity lettura/eliminazione esito KO fallita jobcardid=${id}: ${err.message}`);
     return toSyncStatus(null);
   }
 }
@@ -274,8 +344,11 @@ module.exports = {
   recordDjcSynch,
   selectSyncStatus,
   getSyncStatus,
+  deleteKoSyncActivity,
+  getDetailsSyncStatus,
   withSyncStatus,
   UPSERT_SQL,
   UPDATE_DJC_SYNCH_SQL,
   SELECT_SYNC_STATUS_SQL,
+  DELETE_KO_SYNC_ACTIVITY_SQL,
 };

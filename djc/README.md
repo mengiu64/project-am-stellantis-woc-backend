@@ -398,11 +398,15 @@ su DB fallisce), gli altri sono letti dalle colonne `ack`/`techreason`/
 colonne sono aggiornate da `synch-status` in modo asincrono, quindi i valori
 riflettono l'ultimo esito registrato al momento della risposta: vuoti per una
 jobcard nuova, l'esito della sincronizzazione precedente per una già presente.
-Lettura best-effort: riga assente, valori `NULL`, errore DB o attesa oltre 5 s →
-stringa vuota, senza far fallire la risposta (il payload è già stato inviato a
-DGT). Stesso comportamento della lambda `jobcard`, che aggiunge gli stessi
-campi anche alla risposta di `details` (`djcsynch` letto dal DB, `null` se non
-noto).
+Lettura best-effort, senza far fallire la risposta (il payload è già stato
+inviato a DGT): valori `NULL` di una riga presente → stringa vuota (`null` per
+`djcsynch`); riga assente, errore DB o attesa oltre 5 s → tutti i campi `null`.
+Stesso comportamento della lambda `jobcard`, che aggiunge gli stessi campi anche
+alla risposta di `details` (`djcsynch` letto dal DB, `null` se non noto) dopo
+aver eliminato la riga con `djcsynch` true e `ack` KO (in quel caso tutti i
+campi `null`). La stessa logica (`getDetailsSyncStatus`) è copiata in
+`JobcardSyncActivityRepository.js` di djc per allineamento, ma djc non la
+chiama (non ha l'azione `details`).
 
 #### Payload: struttura e regole di obbligatorietà
 
