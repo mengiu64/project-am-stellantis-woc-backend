@@ -1592,7 +1592,7 @@ Lambda per l'**aggiornamento dello stato di sincronizzazione DJC** di una job ca
 Dopo l'UPDATE su `woc.comunication_asyncro_djc` (anche se lì il record non esiste), `jobcardSyncActivity.js` aggiorna la riga di `woc.jobcard_sync_activity` con `jobcardid` = `jobCardId` (creata da jobcard/djc ad ogni `saveJobcard`):
 
 1. `techreason` = `djc_sync_status` mappato dall'`eventType`, `ack` = `OK` per `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` e `KO` per `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
-2. richiama via REST IAM `getJobCardDetails` della lambda **jobcard**, che gestisce token e cache, e salva `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+2. richiama via REST IAM `getJobCardDetails` della lambda **jobcard**, che gestisce token e cache, e salva `jobCardDetail.roInfo.dmsSynchroStatus` + `dmsReturnMessage` in `businessreason` e `roInfo.updateDateTime` (ora dell'ultimo salvataggio della job card su DJC, normalizzata in ISO UTC) in `lastupdate`; se `updateDateTime` manca o non è valido, `lastupdate` = `now()`. `lastupdate` è restituito dalle lambda jobcard/djc come `updateDateTime`, solo con `ack` `OK`/`KO`.
 
 Interamente **best-effort**: errori DB/DGT vengono solo loggati e la risposta verso DJC non cambia. Se la riga non esiste, `jobCardDetails` non viene richiamato. Se l'UPDATE su `comunication_asyncro_djc` fallisce (5xx), questo passo non viene eseguito.
 
@@ -2218,7 +2218,7 @@ cd agendaSoa && npm run test:coverage
 #### synch-status
 
 - **index (handler)** – parsing del `body` (stringa JSON o oggetto), 400 su body non JSON valido; validazione payload (campi obbligatori `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` tra i 4 supportati, `timestamp` ISO 8601) con 400 e dettaglio errori; mappatura `eventType` → `djc_sync_status`; **UPDATE-only** su `woc.comunication_asyncro_djc` (mai INSERT) con incremento di `version`; 404 quando il record non esiste (deve essere creato prima da un'altra Lambda); 503 su errore di connessione Aurora, 504 su timeout query, 500 su errore generico; nessuna validazione del token (security demandata al gateway IBM APIC)
-- **jobcardSyncActivity** – UPDATE `techreason`/`ack` (OK/KO dai 4 `eventType`, `null` se sconosciuto)/`lastupdate` e poi `businessreason`/`lastupdate` su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus` (anche dalla risposta reale di `jobCardDetails`); record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
+- **jobcardSyncActivity** – UPDATE `techreason`/`ack` (OK/KO dai 4 `eventType`, `null` se sconosciuto)/`lastupdate` e poi `businessreason`/`lastupdate` (`COALESCE(updateDateTime DJC, now())`) su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus`/`dmsReturnMessage` e di `updateDateTime` normalizzato in ISO (vuoto/non valido → `null`), anche dalla risposta reale di `jobCardDetails`; record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
 - **config** – pattern singleton `getInstance()`/`reset()`, struttura della configurazione (sezioni AWS/OAuth/APIC/Logging/Timeouts/API endpoints), risoluzione ambiente da env (`ENVIRONMENT`, default `dev`), `getByPath()` (path annidati, `null` se non trovato), gestione del log level
 
 #### dmlConfigSync

@@ -1274,7 +1274,7 @@ Lambda for **updating the DJC synchronization status** of a job card. It receive
 After the UPDATE on `woc.comunication_asyncro_djc` (even when the record is missing there), `jobcardSyncActivity.js` updates the `woc.jobcard_sync_activity` row with `jobcardid` = `jobCardId` (created by jobcard/djc on every `saveJobcard`):
 
 1. `techreason` = `djc_sync_status` mapped from `eventType`, `ack` = `OK` for `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` and `KO` for `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
-2. calls the **jobcard** Lambda's `getJobCardDetails` over REST IAM (jobcard owns token and cache) and stores `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+2. calls the **jobcard** Lambda's `getJobCardDetails` over REST IAM (jobcard owns token and cache) and stores `jobCardDetail.roInfo.dmsSynchroStatus` + `dmsReturnMessage` in `businessreason` and `roInfo.updateDateTime` (time of the last save of the job card on DJC, normalized to ISO UTC) in `lastupdate`; if `updateDateTime` is missing or invalid, `lastupdate` = `now()`. `lastupdate` is returned by the jobcard/djc Lambdas as `updateDateTime`, only with `ack` `OK`/`KO`.
 
 Fully **best-effort**: DB/DGT errors are only logged and the response to DJC is unchanged. If the row does not exist, `jobCardDetails` is not called. If the UPDATE on `comunication_asyncro_djc` fails (5xx), this step is skipped.
 
@@ -1725,7 +1725,7 @@ cd agendaSoa && npm run test:coverage
 
 #### synch-status
 - **index (handler)** – parses the `body` (JSON string or object), 400 on invalid JSON body; payload validation (required fields `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` among the 4 supported, `timestamp` ISO 8601) with 400 and error details; `eventType` → `djc_sync_status` mapping; **UPDATE-only** on `woc.comunication_asyncro_djc` (never INSERT) with `version` increment; 404 when the record does not exist (must be created first by another Lambda); 503 on Aurora connection error, 504 on query timeout, 500 on generic error; no token validation (security delegated to the IBM APIC gateway)
-- **jobcardSyncActivity** – UPDATE of `techreason`/`ack` (OK/KO from the 4 `eventType`s, `null` if unknown)/`lastupdate` then `businessreason`/`lastupdate` on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus` (also from the real `jobCardDetails` response); missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
+- **jobcardSyncActivity** – UPDATE of `techreason`/`ack` (OK/KO from the 4 `eventType`s, `null` if unknown)/`lastupdate` then `businessreason`/`lastupdate` (`COALESCE(DJC updateDateTime, now())`) on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus`/`dmsReturnMessage` and of `updateDateTime` normalized to ISO (empty/invalid → `null`), also from the real `jobCardDetails` response; missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
 - **config** – `getInstance()`/`reset()` singleton pattern, configuration structure (AWS/OAuth/APIC/Logging/Timeouts/API endpoints sections), environment resolution from env (`ENVIRONMENT`, default `dev`), `getByPath()` (nested paths, `null` when not found), log level handling
 
 #### dmlConfigSync
