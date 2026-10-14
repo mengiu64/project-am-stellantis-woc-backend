@@ -199,7 +199,7 @@ const BRAND_CODE_TO_REFTECH = {
  *      chiamata live a dms/settings, vedi sotto);
  *   3) restituisce un oggetto con la STESSA forma del JSON storico di S3SessionRepository
  *      (stesse chiavi), valorizzando solo i campi ricavabili da myPeople/dms — gli altri
- *      (es. physicalsite, pdvId, preferenze pezzi, sconti massimi, ...) provengono da
+ *      (es. physicalsite, customerRrdiCode, preferenze pezzi, sconti massimi, ...) provengono da
  *      un'altra fonte dati (tabella HQ_DEALERDEFAULTVALUES) non interrogata da questo
  *      flusso e vengono quindi impostati a `null`. In aggiunta alle chiavi storiche,
  *      espone anche `oics` e `applications`: gli interi blocchi User.OICs/User.Applications
@@ -272,8 +272,8 @@ const BRAND_CODE_TO_REFTECH = {
  *      diventano quindi disponibili al più tardi il giorno successivo per un
  *      dealer mai visto prima).
  *
- *      Espone infine `physicalsite` (gn_physical_site_arcad) e `pdvId`
- *      (cd_dealer_arcad_code), oltre a `dpEnIdent` (woc.dms_snowflakes.dp_en_ident,
+ *      Espone infine `physicalsite` (gn_physical_site_arcad) e `customerRrdiCode`
+ *      (cd_dealer_arcad_code), oltre a `hubcode` (woc.dms_snowflakes.dp_en_ident,
  *      LEFT JOIN su cd_dealer_arcad_code = en_ident), risolti dalla tabella woc.ang_snowflakes a
  *      partire da mainSincom/market/brand/oic (v. loadGetPhysicalSiteAndPdvId,
  *      stessi criteri di dbManager/AnagSnowflakesRepository.js
@@ -617,8 +617,8 @@ class MyPeopleDmsSessionRepository extends SessionRepository {
       lastname: attributes.LASTNAME || null,
       profile: (wiAdvDlApp && wiAdvDlApp.PROFILE) || null,
       physicalsite: physicalSiteAndSincom.physicalSiteId ?? null,
-      pdvId: physicalSiteAndSincom.dealerArcadCode ?? null,
-      dpEnIdent: physicalSiteAndSincom.dpEnIdent ?? null,
+      customerRrdiCode: physicalSiteAndSincom.dealerArcadCode ?? null,
+      hubcode: physicalSiteAndSincom.dpEnIdent ?? null,
       sessionbrand: rawBrandCode,
       inmandate: null,
       language: iso2 ? iso2.toLowerCase() : null,
@@ -687,8 +687,8 @@ function buildHqSessionData(username, authProfile) {
     lastname: (authProfile && authProfile.family_name) || null,
     profile: null,
     physicalsite: null,
-    pdvId: null,
-    dpEnIdent: null,
+    customerRrdiCode: null,
+    hubcode: null,
     sessionbrand: null,
     inmandate: null,
     language: null,
