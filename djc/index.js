@@ -225,6 +225,7 @@ function buildAckPendingBody(message) {
     ack: '',
     techReason: '',
     businessReason: '',
+    updateDateTime: null,
   };
 }
 

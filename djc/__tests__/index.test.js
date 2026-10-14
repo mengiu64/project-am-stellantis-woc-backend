@@ -189,6 +189,7 @@ describe('djc REST appointment consumer', () => {
         ack: '',
         techReason: '',
         businessReason: '',
+        updateDateTime: null,
       });
       expect(recordSyncActivity).toHaveBeenCalledWith(payload(), { force: false });
       [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus, callService].forEach((fn) => expect(fn).not.toHaveBeenCalled());
