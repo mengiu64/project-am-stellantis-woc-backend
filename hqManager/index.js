@@ -90,6 +90,16 @@
  *     operazione simmetrica a exportAppConfiguration ma per il log di audit,
  *     stessi filtri opzionali di searchAudit; restituisce il file Excel
  *     (XLSX) codificato in Base64 nel body della risposta.
+ *   - importSnowflakes(): importa da S3 (bucket SNOWFLAKE_BUCKET_NAME) i file
+ *     DM_MCO_DPR_RA_SITE*, DM_MCO_DEALER*, DM_MCO_EXTERNAL_LOCATION* e
+ *     DM_MCO_M2M* in woc.ang_snowflakes/legalentity_snowflakes/addr_snowflakes
+ *     (upsert su gn_row_hash). Risponde 200 se tutto ok, 207 con il dettaglio
+ *     per import se almeno uno fallisce.
+ *   - insertdmsSnowflakes() / insertLegalentitySnowflakes() /
+ *     insertAddrSnowflakes() / insertAnagSnowflakes(): eseguono
+ *     singolarmente i quattro import (rispettivamente DM_MCO_DPR_RA_SITE*,
+ *     DM_MCO_DEALER*, DM_MCO_EXTERNAL_LOCATION*, DM_MCO_M2M*); risposta
+ *     { success, result } (207 se almeno un file e' fallito).
  *
  * Uso CLI:
  *   node index.js getEnablingConfiguration <codmarket>
@@ -113,6 +123,9 @@ const { HqManager } = require('./HqManager');
 // letto da HqManager.VEHICLE_INSPECTION_ARRAY_KEYS) per restare disaccoppiato
 // dal mock di HqManager usato nei test di questo file.
 const VEHICLE_INSPECTION_ARRAY_KEYS = ['conditions', 'equipment', 'damagearea', 'receptions', 'vehicleconfiguration'];
+
+// Import singoli dei file Snowflake (stesso nome del metodo HqManager)
+const SNOWFLAKE_IMPORTS = ['insertdmsSnowflakes', 'insertLegalentitySnowflakes', 'insertAddrSnowflakes', 'insertAnagSnowflakes'];
 
 const VALID_ACTIONS = [
   'getEnablingConfiguration',
@@ -143,6 +156,11 @@ const VALID_ACTIONS = [
   'importAppConfiguration',
   'exportAppConfiguration',
   'exportAudit',
+  'importSnowflakes',
+  'insertdmsSnowflakes',
+  'insertLegalentitySnowflakes',
+  'insertAddrSnowflakes',
+  'insertAnagSnowflakes',
 ];
 
 function parseBody(event) {
@@ -337,6 +355,32 @@ exports.handler = async (event = {}) => {
     if (action === 'exportAppConfiguration') {
       const exportResult = await manager.exportAppConfiguration(market);
       return response(200, { success: true, ...exportResult });
+    }
+
+    if (SNOWFLAKE_IMPORTS.includes(action)) {
+      const result = await manager[action]();
+      const failed = result.failedFiles > 0;
+      return response(failed ? 207 : 200, { success: !failed, result });
+    }
+
+    if (action === 'importSnowflakes') {
+      const imports = {
+        insertdmsSnowflakes: () => manager.insertdmsSnowflakes(),
+        insertLegalentitySnowflakes: () => manager.insertLegalentitySnowflakes(),
+        insertAddrSnowflakes: () => manager.insertAddrSnowflakes(),
+        insertAnagSnowflakes: () => manager.insertAnagSnowflakes(),
+      };
+      const results = {};
+      for (const [name, run] of Object.entries(imports)) {
+        try {
+          results[name] = await run();
+        } catch (err) {
+          console.error(`[hqManager] importSnowflakes: ${name} fallito: ${err.message}`);
+          results[name] = { error: err.message };
+        }
+      }
+      const failed = Object.values(results).some((r) => r.error || r.failedFiles > 0);
+      return response(failed ? 207 : 200, { success: !failed, results });
     }
 
     const allocations = await manager.getAnagAllocation();

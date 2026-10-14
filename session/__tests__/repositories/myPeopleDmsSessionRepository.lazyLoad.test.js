@@ -60,7 +60,7 @@ describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
     expect(callService.mock.calls).toEqual(expected);
     expect(data).toMatchObject({
       codmarket: '1000', marketIso: 'IT', sincom: '0073741', brandvehic_reftech: 'FT',
-      isdml: true, companytypes: [], customertitles: [], physicalsite: 'PS001', pdvId: 'DLR001',
+      isdml: true, companytypes: [], customertitles: [], physicalsite: 'PS001', customerRrdiCode: 'DLR001',
       oics: [{
         code: '00007584', market: '1000', brands: '00,77,83',
         brandLogos: ['assets/FIAT.png', 'assets/ALFAROMEO.png'],
@@ -128,7 +128,7 @@ describe('MyPeopleDmsSessionRepository — trasporto REST lazy', () => {
     ['getDmsSettings', { isdml: false, dmlcustomerupdate: null, dmldiscount: null }],
     ['getDmlConfiguration', { companytypes: [], customertitles: [] }],
     ['getCountryIsoCode', { marketIso: null }],
-    ['getPhysicalSiteAndPdvId', { physicalsite: null, pdvId: null }],
+    ['getPhysicalSiteAndPdvId', { physicalsite: null, customerRrdiCode: null }],
     ['getBrandsByOics', { oics: [expect.objectContaining({ brands: '00,77,83' })] }],
     ['getDisabledOics', { oics: [expect.objectContaining({ code: '00007584' })] }],
     ['getEnableSignatureByOics', { oics: [expect.objectContaining({ feaEnabled: false })] }],

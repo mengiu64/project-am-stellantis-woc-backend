@@ -349,4 +349,89 @@ describe('AnagSnowflakesRepository', () => {
       expect(sql).not.toEqual(expect.stringContaining('cd_market_code = ANY'));
     });
   });
+
+  describe('insertdmsSnowflakes', () => {
+    const { insertdmsSnowflakes } = require('../AnagSnowflakesRepository');
+    const makeClient = (rowsPerCall) => {
+      const client = { query: jest.fn(), release: jest.fn() };
+      client.query.mockImplementation(async (sql) => (
+        /^INSERT/.test(sql) ? { rows: rowsPerCall.shift() } : { rows: [] }
+      ));
+      return { connect: jest.fn().mockResolvedValue(client), client };
+    };
+
+    it('does nothing for an empty list', async () => {
+      const pool = { connect: jest.fn() };
+      expect(await insertdmsSnowflakes(pool, [])).toEqual({ received: 0, saved: 0, inserted: 0, updated: 0 });
+      expect(pool.connect).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid input', async () => {
+      await expect(insertdmsSnowflakes({}, null)).rejects.toThrow('must be an array');
+      await expect(insertdmsSnowflakes({}, [{}])).rejects.toThrow('gn_row_hash');
+    });
+
+    it('upserts in one statement, dedupes by hash and counts inserted/updated', async () => {
+      const { connect, client } = makeClient([[{ inserted: true }, { inserted: false }]]);
+      const result = await insertdmsSnowflakes({ connect }, [
+        { gn_row_hash: 'a', cd_unique_site_code: 'S1', cd_snr_site_code: '' },
+        { gn_row_hash: 'b', cd_unique_site_code: 'S2' },
+        { gn_row_hash: 'a', cd_unique_site_code: 'S1bis' },
+      ]);
+
+      expect(result).toEqual({ received: 3, saved: 2, inserted: 1, updated: 1 });
+      const insert = client.query.mock.calls.find(([sql]) => /^INSERT/.test(sql));
+      expect(insert[0]).toContain('ON CONFLICT (gn_row_hash) DO UPDATE SET');
+      expect(insert[0]).toContain('updated_at = NOW()');
+      expect(insert[0]).toContain('dt_last_updated_date = NOW()');
+      expect(insert[1]).toHaveLength(2 * 37);
+      expect(insert[1][1]).toBe('S1bis');
+      expect(insert[1][2]).toBeNull();
+      expect(client.query).toHaveBeenCalledWith('COMMIT');
+      expect(client.release).toHaveBeenCalled();
+    });
+
+    it('rolls back and rethrows on error', async () => {
+      const client = { query: jest.fn(async (sql) => { if (/^INSERT/.test(sql)) throw new Error('boom'); return {}; }), release: jest.fn() };
+      await expect(insertdmsSnowflakes({ connect: async () => client }, [{ gn_row_hash: 'a' }])).rejects.toThrow('boom');
+      expect(client.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(client.release).toHaveBeenCalled();
+    });
+
+    it('upserts legal entities into woc.legalentity_snowflakes', async () => {
+      const { insertLegalentitySnowflakes } = require('../AnagSnowflakesRepository');
+      const { connect, client } = makeClient([[{ inserted: true }]]);
+      const result = await insertLegalentitySnowflakes({ connect }, [{ gn_row_hash: 'a', gn_legal_entity: 'LE1' }]);
+
+      expect(result).toEqual({ received: 1, saved: 1, inserted: 1, updated: 0 });
+      const insert = client.query.mock.calls.find(([sql]) => /^INSERT/.test(sql));
+      expect(insert[0]).toContain('INSERT INTO woc.legalentity_snowflakes');
+      expect(insert[0]).toContain('ON CONFLICT (gn_row_hash) DO UPDATE SET');
+      expect(insert[1]).toHaveLength(34);
+    });
+
+    it('upserts addresses into woc.addr_snowflakes', async () => {
+      const { insertAddrSnowflakes } = require('../AnagSnowflakesRepository');
+      const { connect, client } = makeClient([[{ inserted: false }]]);
+      const result = await insertAddrSnowflakes({ connect }, [{ gn_row_hash: 'a', gn_town: 'Torino' }]);
+
+      expect(result).toEqual({ received: 1, saved: 1, inserted: 0, updated: 1 });
+      const insert = client.query.mock.calls.find(([sql]) => /^INSERT/.test(sql));
+      expect(insert[0]).toContain('INSERT INTO woc.addr_snowflakes');
+      expect(insert[0]).toContain('ON CONFLICT (gn_row_hash) DO UPDATE SET');
+      expect(insert[1]).toHaveLength(32);
+    });
+
+    it('upserts M2M records into woc.ang_snowflakes', async () => {
+      const { insertAnagSnowflakes } = require('../AnagSnowflakesRepository');
+      const { connect, client } = makeClient([[{ inserted: true }]]);
+      const result = await insertAnagSnowflakes({ connect }, [{ gn_row_hash: 'a' }]);
+
+      expect(result).toEqual({ received: 1, saved: 1, inserted: 1, updated: 0 });
+      const insert = client.query.mock.calls.find(([sql]) => /^INSERT/.test(sql));
+      expect(insert[0]).toContain('INSERT INTO woc.ang_snowflakes');
+      expect(insert[0]).toContain('ON CONFLICT (gn_row_hash) DO UPDATE SET');
+      expect(insert[1]).toHaveLength(37);
+    });
+  });
 });

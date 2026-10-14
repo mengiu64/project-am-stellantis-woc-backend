@@ -671,6 +671,10 @@ Resources:
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/searchAudit
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getAnagSection
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/getAnagAllocation
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/insertdmsSnowflakes
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/insertLegalentitySnowflakes
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/insertAddrSnowflakes
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dbmanager/insertAnagSnowflakes
   DmlConfigSyncRestPolicy:
     Type: AWS::IAM::Policy
     Properties:
