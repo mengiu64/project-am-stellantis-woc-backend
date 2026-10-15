@@ -78,6 +78,7 @@ sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
 L'azione `getStockPrix` (StockPrixService, SOAP mTLS) usa anche le chiavi `STOCKPRIX_USERNAME`,
 `STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` e `WYZ_STOCKPRIX_HTTP_PORT` (default 2773)
 del secret wyz e i secret cert/key di agendaSoa (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, layer Secrets Extension).
+Per `getStockPrix`, il client deve passare `dealerId` nel body (7-10 caratteri alfanumerici).
 Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
 ### Comunicazione REST tra Lambda

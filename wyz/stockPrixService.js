@@ -34,12 +34,12 @@ const STOCKPRIX_PROD_PATH = '/applications/panier-soa/ws/StockPrixService/v1';
 const MAX_PART_LINES = 100;
 // Pattern di customerDMSHeader imposto dall'XSD del servizio.
 const CUSTOMER_DMS_HEADER_PATTERN = /^[0-9A-Za-z-]{2,40}$/;
-// Pattern di dealerId imposto dall'XSD del servizio (dealerIDType).
-const DEALER_ID_PATTERN = /^[0-9a-zA-Z]{7,10}$/;
 // Codice paese ISO 3166-1 alpha-2.
 const COUNTRY_PATTERN = /^[A-Za-z]{2}$/;
 // Codice brand a 2 caratteri (es. AC, AP, DS, OV).
 const BRAND_PATTERN = /^[A-Za-z0-9]{2}$/;
+// Pattern dealerIDType imposto dall'XSD di StockPrixService.
+const DEALER_ID_PATTERN = /^[0-9A-Za-z]{7,10}$/;
 // VIN di 17 caratteri alfanumerici (opzionale).
 const VIN_PATTERN = /^[A-Za-z0-9]{17}$/;
 // Lunghezza massima dei campi stringa liberi.
@@ -194,10 +194,10 @@ function validateInput(input, dealerId) {
     // Errore accumulato.
     errors.push('customerDMSHeader (2-40 caratteri alfanumerici o "-")');
   }
-  // dealerId obbligatorio.
-  if (!isNonEmptyString(dealerId) || !DEALER_ID_PATTERN.test(dealerId)) {
+  // dealerId obbligatorio con il pattern dell'XSD StockPrixService.
+  if (!isNonEmptyString(dealerId) || !DEALER_ID_PATTERN.test(dealerId.trim())) {
     // Errore accumulato.
-    errors.push('dealerId (7-10 caratteri alfanumerici)');
+    errors.push('dealerId (stringa obbligatoria, 7-10 caratteri alfanumerici)');
   }
   // country obbligatorio (ISO alpha-2).
   if (typeof input.country !== 'string' || !COUNTRY_PATTERN.test(input.country.trim())) {

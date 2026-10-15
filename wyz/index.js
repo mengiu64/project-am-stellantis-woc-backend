@@ -20,7 +20,7 @@
  *     "quantity": 2, "vehicleTypes": ["<uuid>"], "vehicleBrands": ["<uuid>"],
  *     "seasons": ["<uuid>"], "brands": ["<uuid>"], "speedIndexes": ["H"], "loadIndexes": [91] }
  *
- * Esempio input getStockPrix (body JSON; dealerId da authorizer, nel body solo per invocazione diretta):
+ * Esempio input getStockPrix (body JSON; dealerId obbligatorio):
  *   { "customerDMSHeader": "95754", "country": "FR", "brand": "AC", "vin": "",
  *     "partLines": [{ "partReference": "00001109AK", "quantity": 1 }] }
  *
@@ -113,9 +113,7 @@ exports.handler = async (event) => {
 
   try {
     const payload = body.payload ?? body;
-    // Identità verificata dal Lambda Authorizer: passata alle azioni solo se presente nell'evento
-    const authorizer = ev.requestContext && ev.requestContext.authorizer;
-    const ctx = { correlationId, ...(authorizer ? { authorizer } : {}) };
+    const ctx = { correlationId };
     const result = await ACTIONS[action](payload, ctx);
     console.log(`[handler] Azione "${action}" completata con successo`);
 

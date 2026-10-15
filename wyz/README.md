@@ -69,7 +69,7 @@ Input:
 | `brand` | sì | 2 caratteri (es. `AC`, `AP`, `DS`, `OV`) |
 | `vin` | no | 17 caratteri alfanumerici |
 | `partLines` | sì | 1..100 righe `{ partReference, quantity, partReferenceManfacture?, triGramManfacture?, idManufacturer? }`, `quantity` intero ≥ 1 |
-| `dealerId` | — | **Con Lambda Authorizer è sempre `profile.dealer_code`** (il valore del body è ignorato); nel body solo per invocazione diretta/CLI |
+| `dealerId` | sì | Inviato dal client; 7-10 caratteri alfanumerici (`[0-9A-Za-z]`), come richiesto dall'XSD StockPrixService |
 
 Risposta:
 
@@ -87,7 +87,7 @@ Risposta:
 
 Mapping dei campi SOAP: `inStockqt` → `inStockQuantity`, `remise` → `discountPercent`, `statusOfAvailibilityDMS` → `availabilityStatus`.
 
-Errori specifici: input non valido o `dealer_code` assente nel profilo → 400; dealer sconosciuto (`UNKNOWN_DEALER`) → 404;
+Errori specifici: input non valido o `dealerId` assente/non conforme → 400; dealer sconosciuto (`UNKNOWN_DEALER`) → 404;
 SOAP Fault `Client` (`INVALID_REQUEST`) → 422; fault del gateway IBM, es. credenziali/certificato rifiutati (`GATEWAY_FAULT`),
 handshake TLS fallito (`TLS_HANDSHAKE_FAILED`) o fault server → 502; timeout → 504; secret/certificato non configurati → 500.
 
