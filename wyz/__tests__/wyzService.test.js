@@ -312,7 +312,7 @@ describe('wyzService', () => {
       const arg = mockStockPrix.mock.calls[0][0];
       expect(arg).toMatchObject({ country: 'IT', brand: 'AP', dealerId: '345678A', vin: 'VF3CABHW6GT204366' });
       expect(arg.partLines).toHaveLength(5);
-      expect(mockStockPrix.mock.calls[0][1].authorizer).toBeUndefined();
+      expect(mockStockPrix.mock.calls[0][1]).toBe(ctx);
     });
 
     it('username dal body solo senza authorizer; errore se assente', async () => {

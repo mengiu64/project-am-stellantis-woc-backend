@@ -356,6 +356,11 @@ function buildPartReferenceMap(items) {
   return map;
 }
 
+// Dealer per getStockPrix: per passare a quello variabile basta impostare USE_FIXED_DEALER_ID = false
+const USE_FIXED_DEALER_ID = true;
+const FIXED_DEALER_ID = '345678A';
+const resolveStockPrixDealerId = (sessionData) => (USE_FIXED_DEALER_ID ? FIXED_DEALER_ID : sessionData?.dealerId);
+
 // Arricchisce partReferenceMap con StockPrixKBRWDetails.priceTTC (getStockPrix)
 async function applyStockPrix(partReferenceMap, sessionData, ctx) {
   const { getStockPrix } = require('./stockPrixService');
@@ -363,13 +368,12 @@ async function applyStockPrix(partReferenceMap, sessionData, ctx) {
   const result = await getStockPrix({
     clientApplicationName: 'WIADVISOR',
     customerDMSHeader: '95754',
-    dealerId: '345678A', // temporaneo: valore fisso
+    dealerId: resolveStockPrixDealerId(sessionData),
     country,
     brand: sessionData?.brandvehic_reftech,
     vin: 'VF3CABHW6GT204366', // temporaneo: valore fisso
     partLines: Object.values(partReferenceMap).map((e) => ({ partReference: e.partReference, quantity: 1 })),
-  // senza authorizer: dealerId fisso temporaneo (altrimenti prevarrebbe profile.dealer_code)
-  }, { correlationId: ctx.correlationId });
+  }, ctx);
 
   (result?.items ?? []).forEach((d) => {
     const entry = partReferenceMap[d?.partReference];
