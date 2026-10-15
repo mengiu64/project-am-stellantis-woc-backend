@@ -16,6 +16,7 @@ const { URL } = require('url');
 const { httpsRequest } = require('./httpClient');
 const { getBearerToken, invalidateToken } = require('./authService');
 const { getConfig } = require('./config');
+const { callService } = require('../serviceClient');
 
 /** Errore applicativo con statusCode HTTP da restituire al front-end. */
 class WyzError extends Error {
@@ -313,8 +314,160 @@ async function searchQuote(params, ctx = {}) {
 
   console.log(`[searchQuote] Ricerca ${body.width}/${body.height} R${body.diameter}, quantity=${body.quantity}`);
   const data = await callWyz('POST', '/api/tyres/search/quote', { body, correlationId: ctx.correlationId });
+
+  // Scarta gli pneumatici senza stock
+  if (data && Array.isArray(data.items)) {
+    data.items = data.items.filter((item) => item?.tyre?.status !== 'EMPTY_STOCK');
+  }
   console.log(`[searchQuote] Completata: ${Array.isArray(data && data.items) ? data.items.length : 0} risultati`);
+
+  await enrichQuoteItems(data, input, ctx);
   return data;
+}
+
+const isBlank = (v) => v === undefined || v === null || v === '';
+
+// Prezzo Wyz: stock 'Hub' prevale su 'Tyre producer'; sellingPrice vuoto -> bf
+function resolveWyzPrice(stocks) {
+  if (!Array.isArray(stocks)) return null;
+  const byName = (n) => stocks.find((s) => String(s?.name ?? '').trim().toLowerCase() === n);
+  const stock = byName('hub') || byName('tyre producer');
+  if (!stock) return null;
+  const raw = isBlank(stock.sellingPrice) ? stock.bf : stock.sellingPrice;
+  const n = isBlank(raw) ? null : Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Costruisce partReferenceMap { [partReference]: {...} } dagli item di searchQuote
+function buildPartReferenceMap(items) {
+  const map = Object.create(null);
+  items.forEach((item) => {
+    const reference = item?.tyre?.reference;
+    if (isBlank(reference)) return;
+    const partReference = String(reference);
+    map[partReference] = {
+      partReference,
+      wyzPrice: resolveWyzPrice(item.stocks),
+      StockPrixBuyingPrice: null,
+      maxAllowableDiscount: null,
+      availability: null,
+    };
+  });
+  return map;
+}
+
+// Arricchisce partReferenceMap con StockPrixKBRWDetails.priceTTC (getStockPrix)
+async function applyStockPrix(partReferenceMap, sessionData, ctx) {
+  const { getStockPrix } = require('./stockPrixService');
+  const country = String(sessionData?.locale ?? '').split('_')[1];
+  const result = await getStockPrix({
+    clientApplicationName: 'WIADVISOR',
+    customerDMSHeader: '95754',
+    dealerId: '345678A', // temporaneo: valore fisso
+    country,
+    brand: sessionData?.brandvehic_reftech,
+    vin: 'VF3CABHW6GT204366', // temporaneo: valore fisso
+    partLines: Object.values(partReferenceMap).map((e) => ({ partReference: e.partReference, quantity: 1 })),
+  // senza authorizer: dealerId fisso temporaneo (altrimenti prevarrebbe profile.dealer_code)
+  }, { correlationId: ctx.correlationId });
+
+  (result?.items ?? []).forEach((d) => {
+    const entry = partReferenceMap[d?.partReference];
+    if (!entry || d.priceTTC === null || d.priceTTC === undefined) return;
+    entry.StockPrixBuyingPrice = d.priceTTC;
+    entry.maxAllowableDiscount = entry.wyzPrice === null ? null : Math.max(0, d.priceTTC - entry.wyzPrice);
+  });
+}
+
+// Chiama dms/inquiry (stessa logica di pkManager.getPriceAndAvailability) con le parti di partReferenceMap
+async function getPriceAndAvailability(documentId, customerId, vehicleId, market, username, partReferenceMap, ctx) {
+  const resolved = await callService('dms', 'resolveSender', {
+    context: { username, vin: vehicleId },
+    overrides: {
+      mainSincom: ctx?.mainSincom,
+      market,
+      brand: ctx?.brand,
+      language: ctx?.language,
+      dealerCountryCode: ctx?.dealerCountryCode,
+    },
+  });
+  const dealerNumberId = resolved.mainSincom;
+  const sender = {
+    dealerNumberId,
+    dealerNumberIdSource: dealerNumberId,
+    dealerCountryCode: resolved.dealerCountryCode,
+    languageCode: resolved.language,
+    brand: resolved.brand,
+    market: resolved.market,
+    serviceId: username,
+  };
+  return callService('dms', 'inquiry', {
+    PartsInquiryHeader: {
+      DocumentID: documentId,
+      CustomerIdDms: customerId,
+      MessageType: 'WL',
+      VehicleID: vehicleId,
+    },
+    customerAccountDmsId: null,
+    workLines: [{
+      workLineReference: '001',
+      partNumbers: Object.values(partReferenceMap).map((e) => e.partReference),
+      laborOperationIds: [],
+    }],
+    sender,
+  });
+}
+
+// availability = QuantityAvailable del primo BinLocation di ciascun PartsItem
+function applyInquiry(partReferenceMap, inquiry) {
+  (inquiry?.WorkLines ?? []).forEach((line) => {
+    (line?.PartsItem ?? []).forEach((part) => {
+      const entry = partReferenceMap[part?.PartNumber];
+      const qty = part?.BinLocation?.[0]?.QuantityAvailable;
+      if (entry && !isBlank(qty)) entry.availability = qty;
+    });
+  });
+}
+
+// Arricchisce data.items[].tyre con i dati di partReferenceMap (null se non trovati)
+async function enrichQuoteItems(data, input, ctx) {
+  if (!data || !Array.isArray(data.items)) return;
+  const partReferenceMap = buildPartReferenceMap(data.items);
+  if (Object.keys(partReferenceMap).length === 0) return;
+
+  // Identità solo dall'authorizer; il body è ammesso solo senza authorizer (invocazione diretta/CLI)
+  const username = ctx.authorizer ? ctx.authorizer.sub : input.username;
+  if (!isNonEmptyString(username)) {
+    throw new WyzError('Utente non autenticato: authorizer.sub mancante nella richiesta', 400);
+  }
+
+  const sessionData = await callService('session', 'getData', { args: [username] });
+  const sessionCtx = await callService('session', 'getContext', { args: [username] });
+
+  // Un errore dei servizi di arricchimento non deve bloccare la ricerca: i campi restano null
+  try {
+    await applyStockPrix(partReferenceMap, sessionData, ctx);
+  } catch (err) {
+    console.error(`[searchQuote] getStockPrix fallita: ${err.message}`);
+  }
+  try {
+    const inquiry = await getPriceAndAvailability(
+      null, null, 'VF3CABHW6GT204366', sessionData?.codmarket, sessionData?.username,
+      partReferenceMap, { ...sessionCtx, brand: sessionData?.brandvehic_reftech },
+    );
+    applyInquiry(partReferenceMap, inquiry);
+  } catch (err) {
+    console.error(`[searchQuote] inquiry fallita: ${err.message}`);
+  }
+
+  data.items.forEach((item) => {
+    if (isBlank(item?.tyre?.reference)) return;
+    const entry = partReferenceMap[String(item.tyre.reference)];
+    item.tyre.StockPrixBuyingPrice = entry.StockPrixBuyingPrice;
+    item.tyre.maxAllowableDiscount = entry.maxAllowableDiscount;
+    item.tyre.wyzPrice = entry.wyzPrice;
+    item.tyre.availability = entry.availability;
+  });
 }
 
 module.exports = { getSearchFilters, searchQuote, WyzError, mapStatus };

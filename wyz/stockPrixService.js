@@ -34,6 +34,8 @@ const STOCKPRIX_PROD_PATH = '/applications/panier-soa/ws/StockPrixService/v1';
 const MAX_PART_LINES = 100;
 // Pattern di customerDMSHeader imposto dall'XSD del servizio.
 const CUSTOMER_DMS_HEADER_PATTERN = /^[0-9A-Za-z-]{2,40}$/;
+// Pattern di dealerId imposto dall'XSD del servizio (dealerIDType).
+const DEALER_ID_PATTERN = /^[0-9a-zA-Z]{7,10}$/;
 // Codice paese ISO 3166-1 alpha-2.
 const COUNTRY_PATTERN = /^[A-Za-z]{2}$/;
 // Codice brand a 2 caratteri (es. AC, AP, DS, OV).
@@ -193,9 +195,9 @@ function validateInput(input, dealerId) {
     errors.push('customerDMSHeader (2-40 caratteri alfanumerici o "-")');
   }
   // dealerId obbligatorio.
-  if (!isNonEmptyString(dealerId) || dealerId.length > MAX_STRING_LENGTH) {
+  if (!isNonEmptyString(dealerId) || !DEALER_ID_PATTERN.test(dealerId)) {
     // Errore accumulato.
-    errors.push(`dealerId (stringa obbligatoria, max ${MAX_STRING_LENGTH} caratteri)`);
+    errors.push('dealerId (7-10 caratteri alfanumerici)');
   }
   // country obbligatorio (ISO alpha-2).
   if (typeof input.country !== 'string' || !COUNTRY_PATTERN.test(input.country.trim())) {

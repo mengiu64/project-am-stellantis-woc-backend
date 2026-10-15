@@ -654,7 +654,7 @@ module.exports = {
   getDmsSettings,
   getCompanyTypes,
   getCustomerTitles,
-  postDmsInquiry,
+    postDmsInquiry,
   buildTypeSection,
   buildApplicationArea,
   resolveDynamicSenderFields,

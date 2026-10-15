@@ -94,14 +94,17 @@ describe('stockPrixService', () => {
 
   describe('validateInput', () => {
     it('normalizza i campi e accetta customerDMSHeader numerico e vin valorizzato', () => {
-      const req = validateInput({ ...VALID, customerDMSHeader: 95754, vin: 'vr3fbyhztly048318', partLines: [{ partReference: 'P', quantity: 2, triGramManfacture: ' ABC ' }] }, 'D');
+      const req = validateInput({ ...VALID, customerDMSHeader: 95754, vin: 'vr3fbyhztly048318', partLines: [{ partReference: 'P', quantity: 2, triGramManfacture: ' ABC ' }] }, '345678A');
       expect(req).toEqual({
-        customerDMSHeader: '95754', dealerId: 'D', country: 'FR', brand: 'AC', vin: 'VR3FBYHZTLY048318',
+        customerDMSHeader: '95754', dealerId: '345678A', country: 'FR', brand: 'AC', vin: 'VR3FBYHZTLY048318',
         partLines: [{ partReference: 'P', quantity: 2, partReferenceManfacture: '', triGramManfacture: 'ABC', idManufacturer: '' }],
       });
     });
+    it('dealerId fuori dal pattern XSD (7-10 alfanumerici) è rifiutato con 400', () => {
+      expect(() => validateInput(VALID, '12345')).toThrow(expect.objectContaining({ statusCode: 400 }));
+    });
     it('vin null è trattato come assente', () => {
-      expect(validateInput({ ...VALID, vin: null }, 'D').vin).toBe('');
+      expect(validateInput({ ...VALID, vin: null }, '345678A').vin).toBe('');
     });
     it('elenca tutti i campi non validi con 400', () => {
       const bad = {
