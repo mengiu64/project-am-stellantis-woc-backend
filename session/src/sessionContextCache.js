@@ -46,6 +46,12 @@
  * La factory caricata sotto e' locale a session. La repository usa REST per
  * myPeople/dbmanager/dmlconfigsync; i consumer esterni accedono alla cache
  * tramite le operazioni interne getData/getContext, non importando questa Lambda.
+ *
+ * getOrCreateSessionData(username, buildSessionData) e' lo stesso cache-aside
+ * senza la resa best-effort, usato dal GET /session pubblico (v. index.js) per
+ * gli utenti dealer: legge la chiave session:context:<username> e, se assente o
+ * scaduta, costruisce i dati con il builder del chiamante, li salva e li
+ * ritorna. Gli errori del builder si propagano e non vengono salvati in cache.
  */
 
 const path = require('path');
@@ -89,6 +95,31 @@ function toSenderContext(sessionData) {
 }
 
 /**
+ * Cache-aside sui dati di sessione completi: ritorna il valore in cache
+ * (chiave `session:context:<username>`) se presente e non scaduto, altrimenti
+ * li costruisce con `buildSessionData(username)`, li salva in cache (TTL v.
+ * resolveTtlMs) e li ritorna.
+ *
+ * NON best-effort sulla costruzione: un errore di `buildSessionData` viene
+ * propagato al chiamante e nulla viene salvato in cache. Lettura e scrittura
+ * DynamoDB restano invece best-effort (v. dynamoCache.js): se la cache non e'
+ * raggiungibile i dati vengono comunque costruiti e ritornati.
+ *
+ * @param {string} username
+ * @param {(username: string) => Promise<object>} buildSessionData - costruisce i dati in caso di cache-miss
+ * @param {{ ttlMs?: number }} [overrides] - injection per i test
+ * @returns {Promise<object>} i dati di sessione, dalla cache o appena costruiti
+ */
+async function getOrCreateSessionData(username, buildSessionData, overrides = {}) {
+  const cached = await readCachedSessionData(username);
+  if (cached) return cached;
+
+  const sessionData = await buildSessionData(username);
+  await writeCachedSessionData(username, sessionData, resolveTtlMs(overrides.ttlMs));
+  return sessionData;
+}
+
+/**
  * Come getCachedSessionContext, ma ritorna l'intero oggetto sessionData
  * (myPeople + dms/settings, v. MyPeopleDmsSessionRepository::getSessionData)
  * cosi' come cachato in DynamoDB, invece del solo sottoinsieme utile al
@@ -109,16 +140,9 @@ function toSenderContext(sessionData) {
 async function getCachedSessionData(username, overrides = {}) {
   if (!username) return null;
 
-  const ttlMs = resolveTtlMs(overrides.ttlMs);
-
-  const cached = await readCachedSessionData(username);
-  if (cached) return cached;
-
   try {
-    const getSessionData = overrides.getSessionDataFn || loadGetSessionData();
-    const sessionData = await getSessionData(username);
-    await writeCachedSessionData(username, sessionData, ttlMs);
-    return sessionData;
+    const buildSessionData = (user) => (overrides.getSessionDataFn || loadGetSessionData())(user);
+    return await getOrCreateSessionData(username, buildSessionData, overrides);
   } catch (err) {
     console.warn(`[sessionContextCache] impossibile risolvere i dati di sessione per "${username}": ${err.message}`);
     return null;
@@ -135,4 +159,4 @@ async function getCachedSessionContext(username, overrides = {}) {
   return toSenderContext(sessionData);
 }
 
-module.exports = { getCachedSessionContext, getCachedSessionData };
+module.exports = { getCachedSessionContext, getCachedSessionData, getOrCreateSessionData };
