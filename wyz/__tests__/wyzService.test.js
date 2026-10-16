@@ -325,13 +325,13 @@ describe('wyzService', () => {
       expect(mockCallService).toHaveBeenCalledWith('session', 'getData', { args: ['user1'] });
     });
 
-    it('tronca a 30 le righe inviate a getStockPrix', async () => {
+    it('tronca a 10 le righe inviate a getStockPrix', async () => {
       const items = Array.from({ length: 120 }, (_, i) => mk(`P${i}`, 'AVAILABLE_STOCK', []));
       mockHttps.mockResolvedValue(ok({ items }));
       await searchQuote(valid, ctx);
       const arg = mockStockPrix.mock.calls[0][0];
-      expect(arg.partLines).toHaveLength(30);
-      expect(arg.partLines[29].partReference).toBe('P29');
+      expect(arg.partLines).toHaveLength(10);
+      expect(arg.partLines[9].partReference).toBe('P9');
     });
 
     it('errori di getStockPrix/inquiry lasciano i campi null', async () => {

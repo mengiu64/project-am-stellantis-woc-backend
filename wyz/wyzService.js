@@ -361,7 +361,7 @@ const USE_FIXED_DEALER_ID = true;
 const FIXED_DEALER_ID = '345678A';
 const resolveStockPrixDealerId = (sessionData) => (USE_FIXED_DEALER_ID ? FIXED_DEALER_ID : sessionData?.dealerId);
 
-const MAX_STOCKPRIX_LINES = 30; // limite righe inviate a getStockPrix da searchQuote
+const MAX_STOCKPRIX_LINES = 10; // limite righe inviate a getStockPrix da searchQuote
 
 // Arricchisce partReferenceMap con StockPrixKBRWDetails.priceTTC (getStockPrix)
 async function applyStockPrix(partReferenceMap, sessionData, ctx) {
