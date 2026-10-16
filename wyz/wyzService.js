@@ -315,9 +315,9 @@ async function searchQuote(params, ctx = {}) {
   console.log(`[searchQuote] Ricerca ${body.width}/${body.height} R${body.diameter}, quantity=${body.quantity}`);
   const data = await callWyz('POST', '/api/tyres/search/quote', { body, correlationId: ctx.correlationId });
 
-  // Scarta gli pneumatici senza stock
+  // Scarta gli pneumatici senza stock e quelli senza uno stock 'Hub' o 'Tyre producer'
   if (data && Array.isArray(data.items)) {
-    data.items = data.items.filter((item) => item?.status !== 'EMPTY_STOCK');
+    data.items = data.items.filter((item) => item?.status !== 'EMPTY_STOCK' && hasAllowedStock(item));
   }
   console.log(`[searchQuote] Completata: ${Array.isArray(data && data.items) ? data.items.length : 0} risultati`);
 
@@ -326,6 +326,12 @@ async function searchQuote(params, ctx = {}) {
 }
 
 const isBlank = (v) => v === undefined || v === null || v === '';
+
+const ALLOWED_STOCK_NAMES = ['hub', 'tyre producer'];
+const normalizeStockName = (s) => String(s?.name ?? '').trim().toLowerCase();
+// Un item è valido se ha almeno uno stock con name 'Hub' o 'Tyre producer'
+const hasAllowedStock = (item) => Array.isArray(item?.stocks)
+  && item.stocks.some((s) => ALLOWED_STOCK_NAMES.includes(normalizeStockName(s)));
 
 // Prezzo Wyz: stock 'Hub' prevale su 'Tyre producer'; sellingPrice vuoto -> bf
 function resolveWyzPrice(stocks) {
