@@ -438,50 +438,12 @@ describe('jobcard REST consumers', () => {
   });
 
   test.each([
-    [{
-      httpMethod: 'GET',
-      path: '/api/repairorder/lastPayload',
-      queryStringParameters: { jobCardId: 'JCID-84521' },
-      body: null,
-      requestContext: { authorizer: { sub: 'trusted' } },
-    }, 'JCID-84521'],
-    [{ action: 'lastPayload', body: { jobCardId: 'JCID-84522' } }, 'JCID-84522'],
-  ])('lastPayload deletes the row after reading the payload when djcsynch is false and the sync outcome is empty (case %#)', async (event, jobCardId) => {
-    const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
-    getLastPayload.mockResolvedValueOnce({
-      jobCardId, djcsynch: false, ack: '', techReason: '', businessReason: '', updateDateTime: null, payload,
-    });
-    deleteSynch.mockResolvedValueOnce({ jobCardId, deleted: true });
-
-    const response = await handler(event);
-
-    expect(response.statusCode).toBe(200);
-    expect(response.body).toBe(JSON.stringify({
-      statusCode: 200,
-      success: true,
-      message: 'Job card payload retrieved successfully',
-      jobCardId,
-      djcsynch: false,
-      ack: '',
-      techReason: '',
-      businessReason: '',
-      updateDateTime: null,
-      deleted: true,
-      payload,
-    }));
-    expect(deleteSynch).toHaveBeenCalledTimes(1);
-    expect(deleteSynch).toHaveBeenCalledWith(jobCardId);
-    expect(getLastPayload.mock.invocationCallOrder[0]).toBeLessThan(deleteSynch.mock.invocationCallOrder[0]);
-    [getBearerToken, saveJobCard, callService].forEach((fn) => expect(fn).not.toHaveBeenCalled());
-  });
-
-  test.each([
-    ['djcsynch null (DGT outcome not known yet)', { djcsynch: null, ack: '', techReason: '', businessReason: '' }],
-    ['djcsynch true', { djcsynch: true, ack: '', techReason: '', businessReason: '' }],
-    ['sync outcome recorded by synch-status', {
-      djcsynch: false, ack: 'OK', techReason: 'SUCCESS_WITHOUT_UPDATE', businessReason: '',
+    ['djcsynch false and empty sync outcome (red state)', {
+      djcsynch: false, ack: '', techReason: '', businessReason: '', updateDateTime: '2026-10-16T10:11:05.000Z',
     }],
-  ])('lastPayload keeps the row when it cannot be deleted: %s', async (_label, outcome) => {
+    ['djcsynch null (DGT outcome not known yet)', { djcsynch: null, ack: '', techReason: '', businessReason: '', updateDateTime: null }],
+    ['djcsynch true', { djcsynch: true, ack: '', techReason: '', businessReason: '', updateDateTime: null }],
+  ])('lastPayload never deletes the row (read only, deleted always false): %s', async (_label, outcome) => {
     getLastPayload.mockResolvedValueOnce({ jobCardId: 'JCID-84521', ...outcome, payload: { jobs: [] } });
 
     const response = await handler({ action: 'lastPayload', body: { jobCardId: 'JCID-84521' } });
@@ -490,40 +452,6 @@ describe('jobcard REST consumers', () => {
     expect(JSON.parse(response.body)).toMatchObject({ ...outcome, deleted: false, payload: { jobs: [] } });
     expect(deleteSynch).not.toHaveBeenCalled();
   });
-
-  test.each([
-    ['the sync outcome changed before the DELETE', {
-      jobCardId: 'JCID-84521', deleted: false, djcsynch: false, ack: 'OK', techReason: '', businessReason: '',
-    }],
-    ['the row was already deleted', null],
-  ])('lastPayload returns deleted: false when the conditional DELETE removes nothing: %s', async (_label, outcome) => {
-    getLastPayload.mockResolvedValueOnce({
-      jobCardId: 'JCID-84521', djcsynch: false, ack: '', techReason: '', businessReason: '', payload: { jobs: [] },
-    });
-    deleteSynch.mockResolvedValueOnce(outcome);
-
-    const response = await handler({ action: 'lastPayload', body: { jobCardId: 'JCID-84521' } });
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.body)).toMatchObject({ success: true, deleted: false, payload: { jobs: [] } });
-    expect(deleteSynch).toHaveBeenCalledWith('JCID-84521');
-  });
-
-  test('lastPayload still returns the payload when the DELETE fails (best-effort, logged)', async () => {
-    getLastPayload.mockResolvedValueOnce({
-      jobCardId: 'JCID-84521', djcsynch: false, ack: '', techReason: '', businessReason: '', payload: { jobs: [] },
-    });
-    deleteSynch.mockRejectedValueOnce(new Error('permission denied for table jobcard_sync_activity'));
-
-    const response = await handler({ action: 'lastPayload', body: { jobCardId: 'JCID-84521' } });
-
-    expect(response.statusCode).toBe(200);
-    expect(JSON.parse(response.body)).toMatchObject({ success: true, deleted: false, payload: { jobs: [] } });
-    expect(console.warn).toHaveBeenCalledWith(
-      '[jobCard] jobcard_sync_activity eliminazione (lastPayload) fallita jobcardid=JCID-84521: permission denied for table jobcard_sync_activity',
-    );
-  });
-
   test('lastPayload returns 404 when the jobcard has no recorded payload', async () => {
     getLastPayload.mockResolvedValueOnce(null);
 

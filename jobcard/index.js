@@ -92,7 +92,8 @@
  * jobCardDetail, in "saveJobcard" in coda alla risposta DGT (con djcsynch
  * della chiamata appena eseguita). Includono anche updateDateTime: ora
  * dell'ultimo salvataggio su DJC letta da synch-status insieme all'esito
- * (colonna lastupdate, ISO 8601), solo con ack OK/KO, altrimenti null.
+ * (colonna lastupdate, ISO 8601), con ack OK/KO; con djcsynch false è l'ora
+ * dell'invio a DGT fallito; altrimenti null.
  * In "details", se la riga ha djcsynch true e ack KO (esito DMS negativo), la
  * riga viene eliminata (DELETE atomica, best-effort con lo stesso timeout di
  * 5 s) e tutti i campi sono restituiti null: la jobcard riparte da grigio.
@@ -104,10 +105,9 @@
  * Include anche djcsynch/ack/techReason/businessReason/updateDateTime della stessa riga (tra
  * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri,
  * updateDateTime come sopra), letti con la stessa SELECT.
- * Dopo la lettura, se djcsynch è false e ack/techReason/businessReason sono
- * vuoti, elimina la riga (stesse condizioni di "deleteSynch", ricontrollate
- * dalla DELETE) e lo segnala con deleted: true; best-effort: un errore della
- * DELETE viene loggato e la risposta resta 200 con deleted: false.
+ * La riga non viene eliminata (deleted sempre false, mantenuto per
+ * compatibilità): lo stato rosso resta finché l'utente non sceglie Server
+ * ("deleteSynch") o una nuova save non la riscrive.
  * Solo DB (nessuna chiamata DGT, nessun token): jobCardId mancante -> 400,
  * nessun payload registrato -> 404, errore della lettura -> 502.
  *
@@ -595,29 +595,20 @@ async function addJobCardSyncStatus(body, jobCardId, djcsynch, { deleteKo = fals
  * modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce,
  * con l'esito (djcsynch/ack/techReason/businessReason) registrato sulla stessa
  * riga.
- * Dopo la lettura, se djcsynch è false e ack/techReason/businessReason sono
- * vuoti (canDeleteSynch), elimina la riga con deleteSynch, che ricontrolla le
- * condizioni nella DELETE: deleted indica se la riga è stata eliminata.
- * Best-effort: un errore della DELETE viene solo loggato, il payload viene
- * comunque restituito (deleted: false).
+ * Sola lettura: la riga non viene eliminata (deleted sempre false, campo
+ * mantenuto per compatibilità della risposta). Prima la riga rossa veniva
+ * eliminata qui, ma il polling del FE che rileva il rosso la cancellava e alla
+ * riapertura la jobcard tornava grigia senza il popup Locale/Server.
  * Jobcard senza payload registrato -> errore con isRecordNotFound (404
  * nell'handler, stessa convenzione di synch-status).
  */
 async function getJobCardLastPayload(jobCardId) {
-  const { getLastPayload, canDeleteSynch, deleteSynch } = require('./JobcardSyncActivityRepository');
+  const { getLastPayload } = require('./JobcardSyncActivityRepository');
   const lastPayload = await getLastPayload(jobCardId);
   if (!lastPayload) {
     const err = new Error(`[jobCard] payload not found for jobCardId ${String(jobCardId).trim()}`);
     err.isRecordNotFound = true;
     throw err;
-  }
-  let deleted = false;
-  if (canDeleteSynch(lastPayload)) {
-    try {
-      deleted = (await deleteSynch(lastPayload.jobCardId))?.deleted === true;
-    } catch (err) {
-      console.warn(`[jobCard] jobcard_sync_activity eliminazione (lastPayload) fallita jobcardid=${lastPayload.jobCardId}: ${err.message}`);
-    }
   }
   return {
     statusCode: 200,
@@ -629,7 +620,7 @@ async function getJobCardLastPayload(jobCardId) {
     techReason: lastPayload.techReason,
     businessReason: lastPayload.businessReason,
     updateDateTime: lastPayload.updateDateTime,
-    deleted,
+    deleted: false,
     payload: lastPayload.payload,
   };
 }
@@ -740,7 +731,7 @@ exports.handler = async (event) => {
     } else if (action === 'lastPayload') {
       // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId da query
       // string (GET) o body; mancante -> 400, payload non registrato -> 404.
-      // Riga eliminata dopo la lettura se eliminabile (deleted nella risposta).
+      // Sola lettura: la riga non viene eliminata (deleted sempre false).
       result = await getJobCardLastPayload(body.jobCardId ?? body.id);
     } else if (action === 'deleteSynch') {
       // Solo DB (nessuna chiamata DGT, quindi nessun token): jobCardId dal body

@@ -189,7 +189,7 @@ describe('JobcardSyncActivityRepository', () => {
       await expect(updateDjcSynch(pool, 'SRP-1', false)).resolves.toBe(row);
       expect(pool.query).toHaveBeenCalledWith(UPDATE_DJC_SYNCH_SQL, ['SRP-1', false]);
       expect(UPDATE_DJC_SYNCH_SQL).toMatch(
-        /UPDATE woc\.jobcard_sync_activity\s+SET djcsynch = \$2\s+WHERE jobcardid = \$1\s+RETURNING jobcardid, djcsynch/,
+        /UPDATE woc\.jobcard_sync_activity\s+SET djcsynch = \$2::boolean,\s+lastupdate = CASE WHEN \$2::boolean THEN lastupdate ELSE now\(\) END\s+WHERE jobcardid = \$1\s+RETURNING jobcardid, djcsynch/,
       );
     });
 
@@ -394,6 +394,11 @@ describe('JobcardSyncActivityRepository', () => {
       expect(Object.keys(result)).toEqual(['djcsynch', 'ack', 'techReason', 'businessReason', 'updateDateTime']);
     });
 
+    test('djcsynch false (invio a DGT fallito): returns lastupdate (ora del fallimento) even without ack', async () => {
+      const result = await getSyncStatus('SRP-1', { getPool: getPoolFor({ djcsynch: false, ack: null, lastupdate }) });
+      expect(result).toEqual({ djcsynch: false, ack: '', techReason: '', businessReason: '', updateDateTime: '2026-10-13T09:55:05.000Z' });
+    });
+
     test('accepts lastupdate as a string (pg type parser not applied)', async () => {
       const result = await getSyncStatus('SRP-1', {
         getPool: getPoolFor({ ack: 'OK', lastupdate: '2026-10-13 11:55:05.123+02' }),
@@ -404,6 +409,8 @@ describe('JobcardSyncActivityRepository', () => {
     test.each([
       ['ack NULL (save in attesa di esito)', { ack: null, lastupdate }],
       ['ack vuoto', { ack: '', lastupdate }],
+      ['djcsynch true e ack vuoto (in attesa di esito)', { djcsynch: true, ack: '', lastupdate }],
+      ['djcsynch false con lastupdate NULL', { djcsynch: false, ack: '', lastupdate: null }],
       ['ack diverso da OK/KO', { ack: 'ok', lastupdate }],
       ['lastupdate NULL', { ack: 'OK', lastupdate: null }],
       ['lastupdate assente', { ack: 'KO' }],

@@ -16,13 +16,15 @@
  *     errore con isAckPending (409 SYNC_ACK_PENDING)
  * DOPO l'invio, recordDjcSynch registra in djcsynch l'esito della chiamata a
  * DGT: true se DGT risponde success: true, false altrimenti (success diverso
- * da true o errore token/HTTP/rete).
+ * da true o errore token/HTTP/rete); con false anche lastupdate = now() (ora
+ * del fallimento).
  * ack/techreason/businessreason/lastupdate sono popolati in un secondo momento
  * (esito della sincronizzazione, da synch-status), non da questa lambda, che
  * li legge soltanto (getSyncStatus), insieme a djcsynch, per restituirli nella
  * risposta di saveJobcard come djcsynch/ack/techReason/businessReason/
- * updateDateTime (lastupdate in ISO, = updateDateTime DJC salvato da
- * synch-status, solo con ack OK/KO, altrimenti null).
+ * updateDateTime (lastupdate in ISO: updateDateTime DJC salvato da
+ * synch-status con ack OK/KO, ora del fallimento con djcsynch false,
+ * altrimenti null).
  *
  * Copia di jobcard/JobcardSyncActivityRepository.js, mantenuta in sync, salvo
  * SELECT_LAST_PAYLOAD_SQL/selectLastPayload/getLastPayload e
@@ -49,9 +51,13 @@ const UPSERT_SQL = `
             AND COALESCE(woc.jobcard_sync_activity.ack, '') = '')
   RETURNING jobcardid, creationdate`;
 
+// Con djcsynch false lastupdate diventa l'ora dell'invio a DGT fallito
+// (updateDateTime dello stato rosso); con true resta invariato: lo popola
+// synch-status insieme all'esito.
 const UPDATE_DJC_SYNCH_SQL = `
   UPDATE woc.jobcard_sync_activity
-  SET djcsynch = $2
+  SET djcsynch = $2::boolean,
+    lastupdate = CASE WHEN $2::boolean THEN lastupdate ELSE now() END
   WHERE jobcardid = $1
   RETURNING jobcardid, djcsynch`;
 
@@ -215,15 +221,18 @@ const SYNC_OUTCOME_ACKS = new Set(['OK', 'KO']);
 
 /**
  * updateDateTime della risposta: lastupdate in ISO 8601 solo se l'esito è
- * presente (ack OK/KO); senza esito lastupdate non è l'ora del salvataggio
- * su DJC dell'esito corrente (es. riga appena riscritta dall'UPSERT), quindi
- * null. null anche se lastupdate è assente o non valido.
+ * presente (ack OK/KO) o se l'ultimo invio a DGT è fallito (djcsynch false:
+ * lastupdate è l'ora del fallimento, v. UPDATE_DJC_SYNCH_SQL); negli altri
+ * casi lastupdate non è l'ora dell'esito corrente (es. riga appena riscritta
+ * dall'UPSERT), quindi null. null anche se lastupdate è assente o non valido.
  * @param {string|null|undefined} ack
  * @param {Date|string|null|undefined} lastupdate
+ * @param {boolean|null|undefined} [djcsynch]
  * @returns {string|null}
  */
-function toUpdateDateTime(ack, lastupdate) {
-  if (!SYNC_OUTCOME_ACKS.has(ack) || lastupdate === undefined || lastupdate === null || lastupdate === '') return null;
+function toUpdateDateTime(ack, lastupdate, djcsynch) {
+  if (!SYNC_OUTCOME_ACKS.has(ack) && djcsynch !== false) return null;
+  if (lastupdate === undefined || lastupdate === null || lastupdate === '') return null;
   const date = lastupdate instanceof Date ? lastupdate : new Date(lastupdate);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
@@ -248,7 +257,7 @@ function toSyncStatus(row) {
     ack: row?.ack ?? '',
     techReason: row?.techreason ?? '',
     businessReason: row?.businessreason ?? '',
-    updateDateTime: toUpdateDateTime(row?.ack, row?.lastupdate),
+    updateDateTime: toUpdateDateTime(row?.ack, row?.lastupdate, row?.djcsynch),
   };
 }
 
