@@ -5,12 +5,14 @@ jest.mock('../HqRepository');
 jest.mock('../AnagSnowflakesRepository');
 jest.mock('../PkConfigRepository');
 jest.mock('../ConfigPackagesRepository');
+jest.mock('../DealerSignRepository');
 
 const { getPool } = require('../db');
 const hq = require('../HqRepository');
 const snowflakes = require('../AnagSnowflakesRepository');
 const pk = require('../PkConfigRepository');
 const config = require('../ConfigPackagesRepository');
+const sign = require('../DealerSignRepository');
 const { handler } = require('../internal');
 const pool = { query: jest.fn() };
 const request = (operation, args = []) => ({
@@ -27,9 +29,9 @@ beforeEach(() => {
 test.each([
   ...Object.keys(hq).filter((name) => !['getAnagSection', 'getAnagAllocation'].includes(name)),
   'getCountryIsoCode', 'getPhysicalSiteAndSincom', 'getPhysicalSiteAndPdvId', 'getBrandsByOics', 'getMarkets', 'insertdmsSnowflakes', 'insertLegalentitySnowflakes', 'insertAddrSnowflakes', 'insertAnagSnowflakes',
-  'getPkwstouse', 'getConfigPackages',
+  'getPkwstouse', 'getConfigPackages', 'getDealerSign',
 ])('dispatches %s locally with the owning DB pool', async (operation) => {
-  const fn = hq[operation] || snowflakes[operation] || pk[operation] || config[operation];
+  const fn = hq[operation] || snowflakes[operation] || pk[operation] || config[operation] || sign[operation];
   fn.mockResolvedValue({ result: operation });
   expect(await data(operation, ['arg'])).toEqual({ result: operation });
   expect(fn).toHaveBeenCalledWith(pool, 'arg');
