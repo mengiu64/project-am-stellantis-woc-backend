@@ -552,7 +552,7 @@ Lambda for **JobCard** management via the Stellantis DGT (Digital Layer) API, wi
 | `jobCardService` | `getJobCardList(token, params)` | JobCard list with filters and pagination |
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Details of a single JobCard, enriched with DML data (see below) |
 | `jobCardService` | `getDealerConfiguration(market, oic)` | Dealer configuration (vehicle inspection + packages) for a market/oic, see below |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`), and best-effort recording of the DGT call outcome in `djcsynch`; best-effort read of `djcsynch`/`ack`/`techreason`/`businessreason`, returned as `djcsynch`/`ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses; read of the recorded `payload`, with `djcsynch`/`ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action; conditional deletion of the row (`canDeleteSynch`/`deleteSynch`) for the `deleteSynch` action and for `lastPayload` after the read (both `jobcard` only, see below) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getDetailsSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT of the `saveJobcard` payload into `woc.jobcard_sync_activity` before sending it to DGT (copy of `djc`, env `JOBCARD_DB_*`), and best-effort recording of the DGT call outcome in `djcsynch`; best-effort read of `djcsynch`/`ack`/`techreason`/`businessreason`, returned as `djcsynch`/`ack`/`techReason`/`businessReason` in the `details` and `saveJobcard` responses, plus `updateDateTime` (`lastupdate` column in ISO, only with `ack` OK/KO, otherwise `null`) (in `details`, through `getDetailsSyncStatus`, the row with `djcsynch` true and `ack` KO is first deleted atomically: all fields `null`); read of the recorded `payload`, with `djcsynch`/`ack`/`techReason`/`businessReason` from the same row, for the `lastPayload` action; conditional deletion of the row (`canDeleteSynch`/`deleteSynch`) for the `deleteSynch` action and for `lastPayload` after the read (both `jobcard` only, see below) |
 | `httpClient` | `httpsRequest(options, body)` | Native Node.js HTTPS client |
 
 #### `getJobCardList` parameters
@@ -593,9 +593,9 @@ See `jobcard/README.md` for the full rule table.
 #### Sync outcome in the `details`/`saveJobcard` responses
 
 The responses of the `details` and `saveJobcard` actions (the latter shared with
-the `djc` lambda) include `djcsynch`, `ack`, `techReason` and `businessReason`,
+the `djc` lambda) include `djcsynch`, `ack`, `techReason`, `businessReason` and `updateDateTime`,
 read from `woc.jobcard_sync_activity` by `jobcardid` (`djcsynch`/`ack`/
-`techreason`/`businessreason` columns): in `details` (`jobcardid` = requested
+`techreason`/`businessreason`/`lastupdate` columns): in `details` (`jobcardid` = requested
 `jobCardId`) right before `jobCardDetail`, in `saveJobcard` (`jobcardid`
 returned by the UPSERT done before sending to DGT) appended to the DGT response.
 
@@ -608,6 +608,11 @@ returned by the UPSERT done before sending to DGT) appended to the DGT response.
 - `ack`/`techReason`/`businessReason`: DMS synchronization outcome, populated
   by [synch-status](#synch-status); reset by the UPSERT on every
   `saveJobcard` (empty string until the outcome of the new push arrives).
+- `updateDateTime` (ISO 8601): `lastupdate` column, where
+  [synch-status](#synch-status) stores, together with the outcome, the
+  `roInfo.updateDateTime` read from DJC (time of the last save of the job card
+  on DJC; `now()` when missing or invalid). Set only with `ack` `OK`/`KO`,
+  otherwise `null` (e.g. save waiting for its outcome).
 
 ```json
 {
@@ -619,6 +624,7 @@ returned by the UPSERT done before sending to DGT) appended to the DGT response.
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "updateDateTime": "2026-10-13T09:55:05.000Z",
   "jobCardDetail": { "roInfo": { "jobCardSrpId": "JCID-84506" } }
 }
 ```
@@ -632,15 +638,17 @@ returned by the UPSERT done before sending to DGT) appended to the DGT response.
   "djcsynch": true,
   "ack": "",
   "techReason": "",
-  "businessReason": ""
+  "businessReason": "",
+  "updateDateTime": null
 }
 ```
 
 The fields are added by the handler (and the CLI) after the DGT call: the
 DynamoDB cache, the `dml` action and the internal `getJobCardDetails` operation
-used by `synch-status` are unchanged. Best-effort read: missing row, `NULL`
-values, DB error or a wait longer than 5 s → empty string (`null` for
-`djcsynch`), never failing the response. In `saveJobcard`, `djcsynch` is the
+used by `synch-status` are unchanged. Best-effort read: `NULL` values of an
+existing row → empty string (`null` for `djcsynch`); missing row, DB error or
+a wait longer than 5 s → all fields `null`, never failing the response. In
+`saveJobcard`, `djcsynch` is the
 outcome of the call just made (even when writing it to the DB, best-effort
 with the same 5 s limit, fails), while `ack`/`techReason`/`businessReason` are
 those recorded when the response is built (`synch-status` updates them
@@ -648,6 +656,61 @@ asynchronously): empty for a new job card, the previous synchronization
 outcome for an existing one. When the DGT call fails, `saveJobcard` records
 `djcsynch` = `false` and answers with the unchanged error
 (`{ "success": false, "message": "..." }`, without `djcsynch`).
+
+Only in `details` (handler and CLI), when the row has `djcsynch = true` and
+`ack = 'KO'` (push accepted by DGT, rejected or failed on the DMS), the row is
+deleted before reading with an atomic DELETE (`WHERE jobcardid = $1 AND
+djcsynch IS TRUE AND ack = 'KO' RETURNING jobcardid`) and all fields are
+returned as `null`: the FE shows the job card grey with the DJC version.
+DELETE and read share the same 5 s best-effort limit (error → all `null`). A
+save just recorded is never deleted (the UPSERT resets `ack` to `NULL`); a
+late Kafka event on the deleted row is only logged by `synch-status`
+("record not found").
+
+#### Save blocked while waiting for the ack (`409 SYNC_ACK_PENDING`) and `force`
+
+API Gateway routes the POST requests `/api/repairorder/{proxy+}` (hence
+`saveJobcard`) to this `jobcard` lambda; `djc` keeps an aligned copy for direct
+invocation/CLI.
+
+When the `woc.jobcard_sync_activity` row has `djcsynch = true` (previous push
+accepted by DGT) and a `NULL` or empty `ack` (outcome not received yet from
+[synch-status](#synch-status)), `saveJobcard` does **not** record the new
+payload and answers `409`, without calling DGT or agendaSoaNaga and without
+writing `djcsynch`:
+
+```json
+{
+  "success": false,
+  "code": "SYNC_ACK_PENDING",
+  "message": "[jobCard] save blocked for jobCardId JCID-84521: previous synchronization not acknowledged yet",
+  "djcsynch": true,
+  "ack": "",
+  "techReason": "",
+  "businessReason": "",
+  "updateDateTime": null
+}
+```
+
+The check lives in the UPSERT itself (atomic, evaluated on the current row
+version): `ON CONFLICT (jobcardid) DO UPDATE ... WHERE $force OR NOT
+(djcsynch IS TRUE AND COALESCE(ack, '') = '')`; no returned row → `409`. A
+missing row (first save) or a `NULL`/`false` `djcsynch` never blocks.
+
+The user can force the save from the FE ("Force save" popup):
+`POST /api/repairorder/saveJobcard?force=true` (exactly `true`; on direct
+invocation also `body.force` `true`/`"true"`). `force` is removed from the
+body **before** resolving the payload (the dispatcher merges query string and
+body), so it is never stored in `payload` nor sent to DGT; a `force` in the
+JSON body of an API Gateway request is ignored. A forced save is logged
+(`console.warn`) with `jobcardid` and the authorizer `sub` (never a body
+value). No DDL required.
+
+> Known risk: after a forced save, a late Kafka event of the previous push may
+> write `ack` on the row of the new payload (`synch-status` updates by
+> `jobcardid` only).
+
+The same logic is replicated in `djc` (logs prefixed with `[djc]`).
 
 The `djcsynch` column is added to existing environments by
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, to be run **before**
@@ -673,17 +736,18 @@ After the read, when `djcsynch` = `false` and `ack`/`techReason`/
 `businessReason` are empty (`NULL` or empty string: last send to DGT failed
 with no synchronization outcome), it deletes the row with the same conditions
 as `deleteSynch` (see below), re-checked by the `DELETE`, and still returns the
-payload it read; `deleted` (between `businessReason` and `payload`) tells
+payload it read; `deleted` (between `updateDateTime` and `payload`) tells
 whether the row was deleted (later calls then answer `404`). The deletion is
 best-effort: a `DELETE` error (e.g. missing privilege) is only logged and the
 response stays `200` with `deleted: false`.
 
-The response also includes `djcsynch`, `ack`, `techReason` and `businessReason`
+The response also includes `djcsynch`, `ack`, `techReason`, `businessReason` and `updateDateTime`
 from the same row (read by the same SELECT as the payload), between `jobCardId`
 and `payload`: `djcsynch` is the outcome of sending the last payload to DGT
 (`true`/`false`, `null` when not known yet, see above), `ack`/`techReason`/
 `businessReason` the outcome of the last synchronization recorded by
-`synch-status` (`NULL` → empty string). Since the latter are populated
+`synch-status` (`NULL` → empty string), `updateDateTime` the `lastupdate`
+column in ISO, only with `ack` `OK`/`KO` (see above). Since the latter are populated
 asynchronously, right after a failed `saveJobcard` they may still be empty or
 refer to the previous synchronization, while `djcsynch` is already `false`.
 
@@ -697,6 +761,7 @@ refer to the previous synchronization, while `djcsynch` is already `false`.
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "updateDateTime": "2026-10-02T09:19:41.000Z",
   "deleted": false,
   "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
 }
@@ -1109,7 +1174,7 @@ node index.js translations lang=en
 
 Lambda that returns **session data** (`codmarket`, `marketIso`, `oic`, `sincom`, `physicalsite`, `customerRrdiCode`, `hubcode`, part preferences, max discounts, etc.) for a given market, read from a single JSON file on S3 (`session/session_data.json`, same bucket used by `translations`). The file contains an object keyed by 4-character market code (e.g. `"1000"`); the only accepted input parameter is the **market code** (`codmarket`, 4 characters): if not provided, the default `1000` is used. If the requested market is not present in the file, the Lambda responds with `404`. Data access is isolated behind a `SessionRepository` interface, implemented by `S3SessionRepository`, to allow replacing S3 in the future without impacting the HTTP handler (same architecture as the `translations` module).
 
-> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. The authorizer's `roles` (CSV) are also always included in the 200 response body as `userroles` (array, `[]` if absent), added by the handler on top of the repository's data, right after the `profile` key (appended at the end if `profile` is missing), preceded by 3 numeric `0`/`1` flags — `hqCentral`, `hqMarket`, `dealer` — derived from those same roles via `resolveRoleFlags(roles)` (`src/index.js`), with only one flag set to `1` at a time (priority `hqCentral` > `hqMarket` > `dealer`): `hqCentral = 1` if a role contains the substring `HQCENTRAL` (case-insensitive, e.g. `WRT.WOC.NONPROD.HQCENTRAL`, `Z` prefix and `NONPROD`/`PROD` environment vary and are ignored); otherwise `hqMarket = 1` if a role contains `HQNSC` followed by 4 digits, the market code (e.g. `ZWRT.WOC.NONPROD.HQNSC3109`); otherwise (default, including an empty `userroles`) `dealer = 1`. Right after `dealer` and before `userroles`, the response also always includes `hqMarketsList` (array of `{ market, description }` objects, e.g. `[{ "market": "3109", "description": "France" }]`), computed by `resolveHqMarketsList` (`src/hqMarketsResolver.js`) from those same flags and **never** client-controlled: `[]` for a `dealer` (no query executed); **all** distinct markets from `woc.ang_snowflakes` (`cd_market_code`, same `fl_is_deleted_flag = 0` filter as the other queries on this table) for `hqCentral = 1`; the **single** market extracted from the `HQNSC<4 digits>` role (e.g. `ZWRT.WOC.NONPROD.HQNSC3109` → market `"3109"`) for `hqMarket = 1` (`[]` if no role matches the pattern). The `gn_country_name` column does **not** exist on `woc.ang_snowflakes`: `description` is resolved via a `LEFT JOIN LATERAL` on `woc.addr_snowflakes` (same `cd_market_code`) that prefers a row not logically deleted (`fl_is_deleted_flag = 0`) but falls back to the most recent row (highest `dt_ingestion_timestamp`) even if marked `fl_is_deleted_flag = 1` when no active row exists yet for that market, so it is `null` only for a market present in `ang_snowflakes` with **no** address row at all in `addr_snowflakes` (never an error). Same fault-tolerant behaviour as the other DB reads below: any query error is caught and `hqMarketsList` simply falls back to `[]`, never blocking the session response. With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) and then reads, in parallel, nine Aurora caches/tables maintained by the `dmlConfigSync`/`dbManager` modules (no more live calls to `dms/*` from `session`): `woc.dms_settings` (for `isdml`/`dmlcustomerupdate`/`dmldiscount`, keyed by `country`+`brand`+`dealer`), `woc.dml_configurations` (for `companytypes`/`customertitles`, keyed by `country`+`language`), `woc.anag_brand` (for `oics[].brandLogos`, see below), `woc.ang_snowflakes` (for `marketIso`, the dealer's country ISO code, given `codmarket`, via `dbManager.getCountryIsoCode`, and for `oics[].brands`, see below), `woc.hq_application_enabling` (to filter out OICs disabled for WOC, see below, **and** for the full list exposed as `OicEnabled`, via `dbManager.getOicEnabled`), `woc.addr_snowflakes` (for `oics[].address`/`oics[].zipcode`/`oics[].city`, see below), and `woc.hq_pk_market` (for `IsPkMarketEnabled`, via `dbManager.checkIsPkMarketEnabled`, see below). The cache reads never throw: on any error or missing row they simply return the safe defaults (`isdml:false`/`null`/`null`, `[]` for companytypes/customertitles, `[]` for `brandLogos`, `null` for `marketIso`, the original myPeople `brands` CSV as fallback, myPeople's own address fields as fallback, no OIC excluded, `[]` for `OicEnabled`, `null` for `IsPkMarketEnabled`), so the session response is never broken for this reason. On a first-ever cache-miss for a country+brand+dealer combination, `session` also registers (best-effort, awaited) that combination into `woc.dms_settings_enabled_dealers`, so the next day's scheduled sync populates it. Each element of `oics` also includes a `brandLogos` array right after `brands`, resolving the CSV brand codes to their `logo_s3_key` paths via the `woc.anag_brand` table (same table already used by `isStellantisBrand`), resolved in a single batched query; same fault-tolerant behaviour — `[]` if `brands` is missing/empty or the DB query fails. The `brands` CSV itself is now overridden (per OIC, via a single batched query) with the distinct `cd_contract_brand_webdac_code` values from `woc.ang_snowflakes` matching the OIC's `CODE` against `cd_paired_oic_code` (`dbManager.getBrandsByOics`), falling back to myPeople's original `brands` CSV when the DB has no rows for that OIC. Likewise, `address`/`zipcode`/`city` are overridden (per OIC, via a single batched query joining `woc.ang_snowflakes`/`woc.addr_snowflakes`) with `gn_address_1`/`cd_zip_code`/`gn_town` (`dbManager.getAddressByOics`), falling back to myPeople's own `ADDRESS`/`ZIPCODE`/`CITY` fields (`null` if neither source has data) when the DB has no rows for that OIC; these fields are inserted even if missing from the original myPeople OIC object. OICs with an explicit `enablewoc = 0` row in `woc.hq_application_enabling` (matched by `market`+`oic`, via `dbManager.getDisabledOics`, also a single batched query) are removed from the `oics` array; an OIC with no configuration row stays enabled by default (opt-out), unlike the `hqManager`/`dbManager.getEnablingConfiguration` admin endpoint which defaults to disabled when no row exists. Each element of `oics` also includes a `feaEnabled` boolean right after `djcListParameter`, read from `woc.hq_application_enabling.enablesignature` via `dbManager.getEnableSignatureByOics` (same batched query pattern); unlike `enablewoc`, this flag is **opt-in**: `true` only when a row exists with `enablesignature = 1`, `false` by default when the row is missing, when `market`/`code` is absent, or on any query error. `IsPkMarketEnabled` is read from the `woc.hq_pk_market.deleted` flag for `codmarket` via `dbManager.checkIsPkMarketEnabled`, and then **inverted** (0→1, 1→0, so `1` means the PK market is enabled and `0` disabled) before being exposed; `null` if `codmarket` is missing, no row exists yet for the market, or the query fails. See the Italian `README.md` for the full field mapping table.
+> **Note (`username` flow):** behind API Gateway, identity comes from the Lambda Authorizer (`event.requestContext.authorizer.sub`), never from a client-supplied parameter. The authorizer's `roles` (CSV) are also always included in the 200 response body as `userroles` (array, `[]` if absent), added by the handler on top of the repository's data, in the block inserted right after the `profile` key (appended at the end if `profile` is missing), preceded by `receptionistFEA` (see below) and by 3 numeric `0`/`1` flags — `hqCentral`, `hqMarket`, `dealer` — derived from those same roles via `resolveRoleFlags(roles)` (`src/index.js`), with only one flag set to `1` at a time (priority `hqCentral` > `hqMarket` > `dealer`): `hqCentral = 1` if a role contains the substring `HQCENTRAL` (case-insensitive, e.g. `WRT.WOC.NONPROD.HQCENTRAL`, `Z` prefix and `NONPROD`/`PROD` environment vary and are ignored); otherwise `hqMarket = 1` if a role contains `HQNSC` followed by 4 digits, the market code (e.g. `ZWRT.WOC.NONPROD.HQNSC3109`); otherwise (default, including an empty `userroles`) `dealer = 1`. Right after `dealer` and before `userroles`, the response also always includes `hqMarketsList` (array of `{ market, description }` objects, e.g. `[{ "market": "3109", "description": "France" }]`), computed by `resolveHqMarketsList` (`src/hqMarketsResolver.js`) from those same flags and **never** client-controlled: `[]` for a `dealer` (no query executed); **all** distinct markets from `woc.ang_snowflakes` (`cd_market_code`, same `fl_is_deleted_flag = 0` filter as the other queries on this table) for `hqCentral = 1`; the **single** market extracted from the `HQNSC<4 digits>` role (e.g. `ZWRT.WOC.NONPROD.HQNSC3109` → market `"3109"`) for `hqMarket = 1` (`[]` if no role matches the pattern). The `gn_country_name` column does **not** exist on `woc.ang_snowflakes`: `description` is resolved via a `LEFT JOIN LATERAL` on `woc.addr_snowflakes` (same `cd_market_code`) that prefers a row not logically deleted (`fl_is_deleted_flag = 0`) but falls back to the most recent row (highest `dt_ingestion_timestamp`) even if marked `fl_is_deleted_flag = 1` when no active row exists yet for that market, so it is `null` only for a market present in `ang_snowflakes` with **no** address row at all in `addr_snowflakes` (never an error). Same fault-tolerant behaviour as the other DB reads below: any query error is caught and `hqMarketsList` simply falls back to `[]`, never blocking the session response. Right after `profile` (before the flags), the response also always includes `receptionistFEA`: the receptionist's signature (the authenticated dealer user) as a base64 string, read from `woc.dealer_sign` with the same query as `getFirmaAccettatore` of the CWS Lambda (`SELECT sign_image FROM woc.dealer_sign WHERE dealer_login_userid = $1`, with `dealer_login_userid` = the authorizer's `sub`) via `dbManager.getDealerSign` (`src/receptionistFeaResolver.js`), **without** calling the CWS Lambda; it is `null` for HQ users (no query executed), when the dealer has not saved a signature yet (where the CWS answers `404`), or on any read error (never blocking the session response). It is read on every request and never stored in the `session:context:<username>` cache, so a newly saved signature shows up immediately (the image, up to 2 MB in base64, would also exceed the 400 KB DynamoDB item limit). With a `sub` available, the Lambda calls `myPeople` (`readUserProfiles`) and then reads, in parallel, nine Aurora caches/tables maintained by the `dmlConfigSync`/`dbManager` modules (no more live calls to `dms/*` from `session`): `woc.dms_settings` (for `isdml`/`dmlcustomerupdate`/`dmldiscount`, keyed by `country`+`brand`+`dealer`), `woc.dml_configurations` (for `companytypes`/`customertitles`, keyed by `country`+`language`), `woc.anag_brand` (for `oics[].brandLogos`, see below), `woc.ang_snowflakes` (for `marketIso`, the dealer's country ISO code, given `codmarket`, via `dbManager.getCountryIsoCode`, and for `oics[].brands`, see below), `woc.hq_application_enabling` (to filter out OICs disabled for WOC, see below, **and** for the full list exposed as `OicEnabled`, via `dbManager.getOicEnabled`), `woc.addr_snowflakes` (for `oics[].address`/`oics[].zipcode`/`oics[].city`, see below), and `woc.hq_pk_market` (for `IsPkMarketEnabled`, via `dbManager.checkIsPkMarketEnabled`, see below). The cache reads never throw: on any error or missing row they simply return the safe defaults (`isdml:false`/`null`/`null`, `[]` for companytypes/customertitles, `[]` for `brandLogos`, `null` for `marketIso`, the original myPeople `brands` CSV as fallback, myPeople's own address fields as fallback, no OIC excluded, `[]` for `OicEnabled`, `null` for `IsPkMarketEnabled`), so the session response is never broken for this reason. On a first-ever cache-miss for a country+brand+dealer combination, `session` also registers (best-effort, awaited) that combination into `woc.dms_settings_enabled_dealers`, so the next day's scheduled sync populates it. Each element of `oics` also includes a `brandLogos` array right after `brands`, resolving the CSV brand codes to their `logo_s3_key` paths via the `woc.anag_brand` table (same table already used by `isStellantisBrand`), resolved in a single batched query; same fault-tolerant behaviour — `[]` if `brands` is missing/empty or the DB query fails. The `brands` CSV itself is now overridden (per OIC, via a single batched query) with the distinct `cd_contract_brand_webdac_code` values from `woc.ang_snowflakes` matching the OIC's `CODE` against `cd_paired_oic_code` (`dbManager.getBrandsByOics`), falling back to myPeople's original `brands` CSV when the DB has no rows for that OIC. Likewise, `address`/`zipcode`/`city` are overridden (per OIC, via a single batched query joining `woc.ang_snowflakes`/`woc.addr_snowflakes`) with `gn_address_1`/`cd_zip_code`/`gn_town` (`dbManager.getAddressByOics`), falling back to myPeople's own `ADDRESS`/`ZIPCODE`/`CITY` fields (`null` if neither source has data) when the DB has no rows for that OIC; these fields are inserted even if missing from the original myPeople OIC object. OICs with an explicit `enablewoc = 0` row in `woc.hq_application_enabling` (matched by `market`+`oic`, via `dbManager.getDisabledOics`, also a single batched query) are removed from the `oics` array; an OIC with no configuration row stays enabled by default (opt-out), unlike the `hqManager`/`dbManager.getEnablingConfiguration` admin endpoint which defaults to disabled when no row exists. Each element of `oics` also includes a `feaEnabled` boolean right after `djcListParameter`, read from `woc.hq_application_enabling.enablesignature` via `dbManager.getEnableSignatureByOics` (same batched query pattern); unlike `enablewoc`, this flag is **opt-in**: `true` only when a row exists with `enablesignature = 1`, `false` by default when the row is missing, when `market`/`code` is absent, or on any query error. `IsPkMarketEnabled` is read from the `woc.hq_pk_market.deleted` flag for `codmarket` via `dbManager.checkIsPkMarketEnabled`, and then **inverted** (0→1, 1→0, so `1` means the PK market is enabled and `0` disabled) before being exposed; `null` if `codmarket` is missing, no row exists yet for the market, or the query fails. See the Italian `README.md` for the full field mapping table.
 
 > **Note (`woc.ang_snowflakes`, logically deleted rows):** **all** `dbManager` queries on `woc.ang_snowflakes` (`getCountryIsoCode`, `getPhysicalSiteAndSincom`, `getPhysicalSiteAndPdvId`, `resolveArcadBrandCode`, `getBrandsByOics` in `AnagSnowflakesRepository.js`; `getEnablingConfiguration`, `getAddressByOics` in `HqRepository.js`) filter `fl_is_deleted_flag = 0`, excluding rows logically deleted at the Snowflake source (`fl_is_deleted_flag = 1`, SMALLINT 0/1 column, see `sql/create_table_ang_snowflakes.sql`). This specifically prevents `oics[].brands` (the brands shown for each OIC in the session response) from including brand codes from rows already deactivated/deleted at the source.
 
@@ -1132,6 +1197,7 @@ session/
 │   ├── errors.js                             # SessionNotFoundError (404)
 │   ├── repositoryFactory.js                  # Factory: buildRepository()
 │   ├── hqMarketsResolver.js                   # resolveHqMarketsList(): computes hqMarketsList (HQ markets) from woc.ang_snowflakes
+│   ├── receptionistFeaResolver.js             # resolveReceptionistFEA(): receptionist signature (receptionistFEA, base64) from woc.dealer_sign
 │   └── repositories/
 │       ├── sessionRepository.js              # Base interface
 │       └── s3SessionRepository.js            # S3 implementation (bucket + JSON key)
@@ -1220,7 +1286,7 @@ Lambda for **updating the DJC synchronization status** of a job card. It receive
 After the UPDATE on `woc.comunication_asyncro_djc` (even when the record is missing there), `jobcardSyncActivity.js` updates the `woc.jobcard_sync_activity` row with `jobcardid` = `jobCardId` (created by jobcard/djc on every `saveJobcard`):
 
 1. `techreason` = `djc_sync_status` mapped from `eventType`, `ack` = `OK` for `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` and `KO` for `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
-2. calls the **jobcard** Lambda's `getJobCardDetails` over REST IAM (jobcard owns token and cache) and stores `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+2. calls the **jobcard** Lambda's `getJobCardDetails` over REST IAM (jobcard owns token and cache) and stores `jobCardDetail.roInfo.dmsSynchroStatus` + `dmsReturnMessage` in `businessreason` and `roInfo.updateDateTime` (time of the last save of the job card on DJC, normalized to ISO UTC) in `lastupdate`; if `updateDateTime` is missing or invalid, `lastupdate` = `now()`. `lastupdate` is returned by the jobcard/djc Lambdas as `updateDateTime`, only with `ack` `OK`/`KO`.
 
 Fully **best-effort**: DB/DGT errors are only logged and the response to DJC is unchanged. If the row does not exist, `jobCardDetails` is not called. If the UPDATE on `comunication_asyncro_djc` fails (5xx), this step is skipped.
 
@@ -1645,8 +1711,9 @@ cd agendaSoa && npm run test:coverage
 - **authService** – valid cache, expired/missing cache (renewal), cache writing, HTTP error, missing `access_token`, default `expires_in`
 - **dmsService** – required parameter validation `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID required; `DocumentID`/`CustomerIdDms` optional content but always present in the payload, sent as `''` and `null` respectively when omitted), inquiry types (LFP/WL/MP), `buildTypeSection`, correct headers (Authorization, IBM credentials), HTTP errors
 - **jobCardService / v360Service** – required parameter validation, all optional filters (date range, pagination, sorting), correct headers (Authorization, IBM credentials, x-trace-id), HTTP errors; for `jobCardService`: `jobs[].packageType`/`packageCharge` enrichment (all `jobType`/`packageCode`/`paymentType` combinations), placement before `partInfo`/`laborInfo`, `roInfo.roSource` added right after `sourceApplication` (including missing `roInfo`/`sourceApplication`)
-- **jobcard / djc: JobcardSyncActivityRepository / index** – `djcsynch` recording (`recordDjcSynch`: only `true` → `true`, empty id without DB access, missing row/DB or pool errors/timeout → `false` with a warning, never propagated; the UPSERT resets it, together with `ack`/`techreason`/`businessreason`, to `NULL` on conflict); sync-outcome read (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`), best-effort (empty id without DB access, missing row/`NULL` values/DB or pool errors/timeout → empty string, `null` for `djcsynch`), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: `djcsynch` recorded after the DGT call (`true` only on `success: true`; `false` on any other `success`, DGT or token error, the error being returned unchanged; neither DGT call nor recording when the UPSERT fails) and returned with the call value even when recording fails; outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`, with `djcsynch` read from the DB in `details`) after the DGT call, never read when the DGT call fails
-- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, outcome in camelCase with `NULL` → empty string and `djcsynch` `NULL` → `null`, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`deleted`/`payload` (in this order) without token or DGT calls; after the read `deleteSynch` only when `djcsynch` is `false` with an empty outcome (`deleted: true`), no DELETE with `djcsynch` `null`/`true` or a recorded outcome, `deleted: false` when the DELETE removes nothing or fails (error logged, response still 200); `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on read errors (no DELETE); only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`); `canDeleteSynch` (same conditions as the DELETE: `djcsynch` strictly `false`, `NULL` or empty `ack`/`techReason`/`businessReason` without trimming)
+- **jobcard / djc: JobcardSyncActivityRepository / index** – conditional UPSERT (updates only with `force` or when the previous push is not waiting for its ack; no row → `isAckPending` error; `force` passed as boolean `$3`), `409 SYNC_ACK_PENDING` (full body) without DGT/Naga/`recordDjcSynch`, `force` only from `?force=true` (or `body.force` on direct invocation), stripped from the payload, ignored in an API Gateway body, forced save logged with the authorizer `sub`; `djcsynch` recording (`recordDjcSynch`: only `true` → `true`, empty id without DB access, missing row/DB or pool errors/timeout → `false` with a warning, never propagated; the UPSERT resets it, together with `ack`/`techreason`/`businessreason`, to `NULL` on conflict); sync-outcome read (`djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate` → `djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime`), best-effort (`NULL` values of an existing row → empty string, `null` for `djcsynch`; ISO `updateDateTime` only with `ack` OK/KO and a valid `lastupdate` (Date or string), otherwise `null`; empty id without DB access, missing row/DB or pool errors/timeout → all `null`); `getDetailsSyncStatus`/`deleteKoSyncActivity` also in djc (aligned copy, not called there), placement in the response (right before `jobCardDetail` or appended, non-object body unchanged); handler: `djcsynch` recorded after the DGT call (`true` only on `success: true`; `false` on any other `success`, DGT or token error, the error being returned unchanged; neither DGT call nor recording when the UPSERT fails) and returned with the call value even when recording fails; outcome read by the UPSERT `jobcardid` (or the requested `jobCardId`, with `djcsynch` read from the DB in `details`) after the DGT call, never read when the DGT call fails
+- **jobcard: JobcardSyncActivityRepository / index (`lastPayload`)** – `getLastPayload` (SELECT of `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate`/`payload`, outcome in camelCase with `NULL` → empty string and `djcsynch` `NULL` → `null`, ISO `updateDateTime` only with `ack` OK/KO, normalized id, missing id → "is required" error without DB access, missing row → `null`, DB/pool errors propagated); handler: API Gateway GET event (`jobCardId` from the query string) and `id` alias, 200 response with `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime`/`deleted`/`payload` (in this order) without token or DGT calls; after the read `deleteSynch` only when `djcsynch` is `false` with an empty outcome (`deleted: true`), no DELETE with `djcsynch` `null`/`true` or a recorded outcome, `deleted: false` when the DELETE removes nothing or fails (error logged, response still 200); `404` when no payload is recorded, `400` when `jobCardId` is missing, `502` on read errors (no DELETE); only `isRecordNotFound` yields `404` (upstream errors with `statusCode` 404 stay `502`); `canDeleteSynch` (same conditions as the DELETE: `djcsynch` strictly `false`, `NULL` or empty `ack`/`techReason`/`businessReason` without trimming)
+- **jobcard: JobcardSyncActivityRepository / index (`details`)** – `getDetailsSyncStatus` (atomic DELETE on `djcsynch IS TRUE AND ack = 'KO'` with `RETURNING`: deleted row → all fields `null` without SELECT; nothing deleted → SELECT as in `getSyncStatus`; missing row, empty id without DB access, DELETE/SELECT/pool errors and a single 5 s timeout → all `null` with a warning); `details` handler (and CLI) using it instead of `getSyncStatus` (not called when DGT fails); `getSyncStatus` with missing row/errors/timeout → all `null`
 - **jobcard: JobcardSyncActivityRepository / index (`deleteSynch`)** – `deleteSynch` (conditional DELETE on `djcsynch IS FALSE` and `NULL` or empty `ack`/`techreason`/`businessreason`; deleted row with the DELETE only; no deleted row → SELECT of the outcome: existing row → `deleted: false` with the current outcome, missing row → `null`; normalized id, missing id → "is required" error without DB access, DB/pool errors propagated); handler: API Gateway POST event (REST and HTTP API v2, case-insensitive method), direct invocation and `id` alias, 200 response without token or DGT calls, `404` when the row does not exist, `409` with the current outcome in the message (even when it contains "is required"), `400` when `jobCardId` is missing, `502` on DB errors, `405` with the `Allow: POST` header for GET/DELETE without DB access
 
 #### pkEper / pkDocsoa / pkMenupricing / pkManager
@@ -1667,10 +1734,11 @@ cd agendaSoa && npm run test:coverage
 - **s3SessionRepository** – fetches and parses JSON from S3, extracts the section for the requested market (uppercased), `SessionNotFoundError` on missing market, S3 error handling (`NoSuchKey`/404/Code), invalid JSON, missing bucket configuration
 - **myPeopleDmsSessionRepository** – `username` flow: full myPeople→cache DB→session JSON mapping (`oics`/`applications`, `oics[].brandLogos` via `woc.anag_brand`, `oics[].brands` overridden from `woc.ang_snowflakes` via `getBrandsByOics` with fallback to myPeople's CSV, `oics[].address`/`oics[].zipcode`/`oics[].city` overridden from `woc.addr_snowflakes` via `getAddressByOics` with fallback to myPeople's own fields (`null` if neither source has data), disabled OICs (`enablewoc = 0` in `woc.hq_application_enabling`, via `getDisabledOics`) removed from `oics`, `oics[].feaEnabled` read from `woc.hq_application_enabling.enablesignature` via `getEnableSignatureByOics` (opt-in, `false` by default, right after `djcListParameter`), `companytypes`/`customertitles` from `woc.dml_configurations`, `OicEnabled` from the full `woc.hq_application_enabling` row set for `codmarket` via `getOicEnabled` (`[]` when `codmarket` is missing or the query fails, error logged but never propagated), `IsPkMarketEnabled` from the inverted (0→1, 1→0) `woc.hq_pk_market.deleted` flag for `codmarket` via `checkIsPkMarketEnabled` (`null` when `codmarket` is missing, no row exists yet, or the query fails, error logged but never propagated)), `isdml`/`dmlcustomerupdate`/`dmldiscount` read from the `woc.dms_settings` cache (never a live call), cache-miss auto-registers the `country`+`brand`+`dealer` combination into `woc.dms_settings_enabled_dealers` (best-effort, awaited, never blocks the session response), all DB reads fault-tolerant (safe defaults on error, no 502); see the Italian `README.md` for the full test list
 - **repositoryFactory** – builds the default instance and with overrides, for both `buildRepository` (S3) and `buildMyPeopleDmsRepository` (myPeople/DB cache)
+- **receptionistFeaResolver** – `receptionistFEA` read via REST `dbmanager/getDealerSign` with `[{ username }]` for dealers only, `null` without calls for HQ users or a missing `username`, `null` when the signature does not exist or the read fails (error logged, never propagated)
 
 #### synch-status
 - **index (handler)** – parses the `body` (JSON string or object), 400 on invalid JSON body; payload validation (required fields `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` among the 4 supported, `timestamp` ISO 8601) with 400 and error details; `eventType` → `djc_sync_status` mapping; **UPDATE-only** on `woc.comunication_asyncro_djc` (never INSERT) with `version` increment; 404 when the record does not exist (must be created first by another Lambda); 503 on Aurora connection error, 504 on query timeout, 500 on generic error; no token validation (security delegated to the IBM APIC gateway)
-- **jobcardSyncActivity** – UPDATE of `techreason`/`ack` (OK/KO from the 4 `eventType`s, `null` if unknown)/`lastupdate` then `businessreason`/`lastupdate` on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus` (also from the real `jobCardDetails` response); missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
+- **jobcardSyncActivity** – UPDATE of `techreason`/`ack` (OK/KO from the 4 `eventType`s, `null` if unknown)/`lastupdate` then `businessreason`/`lastupdate` (`COALESCE(DJC updateDateTime, now())`) on `woc.jobcard_sync_activity` by `jobcardid`; extraction of `jobCardDetail.roInfo.dmsSynchroStatus`/`dmsReturnMessage` and of `updateDateTime` normalized to ISO (empty/invalid → `null`), also from the real `jobCardDetails` response; missing row → `jobCardDetails` not called; UPDATE/`jobCardDetails` errors logged and never propagated
 - **config** – `getInstance()`/`reset()` singleton pattern, configuration structure (AWS/OAuth/APIC/Logging/Timeouts/API endpoints sections), environment resolution from env (`ENVIRONMENT`, default `dev`), `getByPath()` (nested paths, `null` when not found), log level handling
 
 #### dmlConfigSync

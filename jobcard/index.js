@@ -74,25 +74,36 @@
  *
  * "saveJobcard" (POST /jobCard) è la stessa azione esposta anche dalla lambda
  * djc (stessa "declinazione" della jobcard, stesso client PingFederate/DGT):
- * API Gateway instrada le richieste POST verso la lambda djc, ma il metodo è
- * disponibile anche qui (chiamata diretta/CLI, coerenza tra le due lambda).
+ * API Gateway instrada le richieste POST /api/repairorder/{proxy+} verso questa
+ * lambda; djc mantiene una copia allineata (chiamata diretta/CLI).
+ * Se la push precedente è stata accettata da DGT (djcsynch true) ma non ha
+ * ancora l'ack (NULL o vuoto), "saveJobcard" risponde 409 con code
+ * SYNC_ACK_PENDING senza scrivere sul DB né chiamare DGT/Naga; con
+ * ?force=true (in chiamata diretta anche body.force) la save procede e viene
+ * loggata con il sub dell'authorizer.
  *
  * Le risposte di "details" e "saveJobcard" includono djcsynch/ack/techReason/
  * businessReason, letti da woc.jobcard_sync_activity per jobcardid: djcsynch è
  * l'esito dell'ultima chiamata saveJobcard verso DGT (true se DGT ha risposto
  * success: true, false se ha risposto altrimenti o la chiamata è fallita, null
  * se non ancora noto), ack/techReason/businessReason l'esito della
- * sincronizzazione popolato da synch-status (stringa vuota se assente): in
- * "details" prima di jobCardDetail, in "saveJobcard" in coda alla risposta DGT
- * (con djcsynch della chiamata appena eseguita).
+ * sincronizzazione popolato da synch-status (stringa vuota se assente; tutti i
+ * campi null se la riga non c'è o non è leggibile): in "details" prima di
+ * jobCardDetail, in "saveJobcard" in coda alla risposta DGT (con djcsynch
+ * della chiamata appena eseguita). Includono anche updateDateTime: ora
+ * dell'ultimo salvataggio su DJC letta da synch-status insieme all'esito
+ * (colonna lastupdate, ISO 8601), solo con ack OK/KO, altrimenti null.
+ * In "details", se la riga ha djcsynch true e ack KO (esito DMS negativo), la
+ * riga viene eliminata (DELETE atomica, best-effort con lo stesso timeout di
+ * 5 s) e tutti i campi sono restituiti null: la jobcard riparte da grigio.
  *
  * "lastPayload" (GET /api/repairorder/lastPayload?jobCardId=...) restituisce
  * l'ultimo payload saveJobcard inviato a DGT per la jobcard (colonna payload di
  * woc.jobcard_sync_activity, registrata prima dell'invio): serve a recuperare
  * le modifiche inviate in delta quando l'aggiornamento verso DJC/DGT fallisce.
- * Include anche djcsynch/ack/techReason/businessReason della stessa riga (tra
- * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri),
- * letti con la stessa SELECT.
+ * Include anche djcsynch/ack/techReason/businessReason/updateDateTime della stessa riga (tra
+ * jobCardId e payload; NULL -> null per djcsynch, stringa vuota per gli altri,
+ * updateDateTime come sopra), letti con la stessa SELECT.
  * Dopo la lettura, se djcsynch è false e ack/techReason/businessReason sono
  * vuoti, elimina la riga (stesse condizioni di "deleteSynch", ricontrollate
  * dalla DELETE) e lo segnala con deleted: true; best-effort: un errore della
@@ -501,9 +512,37 @@ async function syncAppointmentsToNaga(payload, username) {
  * propagato e il payload NON viene inviato a DGT.
  * @returns {Promise<{jobcardid: string, creationdate: Date}>} la riga registrata
  */
-async function recordJobCardSyncActivity(jobCardPayload) {
+async function recordJobCardSyncActivity(jobCardPayload, force = false) {
   const { recordSyncActivity } = require('./JobcardSyncActivityRepository');
-  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload));
+  return recordSyncActivity(sanitizeJobCardPayload(jobCardPayload), { force });
+}
+
+/**
+ * Save forzata (popup "Forza salvataggio" del FE): da API Gateway solo query
+ * string ?force=true; in invocazione diretta (event.action) anche body.force
+ * (true o 'true').
+ * @returns {boolean}
+ */
+function resolveSaveForce(event, body) {
+  if (event?.queryStringParameters?.force === 'true') return true;
+  return Boolean(event?.action) && (body?.force === true || body?.force === 'true');
+}
+
+/**
+ * Corpo della risposta 409 della save bloccata: la push precedente è stata
+ * accettata da DGT (djcsynch true) ma non ha ancora l'ack.
+ */
+function buildAckPendingBody(message) {
+  return {
+    success: false,
+    code: 'SYNC_ACK_PENDING',
+    message,
+    djcsynch: true,
+    ack: '',
+    techReason: '',
+    businessReason: '',
+    updateDateTime: null,
+  };
 }
 
 /**
@@ -539,12 +578,14 @@ async function saveJobCardWithDjcSynch(jobCardPayload, jobCardId, token) {
  * sincronizzazione popolato da synch-status): prima di jobCardDetail per
  * "details", in coda per "saveJobcard". djcsynch, se passato (saveJobcard),
  * sostituisce il valore letto dal DB con l'esito della chiamata appena
- * eseguita. Best-effort: un errore DB lascia i campi vuoti (djcsynch null)
- * senza far fallire la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ * eseguita. Best-effort: un errore DB lascia i campi a null senza far fallire
+ * la risposta (v. JobcardSyncActivityRepository.getSyncStatus).
+ * Con deleteKo (solo "details") l'esito è letto con getDetailsSyncStatus, che
+ * prima elimina la riga con djcsynch true e ack KO (campi tutti null).
  */
-async function addJobCardSyncStatus(body, jobCardId, djcsynch) {
-  const { getSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
-  const syncStatus = await getSyncStatus(jobCardId);
+async function addJobCardSyncStatus(body, jobCardId, djcsynch, { deleteKo = false } = {}) {
+  const { getSyncStatus, getDetailsSyncStatus, withSyncStatus } = require('./JobcardSyncActivityRepository');
+  const syncStatus = await (deleteKo ? getDetailsSyncStatus : getSyncStatus)(jobCardId);
   return withSyncStatus(body, djcsynch === undefined ? syncStatus : { ...syncStatus, djcsynch });
 }
 
@@ -587,6 +628,7 @@ async function getJobCardLastPayload(jobCardId) {
     ack: lastPayload.ack,
     techReason: lastPayload.techReason,
     businessReason: lastPayload.businessReason,
+    updateDateTime: lastPayload.updateDateTime,
     deleted,
     payload: lastPayload.payload,
   };
@@ -709,10 +751,21 @@ exports.handler = async (event) => {
       // token): market/oic da query string (GET) o body; market mancante -> 400.
       result = await getDealerConfiguration(body.market, body.oic);
     } else if (action === 'saveJobcard') {
-      const jobCardPayload = body.payload ?? body;
+      const force = resolveSaveForce(event, body);
+      // force non fa parte del payload: va tolto prima di body.payload ?? body
+      // (il dispatcher unisce query string e body), altrimenti verrebbe salvato
+      // in payload e inviato a DGT.
+      const { force: _force, ...saveBody } = body;
+      const jobCardPayload = saveBody.payload ?? saveBody;
       // Prima dell'invio a DGT (e prima del token): errore DB -> 502,
-      // id jobcard mancante -> 400 ("is required").
-      const syncActivity = await recordJobCardSyncActivity(jobCardPayload);
+      // id jobcard mancante -> 400 ("is required"), push precedente senza ack
+      // e senza force -> 409 SYNC_ACK_PENDING (nessuna scrittura, nessuna
+      // chiamata DGT/Naga, nessun recordDjcSynch).
+      const syncActivity = await recordJobCardSyncActivity(jobCardPayload, force);
+      if (force) {
+        // Audit della save forzata: sub SEMPRE dall'authorizer, mai dal body.
+        console.warn(`[jobCard] saveJobcard forced jobcardid=${syncActivity?.jobcardid} sub=${event?.requestContext?.authorizer?.sub ?? 'n/a'}`);
+      }
       // Token + invio a DGT: esito registrato in djcsynch, false anche quando
       // token/DGT falliscono (errore poi propagato invariato -> 502).
       const { saved, djcsynch } = await saveJobCardWithDjcSynch(jobCardPayload, syncActivity?.jobcardid);
@@ -727,7 +780,8 @@ exports.handler = async (event) => {
       } else if (action === 'details') {
         const jobCardId = body.jobCardId ?? body.id;
         const details = await getJobCardDetails(token, jobCardId, resolveSessionContext(event, body));
-        result = await addJobCardSyncStatus(details, jobCardId);
+        // Riga con djcsynch true e ack KO eliminata: campi di sync tutti null.
+        result = await addJobCardSyncStatus(details, jobCardId, undefined, { deleteKo: true });
       }
     }
 
@@ -737,6 +791,15 @@ exports.handler = async (event) => {
       body: JSON.stringify(result),
     };
   } catch (err) {
+    // isAckPending: save bloccata perché la push precedente attende l'ack
+    // (409 SYNC_ACK_PENDING, riconoscibile dal FE che può forzarla).
+    if (err.isAckPending) {
+      return {
+        statusCode: 409,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildAckPendingBody(err.message)),
+      };
+    }
     // isRecordNotFound: jobcard senza riga registrata (azioni lastPayload e
     // deleteSynch); isConflict: riga non eliminabile (deleteSynch). isConflict
     // precede "is required": il messaggio 409 riporta businessReason, testo
@@ -791,7 +854,7 @@ async function runDetails(jobCardId) {
   console.log('\n=== JobCard Details ===');
   const token = await getBearerToken();
   const details = await getJobCardDetails(token, jobCardId);
-  const result = await addJobCardSyncStatus(details, jobCardId);
+  const result = await addJobCardSyncStatus(details, jobCardId, undefined, { deleteKo: true });
   console.log(JSON.stringify(result, null, 2));
   return result;
 }

@@ -17,6 +17,7 @@ jest.mock('../JobcardSyncActivityRepository', () => ({
   recordSyncActivity: jest.fn(),
   recordDjcSynch: jest.fn(),
   getSyncStatus: jest.fn(),
+  getDetailsSyncStatus: jest.fn(),
   getLastPayload: jest.fn(),
   deleteSynch: jest.fn(),
 }));
@@ -28,7 +29,7 @@ const {
   saveJobCard, getJobCardDetails, getJobCardList, getJobCardListCurrent, getDataFromDMLFromTmp, getDealerConfiguration,
 } = require('../jobCardService');
 const {
-  recordSyncActivity, recordDjcSynch, getSyncStatus, getLastPayload, deleteSynch,
+  recordSyncActivity, recordDjcSynch, getSyncStatus, getDetailsSyncStatus, getLastPayload, deleteSynch,
 } = require('../JobcardSyncActivityRepository');
 const { handler } = require('../index');
 
@@ -58,6 +59,7 @@ describe('jobcard REST consumers', () => {
     recordSyncActivity.mockResolvedValue({ jobcardid: 'SRP-1', creationdate: new Date('2026-09-30T10:00:00Z') });
     recordDjcSynch.mockResolvedValue(true);
     getSyncStatus.mockResolvedValue(syncStatus);
+    getDetailsSyncStatus.mockResolvedValue(syncStatus);
     callService.mockImplementation(async (service, operation) => {
       if (service === 'session') return session;
       if (operation === 'createnaga') return { success: true, data: { rdvId: 'NEW-AP' } };
@@ -233,6 +235,91 @@ describe('jobcard REST consumers', () => {
     [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus].forEach((fn) => expect(fn).not.toHaveBeenCalled());
   });
 
+  describe('saveJobcard blocked while the previous push waits for its ack (SYNC_ACK_PENDING)', () => {
+    const ackPendingError = () => Object.assign(
+      new Error('[jobCard] save blocked for jobCardId SRP-1: previous synchronization not acknowledged yet'),
+      { isAckPending: true, jobCardId: 'SRP-1' },
+    );
+    const apiEvent = (payload, queryStringParameters, sub = 'trusted') => ({
+      httpMethod: 'POST',
+      path: '/api/repairorder/saveJobcard',
+      queryStringParameters,
+      body: JSON.stringify(payload),
+      requestContext: { authorizer: { sub } },
+    });
+
+    test('answers 409 SYNC_ACK_PENDING without calling DGT/Naga nor recording djcsynch', async () => {
+      recordSyncActivity.mockRejectedValueOnce(ackPendingError());
+
+      const response = await handler(apiEvent(makePayload()));
+
+      expect(response.statusCode).toBe(409);
+      expect(response.headers).toEqual({ 'Content-Type': 'application/json' });
+      expect(JSON.parse(response.body)).toEqual({
+        success: false,
+        code: 'SYNC_ACK_PENDING',
+        message: '[jobCard] save blocked for jobCardId SRP-1: previous synchronization not acknowledged yet',
+        djcsynch: true,
+        ack: '',
+        techReason: '',
+        businessReason: '',
+        updateDateTime: null,
+      });
+      expect(recordSyncActivity).toHaveBeenCalledWith(makePayload(), { force: false });
+      [getBearerToken, saveJobCard, recordDjcSynch, getSyncStatus, callService].forEach((fn) => expect(fn).not.toHaveBeenCalled());
+      expect(console.warn).not.toHaveBeenCalled();
+    });
+
+    test('?force=true forces the save, strips force from the payload and logs the authorizer sub', async () => {
+      const payload = makePayload([]);
+
+      const response = await handler(apiEvent(payload, { force: 'true' }));
+
+      expect(response.statusCode).toBe(200);
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload, { force: true });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload);
+      expect(saveJobCard.mock.calls[0][1]).not.toHaveProperty('force');
+      expect(recordDjcSynch).toHaveBeenCalledWith('SRP-1', true);
+      expect(console.warn).toHaveBeenCalledWith('[jobCard] saveJobcard forced jobcardid=SRP-1 sub=trusted');
+    });
+
+    test.each([
+      [{ force: 'false' }],
+      [{ force: 'TRUE' }],
+      [undefined],
+    ])('query string %p does not force the save', async (query) => {
+      await handler(apiEvent(makePayload([]), query));
+      expect(recordSyncActivity).toHaveBeenCalledWith(makePayload([]), { force: false });
+      expect(saveJobCard.mock.calls[0][1]).not.toHaveProperty('force');
+      expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining('forced'));
+    });
+
+    test('ignores force in the JSON body of an API Gateway request', async () => {
+      await handler(apiEvent({ ...makePayload([]), force: true }));
+      expect(recordSyncActivity).toHaveBeenCalledWith(makePayload([]), { force: false });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', makePayload([]));
+    });
+
+    test.each([true, 'true'])('direct invocation accepts body.force (%p) and never logs a body identity as sub', async (force) => {
+      const payload = makePayload([]);
+
+      const response = await handler({ action: 'saveJobcard', body: { payload, force, username: 'local' } });
+
+      expect(response.statusCode).toBe(200);
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload, { force: true });
+      expect(console.warn).toHaveBeenCalledWith('[jobCard] saveJobcard forced jobcardid=SRP-1 sub=n/a');
+    });
+
+    test('direct invocation with an unwrapped payload strips force before saving', async () => {
+      const payload = makePayload([]);
+
+      await handler({ action: 'saveJobcard', body: { ...payload, force: false } });
+
+      expect(recordSyncActivity).toHaveBeenCalledWith(payload, { force: false });
+      expect(saveJobCard).toHaveBeenCalledWith('local-dgt-token', payload);
+    });
+  });
+
   test('saveJobcard still answers with the DGT outcome when recording djcsynch fails (best-effort)', async () => {
     recordDjcSynch.mockResolvedValueOnce(false);
 
@@ -260,14 +347,15 @@ describe('jobcard REST consumers', () => {
       ...syncStatus, jobCardDetail,
     }));
     expect(getJobCardDetails).toHaveBeenCalledWith('local-dgt-token', jobCardId, expect.objectContaining({ username: null }));
-    expect(getSyncStatus).toHaveBeenCalledWith(jobCardId);
+    expect(getDetailsSyncStatus).toHaveBeenCalledWith(jobCardId);
+    expect(getSyncStatus).not.toHaveBeenCalled();
     expect(details).not.toHaveProperty('ack');
     expect(recordDjcSynch).not.toHaveBeenCalled();
   });
 
   test.each([false, null])('details returns djcsynch as read from the DB (%p)', async (djcsynch) => {
     getJobCardDetails.mockResolvedValueOnce({ success: true, jobCardDetail: {} });
-    getSyncStatus.mockResolvedValueOnce({ ...syncStatus, djcsynch });
+    getDetailsSyncStatus.mockResolvedValueOnce({ ...syncStatus, djcsynch });
 
     const response = await handler({ action: 'details', body: { jobCardId: 'JCID-84506' } });
 
@@ -281,6 +369,20 @@ describe('jobcard REST consumers', () => {
 
     expect(response.statusCode).toBe(502);
     expect(getSyncStatus).not.toHaveBeenCalled();
+    expect(getDetailsSyncStatus).not.toHaveBeenCalled();
+  });
+
+  test('details returns all sync fields null when the KO row has been deleted', async () => {
+    const jobCardDetail = { roInfo: { jobCardSrpId: 'JCID-84506' } };
+    getJobCardDetails.mockResolvedValueOnce({ success: true, jobCardDetail });
+    getDetailsSyncStatus.mockResolvedValueOnce({ djcsynch: null, ack: null, techReason: null, businessReason: null });
+
+    const response = await handler({ action: 'details', body: { jobCardId: 'JCID-84506' } });
+
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({
+      success: true, djcsynch: null, ack: null, techReason: null, businessReason: null, jobCardDetail,
+    });
   });
 
   test.each([
@@ -308,13 +410,15 @@ describe('jobcard REST consumers', () => {
     [{ action: 'lastPayload', body: { id: 'JCID-84522' } }, 'JCID-84522'],
   ])('lastPayload returns the last payload sent to DGT and its sync outcome, reading only the DB (case %#)', async (event, jobCardId) => {
     const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
-    const outcome = { djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable' };
+    const outcome = {
+      djcsynch: false, ack: 'KO', techReason: 'FAILED', businessReason: 'FAILED - DMS unavailable', updateDateTime: '2026-10-13T09:55:05.000Z',
+    };
     getLastPayload.mockResolvedValueOnce({ jobCardId, ...outcome, payload });
 
     const response = await handler(event);
 
     expect(response.statusCode).toBe(200);
-    // toBe sulla stringa JSON: verifica anche l'ordine (djcsynch/ack/techReason/businessReason/deleted tra jobCardId e payload)
+    // toBe sulla stringa JSON: verifica anche l'ordine (djcsynch/ack/techReason/businessReason/updateDateTime/deleted tra jobCardId e payload)
     expect(response.body).toBe(JSON.stringify({
       statusCode: 200,
       success: true,
@@ -324,6 +428,7 @@ describe('jobcard REST consumers', () => {
       ack: 'KO',
       techReason: 'FAILED',
       businessReason: 'FAILED - DMS unavailable',
+      updateDateTime: '2026-10-13T09:55:05.000Z',
       deleted: false,
       payload,
     }));
@@ -344,7 +449,7 @@ describe('jobcard REST consumers', () => {
   ])('lastPayload deletes the row after reading the payload when djcsynch is false and the sync outcome is empty (case %#)', async (event, jobCardId) => {
     const payload = { roInfo: { jobCardSrpId: jobCardId }, jobs: [{ jobDescription: 'Service' }] };
     getLastPayload.mockResolvedValueOnce({
-      jobCardId, djcsynch: false, ack: '', techReason: '', businessReason: '', payload,
+      jobCardId, djcsynch: false, ack: '', techReason: '', businessReason: '', updateDateTime: null, payload,
     });
     deleteSynch.mockResolvedValueOnce({ jobCardId, deleted: true });
 
@@ -360,6 +465,7 @@ describe('jobcard REST consumers', () => {
       ack: '',
       techReason: '',
       businessReason: '',
+      updateDateTime: null,
       deleted: true,
       payload,
     }));

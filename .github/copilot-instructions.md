@@ -57,8 +57,9 @@ Most Lambda `index.js` files resolve `{ action, body }` from either:
    segment and merging query-string params with a JSON body.
 
 `jobcard` and `djc` share the same PingFederate/DGT client and the
-`saveJobcard` action (POST is routed to `djc` by API Gateway, but the method
-also exists in `jobcard` for CLI/direct-invocation parity).
+`saveJobcard` action (POST `/api/repairorder/{proxy+}` is routed to `jobcard`
+by API Gateway; `djc` keeps an aligned copy of the method for CLI/direct
+invocation).
 
 ## Build, test, lint
 

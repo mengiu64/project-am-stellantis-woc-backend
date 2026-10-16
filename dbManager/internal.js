@@ -6,9 +6,10 @@ const snowflakes = require('./AnagSnowflakesRepository');
 const hq = require('./HqRepository');
 const { getPkwstouse } = require('./PkConfigRepository');
 const { getConfigPackages } = require('./ConfigPackagesRepository');
+const { getDealerSign } = require('./DealerSignRepository');
 
 const poolOperations = {
-  getPkwstouse, getConfigPackages,
+  getPkwstouse, getConfigPackages, getDealerSign,
   getCountryIsoCode: snowflakes.getCountryIsoCode,
   getPhysicalSiteAndSincom: snowflakes.getPhysicalSiteAndSincom,
   getPhysicalSiteAndPdvId: snowflakes.getPhysicalSiteAndPdvId,
