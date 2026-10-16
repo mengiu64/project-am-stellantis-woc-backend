@@ -412,7 +412,7 @@ async function getPriceAndAvailability(documentId, customerId, vehicleId, market
     market: resolved.market,
     serviceId: username,
   };
-  return callService('dms', 'inquiry', {
+  const request = {
     PartsInquiryHeader: {
       DocumentID: documentId,
       CustomerIdDms: customerId,
@@ -426,7 +426,9 @@ async function getPriceAndAvailability(documentId, customerId, vehicleId, market
       laborOperationIds: [],
     }],
     sender,
-  });
+  };
+  console.log(`[searchQuote] inquiry request: ${JSON.stringify(request)}`);
+  return callService('dms', 'inquiry', request);
 }
 
 // availability = QuantityAvailable del primo BinLocation di ciascun PartsItem
