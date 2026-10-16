@@ -50,6 +50,9 @@ Parameters:
   SynchStatusRoleName:
     Type: String
     Description: Nome (non ARN) del ruolo execution della Lambda SynchStatus
+  WyzRoleName:
+    Type: String
+    Description: Nome (non ARN) del ruolo execution della Lambda Wyz
 Resources:
   InternalConfigSecretReadPolicy:
     Type: AWS::IAM::Policy
@@ -66,6 +69,7 @@ Resources:
         - Ref: HqManagerRoleName
         - Ref: DmlConfigSyncRoleName
         - Ref: SynchStatusRoleName
+        - Ref: WyzRoleName
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -533,6 +537,23 @@ Resources:
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/pkdocsoa/ibxDetailtpService
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/pkmenupricing/getCompletePkMpList
           - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/pkmenupricing/getJobDetails
+  WyzRestPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName:
+        Fn::Sub: woc-${Environment}-wyz-internal-rest
+      Roles:
+      - Ref: WyzRoleName
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action: execute-api:Invoke
+          Resource:
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/session/getData
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/session/getContext
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dms/resolveSender
+          - Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApiId}/${StageName}/POST/internal/dms/inquiry
   PkFavoriteRestPolicy:
     Type: AWS::IAM::Policy
     Properties:

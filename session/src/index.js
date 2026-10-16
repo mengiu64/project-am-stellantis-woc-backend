@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('./repositoryFactory');
 const { resolveHqMarketsList } = require('./hqMarketsResolver');
+const { getOrCreateSessionData } = require('./sessionContextCache');
 const { isInternalRequest } = require('../../serviceClient');
 
 const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
@@ -23,6 +24,14 @@ const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
  * Se l'authorizer non ha valorizzato `sub` (richiesta non autenticata / authorizer
  * non configurato), la Lambda risponde 401 senza interrogare alcun repository.
  *
+ * Per gli utenti dealer i dati passano dalla cache condivisa DynamoDB (chiave
+ * session:context:<username>, la stessa di getData/getContext, TTL
+ * SESSION_CONTEXT_CACHE_TTL_MS, default 5 min): prima si legge la cache e, solo
+ * se assente o scaduta, si interrogano myPeople/dms e si salva il risultato
+ * (v. sessionContextCache.js::getOrCreateSessionData). In cache vanno i dati
+ * del repository; hqCentral/hqMarket/dealer/hqMarketsList/userroles vengono
+ * aggiunti a ogni richiesta dai ruoli correnti (v. insertAfterProfile).
+ *
  * @param {object} [event] - Evento Lambda (API Gateway proxy).
  * @returns {Promise<object>} { statusCode, body }
  */
@@ -39,7 +48,6 @@ async function handler(event = {}) {
   }
 
   try {
-    const repository = buildMyPeopleDmsRepository();
     // I ruoli vengono verificati PRIMA di interpellare myPeople: se indicano gia'
     // un utente HQ (hqCentral/hqMarket), il repository salta del tutto la
     // chiamata a myPeople (che comunque non modella utenti HQ, v.
@@ -50,7 +58,14 @@ async function handler(event = {}) {
     // `profile` (parsato da authorizer.profile, v. getAuthContext) viene passato
     // solo per valorizzare firstname/lastname degli utenti HQ (given_name/family_name),
     // che altrimenti resterebbero null: v. MyPeopleDmsSessionRepository::buildHqSessionData.
-    const data = await repository.getSessionData(sub, profile, roleFlags);
+    const buildSessionData = (username) => buildMyPeopleDmsRepository()
+      .getSessionData(username, profile, roleFlags);
+    // Gli utenti HQ restano fuori dalla cache: la loro sessione non richiede
+    // chiamate esterne e firstname/lastname arrivano dal profilo
+    // dell'authorizer, che getData (invocato senza profilo) non conosce.
+    const data = roleFlags.dealer
+      ? await getOrCreateSessionData(sub, buildSessionData)
+      : await buildSessionData(sub);
     // `userroles` (array) e' il ruolo/i ruoli dell'utente autenticato, presi
     // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di

@@ -494,11 +494,16 @@ Resources:
   # mutual TLS con gli STESSI secret cert/key di AgendaSoaFunction
   # (sm-np-bsn0027990-${Environment}-apic-cert/-apic-key), letti tramite il layer
   # AWS Parameters and Secrets Lambda Extension; Basic Auth e client_id nel secret wyz.
+  # searchQuote arricchisce i risultati via REST interno IAM (session, dms): packaging
+  # isolato wyz + serviceClient + runtimeConfig (Makefile), secret in WOC_INTERNAL_CONFIG_SECRET_ID globale.
   WyzFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-wyz"
-      CodeUri: wyz/
+      CodeUri: ./
+      Handler: wyz/index.handler
       # Layer Secrets Extension (localhost:2773) per il recupero dei secret mTLS di getStockPrix
       Layers:
         - !Ref MyPeopleExtensionLayerArn
@@ -1344,6 +1349,8 @@ Outputs:
     Value: !Ref DjcFunctionRole
   InternalSessionRoleName:
     Value: !Ref SessionFunctionRole
+  InternalWyzRoleName:
+    Value: !Ref WyzFunctionRole
   InternalHqManagerRoleName:
     Value: !Ref HqManagerFunctionRole
   InternalDmlConfigSyncRoleName:

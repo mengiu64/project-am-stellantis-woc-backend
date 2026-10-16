@@ -20,8 +20,9 @@ const backendOutputs = JSON.stringify(roles.map((key) => ({ OutputKey: `Internal
 afterEach(() => jest.resetAllMocks());
 
 test('only execution-role parameters are overridden; API, root and stage keep their previous values', () => {
-  expect(roles).toHaveLength(9);
+  expect(roles).toHaveLength(10);
   expect(roles).toContain('HqManagerRoleName');
+  expect(roles).toContain('WyzRoleName');
   expect(roles).not.toEqual(expect.arrayContaining(['Environment', 'RestApiId', 'RootResourceId', 'StageName']));
   expect(parameterOverrides(template, parseOutputs(backendOutputs)))
     .toEqual(roles.map((key) => `${key}=current-${key}`));
