@@ -6,14 +6,19 @@ const snowflakes = require('./AnagSnowflakesRepository');
 const hq = require('./HqRepository');
 const { getPkwstouse } = require('./PkConfigRepository');
 const { getConfigPackages } = require('./ConfigPackagesRepository');
+const { getDealerSign } = require('./DealerSignRepository');
 
 const poolOperations = {
-  getPkwstouse, getConfigPackages,
+  getPkwstouse, getConfigPackages, getDealerSign,
   getCountryIsoCode: snowflakes.getCountryIsoCode,
   getPhysicalSiteAndSincom: snowflakes.getPhysicalSiteAndSincom,
   getPhysicalSiteAndPdvId: snowflakes.getPhysicalSiteAndPdvId,
   getBrandsByOics: snowflakes.getBrandsByOics,
   getMarkets: snowflakes.getMarkets,
+  insertdmsSnowflakes: snowflakes.insertdmsSnowflakes,
+  insertLegalentitySnowflakes: snowflakes.insertLegalentitySnowflakes,
+  insertAddrSnowflakes: snowflakes.insertAddrSnowflakes,
+  insertAnagSnowflakes: snowflakes.insertAnagSnowflakes,
   getEnablingConfiguration: hq.getEnablingConfiguration,
   setEnablingConfiguration: hq.setEnablingConfiguration,
   getOicEnabled: hq.getOicEnabled,

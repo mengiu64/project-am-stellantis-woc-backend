@@ -101,8 +101,7 @@ CREATE TABLE woc.hq_settings_email
     updated_at       TIMESTAMPTZ  NOT NULL DEFAULT now(),
 
     CONSTRAINT pk_hq_settings_email PRIMARY KEY (id),
-    CONSTRAINT uk_hq_settings_email_oic_dealer UNIQUE (oic_code, market, dealership_code),
-    CONSTRAINT uk_hq_settings_email_dealer_market UNIQUE (dealership_code, market)
+    CONSTRAINT uk_hq_settings_email_oic_dealer UNIQUE (oic_code, market, dealership_code)
 );
 
 COMMENT ON TABLE  woc.hq_settings_email IS 'Email (firma e DPO) configurate dagli utenti HQ per le dealership dello stesso OIC (WOC-201)';
@@ -116,9 +115,6 @@ COMMENT ON COLUMN woc.hq_settings_email.created_at       IS 'Timestamp creazione
 COMMENT ON COLUMN woc.hq_settings_email.updated_at       IS 'Timestamp ultimo aggiornamento (UPDATED_DATE)';
 COMMENT ON CONSTRAINT uk_hq_settings_email_oic_dealer ON woc.hq_settings_email
     IS 'Una sola configurazione email per tripla (oic_code, market, dealership_code)';
-COMMENT ON CONSTRAINT uk_hq_settings_email_dealer_market ON woc.hq_settings_email
-    IS 'Coppia (dealership_code, market) univoca: non possono esistere 2 record con stessi dealership_code e market';
-
 CREATE TRIGGER insert_hq_settings_email_created_at
     BEFORE INSERT ON woc.hq_settings_email
     FOR EACH ROW EXECUTE FUNCTION woc.set_created_at_timestamp();

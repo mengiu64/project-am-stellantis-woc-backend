@@ -13,6 +13,11 @@ jest.mock('../config', () => ({
   getConfig: async () => ({ api: { baseUrl: mockBaseUrl }, partner: 'WIADVISOR', timeoutMs: 1000 }),
 }));
 
+const mockCallService = jest.fn();
+const mockStockPrix = jest.fn();
+jest.mock('../../serviceClient', () => ({ callService: (...a) => mockCallService(...a) }));
+jest.mock('../stockPrixService', () => ({ getStockPrix: (...a) => mockStockPrix(...a) }));
+
 const { getSearchFilters, searchQuote, WyzError, mapStatus } = require('../wyzService');
 
 const ok = (data) => ({ statusCode: 200, body: { data } });
@@ -176,11 +181,12 @@ describe('wyzService', () => {
     };
 
     it('invia il POST con i soli campi ammessi e restituisce data', async () => {
-      mockHttps.mockResolvedValue(ok({ items: [{ a: 1 }, { a: 2 }] }));
+      const hub = [{ name: 'Hub' }];
+      mockHttps.mockResolvedValue(ok({ items: [{ a: 1, stocks: hub }, { a: 2, stocks: hub }] }));
 
       const data = await searchQuote(valid, { correlationId: 'cid' });
 
-      expect(data).toEqual({ items: [{ a: 1 }, { a: 2 }] });
+      expect(data).toEqual({ items: [{ a: 1, stocks: [{ name: 'Hub' }] }, { a: 2, stocks: [{ name: 'Hub' }] }] });
       const [options, bodyStr] = mockHttps.mock.calls[0];
       expect(options).toMatchObject({
         hostname: 'api.wyz.test', port: 443, method: 'POST', timeout: 1000,
@@ -249,6 +255,107 @@ describe('wyzService', () => {
     it('body non oggetto -> 502', async () => {
       mockHttps.mockResolvedValue({ statusCode: 200, body: 'html' });
       await expect(searchQuote(valid)).rejects.toMatchObject({ statusCode: 502 });
+    });
+  });
+
+  describe('searchQuote: arricchimento', () => {
+    const valid = {
+      customerRrdiCode: 'C1', hubCode: 'H1', width: 205, height: 55, diameter: 16, quantity: 2,
+      vehicleTypes: ['t1'], vehicleBrands: ['vb1'],
+    };
+    const mk = (reference, status, stocks) => ({ status, tyre: { reference }, stocks });
+    const ctx = { authorizer: { sub: 'user1' } };
+
+    beforeEach(() => {
+      mockCallService.mockImplementation(async (svc, op) => {
+        if (op === 'getData') return { locale: 'it_IT', brandvehic_reftech: 'AP', codmarket: '1000', username: 'user1' };
+        if (op === 'getContext') return { mainSincom: 'S1', market: '1000', language: 'it', dealerCountryCode: 'IT' };
+        if (op === 'resolveSender') return { mainSincom: 'S1', dealerCountryCode: 'IT', language: 'it', brand: 'AP', market: '1000' };
+        return {
+          WorkLines: [{ PartsItem: [
+            { PartNumber: 'A', BinLocation: [{ QuantityAvailable: 7 }, { QuantityAvailable: 9 }] },
+            { PartNumber: 'ZZ', BinLocation: [{ QuantityAvailable: 1 }] },
+            { PartNumber: 'C' },
+            null,
+          ] }, null],
+        };
+      });
+      mockStockPrix.mockResolvedValue({ items: [
+        { partReference: 'A', priceTTC: 150 }, { partReference: 'B', priceTTC: 50 },
+        { partReference: 'C', priceTTC: null }, { partReference: 'ZZ', priceTTC: 1 }, null,
+      ] });
+    });
+
+    it('filtra EMPTY_STOCK e arricchisce i tyre', async () => {
+      mockHttps.mockResolvedValue(ok({ items: [
+        mk('A', 'AVAILABLE_STOCK', [
+          { name: 'Tyre producer', sellingPrice: 100, bf: 1 },
+          { name: 'Hub', sellingPrice: '', bf: 120 },
+        ]),
+        mk('B', 'AVAILABLE_STOCK', [{ name: 'Tyre producer', sellingPrice: 80 }]),
+        mk('C', 'AVAILABLE_STOCK', [{ name: 'Other', sellingPrice: 80 }]),
+        mk('D', 'EMPTY_STOCK', []),
+        mk('E', 'AVAILABLE_STOCK', 'x'),
+        mk('F', 'AVAILABLE_STOCK', [{ name: ' hub ', sellingPrice: null, bf: 'n/a' }]),
+        mk('G', 'AVAILABLE_STOCK', [{ name: 'Other' }, { name: 'Tyre producer', sellingPrice: 5 }]),
+        mk(undefined, 'AVAILABLE_STOCK', []),
+        {},
+      ] }));
+
+      const data = await searchQuote(valid, ctx);
+
+      expect(data.items.map((i) => i.tyre?.reference)).toEqual(['A', 'B', 'F', 'G']);
+      const [a, b, f] = data.items.map((i) => i.tyre);
+      expect(a).toMatchObject({ wyzPrice: 120, StockPrixBuyingPrice: 150, maxAllowableDiscount: 0, availability: 7 });
+      expect(b).toMatchObject({ wyzPrice: 80, StockPrixBuyingPrice: 50, maxAllowableDiscount: 30, availability: null });
+      expect(f.wyzPrice).toBeNull();
+      const arg = mockStockPrix.mock.calls[0][0];
+      expect(arg).toMatchObject({ country: 'IT', brand: 'AP', dealerId: '345678A', vin: 'VF3CABHW6GT204366' });
+      expect(arg.partLines).toHaveLength(4);
+      expect(mockStockPrix.mock.calls[0][1]).toBe(ctx);
+    });
+
+    it('username dal body solo senza authorizer; errore se assente', async () => {
+      mockHttps.mockResolvedValue(ok({ items: [mk('A', 'AVAILABLE_STOCK', [{ name: 'Hub' }])] }));
+      await searchQuote({ ...valid, username: 'cli' });
+      expect(mockCallService).toHaveBeenCalledWith('session', 'getData', { args: ['cli'] });
+      await expect(searchQuote(valid)).rejects.toMatchObject({ statusCode: 400 });
+      mockCallService.mockClear();
+      await searchQuote({ ...valid, username: 'evil' }, ctx);
+      expect(mockCallService).toHaveBeenCalledWith('session', 'getData', { args: ['user1'] });
+    });
+
+    it('tronca a 10 le righe inviate a getStockPrix', async () => {
+      const items = Array.from({ length: 120 }, (_, i) => mk(`P${i}`, 'AVAILABLE_STOCK', [{ name: 'Hub' }]));
+      mockHttps.mockResolvedValue(ok({ items }));
+      await searchQuote(valid, ctx);
+      const arg = mockStockPrix.mock.calls[0][0];
+      expect(arg.partLines).toHaveLength(10);
+      expect(arg.partLines[9].partReference).toBe('P9');
+    });
+
+    it('errori di getStockPrix/inquiry lasciano i campi null', async () => {
+      mockStockPrix.mockRejectedValue(new Error('boom'));
+      mockCallService.mockImplementation(async (svc, op) => {
+        if (op === 'getData') return {};
+        if (op === 'getContext') return {};
+        throw new Error('dms down');
+      });
+      mockHttps.mockResolvedValue(ok({ items: [mk('A', 'AVAILABLE_STOCK', [{ name: 'Hub', sellingPrice: 10 }])] }));
+      const data = await searchQuote(valid, ctx);
+      expect(data.items[0].tyre).toMatchObject({ wyzPrice: 10, StockPrixBuyingPrice: null, availability: null });
+    });
+
+    it('risposta senza dettagli/WorkLines e sessione vuota', async () => {
+      mockStockPrix.mockResolvedValue({});
+      mockCallService.mockImplementation(async (svc, op) => {
+        if (op === 'getData' || op === 'getContext') return null;
+        if (op === 'resolveSender') return {};
+        return {};
+      });
+      mockHttps.mockResolvedValue(ok({ items: [mk('A', 'AVAILABLE_STOCK', [{ name: 'Hub' }])] }));
+      const data = await searchQuote(valid, ctx);
+      expect(data.items[0].tyre.availability).toBeNull();
     });
   });
 

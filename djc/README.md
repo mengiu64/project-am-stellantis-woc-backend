@@ -25,7 +25,7 @@ djc/
 ├── index.js             ← CLI entry-point + Lambda handler (dispatcher per metodo)
 ├── DjcManager.js         ← classe orchestratore (payload json_orig/json_mod)
 ├── jobCardService.js     ← saveJobCard (POST /jobCard) — client condiviso con jobcard
-├── JobcardSyncActivityRepository.js ← woc.jobcard_sync_activity: UPSERT, esito DGT djcsynch e lettura esito djcsynch/ack/techReason/businessReason (saveJobcard)
+├── JobcardSyncActivityRepository.js ← woc.jobcard_sync_activity: UPSERT, esito DGT djcsynch e lettura esito djcsynch/ack/techReason/businessReason/updateDateTime (saveJobcard)
 ├── db.js                 ← Pool pg verso Aurora "wiadvisor" (RDS Proxy + Secrets Manager)
 ├── authService.js        ← autenticazione PingFederate → ****** (copia di jobcard/authService.js)
 ├── httpClient.js         ← wrapper HTTPS (copia di jobcard/httpClient.js)
@@ -347,6 +347,11 @@ Il file `index.js` espone `exports.handler`, che instrada l'evento in base al ca
 saveJobCard`) ed è quella effettivamente integrata da API Gateway per la POST
 `/api/repairorder/saveJobcard`; questa versione resta per invocazione diretta/CLI.
 Entrambe registrano il payload in `woc.jobcard_sync_activity` (v. sotto).
+Se la push precedente è stata accettata da DGT (`djcsynch = true`) ma non ha
+ancora l'`ack`, la save risponde `409` `SYNC_ACK_PENDING` senza scrivere né
+chiamare DGT/Naga, salvo `force` (query string `?force=true`, in invocazione
+diretta `body.force`), tolto dal body prima di risolvere il payload; stessa
+logica di `jobcard` (v. README di root, "Save bloccata in attesa dell'ack").
 
 #### Tracciamento su DB: `woc.jobcard_sync_activity`
 
@@ -362,7 +367,7 @@ dagli arricchimenti di sola UI, cioè esattamente quello inviato — v.
 | `creationdate` | `now()` al primo inserimento; non modificata dagli UPSERT successivi |
 | `payload` (JSONB) | payload inviato a DGT; sovrascritto ad ogni `saveJobcard` |
 | `djcsynch` (BOOLEAN) | esito della chiamata DGT, registrato (best-effort) subito dopo l'invio: `true` se DGT risponde `success: true`, `false` se risponde altrimenti o se token/HTTP/rete falliscono; azzerato a `NULL` dall'UPSERT (esito del nuovo invio non ancora noto) |
-| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento da `synch-status` (esito della sincronizzazione); `ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT (l'esito della push precedente non deve essere letto come esito del nuovo invio), `lastupdate` invariato |
+| `ack`, `techreason`, `businessreason`, `lastupdate` | non valorizzati da djc: popolati in un secondo momento da `synch-status` (esito della sincronizzazione; `lastupdate` = `roInfo.updateDateTime` letto da DJC al momento dell'esito, `now()` se assente); `ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT (l'esito della push precedente non deve essere letto come esito del nuovo invio), `lastupdate` invariato |
 
 Negli ambienti esistenti la colonna `djcsynch` si aggiunge con
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, da eseguire **prima**
@@ -386,18 +391,26 @@ best-effort (attesa massima 5 s): riga assente o errore DB vengono solo loggati
 e non fanno fallire la risposta.
 
 **Esito nella risposta**: dopo l'invio a DGT (e la sync NAGA), in coda alla
-risposta vengono aggiunti `djcsynch`, `ack`, `techReason` e `businessReason`:
+risposta vengono aggiunti `djcsynch`, `ack`, `techReason`, `businessReason` e
+`updateDateTime`:
 `djcsynch` è l'esito della chiamata appena eseguita (anche se la sua scrittura
 su DB fallisce), gli altri sono letti dalle colonne `ack`/`techreason`/
-`businessreason` della stessa riga (`jobcardid` restituito dall'UPSERT). Le
+`businessreason`/`lastupdate` della stessa riga (`jobcardid` restituito dall'UPSERT);
+`updateDateTime` è `lastupdate` in ISO 8601 solo con `ack` `OK`/`KO`, altrimenti
+`null` (dopo l'UPSERT `ack` è `NULL`, quindi in risposta a una save riuscita
+vale di norma `null`). Le
 colonne sono aggiornate da `synch-status` in modo asincrono, quindi i valori
 riflettono l'ultimo esito registrato al momento della risposta: vuoti per una
 jobcard nuova, l'esito della sincronizzazione precedente per una già presente.
-Lettura best-effort: riga assente, valori `NULL`, errore DB o attesa oltre 5 s →
-stringa vuota, senza far fallire la risposta (il payload è già stato inviato a
-DGT). Stesso comportamento della lambda `jobcard`, che aggiunge gli stessi
-campi anche alla risposta di `details` (`djcsynch` letto dal DB, `null` se non
-noto).
+Lettura best-effort, senza far fallire la risposta (il payload è già stato
+inviato a DGT): valori `NULL` di una riga presente → stringa vuota (`null` per
+`djcsynch`); riga assente, errore DB o attesa oltre 5 s → tutti i campi `null`.
+Stesso comportamento della lambda `jobcard`, che aggiunge gli stessi campi anche
+alla risposta di `details` (`djcsynch` letto dal DB, `null` se non noto) dopo
+aver eliminato la riga con `djcsynch` true e `ack` KO (in quel caso tutti i
+campi `null`). La stessa logica (`getDetailsSyncStatus`) è copiata in
+`JobcardSyncActivityRepository.js` di djc per allineamento, ma djc non la
+chiama (non ha l'azione `details`).
 
 #### Payload: struttura e regole di obbligatorietà
 
@@ -501,7 +514,8 @@ tratto dal documento di specifica): vedi l'esempio `full` nello swagger
   "djcsynch": true,
   "ack": "",
   "techReason": "",
-  "businessReason": ""
+  "businessReason": "",
+  "updateDateTime": null
 }
 ```
 

@@ -2,6 +2,52 @@
 
 const repository = require('./repository');
 
+const SNOWFLAKE_DEFAULT_BUCKET = `s3-woc-bsn0027990-${process.env.ENVIRONMENT || 'stage'}-m2m-snowflake-extracts`;
+const SNOWFLAKE_FILE_PREFIX = 'DM_MCO_DPR_RA_SITE';
+const SNOWFLAKE_LEGALENTITY_FILE_PREFIX = 'DM_MCO_DEALER';
+const SNOWFLAKE_ADDR_FILE_PREFIX = 'DM_MCO_EXTERNAL_LOCATION';
+const SNOWFLAKE_ANAG_FILE_PREFIX = 'DM_MCO_M2M';
+// Dimensione dei blocchi inviati a dbManager (limite payload API Gateway/Lambda)
+const SNOWFLAKE_BATCH_SIZE = 1000;
+
+/**
+ * Parser CSV (RFC 4180): campi tra doppi apici, "" come apice escapato,
+ * newline dentro i campi quotati, CRLF/LF, BOM iniziale.
+ * @returns {string[][]}
+ */
+function parseCsv(text, delimiter = ',') {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  const src = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+
+  for (let i = 0; i < src.length; i += 1) {
+    const ch = src[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { field += '"'; i += 1; } else quoted = false;
+      } else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === delimiter) { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && src[i + 1] === '\n') i += 1;
+      row.push(field); field = '';
+      rows.push(row); row = [];
+    } else field += ch;
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.length > 1 || r[0] !== '');
+}
+
+/** Converte il CSV (prima riga = intestazione) in oggetti con chiavi in minuscolo. */
+function csvToObjects(text, delimiter) {
+  const [header, ...lines] = parseCsv(text, delimiter);
+  if (!header) return [];
+  const keys = header.map((h) => h.trim().toLowerCase());
+  return lines.map((line) => Object.fromEntries(keys.map((k, i) => [k, line[i] === undefined ? null : line[i]])));
+}
+
 function resolveIdentity(event, body) {
   const authz = event.requestContext && event.requestContext.authorizer;
   return authz ? (authz.sub || null) : (body.username || null);
@@ -634,6 +680,123 @@ class HqManager {
    */
   async getAnagAllocation() {
     return repository.getAnagAllocation();
+  }
+
+  /**
+   * Importa da S3 i file Snowflake DM_MCO_DPR_RA_SITE* in
+   * woc.ang_snowflakes: per ogni file legge il CSV, lo converte in oggetti e
+   * lo passa (a blocchi) ad AnagSnowflakesRepository.insertdmsSnowflakes via
+   * dbManager (upsert su gn_row_hash). Un errore su un file non blocca gli
+   * altri: viene loggato e riportato in `errors` (e `failedFiles`).
+   * Bucket/prefisso/separatore configurabili con SNOWFLAKE_BUCKET_NAME,
+   * SNOWFLAKE_KEY_PREFIX (default DM_MCO_DPR_RA_SITE) e
+   * SNOWFLAKE_CSV_DELIMITER (default ",").
+   *
+   * @returns {Promise<{ files: number, failedFiles: number, recordsRead: number, recordsSaved: number, inserted: number, updated: number, errors: Array<{ key: string, error: string }> }>}
+   */
+  async insertdmsSnowflakes() {
+    return this._importSnowflakeCsv(
+      'insertdmsSnowflakes',
+      process.env.SNOWFLAKE_KEY_PREFIX || SNOWFLAKE_FILE_PREFIX,
+      'insertdmsSnowflakes',
+    );
+  }
+
+  /**
+   * Come insertdmsSnowflakes ma per i file DM_MCO_DEALER* (prefisso
+   * sovrascrivibile con SNOWFLAKE_LEGALENTITY_KEY_PREFIX), salvati in
+   * woc.legalentity_snowflakes tramite
+   * AnagSnowflakesRepository.insertLegalentitySnowflakes.
+   *
+   * @returns {Promise<{ files: number, failedFiles: number, recordsRead: number, recordsSaved: number, inserted: number, updated: number, errors: Array<{ key: string, error: string }> }>}
+   */
+  async insertLegalentitySnowflakes() {
+    return this._importSnowflakeCsv(
+      'insertLegalentitySnowflakes',
+      process.env.SNOWFLAKE_LEGALENTITY_KEY_PREFIX || SNOWFLAKE_LEGALENTITY_FILE_PREFIX,
+      'insertLegalentitySnowflakes',
+    );
+  }
+
+  /**
+   * Come insertdmsSnowflakes ma per i file DM_MCO_EXTERNAL_LOCATION* (prefisso
+   * sovrascrivibile con SNOWFLAKE_ADDR_KEY_PREFIX), salvati in
+   * woc.addr_snowflakes tramite AnagSnowflakesRepository.insertAddrSnowflakes.
+   *
+   * @returns {Promise<{ files: number, failedFiles: number, recordsRead: number, recordsSaved: number, inserted: number, updated: number, errors: Array<{ key: string, error: string }> }>}
+   */
+  async insertAddrSnowflakes() {
+    return this._importSnowflakeCsv(
+      'insertAddrSnowflakes',
+      process.env.SNOWFLAKE_ADDR_KEY_PREFIX || SNOWFLAKE_ADDR_FILE_PREFIX,
+      'insertAddrSnowflakes',
+    );
+  }
+
+  /**
+   * Come insertdmsSnowflakes ma per i file DM_MCO_M2M* (prefisso
+   * sovrascrivibile con SNOWFLAKE_ANAG_KEY_PREFIX), salvati in
+   * woc.ang_snowflakes tramite AnagSnowflakesRepository.insertAnagSnowflakes.
+   *
+   * @returns {Promise<{ files: number, failedFiles: number, recordsRead: number, recordsSaved: number, inserted: number, updated: number, errors: Array<{ key: string, error: string }> }>}
+   */
+  async insertAnagSnowflakes() {
+    return this._importSnowflakeCsv(
+      'insertAnagSnowflakes',
+      process.env.SNOWFLAKE_ANAG_KEY_PREFIX || SNOWFLAKE_ANAG_FILE_PREFIX,
+      'insertAnagSnowflakes',
+    );
+  }
+
+  /** Lettura CSV da S3 (tutti i file con il prefisso) e upsert a blocchi tramite repository[operation]. */
+  async _importSnowflakeCsv(label, defaultPrefix, operation) {
+    const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
+    const bucket = process.env.SNOWFLAKE_BUCKET_NAME || SNOWFLAKE_DEFAULT_BUCKET;
+    const prefix = defaultPrefix;
+    const delimiter = process.env.SNOWFLAKE_CSV_DELIMITER || ',';
+    const s3 = new S3Client({});
+
+    const keys = [];
+    let ContinuationToken;
+    do {
+      const page = await s3.send(new ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken }));
+      for (const obj of page.Contents || []) keys.push(obj.Key);
+      ContinuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (ContinuationToken);
+    keys.sort();
+
+    console.log(`[hqManager] ${label}: ${keys.length} file trovati in s3://${bucket}/${prefix}*`);
+
+    const summary = {
+      files: keys.length, failedFiles: 0, recordsRead: 0, recordsSaved: 0, inserted: 0, updated: 0, errors: [],
+    };
+
+    for (const key of keys) {
+      let read = 0;
+      let saved = 0;
+      try {
+        const object = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        const records = csvToObjects(await object.Body.transformToString('utf-8'), delimiter);
+        read = records.length;
+        summary.recordsRead += read;
+
+        for (let i = 0; i < records.length; i += SNOWFLAKE_BATCH_SIZE) {
+          const result = await repository[operation](records.slice(i, i + SNOWFLAKE_BATCH_SIZE));
+          saved += result.saved;
+          summary.recordsSaved += result.saved;
+          summary.inserted += result.inserted;
+          summary.updated += result.updated;
+        }
+        console.log(`[hqManager] ${label}: ${key} letti=${read} salvati=${saved}`);
+      } catch (err) {
+        summary.failedFiles += 1;
+        summary.errors.push({ key, error: err.message });
+        console.error(`[hqManager] ${label}: errore su ${key} (letti=${read} salvati=${saved}): ${err.message}`);
+      }
+    }
+
+    console.log(`[hqManager] ${label}: file=${summary.files} falliti=${summary.failedFiles} letti=${summary.recordsRead} inseriti=${summary.inserted} aggiornati=${summary.updated}`);
+    return summary;
   }
 }
 

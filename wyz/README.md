@@ -33,11 +33,18 @@ Input: `customerRrdiCode` (string, obbligatorio), `hubCode` (string, obbligatori
 
 ### `searchQuote` (POST, body JSON)
 
-Chiama `POST /api/tyres/search/quote`. Risposta: `{ "success": true, "data": { "items": [...] } }`.
+Chiama `POST /api/tyres/search/quote`. Risposta: `{ "success": true, "data": { "items": [...] } }` (items senza `EMPTY_STOCK`, arricchiti con StockPrix e inquiry).
 
 Obbligatori: `customerRrdiCode`, `hubCode`, `width`, `height`, `diameter` (numeri > 0), `quantity` (intero ≥ 1),
 `vehicleTypes` e `vehicleBrands` (array non vuoti, UUID da `getSearchFilters`).
 Opzionali: `loadIndexes`, `speedIndexes`, `seasons`, `brands`, `runFlat`. Altri campi sono scartati.
+
+Post-elaborazione: gli item con `status === 'EMPTY_STOCK'` (attributo dell'item, non di `tyre`) sono rimossi, così come gli item senza alcuno stock con `name` `Hub` o `Tyre producer` (confronto senza maiuscole/spazi); per gli altri, `tyre` viene arricchito
+con `wyzPrice` (stock `Hub` prevale su `Tyre producer`; `sellingPrice` vuoto → `bf`), `StockPrixBuyingPrice`
+(`priceTTC` di `getStockPrix`), `maxAllowableDiscount` (`max(0, wyzPrice - StockPrixBuyingPrice)`) e `availability`
+(primo `BinLocation.QuantityAvailable` da `dms/inquiry`), tutti `null` se il dato non è disponibile. Dati sessione
+(`session/getData`, `getContext`) letti via REST interno con `username = authorizer.sub` (il body è ammesso solo
+senza authorizer). Dealer, header DMS e VIN di `getStockPrix`/`inquiry` sono temporaneamente fissi.
 
 ### `getStockPrix` (POST, body JSON)
 
@@ -62,7 +69,7 @@ Input:
 | `brand` | sì | 2 caratteri (es. `AC`, `AP`, `DS`, `OV`) |
 | `vin` | no | 17 caratteri alfanumerici |
 | `partLines` | sì | 1..100 righe `{ partReference, quantity, partReferenceManfacture?, triGramManfacture?, idManufacturer? }`, `quantity` intero ≥ 1 |
-| `dealerId` | — | **Con Lambda Authorizer è sempre `profile.dealer_code`** (il valore del body è ignorato); nel body solo per invocazione diretta/CLI |
+| `dealerId` | sì | Inviato dal client; 7-10 caratteri alfanumerici (`[0-9A-Za-z]`), come richiesto dall'XSD StockPrixService |
 
 Risposta:
 
@@ -80,7 +87,7 @@ Risposta:
 
 Mapping dei campi SOAP: `inStockqt` → `inStockQuantity`, `remise` → `discountPercent`, `statusOfAvailibilityDMS` → `availabilityStatus`.
 
-Errori specifici: input non valido o `dealer_code` assente nel profilo → 400; dealer sconosciuto (`UNKNOWN_DEALER`) → 404;
+Errori specifici: input non valido o `dealerId` assente/non conforme → 400; dealer sconosciuto (`UNKNOWN_DEALER`) → 404;
 SOAP Fault `Client` (`INVALID_REQUEST`) → 422; fault del gateway IBM, es. credenziali/certificato rifiutati (`GATEWAY_FAULT`),
 handshake TLS fallito (`TLS_HANDSHAKE_FAILED`) o fault server → 502; timeout → 504; secret/certificato non configurati → 500.
 

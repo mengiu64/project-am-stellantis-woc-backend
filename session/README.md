@@ -30,6 +30,7 @@ escluso il pool posseduto dal receiver.
 | `dbmanager` | `getDisabledOics`, `getEnableSignatureByOics` | `[[{ market, oic }, ...]]` |
 | `dbmanager` | `getBrandLogos` | `[{ codes }]` |
 | `dbmanager` | `getMarkets` | `[]` (HQ centrale) oppure `[{ markets: [market] }]` (HQ mercato) |
+| `dbmanager` | `getDealerSign` | `[{ username }]` (solo dealer) |
 
 La firma originale myPeople è `readUserProfiles(params = {})`, non una stringa
 username. Sul wire JSON le letture brand/indirizzi/firma restituiscono array di
@@ -54,6 +55,25 @@ e `getContext` usando la cache locale di sessione; questi contratti sono
 al receiver; quest'ultimo usa direttamente la cache locale e non richiama il
 dispatcher pubblico. Le richieste pubbliche conservano la validazione authorizer.
 
+## Cache di `GET /session`
+
+Per gli utenti dealer `GET /session` legge prima la cache condivisa DynamoDB
+(`DYNAMO_CACHE_TABLE_NAME`, chiave `session:context:<username>`, la stessa di
+`getData`/`getContext`) e, solo se assente o scaduta, ricostruisce i dati da
+myPeople/dms e li salva con TTL `SESSION_CONTEXT_CACHE_TTL_MS` (default 5 minuti).
+Così gli altri consumer, ad esempio la Lambda CWS, trovano i dati già pronti.
+In cache vanno i dati del repository; `hqCentral`, `hqMarket`, `dealer`,
+`hqMarketsList` e `userroles` sono calcolati a ogni richiesta dai ruoli
+dell'authorizer. Anche `receptionistFEA` (firma dell'accettatore come data URL
+`data:<MIME>;base64,...` con il MIME riconosciuto dall'immagine, letta
+da `woc.dealer_sign` con `dbmanager/getDealerSign`, solo per i dealer) è letto a
+ogni richiesta e non va in cache: una firma appena salvata compare subito e
+l'immagine (fino a 2 MB in base64) supererebbe il limite di 400 KB di un item
+DynamoDB. Gli errori (404/502) non vengono salvati in cache. Gli utenti HQ
+non usano la cache: la loro sessione non richiede chiamate esterne e nome/cognome
+arrivano dal profilo dell'authorizer. Le modifiche di configurazione (ad esempio
+le abilitazioni oic) possono comparire con un ritardo massimo pari al TTL.
+
 Test: `npm run test:coverage -- --runInBand`.
 
 ## English
@@ -69,3 +89,11 @@ responses remain unchanged. myPeople errors propagate; existing enrichment/DML
 cache degradation remains explicitly logged. Only a DMS cache miss triggers an
 awaited, best-effort dealer registration, not a failed cache read. Internal
 `getData`/`getContext` receivers use session's own cache with `{ args: [username] }`.
+Dealer `GET /session` requests read the same `session:context:<username>`
+DynamoDB item first and rebuild/store it only on a miss (TTL
+`SESSION_CONTEXT_CACHE_TTL_MS`, default 5 minutes). Raw repository data is
+cached, role-derived fields are added per request, failures are not cached and
+HQ users bypass the cache. The dealer signature `receptionistFEA` (a
+`data:<MIME>;base64,...` data URL with the MIME type detected from the image, read
+from `woc.dealer_sign` through `dbmanager/getDealerSign`, `null` for HQ users,
+missing signatures or read errors) is fetched on every request and never cached.
