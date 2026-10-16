@@ -159,7 +159,7 @@ function resolveRoleFlags(roles) {
 /**
  * Inserisce, subito dopo `profile`, i campi `receptionistFEA` (v.
  * receptionistFeaResolver.js::resolveReceptionistFEA — firma dell'accettatore
- * in base64 letta da woc.dealer_sign, `null` per un utente HQ o senza firma),
+ * come data URL letta da woc.dealer_sign, `null` per un utente HQ o senza firma),
  * `hqCentral`/`hqMarket`/`dealer` (derivati da `roles` via resolveRoleFlags()),
  * `hqMarketsList` (v. hqMarketsResolver.js::resolveHqMarketsList — elenco dei
  * mercati disponibili per l'utente HQ, `[]` per un dealer) e infine

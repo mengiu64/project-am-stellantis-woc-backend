@@ -5,7 +5,7 @@ jest.mock('../../serviceClient', () => ({ callService: jest.fn() }), { virtual: 
 const { callService } = require('../../serviceClient');
 const { resolveReceptionistFEA } = require('../src/receptionistFeaResolver');
 
-const SIGN = '/9j/4AAQSkZJRgABAQ==';
+const SIGN = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
 
 describe('session/src/receptionistFeaResolver — resolveReceptionistFEA', () => {
   beforeEach(() => callService.mockReset());

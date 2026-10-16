@@ -13,7 +13,8 @@ function loadFetchDealerSign() {
 }
 
 /**
- * Risolve `receptionistFEA`: la firma dell'accettatore (l'utente dealer autenticato) in base64,
+ * Risolve `receptionistFEA`: la firma dell'accettatore (l'utente dealer autenticato) come data URL
+ * (es. "data:image/png;base64,iVBORw0KGgo..."),
  * letta da woc.dealer_sign con la stessa query di getFirmaAccettatore della lambda CWS (v.
  * dbManager/DealerSignRepository.js::getDealerSign), da inserire nella risposta di sessione
  * (v. src/index.js::insertAfterProfile).

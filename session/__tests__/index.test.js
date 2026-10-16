@@ -19,7 +19,7 @@ const { SessionNotFoundError } = require('../src/errors');
 const internal = require('../internal');
 
 const CACHE_KEY = 'session:context:0073741.d235';
-const SIGN = '/9j/4AAQSkZJRgABAQ==';
+const SIGN = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
 
 describe('session/src/index — handler', () => {
   let mockRepository;
