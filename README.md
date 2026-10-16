@@ -570,7 +570,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Dettaglio di una singola JobCard, arricchito con i dati DML (v. sotto) |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
 | `jobCardService` | `getDealerConfiguration(market, oic)` | Configurazione dealer (vehicle inspection + pacchetti) per mercato/oic, v. sotto |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`), e registrazione best-effort in `djcsynch` dell'esito della chiamata DGT; lettura best-effort di `djcsynch`/`ack`/`techreason`/`businessreason`, restituiti come `djcsynch`/`ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`; lettura del `payload` registrato, con `djcsynch`/`ack`/`techReason`/`businessReason` della stessa riga, per l'azione `lastPayload`; eliminazione condizionata della riga (`canDeleteSynch`/`deleteSynch`) per l'azione `deleteSynch` e per `lastPayload` dopo la lettura (entrambe solo `jobcard`, v. sotto) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getDetailsSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`), e registrazione best-effort in `djcsynch` dell'esito della chiamata DGT; lettura best-effort di `djcsynch`/`ack`/`techreason`/`businessreason`, restituiti come `djcsynch`/`ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`, più `updateDateTime` (colonna `lastupdate` in ISO, solo con `ack` OK/KO, altrimenti `null`) (in `details`, con `getDetailsSyncStatus`, prima eliminazione atomica della riga con `djcsynch` true e `ack` KO: campi tutti `null`); lettura del `payload` registrato, con `djcsynch`/`ack`/`techReason`/`businessReason` della stessa riga, per l'azione `lastPayload`; eliminazione condizionata della riga (`canDeleteSynch`/`deleteSynch`) per l'azione `deleteSynch` e per `lastPayload` dopo la lettura (entrambe solo `jobcard`, v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -613,9 +613,10 @@ Vedi `jobcard/README.md` per la tabella completa delle regole.
 Azione che invia (POST) un payload di **Digital Job Card** alla Push API SRP per
 creare/aggiornare una Job Card — condivisa (stesso client PingFederate/DGT) con
 la lambda **[djc](#djc)**, che ne è la declinazione dedicata alla costruzione dei
-payload (`Save*`). **API Gateway instrada le richieste POST verso la lambda
-`djc`**; questa azione resta disponibile qui per chiamata diretta/CLI e per
-coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
+payload (`Save*`). **API Gateway instrada le richieste POST
+`/api/repairorder/{proxy+}` (quindi `saveJobcard`) verso questa lambda
+`jobcard`**; `djc` ne mantiene una copia allineata per chiamata diretta/CLI.
+Regole di obbligatorietà (M/M(O)/M(C)), payload di
 esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
 `jobcard/README.md` e `djc/README.md`.
 
@@ -636,8 +637,8 @@ risposta di `saveJobcard` (già persistita con successo sulla DGT).
 #### Esito della sincronizzazione nelle risposte `details`/`saveJobcard`
 
 Le risposte delle azioni `details` e `saveJobcard` includono `djcsynch`, `ack`,
-`techReason` e `businessReason`, letti da `woc.jobcard_sync_activity` per
-`jobcardid` (colonne `djcsynch`/`ack`/`techreason`/`businessreason`): in
+`techReason`, `businessReason` e `updateDateTime`, letti da `woc.jobcard_sync_activity` per
+`jobcardid` (colonne `djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate`): in
 `details` (`jobcardid` = `jobCardId` richiesto) subito prima di `jobCardDetail`,
 in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
 
@@ -649,6 +650,11 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
 - `ack`/`techReason`/`businessReason`: esito della sincronizzazione DMS,
   popolato da [synch-status](#synch-status); azzerati dall'UPSERT a ogni
   `saveJobcard` (stringa vuota finché non arriva l'esito del nuovo invio).
+- `updateDateTime` (ISO 8601): colonna `lastupdate`, in cui
+  [synch-status](#synch-status) salva insieme all'esito il
+  `roInfo.updateDateTime` letto da DJC (ora dell'ultimo salvataggio della job
+  card su DJC; `now()` se assente o non valido). Valorizzato solo con `ack`
+  `OK`/`KO`, altrimenti `null` (es. save in attesa di esito).
 
 ```json
 {
@@ -660,6 +666,7 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "updateDateTime": "2026-10-13T09:55:05.000Z",
   "jobCardDetail": { "roInfo": { "jobCardSrpId": "JCID-84506" } }
 }
 ```
@@ -673,15 +680,17 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
   "djcsynch": true,
   "ack": "",
   "techReason": "",
-  "businessReason": ""
+  "businessReason": "",
+  "updateDateTime": null
 }
 ```
 
 I campi sono aggiunti nell'handler (e nel CLI) dopo la chiamata DGT: la cache
 DynamoDB, l'azione `dml` e l'operazione interna `getJobCardDetails` usata da
-`synch-status` restano invariate. Lettura best-effort: riga assente, valori
-`NULL`, errore DB o attesa oltre 5 s → stringa vuota (`null` per `djcsynch`),
-senza far fallire la risposta. In `saveJobcard` `djcsynch` è l'esito della
+`synch-status` restano invariate. Lettura best-effort: valori `NULL` di una
+riga presente → stringa vuota (`null` per `djcsynch`); riga assente, errore DB
+o attesa oltre 5 s → tutti i campi `null`, senza far fallire la risposta. In
+`saveJobcard` `djcsynch` è l'esito della
 chiamata appena eseguita (anche se la sua scrittura su DB, best-effort con lo
 stesso limite di 5 s, fallisce), mentre `ack`/`techReason`/`businessReason`
 sono quelli registrati al momento della risposta (`synch-status` li aggiorna
@@ -689,6 +698,57 @@ in modo asincrono): vuoti per una jobcard nuova, l'esito della
 sincronizzazione precedente per una già presente. Se la chiamata DGT fallisce,
 `saveJobcard` registra `djcsynch` = `false` e risponde con l'errore invariato
 (`{ "success": false, "message": "..." }`, senza `djcsynch`).
+
+Solo in `details` (handler e CLI), se la riga ha `djcsynch = true` e
+`ack = 'KO'` (push accettata da DGT, rifiuto o errore del DMS), prima della
+lettura la riga viene eliminata con una DELETE atomica (`WHERE jobcardid = $1
+AND djcsynch IS TRUE AND ack = 'KO' RETURNING jobcardid`) e tutti i campi
+sono restituiti `null`: il FE mostra la jobcard grigia con la versione DJC.
+DELETE e lettura condividono lo stesso limite best-effort di 5 s (errore →
+tutti `null`). Una save appena registrata non viene eliminata (l'UPSERT azzera
+`ack` a `NULL`); un evento Kafka in ritardo sulla riga eliminata viene solo
+loggato da `synch-status` ("record non trovato").
+
+#### Save bloccata in attesa dell'ack (`409 SYNC_ACK_PENDING`) e `force`
+
+Se la riga di `woc.jobcard_sync_activity` ha `djcsynch = true` (push
+precedente accettata da DGT) e `ack` `NULL` o vuoto (esito non ancora arrivato
+da [synch-status](#synch-status)), `saveJobcard` **non** registra il nuovo
+payload e risponde `409`, senza chiamare DGT né agendaSoaNaga e senza
+scrivere `djcsynch`:
+
+```json
+{
+  "success": false,
+  "code": "SYNC_ACK_PENDING",
+  "message": "[jobCard] save blocked for jobCardId JCID-84521: previous synchronization not acknowledged yet",
+  "djcsynch": true,
+  "ack": "",
+  "techReason": "",
+  "businessReason": "",
+  "updateDateTime": null
+}
+```
+
+Il controllo è nell'UPSERT stesso (atomico, valutato sulla versione corrente
+della riga): `ON CONFLICT (jobcardid) DO UPDATE ... WHERE $force OR NOT
+(djcsynch IS TRUE AND COALESCE(ack, '') = '')`; nessuna riga restituita →
+`409`. Riga assente (prima save) o `djcsynch` `NULL`/`false` non bloccano.
+
+L'utente può forzare la save dal FE (popup "Forza salvataggio"):
+`POST /api/repairorder/saveJobcard?force=true` (solo `true` esatto; in
+invocazione diretta anche `body.force` `true`/`"true"`). `force` viene tolto
+dal body **prima** di risolvere il payload (il dispatcher unisce query string
+e body), quindi non viene mai salvato in `payload` né inviato a DGT; un
+`force` nel body JSON di una richiesta API Gateway viene ignorato. La save
+forzata viene loggata (`console.warn`) con `jobcardid` e `sub`
+dell'authorizer (mai un valore del body). Nessun DDL richiesto.
+
+> Rischio noto: dopo una save forzata, un evento Kafka in ritardo della push
+> precedente può scrivere `ack` sulla riga del nuovo payload (`synch-status`
+> aggiorna solo per `jobcardid`).
+
+La stessa logica è replicata in `djc` (log con prefisso `[djc]`).
 
 #### `lastPayload` (GET) — ultimo payload inviato a DJC/DGT
 
@@ -707,17 +767,18 @@ Dopo la lettura, se `djcsynch` = `false` e `ack`/`techReason`/`businessReason`
 sono vuoti (`NULL` o stringa vuota: ultimo invio a DGT fallito senza esito di
 sincronizzazione), elimina la riga con le stesse condizioni di `deleteSynch`
 (v. sotto), ricontrollate nella `DELETE`, e restituisce comunque il payload
-letto; `deleted` (tra `businessReason` e `payload`) indica se la riga è stata
+letto; `deleted` (tra `updateDateTime` e `payload`) indica se la riga è stata
 eliminata (le chiamate successive rispondono poi `404`). L'eliminazione è
 best-effort: un errore della `DELETE` (es. privilegio mancante) viene solo
 loggato e la risposta resta `200` con `deleted: false`.
 
-La risposta include anche `djcsynch`, `ack`, `techReason` e `businessReason`
+La risposta include anche `djcsynch`, `ack`, `techReason`, `businessReason` e `updateDateTime`
 della stessa riga (letti con la stessa SELECT del payload), tra `jobCardId` e
 `payload`: `djcsynch` è l'esito dell'invio a DGT dell'ultimo payload (`true`/
 `false`, `null` se non ancora noto, v. sopra), `ack`/`techReason`/
 `businessReason` l'esito dell'ultima sincronizzazione registrata da
-`synch-status` (`NULL` → stringa vuota). Essendo popolati in modo asincrono,
+`synch-status` (`NULL` → stringa vuota), `updateDateTime` la colonna
+`lastupdate` in ISO solo con `ack` `OK`/`KO` (v. sopra). Essendo popolati in modo asincrono,
 subito dopo un `saveJobcard` fallito questi ultimi possono essere ancora vuoti
 o riferirsi alla sincronizzazione precedente, mentre `djcsynch` vale già
 `false`.
@@ -732,6 +793,7 @@ o riferirsi alla sincronizzazione precedente, mentre `djcsynch` vale già
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "updateDateTime": "2026-10-02T09:19:41.000Z",
   "deleted": false,
   "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
 }
@@ -908,15 +970,17 @@ l'invio e azzerato a `NULL` dall'UPSERT; `ack`/`techreason`/
 `businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`
 (`ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT, così l'esito
 della push precedente non viene letto come esito del nuovo invio). Il
-salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
-in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
+salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`,
+push precedente accettata da DGT ma ancora senza `ack` → `409
+SYNC_ACK_PENDING` (salvo `?force=true`, v. [jobcard](#jobcard) → "Save
+bloccata in attesa dell'ack"), e in tutti i casi il payload non viene inviato a DGT. Stessa implementazione
 (`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate; solo quella
 di `jobcard` aggiunge la lettura `getLastPayload` e l'eliminazione
 `deleteSynch`, v. `lastPayload`/`deleteSynch`) nelle due
 lambda, con env `JOBCARD_DB_*` in `jobcard` e `DJC_DB_*` in `djc`. Dettagli in
 `djc/README.md`. Dopo l'invio, entrambe aggiungono in coda alla risposta
 `djcsynch` (esito della chiamata appena eseguita) e `ack`/`techReason`/
-`businessReason` letti dalla stessa riga (best-effort, v.
+`businessReason`/`updateDateTime` letti dalla stessa riga (best-effort, v.
 [jobcard](#jobcard) → "Esito della sincronizzazione nelle risposte"). La
 colonna `djcsynch` si aggiunge agli ambienti esistenti con
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, da eseguire **prima**
@@ -1539,7 +1603,7 @@ Lambda per l'**aggiornamento dello stato di sincronizzazione DJC** di una job ca
 Dopo l'UPDATE su `woc.comunication_asyncro_djc` (anche se lì il record non esiste), `jobcardSyncActivity.js` aggiorna la riga di `woc.jobcard_sync_activity` con `jobcardid` = `jobCardId` (creata da jobcard/djc ad ogni `saveJobcard`):
 
 1. `techreason` = `djc_sync_status` mappato dall'`eventType`, `ack` = `OK` per `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` e `KO` per `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
-2. richiama via REST IAM `getJobCardDetails` della lambda **jobcard**, che gestisce token e cache, e salva `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+2. richiama via REST IAM `getJobCardDetails` della lambda **jobcard**, che gestisce token e cache, e salva `jobCardDetail.roInfo.dmsSynchroStatus` + `dmsReturnMessage` in `businessreason` e `roInfo.updateDateTime` (ora dell'ultimo salvataggio della job card su DJC, normalizzata in ISO UTC) in `lastupdate`; se `updateDateTime` manca o non è valido, `lastupdate` = `now()`. `lastupdate` è restituito dalle lambda jobcard/djc come `updateDateTime`, solo con `ack` `OK`/`KO`.
 
 Interamente **best-effort**: errori DB/DGT vengono solo loggati e la risposta verso DJC non cambia. Se la riga non esiste, `jobCardDetails` non viene richiamato. Se l'UPDATE su `comunication_asyncro_djc` fallisce (5xx), questo passo non viene eseguito.
 
@@ -2119,15 +2183,15 @@ cd agendaSoa && npm run test:coverage
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
 - **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP; `sanitizeJobCardPayload`
-- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, esito in camelCase con `NULL` → stringa vuota e `djcsynch` `NULL` → `null`, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati) e `deleteSynch` (DELETE condizionata su `djcsynch IS FALSE` e `ack`/`techreason`/`businessreason` `NULL` o vuoti; riga eliminata con la sola DELETE; nessuna riga eliminata → SELECT dell'esito: riga presente → `deleted: false` con l'esito attuale, riga assente → `null`; id normalizzato, id mancante → errore "is required" senza accesso al DB, errori DB/pool propagati) e `canDeleteSynch` (stesse condizioni della DELETE: `djcsynch` strettamente `false`, `ack`/`techReason`/`businessReason` `NULL` o vuoti senza trim)
-- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`deleted`/`payload` (in quest'ordine) senza token né chiamate DGT; dopo la lettura `deleteSynch` solo se `djcsynch` è `false` con esito vuoto (`deleted: true`), nessuna DELETE con `djcsynch` `null`/`true` o esito presente, `deleted: false` se la DELETE non elimina nulla o fallisce (errore loggato, risposta comunque 200); `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore della lettura (senza DELETE); solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
+- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate`/`payload`, esito in camelCase con `NULL` → stringa vuota e `djcsynch` `NULL` → `null`, `updateDateTime` ISO solo con `ack` OK/KO, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati) e `deleteSynch` (DELETE condizionata su `djcsynch IS FALSE` e `ack`/`techreason`/`businessreason` `NULL` o vuoti; riga eliminata con la sola DELETE; nessuna riga eliminata → SELECT dell'esito: riga presente → `deleted: false` con l'esito attuale, riga assente → `null`; id normalizzato, id mancante → errore "is required" senza accesso al DB, errori DB/pool propagati) e `canDeleteSynch` (stesse condizioni della DELETE: `djcsynch` strettamente `false`, `ack`/`techReason`/`businessReason` `NULL` o vuoti senza trim); `getDetailsSyncStatus` (DELETE atomica su `djcsynch IS TRUE AND ack = 'KO'` con `RETURNING`: riga eliminata → tutti i campi `null` senza SELECT; nessuna eliminazione → SELECT come `getSyncStatus`; riga assente, id vuoto senza accesso al DB, errori DELETE/SELECT/pool e timeout unico di 5 s → tutti `null` con warning) e handler `details` (handler e CLI) che la usa al posto di `getSyncStatus` (non chiamata se DGT fallisce); `getSyncStatus` con riga assente/errori/timeout → tutti `null`
+- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime`/`deleted`/`payload` (in quest'ordine) senza token né chiamate DGT; dopo la lettura `deleteSynch` solo se `djcsynch` è `false` con esito vuoto (`deleted: true`), nessuna DELETE con `djcsynch` `null`/`true` o esito presente, `deleted: false` se la DELETE non elimina nulla o fallisce (errore loggato, risposta comunque 200); `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore della lettura (senza DELETE); solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
 - **jobcard: index (`deleteSynch`)** – evento API Gateway POST (REST e HTTP API v2, metodo case-insensitive), invocazione diretta e alias `id`, risposta 200 senza token né chiamate DGT, `404` se la riga non esiste, `409` con l'esito attuale nel messaggio (anche se contiene "is required"), `400` se `jobCardId` manca, `502` su errore DB, `405` con header `Allow: POST` per GET/DELETE senza accesso al DB
 
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
-- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
-- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`, solo con `force` o se la push precedente non attende l'ack; nessuna riga → errore `isAckPending` senza log di upsert; `force` passato come `$3` booleano e loggato), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate` → `djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime`) best-effort (valori `NULL` di una riga presente → stringa vuota, `null` per `djcsynch`; `updateDateTime` ISO solo con `ack` OK/KO e `lastupdate` valido (Date o stringa), altrimenti `null`; id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → tutti `null`); `getDetailsSyncStatus`/`deleteKoSyncActivity` (copia allineata a jobcard, non chiamata in djc: stessi casi di jobcard) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
+- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce; `409 SYNC_ACK_PENDING` (body completo) senza DGT/Naga/`recordDjcSynch`; `force` solo da `?force=true` (o `body.force` in invocazione diretta), tolto dal payload, ignorato nel body API Gateway, save forzata loggata con `sub` dell'authorizer
 - **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
@@ -2165,7 +2229,7 @@ cd agendaSoa && npm run test:coverage
 #### synch-status
 
 - **index (handler)** – parsing del `body` (stringa JSON o oggetto), 400 su body non JSON valido; validazione payload (campi obbligatori `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` tra i 4 supportati, `timestamp` ISO 8601) con 400 e dettaglio errori; mappatura `eventType` → `djc_sync_status`; **UPDATE-only** su `woc.comunication_asyncro_djc` (mai INSERT) con incremento di `version`; 404 quando il record non esiste (deve essere creato prima da un'altra Lambda); 503 su errore di connessione Aurora, 504 su timeout query, 500 su errore generico; nessuna validazione del token (security demandata al gateway IBM APIC)
-- **jobcardSyncActivity** – UPDATE `techreason`/`ack` (OK/KO dai 4 `eventType`, `null` se sconosciuto)/`lastupdate` e poi `businessreason`/`lastupdate` su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus` (anche dalla risposta reale di `jobCardDetails`); record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
+- **jobcardSyncActivity** – UPDATE `techreason`/`ack` (OK/KO dai 4 `eventType`, `null` se sconosciuto)/`lastupdate` e poi `businessreason`/`lastupdate` (`COALESCE(updateDateTime DJC, now())`) su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus`/`dmsReturnMessage` e di `updateDateTime` normalizzato in ISO (vuoto/non valido → `null`), anche dalla risposta reale di `jobCardDetails`; record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
 - **config** – pattern singleton `getInstance()`/`reset()`, struttura della configurazione (sezioni AWS/OAuth/APIC/Logging/Timeouts/API endpoints), risoluzione ambiente da env (`ENVIRONMENT`, default `dev`), `getByPath()` (path annidati, `null` se non trovato), gestione del log level
 
 #### dmlConfigSync
