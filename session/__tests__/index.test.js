@@ -7,12 +7,19 @@ jest.mock('../../serviceClient', () => ({
 jest.mock('../internal', () => ({ handler: jest.fn() }));
 jest.mock('../src/repositoryFactory');
 jest.mock('../src/hqMarketsResolver');
+jest.mock('../src/receptionistFeaResolver');
+jest.mock('../src/dynamoCache', () => ({ getCacheItem: jest.fn(), setCacheItem: jest.fn() }));
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('../src/repositoryFactory');
 const { resolveHqMarketsList } = require('../src/hqMarketsResolver');
+const { resolveReceptionistFEA } = require('../src/receptionistFeaResolver');
+const { getCacheItem, setCacheItem } = require('../src/dynamoCache');
 const { handler, runCli, DEFAULT_MARKET, getAuthContext, resolveRoleFlags } = require('../src/index');
 const { SessionNotFoundError } = require('../src/errors');
 const internal = require('../internal');
+
+const CACHE_KEY = 'session:context:0073741.d235';
+const SIGN = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
 
 describe('session/src/index — handler', () => {
   let mockRepository;
@@ -24,6 +31,9 @@ describe('session/src/index — handler', () => {
     buildRepository.mockReturnValue(mockRepository);
     buildMyPeopleDmsRepository.mockReturnValue(mockMyPeopleDmsRepository);
     resolveHqMarketsList.mockResolvedValue([]);
+    resolveReceptionistFEA.mockResolvedValue(null);
+    getCacheItem.mockResolvedValue(null);
+    delete process.env.SESSION_CONTEXT_CACHE_TTL_MS;
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -42,6 +52,82 @@ describe('session/src/index — handler', () => {
     expect(internal.handler).toHaveBeenCalledWith(event);
     expect(buildMyPeopleDmsRepository).not.toHaveBeenCalled();
     expect(buildRepository).not.toHaveBeenCalled();
+    expect(getCacheItem).not.toHaveBeenCalled();
+  });
+
+  it('dealer, cache miss: costruisce i dati, li salva in cache (chiave da authorizer.sub, TTL 300s) e risponde', async () => {
+    const raw = { codmarket: '3110', profile: 'Service Advisor', sincom: '0127260' };
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue(raw);
+    resolveReceptionistFEA.mockResolvedValue(SIGN);
+
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235', roles: 'ATD.UTIL_CET' } } });
+
+    expect(getCacheItem).toHaveBeenCalledWith(CACHE_KEY);
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledTimes(1);
+    // In cache vanno i dati grezzi del repository, senza i campi derivati dai ruoli ne' la firma.
+    expect(setCacheItem).toHaveBeenCalledWith(CACHE_KEY, raw, 300);
+    expect(setCacheItem.mock.calls[0][1]).not.toHaveProperty('receptionistFEA');
+    expect(resolveReceptionistFEA).toHaveBeenCalledWith({ username: '0073741.d235', dealer: 1 });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      codmarket: '3110',
+      profile: 'Service Advisor',
+      receptionistFEA: SIGN,
+      hqCentral: 0,
+      hqMarket: 0,
+      dealer: 1,
+      hqMarketsList: [],
+      userroles: ['ATD.UTIL_CET'],
+      sincom: '0127260',
+    });
+  });
+
+  it('dealer, cache hit: risponde dalla cache senza interrogare myPeople/dms ne\' riscrivere la cache', async () => {
+    getCacheItem.mockResolvedValue({ codmarket: '3110', profile: 'Service Advisor', sincom: '0127260' });
+    resolveReceptionistFEA.mockResolvedValue(SIGN);
+
+    const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235', roles: 'ATD.UTIL_CET' } } });
+
+    expect(getCacheItem).toHaveBeenCalledWith(CACHE_KEY);
+    expect(buildMyPeopleDmsRepository).not.toHaveBeenCalled();
+    expect(setCacheItem).not.toHaveBeenCalled();
+    // La firma non e' in cache: viene letta a ogni richiesta, anche su cache hit.
+    expect(resolveReceptionistFEA).toHaveBeenCalledWith({ username: '0073741.d235', dealer: 1 });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      codmarket: '3110',
+      profile: 'Service Advisor',
+      receptionistFEA: SIGN,
+      hqCentral: 0,
+      hqMarket: 0,
+      dealer: 1,
+      hqMarketsList: [],
+      userroles: ['ATD.UTIL_CET'],
+      sincom: '0127260',
+    });
+  });
+
+  it('utente HQ: non legge ne\' scrive la cache (nome/cognome dal profilo dell\'authorizer)', async () => {
+    const profile = { sub: 'SF48816', given_name: 'Mario', family_name: 'Rossi' };
+    mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ usertype: 'HQ', firstname: 'Mario', lastname: 'Rossi' });
+
+    const res = await handler({
+      requestContext: {
+        authorizer: { sub: 'SF48816', roles: 'ZWRT.WOC.NONPROD.HQNSC3109', profile: JSON.stringify(profile) },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ firstname: 'Mario', lastname: 'Rossi', hqMarket: 1, receptionistFEA: null });
+    expect(mockMyPeopleDmsRepository.getSessionData).toHaveBeenCalledWith('SF48816', profile, {
+      hqCentral: 0,
+      hqMarket: 1,
+      dealer: 0,
+    });
+    // Per un utente HQ il resolver riceve dealer=0 e non legge woc.dealer_sign.
+    expect(resolveReceptionistFEA).toHaveBeenCalledWith({ username: 'SF48816', dealer: 0 });
+    expect(getCacheItem).not.toHaveBeenCalled();
+    expect(setCacheItem).not.toHaveBeenCalled();
   });
 
   it('DEFAULT_MARKET e\' "1000" di default', () => {
@@ -76,6 +162,7 @@ describe('session/src/index — handler', () => {
     expect(JSON.parse(res.body)).toEqual({
       codmarket: '1000',
       sincom: '0073741',
+      receptionistFEA: null,
       hqCentral: 0,
       hqMarket: 0,
       dealer: 1,
@@ -92,7 +179,7 @@ describe('session/src/index — handler', () => {
     expect(JSON.parse(res.body).userroles).toEqual(['dealer', 'advisor']);
   });
 
-  it('inserisce userroles subito dopo profile nell\'ordine delle chiavi della risposta', async () => {
+  it('inserisce receptionistFEA subito dopo profile, seguito da flag, hqMarketsList e userroles', async () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({
       codmarket: '1000',
       profile: 'ADMIN',
@@ -104,6 +191,7 @@ describe('session/src/index — handler', () => {
     expect(Object.keys(JSON.parse(res.body))).toEqual([
       'codmarket',
       'profile',
+      'receptionistFEA',
       'hqCentral',
       'hqMarket',
       'dealer',
@@ -113,12 +201,14 @@ describe('session/src/index — handler', () => {
     ]);
   });
 
-  it('accoda userroles in fondo se profile non e\' presente nei dati del repository', async () => {
+  it('accoda receptionistFEA e userroles in fondo se profile non e\' presente nei dati del repository', async () => {
     mockMyPeopleDmsRepository.getSessionData.mockResolvedValue({ codmarket: '1000' });
     const res = await handler({
       requestContext: { authorizer: { sub: '0073741.d235', roles: 'dealer' } },
     });
-    expect(Object.keys(JSON.parse(res.body))).toEqual(['codmarket', 'hqCentral', 'hqMarket', 'dealer', 'hqMarketsList', 'userroles']);
+    expect(Object.keys(JSON.parse(res.body))).toEqual([
+      'codmarket', 'receptionistFEA', 'hqCentral', 'hqMarket', 'dealer', 'hqMarketsList', 'userroles',
+    ]);
   });
 
   it('valorizza hqCentral=1 quando un ruolo contiene HQCENTRAL (case-insensitive, prefisso/ambiente variabili)', async () => {
@@ -180,6 +270,9 @@ describe('session/src/index — handler', () => {
       hqMarket: 0,
       dealer: 1,
     });
+    expect(getCacheItem).toHaveBeenCalledWith(CACHE_KEY);
+    // Anche la firma si legge solo per l'utente autenticato, mai per uno username del client.
+    expect(resolveReceptionistFEA).toHaveBeenCalledWith({ username: '0073741.d235', dealer: 1 });
     expect(mockRepository.getSessionData).not.toHaveBeenCalled();
   });
 
@@ -239,6 +332,7 @@ describe('session/src/index — handler', () => {
     const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body).success).toBe(false);
+    expect(setCacheItem).not.toHaveBeenCalled();
   });
 
   it('ritorna 502 su errore generico di MyPeopleDmsSessionRepository (es. dms irraggiungibile)', async () => {
@@ -246,6 +340,7 @@ describe('session/src/index — handler', () => {
     const res = await handler({ requestContext: { authorizer: { sub: '0073741.d235' } } });
     expect(res.statusCode).toBe(502);
     expect(JSON.parse(res.body).message).toBe('dms unreachable');
+    expect(setCacheItem).not.toHaveBeenCalled();
   });
 
   it('ritorna 502 con messaggio stringificato quando l\'errore non ha "message"', async () => {

@@ -72,7 +72,7 @@ describe('wyz handler', () => {
       expect(ctx.correlationId).toMatch(/^[0-9a-f-]{36}$/);
     });
 
-    it('getStockPrix -> 200 con data e authorizer passato nel contesto', async () => {
+    it('getStockPrix -> 200 con data e correlationId nel contesto', async () => {
       mockStockPrix.mockResolvedValue({ items: [{ partReference: 'P' }] });
       const authorizer = { sub: 'u1', profile: '{"dealer_code":"111111A"}' };
       const res = await handler({

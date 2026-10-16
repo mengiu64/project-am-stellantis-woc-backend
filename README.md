@@ -78,6 +78,7 @@ sia nel JSON del secret AWS sia nelle variabili d'ambiente locali. In Lambda,
 L'azione `getStockPrix` (StockPrixService, SOAP mTLS) usa anche le chiavi `STOCKPRIX_USERNAME`,
 `STOCKPRIX_PASSWORD`, `STOCKPRIX_CLIENT_ID`, `WYZ_STOCKPRIX_BASE_URL` e `WYZ_STOCKPRIX_HTTP_PORT` (default 2773)
 del secret wyz e i secret cert/key di agendaSoa (`WYZ_CERT_SECRET_ID`/`WYZ_KEY_SECRET_ID`, layer Secrets Extension).
+Per `getStockPrix`, il client deve passare `dealerId` nel body (7-10 caratteri alfanumerici).
 Vedere [wyz/README.md](wyz/README.md) per la configurazione completa.
 
 ### Comunicazione REST tra Lambda
@@ -569,7 +570,7 @@ Lambda per la gestione delle **JobCard** tramite l'API Stellantis DGT (Digital L
 | `jobCardService` | `getJobCardDetails(token, jobCardId, sessionContext)` | Dettaglio di una singola JobCard, arricchito con i dati DML (v. sotto) |
 | `jobCardService` | `saveJobCard(token, payload)` | POST `/jobCard` – creazione/aggiornamento Job Card (azione `saveJobcard`, condivisa con la lambda `djc`) |
 | `jobCardService` | `getDealerConfiguration(market, oic)` | Configurazione dealer (vehicle inspection + pacchetti) per mercato/oic, v. sotto |
-| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`), e registrazione best-effort in `djcsynch` dell'esito della chiamata DGT; lettura best-effort di `djcsynch`/`ack`/`techreason`/`businessreason`, restituiti come `djcsynch`/`ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`; lettura del `payload` registrato, con `djcsynch`/`ack`/`techReason`/`businessReason` della stessa riga, per l'azione `lastPayload`; eliminazione condizionata della riga (`canDeleteSynch`/`deleteSynch`) per l'azione `deleteSynch` e per `lastPayload` dopo la lettura (entrambe solo `jobcard`, v. sotto) |
+| `JobcardSyncActivityRepository` | `recordSyncActivity(payload)` / `recordDjcSynch(jobCardId, djcsynch)` / `getSyncStatus(jobCardId)` / `getDetailsSyncStatus(jobCardId)` / `getLastPayload(jobCardId)` / `deleteSynch(jobCardId)` | UPSERT su `woc.jobcard_sync_activity` del payload `saveJobcard`, prima dell'invio a DGT (copia di `djc`, env `JOBCARD_DB_*`), e registrazione best-effort in `djcsynch` dell'esito della chiamata DGT; lettura best-effort di `djcsynch`/`ack`/`techreason`/`businessreason`, restituiti come `djcsynch`/`ack`/`techReason`/`businessReason` nelle risposte di `details` e `saveJobcard`, più `updateDateTime` (colonna `lastupdate` in ISO, solo con `ack` OK/KO o con `djcsynch` false, altrimenti `null`; con `djcsynch` false `recordDjcSynch` imposta anche `lastupdate` = `now()`) (in `details`, con `getDetailsSyncStatus`, prima eliminazione atomica della riga con `djcsynch` true e `ack` KO: campi tutti `null`); lettura del `payload` registrato, con `djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime` della stessa riga, per l'azione `lastPayload` (sola lettura, la riga non viene eliminata); eliminazione condizionata della riga (`canDeleteSynch`/`deleteSynch`) per l'azione `deleteSynch` (entrambe solo `jobcard`, v. sotto) |
 | `httpClient` | `httpsRequest(options, body)` | Client HTTPS nativo Node.js |
 
 #### Parametri `getJobCardList`
@@ -612,9 +613,10 @@ Vedi `jobcard/README.md` per la tabella completa delle regole.
 Azione che invia (POST) un payload di **Digital Job Card** alla Push API SRP per
 creare/aggiornare una Job Card — condivisa (stesso client PingFederate/DGT) con
 la lambda **[djc](#djc)**, che ne è la declinazione dedicata alla costruzione dei
-payload (`Save*`). **API Gateway instrada le richieste POST verso la lambda
-`djc`**; questa azione resta disponibile qui per chiamata diretta/CLI e per
-coerenza tra le due lambda. Regole di obbligatorietà (M/M(O)/M(C)), payload di
+payload (`Save*`). **API Gateway instrada le richieste POST
+`/api/repairorder/{proxy+}` (quindi `saveJobcard`) verso questa lambda
+`jobcard`**; `djc` ne mantiene una copia allineata per chiamata diretta/CLI.
+Regole di obbligatorietà (M/M(O)/M(C)), payload di
 esempio e riferimento al documento *"SRP - DL DJC Post API Specification"* in
 `jobcard/README.md` e `djc/README.md`.
 
@@ -635,8 +637,8 @@ risposta di `saveJobcard` (già persistita con successo sulla DGT).
 #### Esito della sincronizzazione nelle risposte `details`/`saveJobcard`
 
 Le risposte delle azioni `details` e `saveJobcard` includono `djcsynch`, `ack`,
-`techReason` e `businessReason`, letti da `woc.jobcard_sync_activity` per
-`jobcardid` (colonne `djcsynch`/`ack`/`techreason`/`businessreason`): in
+`techReason`, `businessReason` e `updateDateTime`, letti da `woc.jobcard_sync_activity` per
+`jobcardid` (colonne `djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate`): in
 `details` (`jobcardid` = `jobCardId` richiesto) subito prima di `jobCardDetail`,
 in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
 
@@ -648,6 +650,14 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
 - `ack`/`techReason`/`businessReason`: esito della sincronizzazione DMS,
   popolato da [synch-status](#synch-status); azzerati dall'UPSERT a ogni
   `saveJobcard` (stringa vuota finché non arriva l'esito del nuovo invio).
+- `updateDateTime` (ISO 8601): colonna `lastupdate`, in cui
+  [synch-status](#synch-status) salva insieme all'esito il
+  `roInfo.updateDateTime` letto da DJC (ora dell'ultimo salvataggio della job
+  card su DJC; `now()` se assente o non valido). Valorizzato con `ack`
+  `OK`/`KO` e anche con `djcsynch` `false`: in quel caso è l'ora dell'invio a
+  DGT fallito (`recordDjcSynch` imposta `lastupdate` = `now()` solo quando
+  registra `false`; con `true` la colonna resta invariata e la scrive
+  `synch-status` con l'esito). Altrimenti `null` (es. save in attesa di esito).
 
 ```json
 {
@@ -659,6 +669,7 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "updateDateTime": "2026-10-13T09:55:05.000Z",
   "jobCardDetail": { "roInfo": { "jobCardSrpId": "JCID-84506" } }
 }
 ```
@@ -672,15 +683,17 @@ in `saveJobcard` (`jobcardid` restituito dall'UPSERT) in coda alla risposta DGT.
   "djcsynch": true,
   "ack": "",
   "techReason": "",
-  "businessReason": ""
+  "businessReason": "",
+  "updateDateTime": null
 }
 ```
 
 I campi sono aggiunti nell'handler (e nel CLI) dopo la chiamata DGT: la cache
 DynamoDB, l'azione `dml` e l'operazione interna `getJobCardDetails` usata da
-`synch-status` restano invariate. Lettura best-effort: riga assente, valori
-`NULL`, errore DB o attesa oltre 5 s → stringa vuota (`null` per `djcsynch`),
-senza far fallire la risposta. In `saveJobcard` `djcsynch` è l'esito della
+`synch-status` restano invariate. Lettura best-effort: valori `NULL` di una
+riga presente → stringa vuota (`null` per `djcsynch`); riga assente, errore DB
+o attesa oltre 5 s → tutti i campi `null`, senza far fallire la risposta. In
+`saveJobcard` `djcsynch` è l'esito della
 chiamata appena eseguita (anche se la sua scrittura su DB, best-effort con lo
 stesso limite di 5 s, fallisce), mentre `ack`/`techReason`/`businessReason`
 sono quelli registrati al momento della risposta (`synch-status` li aggiorna
@@ -688,6 +701,57 @@ in modo asincrono): vuoti per una jobcard nuova, l'esito della
 sincronizzazione precedente per una già presente. Se la chiamata DGT fallisce,
 `saveJobcard` registra `djcsynch` = `false` e risponde con l'errore invariato
 (`{ "success": false, "message": "..." }`, senza `djcsynch`).
+
+Solo in `details` (handler e CLI), se la riga ha `djcsynch = true` e
+`ack = 'KO'` (push accettata da DGT, rifiuto o errore del DMS), prima della
+lettura la riga viene eliminata con una DELETE atomica (`WHERE jobcardid = $1
+AND djcsynch IS TRUE AND ack = 'KO' RETURNING jobcardid`) e tutti i campi
+sono restituiti `null`: il FE mostra la jobcard grigia con la versione DJC.
+DELETE e lettura condividono lo stesso limite best-effort di 5 s (errore →
+tutti `null`). Una save appena registrata non viene eliminata (l'UPSERT azzera
+`ack` a `NULL`); un evento Kafka in ritardo sulla riga eliminata viene solo
+loggato da `synch-status` ("record non trovato").
+
+#### Save bloccata in attesa dell'ack (`409 SYNC_ACK_PENDING`) e `force`
+
+Se la riga di `woc.jobcard_sync_activity` ha `djcsynch = true` (push
+precedente accettata da DGT) e `ack` `NULL` o vuoto (esito non ancora arrivato
+da [synch-status](#synch-status)), `saveJobcard` **non** registra il nuovo
+payload e risponde `409`, senza chiamare DGT né agendaSoaNaga e senza
+scrivere `djcsynch`:
+
+```json
+{
+  "success": false,
+  "code": "SYNC_ACK_PENDING",
+  "message": "[jobCard] save blocked for jobCardId JCID-84521: previous synchronization not acknowledged yet",
+  "djcsynch": true,
+  "ack": "",
+  "techReason": "",
+  "businessReason": "",
+  "updateDateTime": null
+}
+```
+
+Il controllo è nell'UPSERT stesso (atomico, valutato sulla versione corrente
+della riga): `ON CONFLICT (jobcardid) DO UPDATE ... WHERE $force OR NOT
+(djcsynch IS TRUE AND COALESCE(ack, '') = '')`; nessuna riga restituita →
+`409`. Riga assente (prima save) o `djcsynch` `NULL`/`false` non bloccano.
+
+L'utente può forzare la save dal FE (popup "Forza salvataggio"):
+`POST /api/repairorder/saveJobcard?force=true` (solo `true` esatto; in
+invocazione diretta anche `body.force` `true`/`"true"`). `force` viene tolto
+dal body **prima** di risolvere il payload (il dispatcher unisce query string
+e body), quindi non viene mai salvato in `payload` né inviato a DGT; un
+`force` nel body JSON di una richiesta API Gateway viene ignorato. La save
+forzata viene loggata (`console.warn`) con `jobcardid` e `sub`
+dell'authorizer (mai un valore del body). Nessun DDL richiesto.
+
+> Rischio noto: dopo una save forzata, un evento Kafka in ritardo della push
+> precedente può scrivere `ack` sulla riga del nuovo payload (`synch-status`
+> aggiorna solo per `jobcardid`).
+
+La stessa logica è replicata in `djc` (log con prefisso `[djc]`).
 
 #### `lastPayload` (GET) — ultimo payload inviato a DJC/DGT
 
@@ -702,21 +766,24 @@ così com'è. Legge solo dal DB (nessuna chiamata DGT né token) ed è bloccante
 `502` (body `{ "success": false, "message": "..." }`). Solo nella lambda
 `jobcard` (CLI: `node index.js lastPayload <jobCardId>`).
 
-Dopo la lettura, se `djcsynch` = `false` e `ack`/`techReason`/`businessReason`
-sono vuoti (`NULL` o stringa vuota: ultimo invio a DGT fallito senza esito di
-sincronizzazione), elimina la riga con le stesse condizioni di `deleteSynch`
-(v. sotto), ricontrollate nella `DELETE`, e restituisce comunque il payload
-letto; `deleted` (tra `businessReason` e `payload`) indica se la riga è stata
-eliminata (le chiamate successive rispondono poi `404`). L'eliminazione è
-best-effort: un errore della `DELETE` (es. privilegio mancante) viene solo
-loggato e la risposta resta `200` con `deleted: false`.
+È in **sola lettura**: la riga non viene mai eliminata, nemmeno con
+`djcsynch` = `false` e `ack`/`techReason`/`businessReason` vuoti (stato rosso),
+quindi le chiamate successive continuano a restituire il payload. `deleted`
+(tra `updateDateTime` e `payload`) resta nella risposta per compatibilità ma
+vale sempre `false`. In passato `lastPayload` eliminava la riga rossa dopo la
+lettura: il polling del FE che rilevava lo stato rosso la cancellava e, alla
+riapertura, la job card risultava grigia invece di mostrare il popup
+Local/Server. Ora la riga rossa viene eliminata solo con `deleteSynch` (scelta
+Server dell'utente) o sovrascritta dall'UPSERT di una nuova `saveJobcard`.
 
-La risposta include anche `djcsynch`, `ack`, `techReason` e `businessReason`
+La risposta include anche `djcsynch`, `ack`, `techReason`, `businessReason` e `updateDateTime`
 della stessa riga (letti con la stessa SELECT del payload), tra `jobCardId` e
 `payload`: `djcsynch` è l'esito dell'invio a DGT dell'ultimo payload (`true`/
 `false`, `null` se non ancora noto, v. sopra), `ack`/`techReason`/
 `businessReason` l'esito dell'ultima sincronizzazione registrata da
-`synch-status` (`NULL` → stringa vuota). Essendo popolati in modo asincrono,
+`synch-status` (`NULL` → stringa vuota), `updateDateTime` la colonna
+`lastupdate` in ISO solo con `ack` `OK`/`KO` o con `djcsynch` `false` (ora
+dell'invio fallito, v. sopra). Essendo popolati in modo asincrono,
 subito dopo un `saveJobcard` fallito questi ultimi possono essere ancora vuoti
 o riferirsi alla sincronizzazione precedente, mentre `djcsynch` vale già
 `false`.
@@ -731,6 +798,7 @@ o riferirsi alla sincronizzazione precedente, mentre `djcsynch` vale già
   "ack": "OK",
   "techReason": "",
   "businessReason": "",
+  "updateDateTime": "2026-10-02T09:19:41.000Z",
   "deleted": false,
   "payload": { "roInfo": { "jobCardSrpId": "JCID-84521", "dealerId": "DE87630" }, "jobs": [] }
 }
@@ -905,25 +973,28 @@ esito della chiamata DGT (`true` se DGT risponde `success: true`, altrimenti
 `false`, anche su errore token/HTTP/rete), registrato best-effort subito dopo
 l'invio e azzerato a `NULL` dall'UPSERT; `ack`/`techreason`/
 `businessreason`/`lastupdate` vengono popolati in un secondo momento da `synch-status`
-(`ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT, così l'esito
+(salvo `lastupdate` = `now()` scritto insieme a `djcsynch` = `false`: ora
+dell'invio fallito; `ack`/`techreason`/`businessreason` azzerati a `NULL` dall'UPSERT, così l'esito
 della push precedente non viene letto come esito del nuovo invio). Il
-salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`, e
-in entrambi i casi il payload non viene inviato a DGT. Stessa implementazione
+salvataggio è **bloccante**: id jobcard assente → `400`, errore DB → `502`,
+push precedente accettata da DGT ma ancora senza `ack` → `409
+SYNC_ACK_PENDING` (salvo `?force=true`, v. [jobcard](#jobcard) → "Save
+bloccata in attesa dell'ack"), e in tutti i casi il payload non viene inviato a DGT. Stessa implementazione
 (`db.js` + `JobcardSyncActivityRepository.js`, copie sincronizzate; solo quella
 di `jobcard` aggiunge la lettura `getLastPayload` e l'eliminazione
 `deleteSynch`, v. `lastPayload`/`deleteSynch`) nelle due
 lambda, con env `JOBCARD_DB_*` in `jobcard` e `DJC_DB_*` in `djc`. Dettagli in
 `djc/README.md`. Dopo l'invio, entrambe aggiungono in coda alla risposta
 `djcsynch` (esito della chiamata appena eseguita) e `ack`/`techReason`/
-`businessReason` letti dalla stessa riga (best-effort, v.
+`businessReason`/`updateDateTime` letti dalla stessa riga (best-effort, v.
 [jobcard](#jobcard) → "Esito della sincronizzazione nelle risposte"). La
 colonna `djcsynch` si aggiunge agli ambienti esistenti con
 `sql/alter_table_jobcard_sync_activity_add_djcsynch.sql`, da eseguire **prima**
 del deploy di `jobcard`/`djc` (senza la colonna `saveJobcard` e `lastPayload`
-rispondono `502`). Il privilegio `DELETE` per `deleteSynch` e `lastPayload` si
-concede con `sql/grant_delete_jobcard_sync_activity.sql`, da eseguire **prima**
-del deploy di `jobcard` (senza, `deleteSynch` risponde `502` e `lastPayload`
-non elimina la riga).
+rispondono `502`). Il privilegio `DELETE` per `deleteSynch` e per l'eliminazione
+della riga KO in `details` si concede con `sql/grant_delete_jobcard_sync_activity.sql`,
+da eseguire **prima** del deploy di `jobcard` (senza, `deleteSynch` risponde `502`
+e `details` non elimina la riga KO; `lastPayload` è in sola lettura e non lo usa).
 
 Regole di obbligatorietà (M/M(O)/M(C)), regole di creazione/aggiornamento,
 tabella degli identificativi per array, semantica `removalAction`/update
@@ -1317,7 +1388,7 @@ node index.js translations lang=en
 
 ### session
 
-Lambda che restituisce i **dati di sessione** (`codmarket`, `marketIso`, `oic`, `sincom`, `physicalsite`, `pdvId`, preferenze pezzi, sconti massimi, ecc.) per l'utente autenticato.
+Lambda che restituisce i **dati di sessione** (`codmarket`, `marketIso`, `oic`, `sincom`, `physicalsite`, `customerRrdiCode`, `hubcode`, preferenze pezzi, sconti massimi, ecc.) per l'utente autenticato.
 
 L'Handler HTTP (dietro API Gateway, proxy REST) **non si fida di alcun parametro fornito dal client** (query/path/body): l'identità arriva sempre dal Lambda Authorizer (`lmb-np-bsn0027990-<env>-authorizer`), valorizzata in `event.requestContext.authorizer`:
 
@@ -1325,13 +1396,15 @@ L'Handler HTTP (dietro API Gateway, proxy REST) **non si fida di alcun parametro
 - `roles` — stringa CSV (es. `"dealer,advisor"`), esposta come array da `getAuthContext(event)`; l'autorizzazione applicativa (chi può fare cosa) resta a carico di chi consuma questi dati. Questo array viene incluso anche nel body della risposta 200, come `userroles` (vedi nota sotto).
 - `profile` — JSON string col profilo canonico (stessa forma di `GET /auth/user-info`: `sub`, `given_name`, `family_name`, `name`, `email`, `locale`, `country`, `roles[]`, `dealer_code`, `dealer_name`, `brand`, `region_code`, ...), parsato da `getAuthContext(event)` se presente (`null` se assente o JSON non valido). Non usato oggi per calcolare la sessione (si usa sempre `myPeople` via `sub`), disponibile per usi futuri.
 
-Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente), poi legge **in parallelo** nove cache/tabelle Aurora popolate/mantenute dai moduli `dmlConfigSync`/`dbManager` (nessuna chiamata live a `dms/*` da parte di `session`): `woc.dms_settings` (per `isdml`/`dmlcustomerupdate`/`dmldiscount`, chiave `country`+`brand`+`dealer`), `woc.dml_configurations` (per `companytypes`/`customertitles`, chiave `country`+`language`, entrambi derivati dallo stesso `NATIONiso2` di myPeople), la tabella `woc.anag_brand` (per risolvere i loghi dei brand di ogni OIC, vedi nota `brandLogos` sotto), la tabella `woc.ang_snowflakes` (per risolvere `marketIso`, il codice ISO paese del dealer, dato `codmarket`, tramite `dbManager.getCountryIsoCode`, e per risolvere `oics[].brands`, vedi nota sotto), la tabella `woc.hq_application_enabling` (per filtrare gli OIC disabilitati per WOC, vedi nota sotto, **e** per l'elenco completo esposto in `OicEnabled`, tramite `dbManager.getOicEnabled`), la tabella `woc.addr_snowflakes` (per risolvere `oics[].address`/`oics[].zipcode`/`oics[].city`, vedi nota sotto), e la tabella `woc.hq_pk_market` (per `IsPkMarketEnabled`, tramite `dbManager.checkIsPkMarketEnabled`, vedi nota sotto), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository` — a cui l'handler (`src/index.js`) aggiunge il campo `userroles` (vedi nota sotto). I campi non derivabili da myPeople/dms (es. `physicalsite`, `pdvId`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
+Con `sub` disponibile, la Lambda chiama `myPeople` (`readUserProfiles`, per recuperare mercato/OIC/dealer/lingua/tipo utente), poi legge **in parallelo** nove cache/tabelle Aurora popolate/mantenute dai moduli `dmlConfigSync`/`dbManager` (nessuna chiamata live a `dms/*` da parte di `session`): `woc.dms_settings` (per `isdml`/`dmlcustomerupdate`/`dmldiscount`, chiave `country`+`brand`+`dealer`), `woc.dml_configurations` (per `companytypes`/`customertitles`, chiave `country`+`language`, entrambi derivati dallo stesso `NATIONiso2` di myPeople), la tabella `woc.anag_brand` (per risolvere i loghi dei brand di ogni OIC, vedi nota `brandLogos` sotto), la tabella `woc.ang_snowflakes` (per risolvere `marketIso`, il codice ISO paese del dealer, dato `codmarket`, tramite `dbManager.getCountryIsoCode`, e per risolvere `oics[].brands`, vedi nota sotto), la tabella `woc.hq_application_enabling` (per filtrare gli OIC disabilitati per WOC, vedi nota sotto, **e** per l'elenco completo esposto in `OicEnabled`, tramite `dbManager.getOicEnabled`), la tabella `woc.addr_snowflakes` (per risolvere `oics[].address`/`oics[].zipcode`/`oics[].city`, vedi nota sotto), e la tabella `woc.hq_pk_market` (per `IsPkMarketEnabled`, tramite `dbManager.checkIsPkMarketEnabled`, vedi nota sotto), componendo un JSON con **la stessa forma storica** della risposta S3 — vedi `MyPeopleDmsSessionRepository` — a cui l'handler (`src/index.js`) aggiunge i campi `receptionistFEA` e `userroles` (vedi note sotto). I campi non derivabili da myPeople/dms (es. `physicalsite`, `customerRrdiCode`, `hubcode`, `inmandate`, `vat`, `pkwstouse`, `interiorcarwash`/`exteriorcarwash`, `partpref_*`, `pcydealer1-3`, `pcystellantis1-3`, `maxdiscountperc`, `maxdiscountval` — dati che nel flusso storico arrivano da una tabella dedicata, non da myPeople/dms) sono valorizzati a `null`. Se l'utente non risulta su myPeople (`RC`/`STATUS` non di successo), la Lambda risponde `404`.
 
 > **Nota (utenti HQ):** myPeople modella **solo** i profili della rete dealer (username IURSMA): per un utente HQ (staff Stellantis, non dealer, es. `"SF48816"`) risponde con `RC=121`, `STATUS="HQ users are not allowed for this feature."`, `User={}`. Questo caso **non** viene trattato come utente non trovato (404, riservato a `RC` diverso da `0`/`121` o `User` assente): `MyPeopleDmsSessionRepository.getSessionData` ritorna invece una sessione 200 "vuota" (stessa forma/chiavi del JSON storico, tutti i campi dealer-specific `null`/`[]`, `usertype: "HQ"`), cosi' un utente HQ legittimo può comunque accedere all'app senza errori.
 
-> **Nota (`userroles`):** il body della risposta 200 include sempre un campo `userroles` (array di stringhe, es. `["dealer","advisor"]`, `[]` se l'authorizer non valorizza `roles`), preso **esclusivamente** da `event.requestContext.authorizer.roles` (Lambda Authorizer) tramite `getAuthContext(event)` — mai da myPeople/dms, stesso principio "identità solo dall'authorizer" già applicato a `sub`. Aggiunto dall'handler (`src/index.js`) dopo la chiamata al repository, non fa parte dell'oggetto restituito da `MyPeopleDmsSessionRepository`/`S3SessionRepository`: viene inserito nell'ordine delle chiavi della risposta **subito dopo `profile`**, seguito dai 3 flag `hqCentral`/`hqMarket`/`dealer` (vedi nota sotto), da `hqMarketsList` (vedi nota sotto) e poi da `userroles` stesso (in fondo se `profile` non fosse presente).
+> **Nota (`userroles`):** il body della risposta 200 include sempre un campo `userroles` (array di stringhe, es. `["dealer","advisor"]`, `[]` se l'authorizer non valorizza `roles`), preso **esclusivamente** da `event.requestContext.authorizer.roles` (Lambda Authorizer) tramite `getAuthContext(event)` — mai da myPeople/dms, stesso principio "identità solo dall'authorizer" già applicato a `sub`. Aggiunto dall'handler (`src/index.js`) dopo la chiamata al repository, non fa parte dell'oggetto restituito da `MyPeopleDmsSessionRepository`/`S3SessionRepository`: viene inserito nell'ordine delle chiavi della risposta nel blocco aggiunto **subito dopo `profile`**, composto da `receptionistFEA` (vedi nota sotto), dai 3 flag `hqCentral`/`hqMarket`/`dealer` (vedi nota sotto), da `hqMarketsList` (vedi nota sotto) e infine da `userroles` stesso (blocco in fondo se `profile` non fosse presente).
 
-> **Nota (`hqCentral`/`hqMarket`/`dealer`):** il body della risposta 200 include sempre questi 3 campi numerici `0`/`1`, derivati da `userroles` tramite `resolveRoleFlags(roles)` (`src/index.js`), **un solo flag a `1` per volta** (priorità `hqCentral` > `hqMarket` > `dealer`): `hqCentral = 1` se un ruolo contiene la sottostringa `HQCENTRAL` (case-insensitive, es. `WRT.WOC.NONPROD.HQCENTRAL`, prefisso `Z` ed ambiente `NONPROD`/`PROD` variabili e ignorati); altrimenti `hqMarket = 1` se un ruolo contiene `HQNSC` seguito da 4 cifre, il codice mercato (es. `ZWRT.WOC.NONPROD.HQNSC3109`); altrimenti (default, incluso il caso `userroles` vuoto) `dealer = 1`. Sono inseriti nell'ordine delle chiavi della risposta **subito dopo `profile`, prima di `hqMarketsList`/`userroles`**.
+> **Nota (`receptionistFEA`):** il body della risposta 200 include sempre un campo `receptionistFEA`, inserito **subito dopo `profile`**: è la firma dell'accettatore (l'utente dealer autenticato) come data URL pronto per il `src` di un `<img>` (`data:<MIME>;base64,...`, con MIME `image/png`, `image/jpeg` o `image/svg+xml` riconosciuto dal contenuto come in `getFirmaAccettatore` della lambda CWS, `image/png` se non riconosciuto), letta dalla tabella `woc.dealer_sign` con la stessa query di `getFirmaAccettatore` della lambda CWS (`SELECT sign_image FROM woc.dealer_sign WHERE dealer_login_userid = $1`, con `dealer_login_userid` = `sub` dell'authorizer), tramite `dbManager.getDealerSign` (`src/receptionistFeaResolver.js`), **senza** chiamare la lambda CWS. Vale `null` per gli utenti HQ (`hqCentral`/`hqMarket`, nessuna query eseguita), se il dealer non ha ancora salvato una firma (caso in cui la CWS risponde `404`) o se la lettura fallisce (stesso principio fault-tolerant delle altre letture DB di questa Lambda: un errore non blocca mai la sessione). Non viene salvato nella cache `session:context:<username>`: è letto a ogni richiesta, così una firma appena salvata compare subito (l'immagine, fino a 2 MB in base64, supererebbe inoltre il limite di 400 KB di un item DynamoDB).
+
+> **Nota (`hqCentral`/`hqMarket`/`dealer`):** il body della risposta 200 include sempre questi 3 campi numerici `0`/`1`, derivati da `userroles` tramite `resolveRoleFlags(roles)` (`src/index.js`), **un solo flag a `1` per volta** (priorità `hqCentral` > `hqMarket` > `dealer`): `hqCentral = 1` se un ruolo contiene la sottostringa `HQCENTRAL` (case-insensitive, es. `WRT.WOC.NONPROD.HQCENTRAL`, prefisso `Z` ed ambiente `NONPROD`/`PROD` variabili e ignorati); altrimenti `hqMarket = 1` se un ruolo contiene `HQNSC` seguito da 4 cifre, il codice mercato (es. `ZWRT.WOC.NONPROD.HQNSC3109`); altrimenti (default, incluso il caso `userroles` vuoto) `dealer = 1`. Sono inseriti nell'ordine delle chiavi della risposta **subito dopo `receptionistFEA` (quindi dopo `profile`), prima di `hqMarketsList`/`userroles`**.
 
 > **Nota (`hqMarketsList`):** il body della risposta 200 include sempre un campo `hqMarketsList` (array di oggetti `{ market, description }`, es. `[{ "market": "3109", "description": "France" }]`), calcolato da `resolveHqMarketsList` (`src/hqMarketsResolver.js`) in base ai flag `hqCentral`/`hqMarket` sopra descritti e **mai** valorizzato lato client: per un `dealer` (`hqCentral=0`, `hqMarket=0`) è sempre `[]` (nessuna query eseguita); per un utente `hqCentral=1` contiene **tutti** i mercati distinti presenti in `woc.ang_snowflakes` (stesso filtro `fl_is_deleted_flag = 0` delle altre query su questa tabella, colonna `cd_market_code` alias `market`); per un utente `hqMarket=1` contiene il **singolo** mercato ricavato dal ruolo `HQNSC<4 cifre>` (es. `ZWRT.WOC.NONPROD.HQNSC3109` → mercato `"3109"`) (`[]` se nessun ruolo corrisponde al pattern). La colonna `gn_country_name` **non esiste** su `woc.ang_snowflakes`: la `description` è risolta con una `LEFT JOIN LATERAL` su `woc.addr_snowflakes` (stesso `cd_market_code`) che preferisce una riga non cancellata logicamente (`fl_is_deleted_flag = 0`) ma ricade sulla riga più recente (`dt_ingestion_timestamp` più alto) anche se marcata `fl_is_deleted_flag = 1` quando per quel mercato non esiste ancora nessuna riga attiva, quindi è `null` solo per un mercato presente in `ang_snowflakes` ma senza **nessuna** riga indirizzo in `addr_snowflakes` (mai un errore). Stesso principio fault-tolerant delle altre letture DB di questa Lambda: un errore di query non blocca mai la sessione, `hqMarketsList` torna semplicemente `[]`. Inserito nell'ordine delle chiavi della risposta **subito dopo `dealer`, prima di `userroles`**.
 
@@ -1405,6 +1478,7 @@ session/
 │   ├── errors.js                             # SessionNotFoundError (404)
 │   ├── repositoryFactory.js                  # Factory: buildRepository(), buildMyPeopleDmsRepository()
 │   ├── hqMarketsResolver.js                   # resolveHqMarketsList(): calcola hqMarketsList (mercati HQ) da woc.ang_snowflakes
+│   ├── receptionistFeaResolver.js             # resolveReceptionistFEA(): firma dell'accettatore (receptionistFEA, data URL) da woc.dealer_sign
 │   └── repositories/
 │       ├── sessionRepository.js              # Interfaccia base
 │       ├── s3SessionRepository.js            # Implementazione S3 (bucket + key JSON) — flusso codmarket
@@ -1538,7 +1612,7 @@ Lambda per l'**aggiornamento dello stato di sincronizzazione DJC** di una job ca
 Dopo l'UPDATE su `woc.comunication_asyncro_djc` (anche se lì il record non esiste), `jobcardSyncActivity.js` aggiorna la riga di `woc.jobcard_sync_activity` con `jobcardid` = `jobCardId` (creata da jobcard/djc ad ogni `saveJobcard`):
 
 1. `techreason` = `djc_sync_status` mappato dall'`eventType`, `ack` = `OK` per `DMS_PUSH_SUCCESS_WITHOUT_UPDATE`/`DMS_PUSH_SUCCESS_WITH_UPDATE` e `KO` per `DMS_PUSH_REFUSAL`/`DMS_PUSH_FAILURE`, `lastupdate` = `now()`;
-2. richiama via REST IAM `getJobCardDetails` della lambda **jobcard**, che gestisce token e cache, e salva `jobCardDetail.roInfo.dmsSynchroStatus` in `businessreason`, `lastupdate` = `now()`.
+2. richiama via REST IAM `getJobCardDetails` della lambda **jobcard**, che gestisce token e cache, e salva `jobCardDetail.roInfo.dmsSynchroStatus` + `dmsReturnMessage` in `businessreason` e `roInfo.updateDateTime` (ora dell'ultimo salvataggio della job card su DJC, normalizzata in ISO UTC) in `lastupdate`; se `updateDateTime` manca o non è valido, `lastupdate` = `now()`. `lastupdate` è restituito dalle lambda jobcard/djc come `updateDateTime`, con `ack` `OK`/`KO` (oppure con `djcsynch` `false`: in quel caso è l'ora dell'invio a DGT fallito, scritta da jobcard/djc).
 
 Interamente **best-effort**: errori DB/DGT vengono solo loggati e la risposta verso DJC non cambia. Se la riga non esiste, `jobCardDetails` non viene richiamato. Se l'UPDATE su `comunication_asyncro_djc` fallisce (5xx), questo passo non viene eseguito.
 
@@ -2118,15 +2192,15 @@ cd agendaSoa && npm run test:coverage
 - **authService** – cache valida, cache scaduta/assente (rinnovo), scrittura cache, errore HTTP, `access_token` assente, `expires_in` default
 - **dmsService** – validazione parametri obbligatori `getDmsSettings` (country/brand/dealer), `postDmsInquiry` (MessageType/VehicleID obbligatori; `DocumentID`/`CustomerIdDms` a contenuto opzionale ma sempre presenti nel payload, rispettivamente come `''` e `null` se omessi), tipi inquiry (LFP/WL/MP), `buildTypeSection`, headers corretti (Authorization, IBM credentials), errori HTTP
 - **jobCardService / v360Service** – validazione parametri obbligatori, tutti i filtri opzionali (date range, paginazione, ordinamento), headers corretti (Authorization, IBM credentials, x-trace-id), errori HTTP; per `jobCardService`: arricchimento `jobs[].packageType`/`packageCharge` (tutte le combinazioni `jobType`/`packageCode`/`paymentType`), posizionamento prima di `partInfo`/`laborInfo`, aggiunta `roInfo.roSource` subito dopo `sourceApplication` (incluso il caso `roInfo`/`sourceApplication` assenti); `saveJobCard` — POST `/jobCard` con payload/`body.payload`, headers corretti, errori HTTP; `sanitizeJobCardPayload`
-- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`payload`, esito in camelCase con `NULL` → stringa vuota e `djcsynch` `NULL` → `null`, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati) e `deleteSynch` (DELETE condizionata su `djcsynch IS FALSE` e `ack`/`techreason`/`businessreason` `NULL` o vuoti; riga eliminata con la sola DELETE; nessuna riga eliminata → SELECT dell'esito: riga presente → `deleted: false` con l'esito attuale, riga assente → `null`; id normalizzato, id mancante → errore "is required" senza accesso al DB, errori DB/pool propagati) e `canDeleteSynch` (stesse condizioni della DELETE: `djcsynch` strettamente `false`, `ack`/`techReason`/`businessReason` `NULL` o vuoti senza trim)
-- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`deleted`/`payload` (in quest'ordine) senza token né chiamate DGT; dopo la lettura `deleteSynch` solo se `djcsynch` è `false` con esito vuoto (`deleted: true`), nessuna DELETE con `djcsynch` `null`/`true` o esito presente, `deleted: false` se la DELETE non elimina nulla o fallisce (errore loggato, risposta comunque 200); `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore della lettura (senza DELETE); solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
+- **jobcard: JobcardSyncActivityRepository / db** – stessi casi delle copie in `djc` (v. sotto), con env `JOBCARD_DB_*`; in più `getLastPayload` (SELECT di `jobcardid`/`djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate`/`payload`, esito in camelCase con `NULL` → stringa vuota e `djcsynch` `NULL` → `null`, `updateDateTime` ISO solo con `ack` OK/KO o `djcsynch` false, id normalizzato, id mancante → errore "is required" senza accesso al DB, riga assente → `null`, errori DB/pool propagati) e `deleteSynch` (DELETE condizionata su `djcsynch IS FALSE` e `ack`/`techreason`/`businessreason` `NULL` o vuoti; riga eliminata con la sola DELETE; nessuna riga eliminata → SELECT dell'esito: riga presente → `deleted: false` con l'esito attuale, riga assente → `null`; id normalizzato, id mancante → errore "is required" senza accesso al DB, errori DB/pool propagati) e `canDeleteSynch` (stesse condizioni della DELETE: `djcsynch` strettamente `false`, `ack`/`techReason`/`businessReason` `NULL` o vuoti senza trim); `getDetailsSyncStatus` (DELETE atomica su `djcsynch IS TRUE AND ack = 'KO'` con `RETURNING`: riga eliminata → tutti i campi `null` senza SELECT; nessuna eliminazione → SELECT come `getSyncStatus`; riga assente, id vuoto senza accesso al DB, errori DELETE/SELECT/pool e timeout unico di 5 s → tutti `null` con warning) e handler `details` (handler e CLI) che la usa al posto di `getSyncStatus` (non chiamata se DGT fallisce); `getSyncStatus` con riga assente/errori/timeout → tutti `null`
+- **jobcard: index (`lastPayload`)** – evento API Gateway GET (`jobCardId` da query string) e alias `id`, risposta 200 con `jobCardId`/`djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime`/`deleted`/`payload` (in quest'ordine) senza token né chiamate DGT; sola lettura: `deleteSynch` mai chiamata e `deleted` sempre `false`, anche con `djcsynch` `false` ed esito vuoto (stato rosso, con `updateDateTime` valorizzato), `djcsynch` `null`/`true` o esito presente; `404` se nessun payload registrato, `400` se `jobCardId` manca, `502` su errore della lettura; solo `isRecordNotFound` produce `404` (errori upstream con `statusCode` 404 restano `502`)
 - **jobcard: index (`deleteSynch`)** – evento API Gateway POST (REST e HTTP API v2, metodo case-insensitive), invocazione diretta e alias `id`, risposta 200 senza token né chiamate DGT, `404` se la riga non esiste, `409` con l'esito attuale nel messaggio (anche se contiene "is required"), `400` se `jobCardId` manca, `502` su errore DB, `405` con header `Allow: POST` per GET/DELETE senza accesso al DB
 
 #### djc
 - **httpClient / authService** – stessi casi di `jobcard` (file sincronizzati)
 - **jobCardService** – `saveJobCard` (POST `/jobCard`), stessi casi di `jobcard/jobCardService.js::saveJobCard`; `sanitizeJobCardPayload` (validazione payload, rimozione arricchimenti UI dai `jobs`)
-- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason` → `djcsynch`/`ack`/`techReason`/`businessReason`) best-effort (id vuoto senza accesso al DB, riga assente/valori `NULL`/errori DB/pool/timeout → stringa vuota, `null` per `djcsynch`) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
-- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce
+- **JobcardSyncActivityRepository** – risoluzione `jobcardid` (`jobCardSrpId` → `dmsRepairOrderId` → `jobCardLegacyId`), UPSERT su `woc.jobcard_sync_activity` (su conflitto aggiorna `payload` e azzera `djcsynch`/`ack`/`techreason`/`businessreason` a `NULL`, solo con `force` o se la push precedente non attende l'ack; nessuna riga → errore `isAckPending` senza log di upsert; `force` passato come `$3` booleano e loggato), id mancante → errore "is required" senza accesso al DB, propagazione errori DB/pool (bloccante); registrazione di `djcsynch` (`recordDjcSynch`: solo `true` → `true`, con `false` anche `lastupdate` = `now()` e con `true` `lastupdate` invariato, id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → `false` con warning, mai propagati); lettura dell'esito (`djcsynch`/`ack`/`techreason`/`businessreason`/`lastupdate` → `djcsynch`/`ack`/`techReason`/`businessReason`/`updateDateTime`) best-effort (valori `NULL` di una riga presente → stringa vuota, `null` per `djcsynch`; `updateDateTime` ISO solo con `ack` OK/KO o `djcsynch` false e `lastupdate` valido (Date o stringa), altrimenti `null`; id vuoto senza accesso al DB, riga assente/errori DB/pool/timeout → tutti `null`); `getDetailsSyncStatus`/`deleteKoSyncActivity` (copia allineata a jobcard, non chiamata in djc: stessi casi di jobcard) e inserimento nella risposta (prima di `jobCardDetail` o in coda, body non oggetto invariato)
+- **index (handler `saveJobcard`; in `jobcard` anche `details`)** – `djcsynch` registrato dopo la chiamata DGT (`true` solo con `success: true`; `false` su `success` diverso, errore DGT o token, con errore restituito invariato; nessuna chiamata DGT né registrazione se l'UPSERT fallisce) e restituito con il valore della chiamata anche se la scrittura fallisce; esito letto per il `jobcardid` dell'UPSERT (o per il `jobCardId` richiesto, con `djcsynch` letto dal DB in `details`) dopo la chiamata DGT, ordine dei campi nella risposta, nessuna lettura se la chiamata DGT fallisce; `409 SYNC_ACK_PENDING` (body completo) senza DGT/Naga/`recordDjcSynch`; `force` solo da `?force=true` (o `body.force` in invocazione diretta), tolto dal payload, ignorato nel body API Gateway, save forzata loggata con `sub` dell'authorizer
 - **db** – Pool pg con credenziali da Secrets Manager (estensione Lambda) o da `DJC_DB_USER`/`DJC_DB_PASSWORD`, default porta/nome db, TLS disattivabile, cache del Pool, errore esplicito se manca `DJC_DB_HOST` con retry successivo
 - **DjcManager** – costruttore sincrono (`djcJson` esplicito o fallback su `get.json`), factory asincrona `DjcManager.create()` (lettura da DynamoDB via chiave `jobcard:jobcarddetails:<jobCardId>`, fallback su `get.json` se `jobCardId` assente, errore esplicito se l'item in cache manca), tutti i metodi `Save*` (`SaveRoInfo`, `SaveDmsSync`, `SaveCustomer`, `SaveVehicle`, `SaveJobs`, `SaveConsents`, `SaveAppointments`): struttura `json_orig`/`json_mod`, campi sovrascritti vs. campi invariati, metodi non ancora implementati (`Error` esplicito)
 
@@ -2149,6 +2223,7 @@ cd agendaSoa && npm run test:coverage
 - **s3SessionRepository** – fetch e parsing del JSON da S3, estrazione della sezione relativa al mercato (uppercase), `SessionNotFoundError` su mercato assente, gestione errori S3 (`NoSuchKey`/404/Code), JSON non valido, bucket non configurato
 - **myPeopleDmsSessionRepository** – happy path con mappatura completa myPeople→cache DB→JSON di sessione (incluso `oics`/`applications`, gli interi blocchi `OICs`/`Applications` di myPeople con chiavi in minuscolo, e `companytypes`/`customertitles`, gli array `data` letti dalla cache `woc.dml_configurations`), `oics[].brandLogos` (risoluzione batch dei codici brand CSV tramite `woc.anag_brand`, posizionamento subito dopo `brands`, `[]` se `brands` assente/vuoto o se la query fallisce, nessuna query se non ci sono codici brand da risolvere), `oics[].brands` sovrascritto dall'elenco letto da `woc.ang_snowflakes` (`getBrandsByOics`, chiamata con l'elenco deduplicato dei `CODE` degli OIC), fallback al CSV originale di myPeople quando il DB non ha righe per l'OIC o la query fallisce, `oics[].address`/`oics[].zipcode`/`oics[].city` sovrascritti dall'indirizzo letto da `woc.addr_snowflakes` (`getAddressByOics`, chiamata con lo stesso elenco deduplicato dei `CODE` degli OIC), fallback ai valori di myPeople (`ADDRESS`/`ZIPCODE`/`CITY`, `null` se assenti) quando il DB non ha righe per l'OIC o la query fallisce, OIC con `enablewoc = 0` in `woc.hq_application_enabling` (`getDisabledOics`, chiamata con le coppie deduplicate `{market, oic}`) tolti dall'array `oics`, OIC senza riga di configurazione mantenuto (default abilitato/opt-out), `oics[].feaEnabled` letto da `woc.hq_application_enabling.enablesignature` (`getEnableSignatureByOics`, stesse coppie deduplicate `{market, oic}`, posizionamento subito dopo `djcListParameter`), `true` solo con `enablesignature = 1`, `false` di default se manca la riga di configurazione o se la query fallisce (comportamento opt-in), errore di lettura di `getBrandsByOics`/`getDisabledOics`/`getEnableSignatureByOics`/`getAddressByOics` mai propagato (fallback rispettivamente al CSV di myPeople, a nessuna esclusione, a `feaEnabled: false`, e ai valori di myPeople), nessuna query batch se non ci sono OIC, `username` mancante, `RC`/`STATUS` di fallimento → `SessionNotFoundError`, `User` assente, fallback OIC (nessun `MAIN=Y`, nessun OIC), codice brand sconosciuto → `brandvehic_reftech: null`, cache-miss su `woc.dms_settings` → default (`isdml:false`/`null`/`null`) + registrazione (`await`) best-effort in `woc.dms_settings_enabled_dealers`, errore di lettura cache dms/settings o di registrazione dealer mai propagato (fallback ai default, mai un errore/502), nessuna interrogazione/registrazione dms/settings se manca `country`/`brand`/`dealer`, `companytypes`/`customertitles` a `[]` quando la cache `woc.dml_configurations` fallisce o non contiene un array `data`, fallback `dmlcustomerupdate`→`accountCustomerUpdate`, ricerca chiave `dmldiscount`, attributi tutti assenti (`|| null`), `oics: []`/`applications: []` quando myPeople non restituisce OIC/Applications, `applications` assente dal blocco `User`, `OicEnabled` valorizzato con l'elenco completo (`oic`/`enablewoc`/`enablesignature`) letto da `woc.hq_application_enabling` per `codmarket` (`getOicEnabled`), `[]` quando manca `codmarket` o la query fallisce (errore loggato, mai propagato), nessuna interrogazione se manca `codmarket`, `IsPkMarketEnabled` valorizzato invertendo (0→1, 1→0) il flag `deleted` di `woc.hq_pk_market` per `codmarket` (`checkIsPkMarketEnabled`), `null` quando manca `codmarket`, non esiste ancora una riga per il mercato, o la query fallisce (errore loggato, mai propagato); test dedicato per il caricamento lazy (`require` dinamico) di `myPeople`/`dmlConfigSync`/`DmsSettingsRepository`/`DmlConfigRepository`/`dbManager` (incluso `woc.anag_brand`, `woc.ang_snowflakes`, `woc.hq_application_enabling`, `woc.addr_snowflakes`) quando non sono iniettate funzioni mock
 - **repositoryFactory** – costruzione dell'istanza di default e con override, sia per `buildRepository` (S3) che per `buildMyPeopleDmsRepository` (myPeople/dms)
+- **receptionistFeaResolver** – `receptionistFEA` letto via REST `dbmanager/getDealerSign` con `[{ username }]` solo per i dealer, `null` senza chiamate per utenti HQ o `username` assente, `null` se la firma non esiste o la lettura fallisce (errore loggato, mai propagato)
 
 #### myPeople
 - **httpClient** – parsing JSON/testo, concatenamento chunk, scrittura body, reject su errore di rete
@@ -2164,7 +2239,7 @@ cd agendaSoa && npm run test:coverage
 #### synch-status
 
 - **index (handler)** – parsing del `body` (stringa JSON o oggetto), 400 su body non JSON valido; validazione payload (campi obbligatori `eventType`/`jobCardId`|`jobCardSrpId`/`timestamp`, `eventType` tra i 4 supportati, `timestamp` ISO 8601) con 400 e dettaglio errori; mappatura `eventType` → `djc_sync_status`; **UPDATE-only** su `woc.comunication_asyncro_djc` (mai INSERT) con incremento di `version`; 404 quando il record non esiste (deve essere creato prima da un'altra Lambda); 503 su errore di connessione Aurora, 504 su timeout query, 500 su errore generico; nessuna validazione del token (security demandata al gateway IBM APIC)
-- **jobcardSyncActivity** – UPDATE `techreason`/`ack` (OK/KO dai 4 `eventType`, `null` se sconosciuto)/`lastupdate` e poi `businessreason`/`lastupdate` su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus` (anche dalla risposta reale di `jobCardDetails`); record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
+- **jobcardSyncActivity** – UPDATE `techreason`/`ack` (OK/KO dai 4 `eventType`, `null` se sconosciuto)/`lastupdate` e poi `businessreason`/`lastupdate` (`COALESCE(updateDateTime DJC, now())`) su `woc.jobcard_sync_activity` per `jobcardid`; estrazione di `jobCardDetail.roInfo.dmsSynchroStatus`/`dmsReturnMessage` e di `updateDateTime` normalizzato in ISO (vuoto/non valido → `null`), anche dalla risposta reale di `jobCardDetails`; record assente → `jobCardDetails` non richiamato; errori su UPDATE/`jobCardDetails` loggati e mai propagati
 - **config** – pattern singleton `getInstance()`/`reset()`, struttura della configurazione (sezioni AWS/OAuth/APIC/Logging/Timeouts/API endpoints), risoluzione ambiente da env (`ENVIRONMENT`, default `dev`), `getByPath()` (path annidati, `null` se non trovato), gestione del log level
 
 #### dmlConfigSync

@@ -32,6 +32,7 @@
       "internal.js",
       "PkConfigRepository.js",
       "ConfigPackagesRepository.js",
+      "DealerSignRepository.js",
       "AnagSnowflakesRepository.js",
       "HqRepository.js",
       "S3ConfigRepository.js",

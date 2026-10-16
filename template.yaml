@@ -32,6 +32,14 @@ Parameters:
       quando il nome auto-generato collide con un bucket già esistente in
       un altro account AWS (i nomi bucket S3 sono univoci globalmente).
 
+  SnowflakeExtractsBucketName:
+    Type: String
+    Default: ''
+    Description: >-
+      Override opzionale del bucket S3 con le estrazioni Snowflake (DM_MCO_*)
+      importate da HqManager. Se vuoto (default), usa
+      "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts".
+
   VpcSubnetIds:
     Type: CommaDelimitedList
     Description: Comma-separated list of private Subnet IDs
@@ -124,6 +132,7 @@ Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   IsStage: !Equals [!Ref Environment, stage]
   HasTranslationsBucketNameOverride: !Not [!Equals [!Ref TranslationsBucketNameOverride, '']]
+  HasSnowflakeExtractsBucketOverride: !Not [!Equals [!Ref SnowflakeExtractsBucketName, '']]
   HasAuroraAutoStartClusterIdentifier: !Not [!Equals [!Ref AuroraAutoStartClusterIdentifier, '']]
   HasAuroraAutoStartBastionName: !Not [!Equals [!Ref AuroraAutoStartBastionName, '']]
 
@@ -485,11 +494,16 @@ Resources:
   # mutual TLS con gli STESSI secret cert/key di AgendaSoaFunction
   # (sm-np-bsn0027990-${Environment}-apic-cert/-apic-key), letti tramite il layer
   # AWS Parameters and Secrets Lambda Extension; Basic Auth e client_id nel secret wyz.
+  # searchQuote arricchisce i risultati via REST interno IAM (session, dms): packaging
+  # isolato wyz + serviceClient + runtimeConfig (Makefile), secret in WOC_INTERNAL_CONFIG_SECRET_ID globale.
   WyzFunction:
     Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-wyz"
-      CodeUri: wyz/
+      CodeUri: ./
+      Handler: wyz/index.handler
       # Layer Secrets Extension (localhost:2773) per il recupero dei secret mTLS di getStockPrix
       Layers:
         - !Ref MyPeopleExtensionLayerArn
@@ -978,9 +992,25 @@ Resources:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-hqmanager"
       CodeUri: ./
       Handler: hqManager/index.handler
+      # Import Snowflake (action importSnowflakes): file CSV anche grandi
+      Timeout: 900
       Policies:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
         - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
+        # HqManager.js::insertdmsSnowflakes/insertLegalentitySnowflakes/
+        # insertAddrSnowflakes/insertAnagSnowflakes — lettura file DM_MCO_*
+        - S3ReadPolicy:
+            BucketName: !If
+              - HasSnowflakeExtractsBucketOverride
+              - !Ref SnowflakeExtractsBucketName
+              - !Sub "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts"
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          SNOWFLAKE_BUCKET_NAME: !If
+            - HasSnowflakeExtractsBucketOverride
+            - !Ref SnowflakeExtractsBucketName
+            - !Sub "s3-woc-bsn0027990-${Environment}-m2m-snowflake-extracts"
   HqManagerFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
@@ -1319,6 +1349,8 @@ Outputs:
     Value: !Ref DjcFunctionRole
   InternalSessionRoleName:
     Value: !Ref SessionFunctionRole
+  InternalWyzRoleName:
+    Value: !Ref WyzFunctionRole
   InternalHqManagerRoleName:
     Value: !Ref HqManagerFunctionRole
   InternalDmlConfigSyncRoleName:

@@ -70,38 +70,27 @@ describe('stockPrixService', () => {
   });
 
   describe('resolveDealerId', () => {
-    it('con authorizer usa SOLO profile.dealer_code e ignora il body', () => {
-      const authorizer = { profile: JSON.stringify({ dealer_code: ' 111111A ' }) };
-      expect(resolveDealerId({ dealerId: '999999Z' }, authorizer)).toBe('111111A');
-      expect(console.warn).toHaveBeenCalled();
-    });
-    it('accetta un profile già oggetto', () => {
-      expect(resolveDealerId({ dealerId: '111111A' }, { profile: { dealer_code: '111111A' } })).toBe('111111A');
-      expect(console.warn).not.toHaveBeenCalled();
-    });
-    it.each([
-      [{}],
-      [{ profile: '{bad' }],
-      [{ profile: JSON.stringify({ dealer_code: '' }) }],
-    ])('con authorizer senza dealer_code valido -> 400 (%j)', (authorizer) => {
-      expect(() => resolveDealerId({ dealerId: 'X' }, authorizer)).toThrow(expect.objectContaining({ statusCode: 400 }));
-    });
-    it('senza authorizer usa il body (o stringa vuota)', () => {
+    it('usa il dealerId del payload anche se è presente un authorizer', () => {
       expect(resolveDealerId({ dealerId: ' 345678A ' })).toBe('345678A');
+    });
+    it('senza dealerId restituisce una stringa vuota per la validazione successiva', () => {
       expect(resolveDealerId({})).toBe('');
     });
   });
 
   describe('validateInput', () => {
     it('normalizza i campi e accetta customerDMSHeader numerico e vin valorizzato', () => {
-      const req = validateInput({ ...VALID, customerDMSHeader: 95754, vin: 'vr3fbyhztly048318', partLines: [{ partReference: 'P', quantity: 2, triGramManfacture: ' ABC ' }] }, 'D');
+      const req = validateInput({ ...VALID, customerDMSHeader: 95754, vin: 'vr3fbyhztly048318', partLines: [{ partReference: 'P', quantity: 2, triGramManfacture: ' ABC ' }] }, '1234567');
       expect(req).toEqual({
-        customerDMSHeader: '95754', dealerId: 'D', country: 'FR', brand: 'AC', vin: 'VR3FBYHZTLY048318',
+        customerDMSHeader: '95754', dealerId: '1234567', country: 'FR', brand: 'AC', vin: 'VR3FBYHZTLY048318',
         partLines: [{ partReference: 'P', quantity: 2, partReferenceManfacture: '', triGramManfacture: 'ABC', idManufacturer: '' }],
       });
     });
     it('vin null è trattato come assente', () => {
-      expect(validateInput({ ...VALID, vin: null }, 'D').vin).toBe('');
+      expect(validateInput({ ...VALID, vin: null }, '1234567').vin).toBe('');
+    });
+    it('rifiuta dealerId non conforme al pattern StockPrix', () => {
+      expect(() => validateInput(VALID, 'IT-DLR-04217')).toThrow('dealerId (stringa obbligatoria, 7-10 caratteri alfanumerici)');
     });
     it('elenca tutti i campi non validi con 400', () => {
       const bad = {
@@ -172,7 +161,7 @@ describe('stockPrixService', () => {
       expect(mockGetAgent).toHaveBeenCalledWith({ extensionPort: 2773 });
     });
 
-    it('usa la porta esplicita dell\'URL e il dealer dell\'authorizer', async () => {
+    it('usa la porta esplicita dell\'URL e il dealerId del payload anche con authorizer', async () => {
       mockGetConfig.mockResolvedValue({ stockPrix: { ...SP, baseUrl: 'https://api-cert.groupe-psa.com:8443' } });
       mockRequest.mockResolvedValue({ statusCode: 200, body: OK_BODY });
       await getStockPrix(VALID, { authorizer: { profile: JSON.stringify({ dealer_code: '111111A' }) } });
@@ -180,7 +169,7 @@ describe('stockPrixService', () => {
         hostname: 'api-cert.groupe-psa.com', port: '8443',
         path: '/applications/panier-soa/ws/StockPrixService/v1?client_id=cid',
       });
-      expect(mockRequest.mock.calls[0][1]).toContain('<dealerId>111111A</dealerId>');
+      expect(mockRequest.mock.calls[0][1]).toContain('<dealerId>345678A</dealerId>');
     });
 
     it('più righe -> array; risposta senza dettagli -> items vuoto', async () => {

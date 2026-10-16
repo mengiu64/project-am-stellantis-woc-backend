@@ -46,6 +46,10 @@ function makeManagerInstance(overrides = {}) {
     importAppConfiguration: jest.fn(),
     exportAppConfiguration: jest.fn(),
     exportAudit: jest.fn(),
+    insertdmsSnowflakes: jest.fn(),
+    insertLegalentitySnowflakes: jest.fn(),
+    insertAddrSnowflakes: jest.fn(),
+    insertAnagSnowflakes: jest.fn(),
     ...overrides,
   };
   HqManager.mockImplementation(() => instance);
@@ -497,6 +501,74 @@ describe('hqManager/index.js', () => {
       expect(instance.exportAppConfiguration).toHaveBeenCalledWith('1000');
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ success: true, ...exportResult });
+    });
+
+    it.each(['insertdmsSnowflakes', 'insertLegalentitySnowflakes', 'insertAddrSnowflakes', 'insertAnagSnowflakes'])(
+      'dispatches %s individually',
+      async (action) => {
+        const result = { files: 1, failedFiles: 0 };
+        const instance = makeManagerInstance({ [action]: jest.fn().mockResolvedValue(result) });
+        HqManager.mockImplementation(() => instance);
+
+        const res = await handler({ action });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.body)).toEqual({ success: true, result });
+        expect(instance[action]).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('single import returns 207 when a file failed', async () => {
+      const result = { files: 2, failedFiles: 1 };
+      const instance = makeManagerInstance({ insertAnagSnowflakes: jest.fn().mockResolvedValue(result) });
+      HqManager.mockImplementation(() => instance);
+
+      const res = await handler({ action: 'insertAnagSnowflakes' });
+
+      expect(res.statusCode).toBe(207);
+      expect(JSON.parse(res.body).success).toBe(false);
+    });
+
+    it('dispatches importSnowflakes running all four imports', async () => {
+      const ok = { files: 1, failedFiles: 0 };
+      const instance = makeManagerInstance({
+        insertdmsSnowflakes: jest.fn().mockResolvedValue(ok),
+        insertLegalentitySnowflakes: jest.fn().mockResolvedValue(ok),
+        insertAddrSnowflakes: jest.fn().mockResolvedValue(ok),
+        insertAnagSnowflakes: jest.fn().mockResolvedValue(ok),
+      });
+      HqManager.mockImplementation(() => instance);
+
+      const res = await handler({ action: 'importSnowflakes' });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({
+        success: true,
+        results: {
+          insertdmsSnowflakes: ok, insertLegalentitySnowflakes: ok, insertAddrSnowflakes: ok, insertAnagSnowflakes: ok,
+        },
+      });
+    });
+
+    it('importSnowflakes returns 207 when an import fails but runs the others', async () => {
+      const ok = { files: 1, failedFiles: 0 };
+      const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const instance = makeManagerInstance({
+        insertdmsSnowflakes: jest.fn().mockRejectedValue(new Error('denied')),
+        insertLegalentitySnowflakes: jest.fn().mockResolvedValue({ files: 2, failedFiles: 1 }),
+        insertAddrSnowflakes: jest.fn().mockResolvedValue(ok),
+        insertAnagSnowflakes: jest.fn().mockResolvedValue(ok),
+      });
+      HqManager.mockImplementation(() => instance);
+
+      const res = await handler({ action: 'importSnowflakes' });
+      errSpy.mockRestore();
+
+      expect(res.statusCode).toBe(207);
+      const body = JSON.parse(res.body);
+      expect(body.success).toBe(false);
+      expect(body.results.insertdmsSnowflakes).toEqual({ error: 'denied' });
+      expect(instance.insertAnagSnowflakes).toHaveBeenCalled();
     });
 
     it('dispatches exportAudit (direct invocation payload)', async () => {

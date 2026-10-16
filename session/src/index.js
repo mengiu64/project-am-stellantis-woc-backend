@@ -4,6 +4,8 @@ require('dotenv').config();
 
 const { buildRepository, buildMyPeopleDmsRepository } = require('./repositoryFactory');
 const { resolveHqMarketsList } = require('./hqMarketsResolver');
+const { resolveReceptionistFEA } = require('./receptionistFeaResolver');
+const { getOrCreateSessionData } = require('./sessionContextCache');
 const { isInternalRequest } = require('../../serviceClient');
 
 const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
@@ -23,6 +25,16 @@ const DEFAULT_MARKET = process.env.SESSION_DEFAULT_MARKET || '1000';
  * Se l'authorizer non ha valorizzato `sub` (richiesta non autenticata / authorizer
  * non configurato), la Lambda risponde 401 senza interrogare alcun repository.
  *
+ * Per gli utenti dealer i dati passano dalla cache condivisa DynamoDB (chiave
+ * session:context:<username>, la stessa di getData/getContext, TTL
+ * SESSION_CONTEXT_CACHE_TTL_MS, default 5 min): prima si legge la cache e, solo
+ * se assente o scaduta, si interrogano myPeople/dms e si salva il risultato
+ * (v. sessionContextCache.js::getOrCreateSessionData). In cache vanno i dati
+ * del repository; hqCentral/hqMarket/dealer/hqMarketsList/userroles vengono
+ * aggiunti a ogni richiesta dai ruoli correnti e receptionistFEA (firma
+ * dell'accettatore, solo dealer) viene letto a ogni richiesta da
+ * woc.dealer_sign, senza passare dalla cache (v. insertAfterProfile).
+ *
  * @param {object} [event] - Evento Lambda (API Gateway proxy).
  * @returns {Promise<object>} { statusCode, body }
  */
@@ -39,7 +51,6 @@ async function handler(event = {}) {
   }
 
   try {
-    const repository = buildMyPeopleDmsRepository();
     // I ruoli vengono verificati PRIMA di interpellare myPeople: se indicano gia'
     // un utente HQ (hqCentral/hqMarket), il repository salta del tutto la
     // chiamata a myPeople (che comunque non modella utenti HQ, v.
@@ -50,7 +61,14 @@ async function handler(event = {}) {
     // `profile` (parsato da authorizer.profile, v. getAuthContext) viene passato
     // solo per valorizzare firstname/lastname degli utenti HQ (given_name/family_name),
     // che altrimenti resterebbero null: v. MyPeopleDmsSessionRepository::buildHqSessionData.
-    const data = await repository.getSessionData(sub, profile, roleFlags);
+    const buildSessionData = (username) => buildMyPeopleDmsRepository()
+      .getSessionData(username, profile, roleFlags);
+    // Gli utenti HQ restano fuori dalla cache: la loro sessione non richiede
+    // chiamate esterne e firstname/lastname arrivano dal profilo
+    // dell'authorizer, che getData (invocato senza profilo) non conosce.
+    const data = roleFlags.dealer
+      ? await getOrCreateSessionData(sub, buildSessionData)
+      : await buildSessionData(sub);
     // `userroles` (array) e' il ruolo/i ruoli dell'utente autenticato, presi
     // SEMPRE da event.requestContext.authorizer.roles (Lambda Authorizer, gia'
     // estratto da getAuthContext), mai da myPeople/dms: stesso principio di
@@ -59,7 +77,10 @@ async function handler(event = {}) {
     // vedi resolveRoleFlags(). `hqMarketsList` (array, v. hqMarketsResolver.js)
     // e' invece l'elenco dei mercati disponibili per l'utente HQ: [] per un
     // dealer, viene calcolato in modo asincrono dentro insertAfterProfile().
-    return response(200, await insertAfterProfile(data, roles));
+    // `receptionistFEA` e' la firma dell'accettatore (dealer `sub`), letta da
+    // woc.dealer_sign come getFirmaAccettatore della lambda CWS (v.
+    // receptionistFeaResolver.js).
+    return response(200, await insertAfterProfile(data, roles, sub));
   } catch (err) {
     if (err.code === 'SESSION_NOT_FOUND') {
       return response(404, { success: false, message: err.message });
@@ -136,29 +157,36 @@ function resolveRoleFlags(roles) {
 }
 
 /**
- * Inserisce, subito dopo `profile`, i campi `hqCentral`/`hqMarket`/`dealer`
- * (derivati da `roles` via resolveRoleFlags()), `hqMarketsList` (v.
- * hqMarketsResolver.js::resolveHqMarketsList — elenco dei mercati disponibili
- * per l'utente HQ, `[]` per un dealer) e infine `userroles`, nell'oggetto
- * dati di sessione (stesso ordine di chiavi atteso nel JSON di risposta),
- * senza mutare l'oggetto originale. Se `profile` non e' presente (fallback
- * difensivo, non dovrebbe verificarsi con l'attuale
+ * Inserisce, subito dopo `profile`, i campi `receptionistFEA` (v.
+ * receptionistFeaResolver.js::resolveReceptionistFEA — firma dell'accettatore
+ * come data URL letta da woc.dealer_sign, `null` per un utente HQ o senza firma),
+ * `hqCentral`/`hqMarket`/`dealer` (derivati da `roles` via resolveRoleFlags()),
+ * `hqMarketsList` (v. hqMarketsResolver.js::resolveHqMarketsList — elenco dei
+ * mercati disponibili per l'utente HQ, `[]` per un dealer) e infine
+ * `userroles`, nell'oggetto dati di sessione (stesso ordine di chiavi atteso
+ * nel JSON di risposta), senza mutare l'oggetto originale. Se `profile` non
+ * e' presente (fallback difensivo, non dovrebbe verificarsi con l'attuale
  * MyPeopleDmsSessionRepository), tutti questi campi vengono semplicemente
  * accodati in fondo.
  *
  * @param {object} data - Dati di sessione restituiti dal repository.
  * @param {string[]} roles - Ruoli dell'utente autenticato (da getAuthContext).
+ * @param {string} username - Utente autenticato (authorizer.sub), chiave della firma in woc.dealer_sign.
  * @returns {Promise<object>} Copia di `data` con i nuovi campi inseriti dopo `profile`.
  */
-async function insertAfterProfile(data, roles) {
+async function insertAfterProfile(data, roles, username) {
   const entries = Object.entries(data || {});
   const profileIndex = entries.findIndex(([key]) => key === 'profile');
   const insertAt = profileIndex === -1 ? entries.length : profileIndex + 1;
   const { hqCentral, hqMarket, dealer } = resolveRoleFlags(roles);
-  const hqMarketsList = await resolveHqMarketsList({ hqCentral, hqMarket, roles });
+  const [receptionistFEA, hqMarketsList] = await Promise.all([
+    resolveReceptionistFEA({ username, dealer }),
+    resolveHqMarketsList({ hqCentral, hqMarket, roles }),
+  ]);
   entries.splice(
     insertAt,
     0,
+    ['receptionistFEA', receptionistFEA],
     ['hqCentral', hqCentral],
     ['hqMarket', hqMarket],
     ['dealer', dealer],
