@@ -41,7 +41,7 @@ Opzionali: `loadIndexes`, `speedIndexes`, `seasons`, `brands`, `runFlat`. Altri 
 
 Post-elaborazione: gli item con `status === 'EMPTY_STOCK'` (attributo dell'item, non di `tyre`) sono rimossi; per gli altri, `tyre` viene arricchito
 con `wyzPrice` (stock `Hub` prevale su `Tyre producer`; `sellingPrice` vuoto → `bf`), `StockPrixBuyingPrice`
-(`priceTTC` di `getStockPrix`), `maxAllowableDiscount` (`max(0, StockPrixBuyingPrice - wyzPrice)`) e `availability`
+(`priceTTC` di `getStockPrix`), `maxAllowableDiscount` (`max(0, wyzPrice - StockPrixBuyingPrice)`) e `availability`
 (primo `BinLocation.QuantityAvailable` da `dms/inquiry`), tutti `null` se il dato non è disponibile. Dati sessione
 (`session/getData`, `getContext`) letti via REST interno con `username = authorizer.sub` (il body è ammesso solo
 senza authorizer). Dealer, header DMS e VIN di `getStockPrix`/`inquiry` sono temporaneamente fissi.

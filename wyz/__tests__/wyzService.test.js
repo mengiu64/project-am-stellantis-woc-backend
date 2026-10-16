@@ -304,8 +304,8 @@ describe('wyzService', () => {
 
       expect(data.items.map((i) => i.tyre?.reference)).toEqual(['A', 'B', 'C', 'E', 'F', undefined, undefined]);
       const [a, b, c, e, f] = data.items.map((i) => i.tyre);
-      expect(a).toMatchObject({ wyzPrice: 120, StockPrixBuyingPrice: 150, maxAllowableDiscount: 30, availability: 7 });
-      expect(b).toMatchObject({ wyzPrice: 80, StockPrixBuyingPrice: 50, maxAllowableDiscount: 0, availability: null });
+      expect(a).toMatchObject({ wyzPrice: 120, StockPrixBuyingPrice: 150, maxAllowableDiscount: 0, availability: 7 });
+      expect(b).toMatchObject({ wyzPrice: 80, StockPrixBuyingPrice: 50, maxAllowableDiscount: 30, availability: null });
       expect(c).toMatchObject({ wyzPrice: null, StockPrixBuyingPrice: null, maxAllowableDiscount: null, availability: null });
       expect(e.wyzPrice).toBeNull();
       expect(f.wyzPrice).toBeNull();
