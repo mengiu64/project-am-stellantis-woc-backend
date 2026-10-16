@@ -325,6 +325,15 @@ describe('wyzService', () => {
       expect(mockCallService).toHaveBeenCalledWith('session', 'getData', { args: ['user1'] });
     });
 
+    it('tronca a 100 le righe inviate a getStockPrix', async () => {
+      const items = Array.from({ length: 120 }, (_, i) => mk(`P${i}`, 'AVAILABLE_STOCK', []));
+      mockHttps.mockResolvedValue(ok({ items }));
+      await searchQuote(valid, ctx);
+      const arg = mockStockPrix.mock.calls[0][0];
+      expect(arg.partLines).toHaveLength(100);
+      expect(arg.partLines[99].partReference).toBe('P99');
+    });
+
     it('errori di getStockPrix/inquiry lasciano i campi null', async () => {
       mockStockPrix.mockRejectedValue(new Error('boom'));
       mockCallService.mockImplementation(async (svc, op) => {

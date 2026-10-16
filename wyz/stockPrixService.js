@@ -177,7 +177,8 @@ function validateInput(input, dealerId) {
   // Verifica della cardinalità.
   if (!Array.isArray(rawLines) || rawLines.length === 0 || rawLines.length > MAX_PART_LINES) {
     // Errore accumulato.
-    errors.push(`partLines (array di 1..${MAX_PART_LINES} elementi)`);
+    const received = Array.isArray(rawLines) ? `${rawLines.length} elementi` : typeof rawLines;
+    errors.push(`partLines (array di 1..${MAX_PART_LINES} elementi, ricevuto: ${received})`);
   }
   // Validazione delle singole righe.
   const partLines = (Array.isArray(rawLines) ? rawLines.slice(0, MAX_PART_LINES) : []).map((line, i) => {

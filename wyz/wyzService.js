@@ -361,10 +361,17 @@ const USE_FIXED_DEALER_ID = true;
 const FIXED_DEALER_ID = '345678A';
 const resolveStockPrixDealerId = (sessionData) => (USE_FIXED_DEALER_ID ? FIXED_DEALER_ID : sessionData?.dealerId);
 
+const MAX_STOCKPRIX_LINES = 100; // allineato a MAX_PART_LINES di stockPrixService
+
 // Arricchisce partReferenceMap con StockPrixKBRWDetails.priceTTC (getStockPrix)
 async function applyStockPrix(partReferenceMap, sessionData, ctx) {
   const { getStockPrix } = require('./stockPrixService');
   const country = String(sessionData?.locale ?? '').split('_')[1];
+  // getStockPrix accetta al massimo MAX_PART_LINES righe: le eccedenti restano senza prezzo
+  const references = Object.values(partReferenceMap);
+  if (references.length > MAX_STOCKPRIX_LINES) {
+    console.warn(`[searchQuote] getStockPrix: ${references.length} righe, troncate a ${MAX_STOCKPRIX_LINES}`);
+  }
   const result = await getStockPrix({
     clientApplicationName: 'WIADVISOR',
     customerDMSHeader: '95754',
@@ -372,7 +379,7 @@ async function applyStockPrix(partReferenceMap, sessionData, ctx) {
     country,
     brand: sessionData?.brandvehic_reftech,
     vin: 'VF3CABHW6GT204366', // temporaneo: valore fisso
-    partLines: Object.values(partReferenceMap).map((e) => ({ partReference: e.partReference, quantity: 1 })),
+    partLines: references.slice(0, MAX_STOCKPRIX_LINES).map((e) => ({ partReference: e.partReference, quantity: 1 })),
   }, ctx);
 
   (result?.items ?? []).forEach((d) => {
