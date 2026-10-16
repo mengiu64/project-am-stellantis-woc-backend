@@ -284,7 +284,7 @@ const isPositiveNumber = (v) => typeof v === 'number' && Number.isFinite(v) && v
  * Metodo 2 — ricerca preventivi pneumatici (POST /api/tyres/search/quote).
  * @param {object} params - body di ricerca (v. QUOTE_ALLOWED_FIELDS)
  * @param {{correlationId?: string}} [ctx]
- * @returns {Promise<object>} contenuto di "data" ({ items: [...] })
+ * @returns {Promise<object>} contenuto di "data" ({ items: [...] }), senza EMPTY_STOCK e arricchito
  * @throws {WyzError}
  */
 async function searchQuote(params, ctx = {}) {
@@ -317,7 +317,7 @@ async function searchQuote(params, ctx = {}) {
 
   // Scarta gli pneumatici senza stock
   if (data && Array.isArray(data.items)) {
-    data.items = data.items.filter((item) => item?.tyre?.status !== 'EMPTY_STOCK');
+    data.items = data.items.filter((item) => item?.status !== 'EMPTY_STOCK');
   }
   console.log(`[searchQuote] Completata: ${Array.isArray(data && data.items) ? data.items.length : 0} risultati`);
 

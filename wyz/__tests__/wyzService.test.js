@@ -262,7 +262,7 @@ describe('wyzService', () => {
       customerRrdiCode: 'C1', hubCode: 'H1', width: 205, height: 55, diameter: 16, quantity: 2,
       vehicleTypes: ['t1'], vehicleBrands: ['vb1'],
     };
-    const mk = (reference, status, stocks) => ({ tyre: { reference, status }, stocks });
+    const mk = (reference, status, stocks) => ({ status, tyre: { reference }, stocks });
     const ctx = { authorizer: { sub: 'user1' } };
 
     beforeEach(() => {
