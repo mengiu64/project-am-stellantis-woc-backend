@@ -113,7 +113,9 @@ exports.handler = async (event) => {
 
   try {
     const payload = body.payload ?? body;
-    const ctx = { correlationId };
+    // Identità verificata dal Lambda Authorizer: passata alle azioni solo se presente nell'evento
+    const authorizer = ev.requestContext && ev.requestContext.authorizer;
+    const ctx = { correlationId, ...(authorizer ? { authorizer } : {}) };
     const result = await ACTIONS[action](payload, ctx);
     console.log(`[handler] Azione "${action}" completata con successo`);
 

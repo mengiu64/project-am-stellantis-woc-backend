@@ -82,7 +82,7 @@ describe('wyz handler', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(parse(res)).toEqual({ success: true, data: { items: [{ partReference: 'P' }] } });
-      expect(mockStockPrix).toHaveBeenCalledWith({ partLines: [] }, { correlationId: 'req-2' });
+      expect(mockStockPrix).toHaveBeenCalledWith({ partLines: [] }, { correlationId: 'req-2', authorizer });
     });
 
     it('evento assente -> azione sconosciuta 400', async () => {
