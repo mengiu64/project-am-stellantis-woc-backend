@@ -386,7 +386,7 @@ async function applyStockPrix(partReferenceMap, sessionData, ctx) {
     const entry = partReferenceMap[d?.partReference];
     if (!entry || d.priceTTC === null || d.priceTTC === undefined) return;
     entry.StockPrixBuyingPrice = d.priceTTC;
-    entry.maxAllowableDiscount = entry.wyzPrice === null ? null : Math.max(0, d.priceTTC - entry.wyzPrice);
+    entry.maxAllowableDiscount = entry.wyzPrice === null ? null : Math.max(0, entry.wyzPrice - d.priceTTC);
   });
 }
 
