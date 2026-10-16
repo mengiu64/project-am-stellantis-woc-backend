@@ -322,11 +322,167 @@ async function getMarkets(pool, { markets } = {}) {
   return rows;
 }
 
+/** Colonne di woc.ang_snowflakes valorizzate dall'import CSV (created_at/updated_at/dt_last_updated_date gestite dal DB). */
+const SNOWFLAKES_COLUMNS = [
+  'dt_ingestion_timestamp', 'cd_unique_site_code', 'cd_snr_site_code', 'cd_snr_status_code',
+  'cd_contract_brand_webdac_code', 'cd_contract_brand_arcad_code', 'gn_contract_brand_name',
+  'cd_contract_webdac_activity_code', 'cd_contract_arcad_activity_code', 'gn_activity_name',
+  'cd_market_iso_code', 'cd_market_code', 'cd_dealer_country_iso_code', 'gn_legal_entity',
+  'gn_cddb_alias', 'cd_paired_oic_code', 'cd_sincom_code', 'cd_main_sincom_code', 'cd_issuer_code',
+  'cd_dealer_arcad_code', 'cd_sagai_code', 'cd_sagai_pr_code', 'cd_outlet_webdac_code',
+  'gn_physical_site_arcad', 'gn_arcad_geographical_site',
+  'cd_webdac_contract_site_level_status_code', 'gn_webdac_contract_site_level_status',
+  'cd_webdac_mandate_status_code', 'gn_webdac_mandate_status',
+  'cd_webdac_site_status_code', 'gn_webdac_site_status',
+  'dt_site_appointment_date', 'dt_site_closing_date', 'gn_global_status', 'gn_row_hash',
+  'fl_is_updated_flag', 'fl_is_deleted_flag',
+];
+
+/** Colonne di woc.legalentity_snowflakes valorizzate dall'import CSV DM_MCO_DEALER (updated_at/dt_last_updated_date gestite dal DB). */
+const LEGALENTITY_COLUMNS = [
+  'dt_ingestion_timestamp', 'gn_legal_entity', 'gn_first_company_name', 'cd_snr_business_unit_code',
+  'cd_category_code', 'gn_snr_business_unit_type', 'gn_business_function', 'cd_webdac_brand_code',
+  'cd_arcad_brand_code', 'fl_dealer_owned_by_oem_flag', 'cd_market_code', 'cd_country_code',
+  'gn_country_name', 'gn_first_address', 'gn_second_address', 'cd_zip_code', 'gn_town',
+  'cd_province_code', 'cd_webdac_dealer_status_code', 'cd_snr_status_code', 'ds_status_desc',
+  'gn_reference_dealer_subnetwork', 'dt_starting_validity_date', 'dt_closing_validity_date',
+  'cd_webdac_language_code', 'cd_iso_language_code', 'gn_language_name', 'cd_webdac_currency_code',
+  'cd_iso_currency_code', 'gn_currency_name', 'cd_vat_code', 'gn_row_hash',
+  'fl_is_updated_flag', 'fl_is_deleted_flag',
+];
+
+/** Colonne di woc.addr_snowflakes valorizzate dall'import CSV DM_MCO_EXTERNAL_LOCATION (created_at/updated_at/dt_last_updated_date gestite dal DB). */
+const ADDR_COLUMNS = [
+  'dt_ingestion_timestamp', 'cd_site_identification_code', 'cd_snr_site_code',
+  'cd_outlet_identification_code', 'gn_legal_entity', 'cd_market_code', 'gn_site_name',
+  'gn_site_label_full', 'gn_address_1', 'gn_additional_address', 'cd_zip_code', 'gn_town',
+  'cd_province_code', 'gn_phone_number', 'gn_latitude', 'gn_longitude', 'gn_country_name',
+  'cd_servicenow_status_code', 'cd_webdac_status_code', 'cd_snr_status_code', 'ds_status_desc',
+  'dt_appointment_date', 'dt_closing_date', 'cd_webdac_site_outlet_code', 'cd_physical_site_xp_code',
+  'cd_physical_site_xf_code', 'fl_principal_location_flag', 'fl_internet_website_flag',
+  'cd_country_iso_code', 'gn_row_hash', 'fl_is_updated_flag', 'fl_is_deleted_flag',
+];
+
+const SNOWFLAKES_PK = 'gn_row_hash';
+// Max 65535 parametri per istruzione in PostgreSQL: 1000 righe x ~38 colonne restano entro il limite
+const SNOWFLAKES_CHUNK_SIZE = 1000;
+
+/**
+ * Upsert (INSERT ... ON CONFLICT (gn_row_hash) DO UPDATE) di record CSV
+ * Snowflake nella tabella indicata. In caso di conflitto aggiorna tutti i
+ * campi e imposta updated_at/dt_last_updated_date = NOW(). Eseguito in
+ * un'unica transazione, con una sola istruzione per blocco di record. A parita'
+ * di gn_row_hash nello stesso invio vince l'ultimo record (PostgreSQL non
+ * ammette lo stesso conflitto due volte nella stessa istruzione).
+ */
+async function upsertSnowflakes(pool, table, columns, records) {
+  if (!Array.isArray(records)) throw new Error('"records" must be an array');
+  if (records.length === 0) return { received: 0, saved: 0, inserted: 0, updated: 0 };
+
+  const byHash = new Map();
+  for (const record of records) {
+    if (!record || !record[SNOWFLAKES_PK]) throw new Error(`"${SNOWFLAKES_PK}" is required for every record`);
+    byHash.set(record[SNOWFLAKES_PK], record);
+  }
+  const unique = [...byHash.values()];
+
+  const setClause = [
+    ...columns.filter((c) => c !== SNOWFLAKES_PK).map((c) => `${c} = EXCLUDED.${c}`),
+    'updated_at = NOW()',
+    'dt_last_updated_date = NOW()',
+  ].join(', ');
+  const value = (v) => (v === undefined || v === '' ? null : v);
+
+  let inserted = 0;
+  let updated = 0;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (let i = 0; i < unique.length; i += SNOWFLAKES_CHUNK_SIZE) {
+      const chunk = unique.slice(i, i + SNOWFLAKES_CHUNK_SIZE);
+      const values = [];
+      const placeholders = chunk.map((record, r) => {
+        const base = r * columns.length;
+        columns.forEach((c) => values.push(value(record[c])));
+        return `(${columns.map((_, k) => `$${base + k + 1}`).join(', ')})`;
+      });
+      const { rows } = await client.query(
+        `INSERT INTO ${table} (${columns.join(', ')})
+         VALUES ${placeholders.join(', ')}
+         ON CONFLICT (${SNOWFLAKES_PK}) DO UPDATE SET ${setClause}
+         RETURNING (xmax = 0) AS inserted`,
+        values,
+      );
+      for (const row of rows) {
+        if (row.inserted) inserted += 1; else updated += 1;
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return { received: records.length, saved: inserted + updated, inserted, updated };
+}
+
+/**
+ * Upsert dei record del CSV DM_MCO_DPR_RA_SITE in woc.ang_snowflakes.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {Array<object>} records - oggetti con chiavi uguali ai nomi colonna
+ * @returns {Promise<{ received: number, saved: number, inserted: number, updated: number }>}
+ */
+async function insertdmsSnowflakes(pool, records) {
+  return upsertSnowflakes(pool, 'woc.ang_snowflakes', SNOWFLAKES_COLUMNS, records);
+}
+
+/**
+ * Upsert dei record del CSV DM_MCO_DEALER in woc.legalentity_snowflakes
+ * (struttura in sql/create_table_legalentity_snowflakes.sql).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {Array<object>} records - oggetti con chiavi uguali ai nomi colonna
+ * @returns {Promise<{ received: number, saved: number, inserted: number, updated: number }>}
+ */
+async function insertLegalentitySnowflakes(pool, records) {
+  return upsertSnowflakes(pool, 'woc.legalentity_snowflakes', LEGALENTITY_COLUMNS, records);
+}
+
+/**
+ * Upsert dei record del CSV DM_MCO_EXTERNAL_LOCATION in woc.addr_snowflakes.
+ *
+ * @param {import('pg').Pool} pool
+ * @param {Array<object>} records - oggetti con chiavi uguali ai nomi colonna
+ * @returns {Promise<{ received: number, saved: number, inserted: number, updated: number }>}
+ */
+async function insertAddrSnowflakes(pool, records) {
+  return upsertSnowflakes(pool, 'woc.addr_snowflakes', ADDR_COLUMNS, records);
+}
+
+/**
+ * Upsert dei record del CSV DM_MCO_M2M in woc.ang_snowflakes (stessa tabella e
+ * stesse colonne di insertdmsSnowflakes, sorgente diversa).
+ *
+ * @param {import('pg').Pool} pool
+ * @param {Array<object>} records - oggetti con chiavi uguali ai nomi colonna
+ * @returns {Promise<{ received: number, saved: number, inserted: number, updated: number }>}
+ */
+async function insertAnagSnowflakes(pool, records) {
+  return upsertSnowflakes(pool, 'woc.ang_snowflakes', SNOWFLAKES_COLUMNS, records);
+}
+
 module.exports = {
   getCountryIsoCode,
   getPhysicalSiteAndSincom,
   getPhysicalSiteAndPdvId,
   getBrandsByOics,
   getMarkets,
+  insertdmsSnowflakes,
+  insertLegalentitySnowflakes,
+  insertAddrSnowflakes,
+  insertAnagSnowflakes,
   resolveArcadBrandCode,
 };

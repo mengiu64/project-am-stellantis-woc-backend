@@ -20,7 +20,7 @@
  *     "quantity": 2, "vehicleTypes": ["<uuid>"], "vehicleBrands": ["<uuid>"],
  *     "seasons": ["<uuid>"], "brands": ["<uuid>"], "speedIndexes": ["H"], "loadIndexes": [91] }
  *
- * Esempio input getStockPrix (body JSON; dealerId da authorizer, nel body solo per invocazione diretta):
+ * Esempio input getStockPrix (body JSON; dealerId obbligatorio):
  *   { "customerDMSHeader": "95754", "country": "FR", "brand": "AC", "vin": "",
  *     "partLines": [{ "partReference": "00001109AK", "quantity": 1 }] }
  *

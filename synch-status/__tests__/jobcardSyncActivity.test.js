@@ -30,9 +30,16 @@ const DETAILS_BODY = {
       jobCardSrpId: 'JCID-42',
       dmsSynchroStatus: 'SYNCED',
       dmsReturnMessage: 'Job card Transaction successfull',
+      updateDateTime: '2026-10-13T09:55:05Z',
     },
   },
 };
+
+const DETAILS_UPDATE_DATE_TIME = '2026-10-13T09:55:05.000Z';
+
+function reasonOf(businessReason, updateDateTime = null) {
+  return { businessReason, updateDateTime };
+}
 
 describe('jobcardSyncActivity', () => {
   describe('SQL', () => {
@@ -42,20 +49,22 @@ describe('jobcardSyncActivity', () => {
       expect(UPDATE_TECHREASON_SQL).toMatch(/WHERE jobcardid = \$1/);
     });
 
-    it('aggiorna businessreason e lastupdate per jobcardid', () => {
-      expect(UPDATE_BUSINESSREASON_SQL).toMatch(/businessreason = \$2, lastupdate = now\(\)/);
+    it('aggiorna businessreason e lastupdate (updateDateTime DJC, fallback now()) per jobcardid', () => {
+      expect(UPDATE_BUSINESSREASON_SQL).toMatch(/businessreason = \$2, lastupdate = COALESCE\(\$3::timestamptz, now\(\)\)/);
       expect(UPDATE_BUSINESSREASON_SQL).toMatch(/WHERE jobcardid = \$1/);
     });
   });
 
   describe('fetchBusinessReason()', () => {
-    it('concatena jobCardDetail.roInfo.dmsSynchroStatus e dmsReturnMessage', async () => {
+    it('concatena dmsSynchroStatus e dmsReturnMessage e restituisce updateDateTime in ISO', async () => {
       const deps = makeDeps(DETAILS_BODY);
-      await expect(fetchBusinessReason('JCID-42', deps)).resolves.toBe('SYNCED - Job card Transaction successfull');
+      await expect(fetchBusinessReason('JCID-42', deps)).resolves.toEqual(
+        reasonOf('SYNCED - Job card Transaction successfull', DETAILS_UPDATE_DATE_TIME),
+      );
       expect(deps.callService).toHaveBeenCalledWith('jobcard', 'getJobCardDetails', { args: ['JCID-42'] });
     });
 
-    it('estrae entrambi i campi dalla risposta reale di jobCardDetails', async () => {
+    it('estrae i campi dalla risposta reale di jobCardDetails', async () => {
       const realBody = {
         statusCode: 200,
         success: true,
@@ -65,40 +74,56 @@ describe('jobcardSyncActivity', () => {
             jobCardSrpId: 'JCID-17362',
             jobCardLegacyId: '1JSGR43CT',
             status: 'CREATED',
+            updateDateTime: '2026-10-09T09:45:59Z',
             dmsSynchroStatus: 'UNSYNCED',
             dmsReturnMessage: 'Job card update rejected',
           },
           jobs: [],
         },
       };
-      await expect(fetchBusinessReason('JCID-17362', makeDeps(realBody))).resolves.toBe('UNSYNCED - Job card update rejected');
+      await expect(fetchBusinessReason('JCID-17362', makeDeps(realBody))).resolves.toEqual(
+        reasonOf('UNSYNCED - Job card update rejected', '2026-10-09T09:45:59.000Z'),
+      );
     });
 
     it('accetta anche roInfo al primo livello', async () => {
       await expect(fetchBusinessReason('JCID-42', makeDeps({
-        roInfo: { dmsSynchroStatus: 'UNSYNCED', dmsReturnMessage: 'Job card update rejected' },
-      }))).resolves.toBe('UNSYNCED - Job card update rejected');
+        roInfo: { dmsSynchroStatus: 'UNSYNCED', dmsReturnMessage: 'Job card update rejected', updateDateTime: '2026-10-13T11:55:05+02:00' },
+      }))).resolves.toEqual(reasonOf('UNSYNCED - Job card update rejected', DETAILS_UPDATE_DATE_TIME));
     });
 
     it('mantiene il campo presente quando l’altro è assente', async () => {
       await expect(fetchBusinessReason('JCID-42', makeDeps({
         jobCardDetail: { roInfo: { dmsSynchroStatus: 'UNSYNCED' } },
-      }))).resolves.toBe('UNSYNCED');
+      }))).resolves.toEqual(reasonOf('UNSYNCED'));
       await expect(fetchBusinessReason('JCID-42', makeDeps({
         jobCardDetail: { roInfo: { dmsReturnMessage: 'Job card update rejected' } },
-      }))).resolves.toBe('Job card update rejected');
+      }))).resolves.toEqual(reasonOf('Job card update rejected'));
     });
 
-    it('ritorna null se entrambi i campi sono assenti', async () => {
-      await expect(fetchBusinessReason('JCID-42', makeDeps({}))).resolves.toBeNull();
-      await expect(fetchBusinessReason('JCID-42', makeDeps(null))).resolves.toBeNull();
+    it('ritorna null se i campi sono assenti', async () => {
+      await expect(fetchBusinessReason('JCID-42', makeDeps({}))).resolves.toEqual(reasonOf(null));
+      await expect(fetchBusinessReason('JCID-42', makeDeps(null))).resolves.toEqual(reasonOf(null));
+    });
+
+    it.each([
+      ['vuoto', ''],
+      ['solo spazi', '   '],
+      ['non interpretabile', 'not-a-date'],
+      ['non stringa', 1760349305000],
+    ])('updateDateTime %s: null (lastupdate resta now())', async (_label, value) => {
+      await expect(fetchBusinessReason('JCID-42', makeDeps({
+        jobCardDetail: { roInfo: { dmsSynchroStatus: 'SYNCED', updateDateTime: value } },
+      }))).resolves.toEqual(reasonOf('SYNCED'));
     });
 
     it('usa di default i servizi della lambda jobcard', async () => {
       callService.mockResolvedValue(DETAILS_BODY);
 
       expect(loadJobcardServices()).toEqual({ callService });
-      await expect(fetchBusinessReason('JCID-42')).resolves.toBe('SYNCED - Job card Transaction successfull');
+      await expect(fetchBusinessReason('JCID-42')).resolves.toEqual(
+        reasonOf('SYNCED - Job card Transaction successfull', DETAILS_UPDATE_DATE_TIME),
+      );
       expect(callService).toHaveBeenCalledWith('jobcard', 'getJobCardDetails', { args: ['JCID-42'] });
     });
   });
@@ -122,16 +147,18 @@ describe('jobcardSyncActivity', () => {
         techReasonUpdated: true,
         ack: 'KO',
         businessReason: 'SYNCED - Job card Transaction successfull',
+        updateDateTime: DETAILS_UPDATE_DATE_TIME,
         businessReasonUpdated: true,
       });
       expect(pool.query).toHaveBeenNthCalledWith(1, UPDATE_TECHREASON_SQL, ['JCID-42', 'FAILURE', 'KO']);
       expect(pool.query).toHaveBeenNthCalledWith(2, UPDATE_BUSINESSREASON_SQL, [
         'JCID-42',
         'SYNCED - Job card Transaction successfull',
+        DETAILS_UPDATE_DATE_TIME,
       ]);
     });
 
-    it('non si blocca se entrambi i campi businessreason mancano', async () => {
+    it('non si blocca se businessreason e updateDateTime mancano (lastupdate = now())', async () => {
       pool.query.mockResolvedValue({ rows: [{ jobcardid: 'JCID-42' }] });
       const deps = makeDeps({ jobCardDetail: { roInfo: {} } });
 
@@ -145,8 +172,9 @@ describe('jobcardSyncActivity', () => {
       });
 
       expect(outcome.businessReason).toBeNull();
+      expect(outcome.updateDateTime).toBeNull();
       expect(outcome.businessReasonUpdated).toBe(true);
-      expect(pool.query).toHaveBeenNthCalledWith(2, UPDATE_BUSINESSREASON_SQL, ['JCID-42', null]);
+      expect(pool.query).toHaveBeenNthCalledWith(2, UPDATE_BUSINESSREASON_SQL, ['JCID-42', null, null]);
     });
 
     it.each([
@@ -179,7 +207,7 @@ describe('jobcardSyncActivity', () => {
 
       const outcome = await syncJobcardActivity({ pool, jobCardId: 'JCID-1', djcSyncStatus: 'REFUSAL', eventType: 'DMS_PUSH_REFUSAL', logger, deps });
 
-      expect(outcome).toEqual({ techReasonUpdated: false, ack: 'KO', businessReason: null, businessReasonUpdated: false });
+      expect(outcome).toEqual({ techReasonUpdated: false, ack: 'KO', businessReason: null, updateDateTime: null, businessReasonUpdated: false });
       expect(deps.callService).not.toHaveBeenCalled();
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(logger.warn).toHaveBeenCalled();
@@ -209,7 +237,7 @@ describe('jobcardSyncActivity', () => {
 
       const outcome = await syncJobcardActivity({ pool, jobCardId: 'JCID-42', djcSyncStatus: 'FAILURE', eventType: 'DMS_PUSH_FAILURE', logger, deps });
 
-      expect(outcome).toEqual({ techReasonUpdated: true, ack: 'KO', businessReason: null, businessReasonUpdated: false });
+      expect(outcome).toEqual({ techReasonUpdated: true, ack: 'KO', businessReason: null, updateDateTime: null, businessReasonUpdated: false });
       expect(pool.query).toHaveBeenCalledTimes(1);
       expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('errore jobCardDetails'), {
         jobCardId: 'JCID-42', errorMessage: message,
@@ -227,6 +255,7 @@ describe('jobcardSyncActivity', () => {
         techReasonUpdated: true,
         ack: 'KO',
         businessReason: 'SYNCED - Job card Transaction successfull',
+        updateDateTime: DETAILS_UPDATE_DATE_TIME,
         businessReasonUpdated: false,
       });
       expect(logger.error).toHaveBeenCalled();

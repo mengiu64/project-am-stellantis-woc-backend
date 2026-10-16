@@ -5,7 +5,7 @@ jest.mock('../src/repositoryFactory');
 
 const { getCacheItem, setCacheItem } = require('../src/dynamoCache');
 const { buildMyPeopleDmsRepository } = require('../src/repositoryFactory');
-const { getCachedSessionContext } = require('../src/sessionContextCache');
+const { getCachedSessionContext, getOrCreateSessionData } = require('../src/sessionContextCache');
 
 const CACHE_KEY = 'session:context:dealer1.d001';
 
@@ -134,5 +134,49 @@ describe('sessionContextCache', () => {
     await getCachedSessionContext('weird/../user name!', { getSessionDataFn });
 
     expect(getCacheItem).toHaveBeenCalledWith('session:context:weird/../user name!');
+  });
+});
+
+describe('sessionContextCache — getOrCreateSessionData', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.SESSION_CONTEXT_CACHE_TTL_MS;
+  });
+
+  test('cache hit: returns the cached data without building or writing', async () => {
+    const cached = { sincom: '0062230', oics: [] };
+    getCacheItem.mockResolvedValue(cached);
+    const buildSessionData = jest.fn();
+
+    expect(await getOrCreateSessionData('dealer1.d001', buildSessionData)).toBe(cached);
+    expect(getCacheItem).toHaveBeenCalledWith(CACHE_KEY);
+    expect(buildSessionData).not.toHaveBeenCalled();
+    expect(setCacheItem).not.toHaveBeenCalled();
+  });
+
+  test('cache miss: builds the data, writes it with the default TTL and returns it', async () => {
+    getCacheItem.mockResolvedValue(null);
+    const sessionData = { sincom: '0062230', oics: [{ code: '00000357' }] };
+    const buildSessionData = jest.fn().mockResolvedValue(sessionData);
+
+    expect(await getOrCreateSessionData('dealer1.d001', buildSessionData)).toBe(sessionData);
+    expect(buildSessionData).toHaveBeenCalledWith('dealer1.d001');
+    expect(setCacheItem).toHaveBeenCalledWith(CACHE_KEY, sessionData, 300);
+  });
+
+  test('respects a custom ttlMs override when writing the cache', async () => {
+    getCacheItem.mockResolvedValue(null);
+
+    await getOrCreateSessionData('dealer1.d001', jest.fn().mockResolvedValue({}), { ttlMs: 60000 });
+
+    expect(setCacheItem).toHaveBeenCalledWith(CACHE_KEY, {}, 60);
+  });
+
+  test('propagates build errors without caching anything', async () => {
+    getCacheItem.mockResolvedValue(null);
+    const error = new Error('myPeople unreachable');
+
+    await expect(getOrCreateSessionData('dealer1.d001', jest.fn().mockRejectedValue(error))).rejects.toBe(error);
+    expect(setCacheItem).not.toHaveBeenCalled();
   });
 });

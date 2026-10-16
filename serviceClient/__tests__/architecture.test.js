@@ -84,6 +84,7 @@ const consumerPolicies = {
   pkManager: 'PkManager', pkFavorite: 'PkFavorite', dms: 'Dms', jobcard: 'JobCard',
   djc: 'Djc', session: 'Session', hqManager: 'HqManager',
   dmlConfigSync: 'DmlConfigSync', 'synch-status': 'SynchStatus',
+  wyz: 'Wyz',
 };
 
 function checkRestPermissions(module, policy, template) {

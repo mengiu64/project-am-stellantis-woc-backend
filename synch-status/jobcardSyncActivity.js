@@ -11,7 +11,10 @@
  *                       o KO (DMS_PUSH_REFUSAL / DMS_PUSH_FAILURE), lastupdate = now()
  *   2) businessreason = roInfo.dmsSynchroStatus + dmsReturnMessage restituiti
  *                       da jobCardDetails
- *                       (servizio REST privato jobcard), lastupdate = now()
+ *                       (servizio REST privato jobcard),
+ *      lastupdate     = roInfo.updateDateTime della stessa risposta (ora
+ *                       dell'ultimo salvataggio su DJC), now() se assente o
+ *                       non valido
  *
  * Interamente best-effort: ogni errore viene loggato e mai propagato, così la
  * risposta verso DJC resta invariata.
@@ -34,7 +37,7 @@ const UPDATE_TECHREASON_SQL = `
 
 const UPDATE_BUSINESSREASON_SQL = `
   UPDATE woc.jobcard_sync_activity
-  SET businessreason = $2, lastupdate = now()
+  SET businessreason = $2, lastupdate = COALESCE($3::timestamptz, now())
   WHERE jobcardid = $1
   RETURNING jobcardid`;
 
@@ -46,18 +49,34 @@ function loadJobcardServices() {
 }
 
 /**
+ * Normalizza roInfo.updateDateTime in ISO 8601 UTC (fuso sempre esplicito
+ * per il cast ::timestamptz); null se assente o non interpretabile.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+function toIsoTimestamp(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+/**
  * Richiama jobCardDetails (lambda jobcard) e compone il businessreason da
- * roInfo.dmsSynchroStatus e roInfo.dmsReturnMessage.
+ * roInfo.dmsSynchroStatus e roInfo.dmsReturnMessage; dalla stessa risposta
+ * legge roInfo.updateDateTime.
  * @param {string} jobCardId
  * @param {object} [deps] - iniettabile nei test
- * @returns {Promise<string|null>}
+ * @returns {Promise<{businessReason: (string|null), updateDateTime: (string|null)}>}
  */
 async function fetchBusinessReason(jobCardId, deps = loadJobcardServices()) {
   const body = await deps.callService('jobcard', 'getJobCardDetails', { args: [jobCardId] });
   const roInfo = body?.jobCardDetail?.roInfo ?? body?.roInfo;
   const reasonParts = [roInfo?.dmsSynchroStatus, roInfo?.dmsReturnMessage]
     .filter((value) => typeof value === 'string' && value.trim() !== '');
-  return reasonParts.length > 0 ? reasonParts.join(' - ') : null;
+  return {
+    businessReason: reasonParts.length > 0 ? reasonParts.join(' - ') : null,
+    updateDateTime: toIsoTimestamp(roInfo?.updateDateTime),
+  };
 }
 
 /**
@@ -70,10 +89,16 @@ async function fetchBusinessReason(jobCardId, deps = loadJobcardServices()) {
  * @param {string} params.eventType - evento DJC, determina ack (OK/KO)
  * @param {object} params.logger
  * @param {object} [params.deps] - servizi jobcard, iniettabili nei test
- * @returns {Promise<{techReasonUpdated: boolean, businessReason: (string|null), businessReasonUpdated: boolean}>}
+ * @returns {Promise<{techReasonUpdated: boolean, ack: (string|null), businessReason: (string|null), updateDateTime: (string|null), businessReasonUpdated: boolean}>}
  */
 async function syncJobcardActivity({ pool, jobCardId, djcSyncStatus, eventType, logger, deps }) {
-  const outcome = { techReasonUpdated: false, ack: EVENT_TYPE_TO_ACK[eventType] ?? null, businessReason: null, businessReasonUpdated: false };
+  const outcome = {
+    techReasonUpdated: false,
+    ack: EVENT_TYPE_TO_ACK[eventType] ?? null,
+    businessReason: null,
+    updateDateTime: null,
+    businessReasonUpdated: false,
+  };
 
   try {
     const tech = await pool.query(UPDATE_TECHREASON_SQL, [jobCardId, djcSyncStatus, outcome.ack]);
@@ -89,16 +114,22 @@ async function syncJobcardActivity({ pool, jobCardId, djcSyncStatus, eventType, 
   }
 
   try {
-    outcome.businessReason = await fetchBusinessReason(jobCardId, deps);
+    const details = await fetchBusinessReason(jobCardId, deps);
+    outcome.businessReason = details.businessReason;
+    outcome.updateDateTime = details.updateDateTime;
   } catch (err) {
     logger.error('❌ jobcard_sync_activity: errore jobCardDetails, businessreason non aggiornato', { jobCardId, errorMessage: err.message });
     return outcome;
   }
 
   try {
-    const business = await pool.query(UPDATE_BUSINESSREASON_SQL, [jobCardId, outcome.businessReason]);
+    const business = await pool.query(UPDATE_BUSINESSREASON_SQL, [jobCardId, outcome.businessReason, outcome.updateDateTime]);
     outcome.businessReasonUpdated = Boolean(business.rows && business.rows.length > 0);
-    logger.info('✅ jobcard_sync_activity: businessreason aggiornato', { jobCardId, businessreason: outcome.businessReason });
+    logger.info('✅ jobcard_sync_activity: businessreason/lastupdate aggiornati', {
+      jobCardId,
+      businessreason: outcome.businessReason,
+      updateDateTime: outcome.updateDateTime,
+    });
   } catch (err) {
     logger.error('❌ jobcard_sync_activity: errore aggiornamento businessreason', { jobCardId, errorMessage: err.message });
   }

@@ -16,10 +16,12 @@
 --     restano invariati
 -- DOPO l'invio a DGT la stessa lambda registra in djcsynch (best-effort)
 -- l'esito della chiamata: true se DGT risponde success: true, false se
--- risponde altrimenti o se la chiamata fallisce (token/HTTP/rete).
--- ack/techreason/businessreason/lastupdate NON sono valorizzati da djc: vengono
+-- risponde altrimenti o se la chiamata fallisce (token/HTTP/rete); con false
+-- imposta anche lastupdate = now() (ora dell'invio fallito), con true
+-- lastupdate resta invariato.
+-- ack/techreason/businessreason NON sono valorizzati da djc: vengono
 -- popolati in un secondo momento da synch-status (esito asincrono della
--- sincronizzazione): ack = OK/KO, techreason = djc_sync_status,
+-- sincronizzazione), insieme a lastupdate: ack = OK/KO, techreason = djc_sync_status,
 -- businessreason = dmsSynchroStatus e dmsReturnMessage da jobCardDetails,
 -- concatenati con " - " quando entrambi sono presenti.
 -- jobcard e djc li rileggono per jobcardid insieme a djcsynch (SELECT
@@ -28,11 +30,10 @@
 -- nella risposta di saveJobcard (djcsynch = esito della chiamata appena
 -- eseguita) e (solo jobcard) di jobCardDetails.
 -- jobcard rilegge anche payload, insieme a djcsynch/ack/techreason/
--- businessreason (azione GET lastPayload), per recuperare le modifiche inviate
--- quando l'aggiornamento verso DJC/DGT fallisce, ed elimina la riga (azione
--- POST deleteSynch, e azione GET lastPayload dopo la lettura del payload) solo
--- se djcsynch è false e ack/techreason/businessreason sono vuoti (NULL o
--- stringa vuota).
+-- businessreason/lastupdate (azione GET lastPayload, in sola lettura), per
+-- recuperare le modifiche inviate quando l'aggiornamento verso DJC/DGT
+-- fallisce, ed elimina la riga (azione POST deleteSynch) solo se djcsynch è
+-- false e ack/techreason/businessreason sono vuoti (NULL o stringa vuota).
 --
 -- Ambienti esistenti: la colonna djcsynch si aggiunge con
 -- alter_table_jobcard_sync_activity_add_djcsynch.sql e il privilegio DELETE
@@ -67,7 +68,7 @@ COMMENT ON COLUMN woc.jobcard_sync_activity.payload        IS 'Ultimo payload in
 COMMENT ON COLUMN woc.jobcard_sync_activity.ack            IS 'Esito (ack) della sincronizzazione: OK (DMS_PUSH_SUCCESS_*) / KO (DMS_PUSH_REFUSAL, DMS_PUSH_FAILURE) — popolato da synch-status';
 COMMENT ON COLUMN woc.jobcard_sync_activity.techreason     IS 'Motivazione tecnica dell''esito — popolata in un secondo momento';
 COMMENT ON COLUMN woc.jobcard_sync_activity.businessreason IS 'Motivazione di business dell''esito — popolata in un secondo momento';
-COMMENT ON COLUMN woc.jobcard_sync_activity.lastupdate     IS 'Data ultimo aggiornamento dell''esito — popolata in un secondo momento';
+COMMENT ON COLUMN woc.jobcard_sync_activity.lastupdate     IS 'Data ultimo aggiornamento dell''esito (updateDateTime DJC scritto da synch-status con ack OK/KO) oppure ora dell''invio a DGT fallito (now() scritto da jobcard/djc insieme a djcsynch false)';
 COMMENT ON COLUMN woc.jobcard_sync_activity.djcsynch       IS 'Esito dell''ultima chiamata saveJobcard verso DGT: true se DGT risponde success: true, false se risponde altrimenti o la chiamata fallisce, NULL se non ancora noto (azzerato dall''UPSERT del nuovo payload) — popolato da jobcard/djc';
 
 -- ============================================================================
