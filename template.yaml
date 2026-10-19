@@ -28,7 +28,8 @@ Parameters:
     Default: ''
     Description: >-
       Nome esplicito del bucket S3 Translations. Se vuoto (default), usa
-      "s3-np-bsn0027990-${Environment}-translations". Da valorizzare solo
+      "s3-np-bsn0027990-${Environment}-translations" (dev/stage) oppure
+      "s3-bsn0027990-prod-translations" (prod, senza "np-"). Da valorizzare solo
       quando il nome auto-generato collide con un bucket già esistente in
       un altro account AWS (i nomi bucket S3 sono univoci globalmente).
 
@@ -760,13 +761,21 @@ Resources:
 
   # ── Translations (bucket S3 + Lambda) ──────────────────────────────────────
 
+  # Retain: il bucket e il suo contenuto NON vengono mai cancellati da CloudFormation,
+  # ne' in caso di rimozione della risorsa/stack ne' in caso di sostituzione.
   TranslationsBucket:
     Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
+      # Override esplicito, altrimenti nome per ambiente: prod senza "np-", dev/stage invariati
       BucketName: !If
         - HasTranslationsBucketNameOverride
         - !Ref TranslationsBucketNameOverride
-        - !Sub "s3-np-bsn0027990-${Environment}-translations"
+        - !If
+          - IsProd
+          - "s3-bsn0027990-prod-translations"
+          - !Sub "s3-np-bsn0027990-${Environment}-translations"
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -816,7 +825,10 @@ Resources:
           TRANSLATIONS_BUCKET_NAME: !If
             - HasTranslationsBucketNameOverride
             - !Ref TranslationsBucketNameOverride
-            - !Sub "s3-np-bsn0027990-${Environment}-translations"
+            - !If
+              - IsProd
+              - "s3-bsn0027990-prod-translations"
+              - !Sub "s3-np-bsn0027990-${Environment}-translations"
           DB_SECRET_ARN_PARAM: !If
             - IsProd
             - /app/BSN0027990/DB_SECRET_ARN
