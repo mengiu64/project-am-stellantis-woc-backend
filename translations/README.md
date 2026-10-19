@@ -91,3 +91,35 @@ template SAM (`template.yaml`). Questa Lambda si limita a **leggere** il file
 `locales/{lang}/translation.json` dal bucket e a restituirlo come JSON: il
 caricamento/la gestione dei contenuti di traduzione nel bucket è a carico di
 un altro processo, esterno a questa Lambda e alla sua pipeline CI/CD.
+
+## Import S3 → Aurora e API su database (woc.translations)
+
+### 1. Import (evento S3, nessuna rotta HTTP)
+Trigger: `s3:ObjectCreated:*` (upload o sovrascrittura) su `locales/en/translation.json` del bucket
+`s3-np-bsn0027990-<env>-translations`. Il codice accetta solo il bucket configurato e la chiave esatta.
+
+- Il JSON annidato viene appiattito. `path` è dato dalle chiavi unite con `.`, `context` è il primo segmento e `language` vale `en`.
+- Per ogni voce `en` vengono create 4 righe (`de`, `it`, `es`, `fr`) con lo stesso `path`/`context` e `translation = [path]`.
+- L'upsert avviene in un'unica transazione su `(path, language)`. Per `en` aggiorna testo e contesto. Per le altre lingue **non sovrascrive** una traduzione già presente.
+- **Nessuna DELETE**: le voci tolte dal file restano nel DB.
+- In caso di errore: log strutturato, rollback e rilancio dell'eccezione (retry asincroni di Lambda).
+
+### 2. `GET .../by-language?language=en`
+`language` è obbligatorio. Restituisce il JSON ricostruito con la stessa struttura di `translation.json`.
+Errori: 400 (input), 404 (nessun record), 500 (errore interno).
+
+### 3. `GET .../search?path=&language=&context=` (o body JSON)
+Serve almeno un filtro; i filtri sono combinati in AND. `path` corrisponde al path esatto o al sottoalbero
+(es. `shell.layout`). Se il risultato contiene una sola lingua restituisce il JSON annidato,
+altrimenti `{ "<lingua>": { ... } }`. Errori: 400 (input), 404 (nessun record), 500 (errore interno).
+
+Routing: ultimo segmento del path (`by-language`, `search`) oppure `event.action`.
+
+### Variabili aggiuntive
+| Variabile | Descrizione |
+|---|---|
+| `DB_SECRET_ARN_PARAM` / `RDS_PROXY_ENDPOINT_PARAM` | Parametri SSM con l'ARN del secret e l'endpoint di RDS Proxy (vedi `shared/dbClient.js`) |
+| `TRANSLATIONS_S3_READ_VERSION` | `true` (default): legge la versione S3 indicata dall'evento |
+| `DB_LOCAL_MODE`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL` | Solo per lo sviluppo locale |
+
+CLI: `node index.js by-language language=en` · `node index.js search context=shell language=it`
