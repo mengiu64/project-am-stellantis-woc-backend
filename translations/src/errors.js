@@ -12,4 +12,26 @@ class TranslationNotFoundError extends Error {
   }
 }
 
-module.exports = { TranslationNotFoundError };
+/**
+ * Errore di validazione dell'input (parametri mancanti o non validi) — mappato a HTTP 400.
+ */
+class ValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ValidationError';
+    this.code = 'VALIDATION_ERROR';
+  }
+}
+
+/**
+ * Nessun record trovato in woc.translations per i filtri richiesti — mappato a HTTP 404.
+ */
+class NoTranslationsFoundError extends Error {
+  constructor(message = 'Nessuna traduzione trovata per i filtri richiesti') {
+    super(message);
+    this.name = 'NoTranslationsFoundError';
+    this.code = 'NO_TRANSLATIONS_FOUND';
+  }
+}
+
+module.exports = { TranslationNotFoundError, ValidationError, NoTranslationsFoundError };

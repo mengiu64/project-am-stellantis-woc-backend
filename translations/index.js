@@ -13,9 +13,31 @@
 
 require('dotenv').config();
 
+// Azioni REST esposte (selezionabili da event.action o dall'ultimo segmento del path)
 const handlers = {
-  translations: require('./src/handlers/translations'),
+  translations: require('./src/handlers/translations'), // lettura file da S3 (esistente)
+  'by-language': require('./src/handlers/getByLanguage'), // JSON ricostruito dal DB per lingua
+  search: require('./src/handlers/search'), // JSON ricostruito dal DB con filtri in AND
 };
+
+// Handler dell'import S3 -> Aurora: NON presente in `handlers`, quindi mai raggiungibile da HTTP/azione
+const importFromS3 = require('./src/handlers/importFromS3');
+
+/**
+ * Riconosce un evento nativo S3 (notifica ObjectCreated). Un evento API Gateway proxy
+ * non contiene `Records` e un'invocazione con `action` esplicita e' sempre trattata come REST.
+ */
+function isS3Event(event) {
+  return Boolean(
+    event &&
+    !event.action &&
+    !event.httpMethod &&
+    !event.requestContext &&
+    Array.isArray(event.Records) &&
+    event.Records.length > 0 &&
+    event.Records.every((r) => r && r.eventSource === 'aws:s3'),
+  );
+}
 
 // ── Lambda handler ────────────────────────────────────────────────────────────
 
@@ -38,6 +60,11 @@ function resolveAction(event) {
 }
 
 exports.handler = async (event, context) => {
+  // Ramo evento S3: import di translation.json su woc.translations (errori rilanciati per i retry Lambda)
+  if (isS3Event(event)) {
+    return importFromS3.handler(event, context);
+  }
+
   const action = resolveAction(event);
 
   if (!handlers[action]) {
@@ -79,6 +106,8 @@ async function cliMain() {
   if (!action || !validActions.includes(action)) {
     console.error('[ERROR] Azione non valida. Usa:');
     console.error('  node index.js translations lang=en');
+    console.error('  node index.js by-language language=en');
+    console.error('  node index.js search path=shell.layout language=en context=shell');
     process.exit(1);
     return;
   }
@@ -100,6 +129,7 @@ async function cliMain() {
 }
 
 // Exported for unit-testing the CLI logic
+module.exports._isS3Event = isS3Event;
 module.exports._parseKvArgs = parseKvArgs;
 module.exports._cliMain     = cliMain;
 

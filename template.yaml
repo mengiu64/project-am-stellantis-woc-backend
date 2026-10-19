@@ -779,19 +779,52 @@ Resources:
       VersioningConfiguration:
         Status: Enabled
 
+  # Metodi della Lambda:
+  #  - lettura file da S3 (REST, esistente)
+  #  - import S3 -> Aurora woc.translations (evento S3 ObjectCreated su locales/en/translation.json)
+  #  - by-language / search (REST su Aurora, integrati dal gateway esterno)
+  # Il ruolo di esecuzione e' fornito dall'infrastruttura (keyword aurora, secrets, s3, parameter, xray):
+  # con `Role` valorizzato SAM ignora `Policies`, che per questo non sono piu' dichiarate qui.
   TranslationsFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: !Sub "lmb-np-bsn0027990-${Environment}-translations"
       CodeUri: translations/
-      Policies:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
-        - S3ReadPolicy:
-            BucketName: !Ref TranslationsBucket
+      # Ruolo IAM esterno: dev 237024525379 / stage 651022779727 (account risolto da AWS::AccountId); prod senza "np-"
+      Role: !If
+        - IsProd
+        - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/stla-rol-bsn0027990-prod-translations"
+        - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/stla-rol-np-bsn0027990-${Environment}-translations"
+      # Trigger S3: upload/sovrascrittura di locales/en/translation.json (ObjectCreated:* = createObject/updateObject)
+      Events:
+        TranslationsEnUpload:
+          Type: S3
+          Properties:
+            Bucket: !Ref TranslationsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: locales/en/
+                  - Name: suffix
+                    Value: translation.json
       Environment:
         Variables:
-          TRANSLATIONS_BUCKET_NAME: !Ref TranslationsBucket
+          # Stesso nome calcolato per TranslationsBucket ma SENZA !Ref alla risorsa:
+          # il trigger S3 fa dipendere il bucket dalla funzione, un !Ref creerebbe una dipendenza circolare
+          TRANSLATIONS_BUCKET_NAME: !If
+            - HasTranslationsBucketNameOverride
+            - !Ref TranslationsBucketNameOverride
+            - !Sub "s3-np-bsn0027990-${Environment}-translations"
+          DB_SECRET_ARN_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/DB_SECRET_ARN
+            - !Sub /app/np-BSN0027990-${Environment}/DB_SECRET_ARN
+          RDS_PROXY_ENDPOINT_PARAM: !If
+            - IsProd
+            - /app/BSN0027990/RDS_PROXY_ENDPOINT
+            - !Sub /app/np-BSN0027990-${Environment}/RDS_PROXY_ENDPOINT
 
   TranslationsFunctionLogGroup:
     Type: AWS::Logs::LogGroup

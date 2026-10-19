@@ -1,7 +1,7 @@
 {
   "name": "translations",
   "version": "1.0.0",
-  "description": "Lambda per il recupero delle traduzioni (locales/{lang}/translation.json) da S3",
+  "description": "Lambda per traduzioni: lettura da S3, import S3 -> Aurora (woc.translations) e API REST di consultazione dal DB",
   "main": "index.js",
   "engines": {
     "node": ">=24.0.0"
@@ -16,7 +16,10 @@
   "license": "ISC",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1083.0",
-    "dotenv": "^17.4.2"
+    "@aws-sdk/client-secrets-manager": "^3.1152.0",
+    "@aws-sdk/client-ssm": "^3.1152.0",
+    "dotenv": "^17.4.2",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "jest": "^30.5.2",
@@ -29,7 +32,8 @@
     ],
     "collectCoverageFrom": [
       "index.js",
-      "src/**/*.js"
+      "src/**/*.js",
+      "shared/**/*.js"
     ],
     "coverageReporters": [
       "html",
